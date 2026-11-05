@@ -119,17 +119,6 @@ impl RuleOutcome {
             Self::Fail => Outcome::Fail,
         }
     }
-
-    /// Lowercase name.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Pass => "pass",
-            Self::Waived => "waived",
-            Self::Hold => "hold",
-            Self::Fail => "fail",
-        }
-    }
 }
 
 /// One rule's result.

@@ -262,14 +262,21 @@ paths = ["src/**"]
         file("src/b.rs", "modified", 10, &[]),
         file("src/c.rs", "modified", 0, &[]),
     ]);
-    let outcomes: Vec<_> = evaluate(&p, &over, seals(), today())
-        .rules
-        .iter()
-        .map(|r| r.outcome)
-        .collect();
+    let over_verdict = evaluate(&p, &over, seals(), today());
+    let outcomes: Vec<_> = over_verdict.rules.iter().map(|r| r.outcome).collect();
     assert_eq!(
         outcomes,
         [RuleOutcome::Fail, RuleOutcome::Fail, RuleOutcome::Fail]
+    );
+    let over_file_budget: Vec<_> = over_verdict.rules[0]
+        .violations
+        .iter()
+        .map(|v| v.path.as_deref())
+        .collect();
+    assert_eq!(
+        over_file_budget,
+        [Some("src/a.rs")],
+        "only the file above its limit"
     );
 }
 
