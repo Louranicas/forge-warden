@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "ff78a33688ef9aad5d9e43944bad4f16abcb20317cb2a9307bef8c0ecb092fca",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "src/greet.rs", "status": "added", "score": 4, "signals": ["new_file"]},
+    {"path": ".github/workflows/triage.yml", "status": "modified", "score": 2, "signals": ["config_or_lockfile"]}
+  ]
+}

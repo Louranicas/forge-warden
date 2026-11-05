@@ -1,0 +1,27 @@
+[package]
+name = "forge-warden-cli"
+description = "forge-warden: change policy as code for deep-diff-forge reviews. A sealed, deterministic gate for CI and agents."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "forge-warden"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+forge-warden-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "6d03d4acb02b9336c25a9e52b88940a40ad75a56e37bc22d905e1be069e8695c",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "src/x.rs", "status": "modified", "score": 6, "signals": ["unsafe_added"], "evidence": [{"signal": "unsafe_added", "address": "837317b8488b2587efc18a8ae5f94bd93875811583d780447787a0289f463a7e", "side": "new", "line": 4, "basis": "lexical"}]}
+  ]
+}

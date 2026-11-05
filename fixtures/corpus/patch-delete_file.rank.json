@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "eee4a15abb8a134858efcf2c1218cbe00e51d925beb9024a47ee6d0d3b3ac8f1",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "gone.txt", "status": "deleted", "score": 5, "signals": ["deleted_file"]}
+  ]
+}

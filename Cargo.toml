@@ -1,0 +1,94 @@
+[workspace]
+members = ["crates/forge-warden-core", "crates/forge-warden-cli"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Louranicas/forge-warden"
+homepage = "https://github.com/Louranicas/forge-warden"
+rust-version = "1.88"
+keywords = ["code-review", "policy", "diff", "ci", "deep-diff-forge"]
+categories = ["development-tools", "command-line-utilities"]
+
+# ---------------------------------------------------------------------------------------------
+# The lint wall (ADR 0002). Every member opts in with `[lints] workspace = true`, and a test
+# (`crates/forge-warden-cli/tests/repo_invariants.rs`) fails if one does not.
+#
+# Rule of thumb: anything a reviewer would have to *remember* to check is a lint here instead.
+# ---------------------------------------------------------------------------------------------
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+missing_docs = "deny"
+unreachable_pub = "deny"
+unused_must_use = "deny"
+unused_qualifications = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+let_underscore_drop = "deny"
+non_ascii_idents = "forbid"
+
+[workspace.lints.clippy]
+# Whole families, as errors: a warning nobody must fix is a warning nobody fixes.
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+# `cargo` complains about duplicate transitive versions we do not control.
+multiple_crate_versions = "allow"
+
+# Panic discipline: production code returns errors; it never aborts the process by accident.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+arithmetic_side_effects = "deny"
+as_conversions = "deny"
+unwrap_in_result = "deny"
+panic_in_result_fn = "deny"
+
+# Output and effects go through named doors (clippy.toml `disallowed-*`), never ad hoc.
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+exit = "deny"
+mem_forget = "deny"
+
+# Suppressions must be `#[expect(lint, reason = "...")]`: reviewed, and stale ones fail.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# Shape and honesty.
+wildcard_enum_match_arm = "deny"
+match_wildcard_for_single_variants = "deny"
+shadow_unrelated = "deny"
+large_include_file = "deny"
+rc_buffer = "deny"
+clone_on_ref_ptr = "deny"
+str_to_string = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+module_name_repetitions = "allow"
+
+[workspace.dependencies]
+forge-warden-core = { path = "crates/forge-warden-core", version = "0.1.0" }
+
+clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
+globset = { version = "0.4.16", default-features = false }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.140", features = ["preserve_order"] }
+sha2 = { version = "0.10.9", default-features = false }
+thiserror = "2.0.12"
+toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
+
+proptest = { version = "1.7", default-features = false, features = ["std"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

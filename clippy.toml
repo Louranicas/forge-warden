@@ -1,0 +1,35 @@
+# Effect doors (ADR 0001). Outside the pure core, a method below may be called only inside a
+# function that carries `#[expect(clippy::disallowed_methods, reason = "door: <name>")]`, and the
+# doors live in one module (`crates/forge-warden-cli/src/doors.rs`). A new effect is therefore a
+# reviewed diff to that one file, never a line anywhere. `repo_invariants.rs` checks that no other
+# file names a door.
+avoid-breaking-exported-api = false
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-print-in-tests = true
+
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order is random; use BTreeMap so output is deterministic" },
+    { path = "std::collections::HashSet", reason = "iteration order is random; use BTreeSet so output is deterministic" },
+]
+
+disallowed-methods = [
+    { path = "std::fs::read", reason = "read files only through doors::read_file" },
+    { path = "std::fs::File::open", reason = "read files only through doors::read_file" },
+    { path = "std::fs::File::create", reason = "forge-warden never writes files" },
+    { path = "std::fs::read_to_string", reason = "read files only through doors::read_file" },
+    { path = "std::fs::write", reason = "forge-warden never writes files" },
+    { path = "std::fs::remove_file", reason = "forge-warden never deletes files" },
+    { path = "std::fs::remove_dir_all", reason = "forge-warden never deletes files" },
+    { path = "std::io::stdin", reason = "read stdin only through doors::read_stdin" },
+    { path = "std::io::stdout", reason = "write stdout only through doors::emit" },
+    { path = "std::io::stderr", reason = "write stderr only through doors::diagnose" },
+    { path = "std::env::var", reason = "forge-warden reads no environment; configuration is explicit" },
+    { path = "std::env::var_os", reason = "forge-warden reads no environment; configuration is explicit" },
+    { path = "std::process::Command::new", reason = "forge-warden spawns nothing" },
+    { path = "std::time::SystemTime::now", reason = "read the clock only through doors::today" },
+    { path = "std::time::Instant::now", reason = "forge-warden measures nothing" },
+    { path = "std::thread::sleep", reason = "forge-warden never waits" },
+]

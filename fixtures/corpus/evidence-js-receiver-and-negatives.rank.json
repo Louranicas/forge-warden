@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "e4df4e158dc1bb41bb72e3c90be9d8d80cfa5388be54bd7d7d28be413b018e4a",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "web/client.ts", "status": "modified", "score": 9, "signals": ["network_fetch", "dynamic_eval"], "evidence": [{"signal": "dynamic_eval", "address": "b003b69fbea6120f5f0560e4da754d438eee9a39e006256e6b357b56ff7ff5be", "side": "new", "line": 7, "basis": "lexical"}, {"signal": "network_fetch", "address": "b003b69fbea6120f5f0560e4da754d438eee9a39e006256e6b357b56ff7ff5be", "side": "new", "line": 8, "basis": "lexical"}]}
+  ]
+}

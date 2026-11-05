@@ -1,0 +1,106 @@
+#:schema ./schemas/policy.v0.schema.json
+# forge-warden judges its own pull requests with this policy (.github/workflows/ci.yml, job
+# `dogfood`). It is the starter policy tightened for a Rust crate whose core must stay pure.
+schema = "forge-warden.policy.v0"
+
+[[rule]]
+id = "no-secrets"
+why = "A credential committed once is compromised forever, even after a revert."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["secret_like"]
+
+[[rule]]
+id = "no-hidden-text"
+why = "Bidi controls, invisible characters and traversing paths make code read differently than it runs."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["hazardous_text"]
+except = ["fixtures/**"]
+
+[[rule]]
+id = "no-unsafe"
+why = "unsafe_code is forbidden workspace-wide; a diff that adds it is already wrong."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["unsafe_added"]
+
+[[rule]]
+id = "core-stays-pure"
+why = "The core is a pure function (ADR 0001); spawning, fetching or eval belongs nowhere in it."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["process_spawn", "network_fetch", "dynamic_eval", "build_hook"]
+paths = ["crates/forge-warden-core/**"]
+
+[[rule]]
+id = "no-ci-privilege"
+why = "pull_request_target, write-all and secret inheritance hand untrusted code the keys to the repository."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["ci_privilege"]
+
+[[rule]]
+id = "no-silent-suppression"
+why = "Suppressions are #[expect(lint, reason)] and reviewed; a new one needs a person to agree."
+kind = "forbid_signal"
+severity = "hold"
+signals = ["check_suppressed"]
+
+[[rule]]
+id = "keep-the-tests"
+why = "Deleting a test removes a guarantee someone relied on; that deserves a second pair of eyes."
+kind = "forbid_signal"
+severity = "hold"
+signals = ["test_removed"]
+
+[[rule]]
+id = "tests-travel-with-code"
+why = "Behaviour that changes without an integration test or fixture change is behaviour nobody pinned down; if the new tests are inline, say so in review."
+kind = "require_companion"
+severity = "hold"
+when = ["crates/*/src/**"]
+require = ["crates/*/tests/**", "fixtures/**"]
+
+[[rule]]
+id = "schema-changes-are-versioned"
+why = "Consumers parse verdicts by schema name; changing a schema means a CHANGELOG entry they can find."
+kind = "require_companion"
+severity = "fail"
+when = ["schemas/**", "crates/forge-warden-core/src/verdict.rs", "crates/forge-warden-core/src/exit.rs"]
+require = ["CHANGELOG.md"]
+
+[[rule]]
+id = "quality-config-is-owned"
+why = "Lints, CI, hooks and this policy decide what every other check means; loosening them needs the owner."
+kind = "protect_paths"
+severity = "hold"
+paths = [
+  ".github/**",
+  ".claude/**",
+  ".githooks/**",
+  "Cargo.toml",
+  "clippy.toml",
+  "crates/*/clippy.toml",
+  "deny.toml",
+  "rustfmt.toml",
+  "warden.toml",
+  "crates/forge-warden-cli/tests/repo_invariants.rs",
+  "crates/forge-warden-cli/src/doors.rs",
+]
+
+[[rule]]
+id = "reviewable-size"
+why = "A change too risky to hold in one head gets rubber-stamped; split it."
+kind = "max_score"
+severity = "hold"
+limit = 60
+per = "change"
+
+[[rule]]
+id = "one-thing-at-a-time"
+why = "A pull request that touches many source files is several changes; review them separately."
+kind = "max_files"
+severity = "hold"
+limit = 12
+paths = ["crates/*/src/**"]

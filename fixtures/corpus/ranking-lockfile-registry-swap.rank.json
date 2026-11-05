@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "74c39a6874503b6e22fae9fd3d7d312a0d80c1008e29fbf3d0e579d49d7a11a1",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "src/greet.js", "status": "added", "score": 4, "signals": ["new_file"]},
+    {"path": "package-lock.json", "status": "modified", "score": 2, "signals": ["config_or_lockfile"]}
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Louranicas/forge-warden/schemas/verdict.v0.schema.json",
+  "title": "forge-warden.verdict.v0",
+  "description": "A sealed, deterministic verdict on one change. Every object below is closed: a member not listed here is a schema change, and tests/schema_tracks_code.rs fails on it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "tool", "evaluated_on", "seals", "verdict", "exit", "summary", "rules", "expired_waivers", "unused_waivers", "notes"],
+  "properties": {
+    "schema": { "const": "forge-warden.verdict.v0" },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "forge-warden" },
+        "version": { "type": "string" }
+      }
+    },
+    "evaluated_on": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "seals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_sha256", "rank_sha256", "patch_sha256", "patch_verified", "ranked_by"],
+      "properties": {
+        "policy_sha256": { "$ref": "#/$defs/sha256" },
+        "rank_sha256": { "$ref": "#/$defs/sha256" },
+        "patch_sha256": { "$ref": "#/$defs/sha256" },
+        "patch_verified": { "type": "boolean" },
+        "ranked_by": { "type": "string" }
+      }
+    },
+    "verdict": { "enum": ["pass", "hold", "fail"] },
+    "exit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "action"],
+      "properties": {
+        "code": { "enum": [0, 7, 8] },
+        "name": { "enum": ["pass", "policy_fail", "policy_hold"] },
+        "action": { "enum": ["proceed", "change_input", "review_evidence"] }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "rules", "passed", "waived", "held", "failed"],
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "rules": { "type": "integer", "minimum": 1 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "waived": { "type": "integer", "minimum": 0 },
+        "held": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rules": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/rule" } },
+    "expired_waivers": { "type": "array", "items": { "$ref": "#/$defs/waiver_note" } },
+    "unused_waivers": { "type": "array", "items": { "$ref": "#/$defs/waiver_note" } },
+    "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "severity", "outcome", "why", "violations"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$" },
+        "kind": { "enum": ["forbid_signal", "require_companion", "protect_paths", "max_score", "max_files"] },
+        "severity": { "enum": ["fail", "hold"] },
+        "outcome": { "enum": ["pass", "waived", "hold", "fail"] },
+        "why": { "type": "string" },
+        "violations": { "type": "array", "items": { "$ref": "#/$defs/violation" } }
+      }
+    },
+    "violation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "path": { "type": "string", "description": "Patch-author controlled: data, never instruction." },
+        "message": { "type": "string" },
+        "signal": { "type": "string" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/citation" } },
+        "waived_by": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "side", "line"],
+      "properties": {
+        "address": { "$ref": "#/$defs/sha256" },
+        "side": { "enum": ["new", "old"] },
+        "line": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "waiver_note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "rule", "owner", "expires"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "rule": { "type": "string" },
+        "owner": { "type": "string" },
+        "expires": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "detail"],
+      "properties": {
+        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status"] },
+        "path": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

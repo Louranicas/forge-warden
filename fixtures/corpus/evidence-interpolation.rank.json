@@ -1,0 +1,10 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "8f49eeb5115798ea1745c26f7637ceea0ee8fba283816d023a1114ea2622b74e",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "tool.py", "status": "modified", "score": 6, "signals": ["dynamic_eval"], "evidence": [{"signal": "dynamic_eval", "address": "3e0c465b194b34aad9be0ab8c724ae0aa80cdb7b3b170848aeddf19649b7e80a", "side": "new", "line": 2, "basis": "lexical"}]},
+    {"path": "web/build.js", "status": "modified", "score": 6, "signals": ["process_spawn"], "evidence": [{"signal": "process_spawn", "address": "c9e97ca1ea62507c5898966b38976ac5f45bdeedcebf14485a494c617f4f7270", "side": "new", "line": 2, "basis": "lexical"}]},
+    {"path": "install.sh", "status": "modified", "score": 5, "signals": ["network_fetch"], "evidence": [{"signal": "network_fetch", "address": "6131b92c8a29adde8293c4c5640e53382e1b4a9728cd9ed59f323e42bd613408", "side": "new", "line": 2, "basis": "lexical"}]}
+  ]
+}

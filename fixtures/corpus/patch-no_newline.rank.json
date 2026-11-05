@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "f4479a8fe9326014f55f3db3630bd4b4dd038319287c57f28be37bc8c6901bca",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "eof.txt", "status": "modified", "score": 2, "signals": []}
+  ]
+}

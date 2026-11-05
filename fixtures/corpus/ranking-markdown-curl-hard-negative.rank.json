@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "e7912b63f4addb747e490a4616018fa8d565b9087dd041a9d1a7d8e364b64fab",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "scripts/install.sh", "status": "modified", "score": 5, "signals": ["network_fetch"], "evidence": [{"signal": "network_fetch", "address": "532294f764c4ac865feb837694c36528e6eee17467313f43cc2e28288ec48114", "side": "new", "line": 2, "basis": "lexical"}]},
+    {"path": "docs/install.md", "status": "modified", "score": 2, "signals": []}
+  ]
+}

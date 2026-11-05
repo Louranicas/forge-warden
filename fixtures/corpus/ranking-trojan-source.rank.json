@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "817d6241c1b697a5615b37e63edbe5b5a4eec1c850afd5c750be98f870d4c86a",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "src/access.rs", "status": "modified", "score": 5, "signals": ["hazardous_text"]},
+    {"path": "docs/notes.md", "status": "modified", "score": 2, "signals": []}
+  ]
+}

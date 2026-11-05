@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "6d60dab1ce23a177e6f827ca08d86f554643a283d582c0f2c1d9f2db625fdf8a",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": ".github/workflows/ci.yml", "status": "modified", "score": 6, "signals": ["config_or_lockfile", "ci_privilege"], "evidence": [{"signal": "ci_privilege", "address": "63f07beb9491a8017e52ef24e76bc459f56876d83d8a09749151c93717999185", "side": "new", "line": 2, "basis": "lexical"}]},
+    {"path": "src/parse.rs", "status": "added", "score": 4, "signals": ["new_file"]}
+  ]
+}

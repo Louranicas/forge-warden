@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "13f6b18113f9edd849af6030c6c7be90f104f4ed899a0dec27b0eb5476b8a9ce",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "Dockerfile", "status": "modified", "score": 5, "signals": ["network_fetch"], "evidence": [{"signal": "network_fetch", "address": "877f6cfc3d074e6a8f501443836e38c57688474e6d34c157779a29b9b4892dee", "side": "new", "line": 3, "basis": "lexical"}]}
+  ]
+}

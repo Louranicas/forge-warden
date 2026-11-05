@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "28623e251bd1dde59ffe3c1fb7a2553526f818262e178df4ffe3131ac7abb8cb",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "tool.py", "status": "modified", "score": 8, "signals": ["dynamic_eval", "check_suppressed"], "evidence": [{"signal": "dynamic_eval", "address": "9ef8a023f902a44643dd9fe79cb0cf589cb9c2c430e091f32774ea31bf8d4f2d", "side": "new", "line": 3, "basis": "lexical"}, {"signal": "check_suppressed", "address": "9ef8a023f902a44643dd9fe79cb0cf589cb9c2c430e091f32774ea31bf8d4f2d", "side": "new", "line": 3, "basis": "lexical"}]}
+  ]
+}

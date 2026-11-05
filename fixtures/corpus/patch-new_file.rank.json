@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "9708b681cc2bbd504b29b4cc6c9ca21c0e206ec370c717bbcb6106ed03d862da",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "hello.txt", "status": "added", "score": 4, "signals": ["new_file"]}
+  ]
+}

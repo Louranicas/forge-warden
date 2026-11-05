@@ -1,0 +1,16 @@
+# Deliberately broken: tests/cli.rs checks that `forge-warden lint` reports every issue at once.
+schema = "forge-warden.policy.v0"
+
+[[rule]]
+id = "No_Secrets"
+why = "because"
+kind = "forbid_signal"
+severity = "fail"
+signals = ["secrets_like"]
+
+[[waiver]]
+rule = "no-such-rule"
+paths = ["src/**"]
+reason = "Pointing at a rule that does not exist."
+owner = "@nobody"
+expires = "2030-01-01"

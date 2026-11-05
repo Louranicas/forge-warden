@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "6e0938497086302b70e64dc2faf2bdc73ce65821669f6a932df40f4e8ee12382",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "docs/CHANGES.md", "status": "modified", "score": 5, "signals": ["large_change"]},
+    {"path": "src/handlers/delete.rs", "status": "modified", "score": 2, "signals": []}
+  ]
+}

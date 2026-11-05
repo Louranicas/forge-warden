@@ -1,0 +1,10 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "aa4bf2daa27d2c5b8eec780850e214de6f05f1d86b418a5e3260afd4739cca37",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "auth/auth_test.go", "status": "modified", "score": 4, "signals": ["test_only", "test_removed"], "evidence": [{"signal": "test_removed", "address": "5ad2dbb2b7a4e09ef558a60243eab3f7ab16e0b8c327138a50a3cc53cf984d1a", "side": "old", "line": 2, "basis": "lexical"}]},
+    {"path": "tests/test_auth.py", "status": "modified", "score": 4, "signals": ["test_only", "test_removed"], "evidence": [{"signal": "test_removed", "address": "3c732049cfb2cbea8abebe343280491eb89809d4fa87701cd8a7f96c5ba59ec6", "side": "old", "line": 2, "basis": "lexical"}]},
+    {"path": "web/auth.test.js", "status": "modified", "score": 4, "signals": ["test_only", "test_removed"], "evidence": [{"signal": "test_removed", "address": "0beb546ab51805e9f32d72f6093cc31de1858d27ea3413e859d244d7a4812b7a", "side": "old", "line": 2, "basis": "lexical"}]}
+  ]
+}

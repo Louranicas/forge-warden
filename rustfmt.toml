@@ -1,0 +1,8 @@
+# Formatting is not a review topic: `cargo fmt --check` gates CI, the pre-commit hook and the
+# Claude Code PostToolUse hook. Stable options only, so every toolchain agrees.
+edition = "2024"
+style_edition = "2024"
+max_width = 100
+use_field_init_shorthand = true
+use_try_shorthand = true
+newline_style = "Unix"

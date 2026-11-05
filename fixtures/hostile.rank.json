@@ -1,0 +1,28 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "tool": {
+    "name": "deep-diff-forge",
+    "version": "0.7.0"
+  },
+  "ranked": [
+    {
+      "path": "src/\u001b[31mred\u001b[0m.rs",
+      "status": "added",
+      "score": 6,
+      "signals": [
+        "new_file",
+        "hazardous_text"
+      ]
+    },
+    {
+      "path": "src/admin\u202egnp.rs",
+      "status": "added",
+      "score": 6,
+      "signals": [
+        "new_file",
+        "hazardous_text"
+      ]
+    }
+  ]
+}

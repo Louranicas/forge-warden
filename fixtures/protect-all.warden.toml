@@ -1,0 +1,8 @@
+schema = "forge-warden.policy.v0"
+
+[[rule]]
+id = "everything-is-protected"
+why = "Used by tests: every file in the change is reported, hostile names included."
+kind = "protect_paths"
+severity = "hold"
+paths = ["**"]

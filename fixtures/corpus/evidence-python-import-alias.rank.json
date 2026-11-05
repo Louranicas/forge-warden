@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "89e751dbe355365ffac75aa75a8d99a2cef8cf3568d218fe3548af89cc5594ad",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "tools/run.py", "status": "modified", "score": 6, "signals": ["process_spawn"], "evidence": [{"signal": "process_spawn", "address": "e95003fbe2387a63e308074c39bcb4f8e23b26cea1f00176d9246a10477ca13c", "side": "new", "line": 4, "basis": "lexical"}]}
+  ]
+}

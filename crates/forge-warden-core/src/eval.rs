@@ -1,0 +1,287 @@
+//! Evaluating a policy over a ranking.
+//!
+//! The whole engine is one pure function, [`evaluate`]. Its contract:
+//!
+//! 1. Rules are evaluated independently, in policy order; violations keep deep-diff-forge's risk
+//!    order (highest first).
+//! 2. A violation tied to a file can be covered by the first **active** waiver (on or before its
+//!    `expires` date) for that rule whose paths match. Budget violations over a whole change are
+//!    never waivable: a waiver names paths, and they have none.
+//! 3. The verdict is the strictest of: every rule's outcome, `hold` for each [`Note`], and `fail`
+//!    for each expired waiver. Unknown vocabulary and empty input can never make it looser.
+
+use crate::date::Date;
+use crate::exit::Outcome;
+use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
+use crate::rank::{RankDoc, RankedFile};
+use crate::verdict::{
+    Citation, ExitInfo, Note, RuleOutcome, RuleResult, Seals, Summary, Tool, VERDICT_SCHEMA,
+    Verdict, Violation, WaiverNote,
+};
+use crate::vocab::{is_known_signal, is_known_status};
+use std::collections::BTreeSet;
+
+/// Evaluate `policy` over `rank`, judging waivers as of `today`.
+#[must_use]
+pub fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict {
+    let mut used_waivers = BTreeSet::new();
+    let rules: Vec<RuleResult> = policy
+        .rules
+        .iter()
+        .map(|rule| judge_rule(rule, rank, &policy.waivers, today, &mut used_waivers))
+        .collect();
+
+    let (expired, unused) = classify_waivers(&policy.waivers, today, &used_waivers);
+    let notes = notes_for(rank);
+
+    let verdict = rules
+        .iter()
+        .map(|r| r.outcome.overall())
+        .chain(notes.iter().map(|_| Outcome::Hold))
+        .chain(expired.iter().map(|_| Outcome::Fail))
+        .max()
+        .unwrap_or(Outcome::Pass);
+    let entry = verdict.exit_entry();
+    let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
+    let summary = Summary {
+        files: rank.files.len(),
+        rules: rules.len(),
+        passed: count(RuleOutcome::Pass),
+        waived: count(RuleOutcome::Waived),
+        held: count(RuleOutcome::Hold),
+        failed: count(RuleOutcome::Fail),
+    };
+
+    Verdict {
+        schema: VERDICT_SCHEMA,
+        tool: Tool {
+            name: crate::TOOL_NAME,
+            version: crate::TOOL_VERSION,
+        },
+        evaluated_on: today.to_string(),
+        seals,
+        verdict,
+        exit: ExitInfo {
+            code: entry.code,
+            name: entry.name,
+            action: entry.action,
+        },
+        summary,
+        rules,
+        expired_waivers: expired,
+        unused_waivers: unused,
+        notes,
+    }
+}
+
+fn judge_rule(
+    rule: &Rule,
+    rank: &RankDoc,
+    waivers: &[Waiver],
+    today: Date,
+    used: &mut BTreeSet<usize>,
+) -> RuleResult {
+    let mut violations = find_violations(&rule.check, &rank.files);
+    for violation in &mut violations {
+        let Some(path) = violation.path.as_deref() else {
+            continue;
+        };
+        let cover = waivers
+            .iter()
+            .enumerate()
+            .find(|(_, w)| w.rule == rule.id && w.expires >= today && w.paths.matches(path));
+        if let Some((index, _)) = cover {
+            violation.waived_by = Some(index);
+            used.insert(index);
+        }
+    }
+    let outcome = if violations.is_empty() {
+        RuleOutcome::Pass
+    } else if violations.iter().all(|v| v.waived_by.is_some()) {
+        RuleOutcome::Waived
+    } else {
+        match rule.severity.outcome() {
+            Outcome::Fail => RuleOutcome::Fail,
+            Outcome::Hold | Outcome::Pass => RuleOutcome::Hold,
+        }
+    };
+    RuleResult {
+        id: rule.id.clone(),
+        kind: rule.check.kind(),
+        severity: rule.severity.label(),
+        outcome,
+        why: rule.why.clone(),
+        violations,
+    }
+}
+
+fn violation(path: Option<&str>, message: String) -> Violation {
+    Violation {
+        path: path.map(str::to_owned),
+        message,
+        signal: None,
+        evidence: Vec::new(),
+        waived_by: None,
+    }
+}
+
+fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
+    match check {
+        Check::ForbidSignal { signals, scope } => forbidden_signals(signals, scope, files),
+        Check::RequireCompanion { when, require } => missing_companions(when, require, files),
+        Check::ProtectPaths { scope } => files
+            .iter()
+            .filter(|f| scope.contains(&f.path))
+            .map(|f| {
+                let message = format!("protected path changed ({})", f.status);
+                violation(Some(&f.path), message)
+            })
+            .collect(),
+        Check::MaxScore {
+            limit,
+            per: ScorePer::File,
+            scope,
+        } => files
+            .iter()
+            .filter(|f| scope.contains(&f.path) && f.score > *limit)
+            .map(|f| {
+                let message = format!("risk score {} exceeds the per-file limit {limit}", f.score);
+                violation(Some(&f.path), message)
+            })
+            .collect(),
+        Check::MaxScore {
+            limit,
+            per: ScorePer::Change,
+            scope,
+        } => {
+            let total: u64 = files
+                .iter()
+                .filter(|f| scope.contains(&f.path))
+                .fold(0_u64, |sum, f| sum.saturating_add(u64::from(f.score)));
+            over_budget(total, *limit, |total| {
+                format!("total risk score {total} exceeds the change limit {limit}")
+            })
+        }
+        Check::MaxFiles { limit, scope } => {
+            let count = files.iter().filter(|f| scope.contains(&f.path)).count();
+            let count = u64::try_from(count).unwrap_or(u64::MAX);
+            over_budget(count, *limit, |count| {
+                format!("{count} files in scope changed; the limit is {limit}")
+            })
+        }
+    }
+}
+
+/// One change-wide violation when `value` exceeds `limit`, none otherwise.
+fn over_budget(value: u64, limit: u32, message: impl FnOnce(u64) -> String) -> Vec<Violation> {
+    if value > u64::from(limit) {
+        vec![violation(None, message(value))]
+    } else {
+        Vec::new()
+    }
+}
+
+fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) -> Vec<Violation> {
+    let mut out = Vec::new();
+    for file in files.iter().filter(|f| scope.contains(&f.path)) {
+        for signal in signals.iter().filter(|s| file.signals.contains(s)) {
+            let mut evidence: Vec<Citation> = file
+                .evidence
+                .iter()
+                .filter(|e| &e.signal == signal)
+                .map(|e| Citation {
+                    address: e.address.clone(),
+                    side: e.side.clone(),
+                    line: e.line,
+                })
+                .collect();
+            evidence.sort();
+            let message = format!("carries forbidden signal `{signal}`");
+            out.push(Violation {
+                signal: Some(signal.clone()),
+                evidence,
+                ..violation(Some(&file.path), message)
+            });
+        }
+    }
+    out
+}
+
+fn missing_companions(when: &Scope, require: &PathSet, files: &[RankedFile]) -> Vec<Violation> {
+    // A deleted file is not a companion: deleting the tests must not satisfy "tests must change".
+    // Nor is it a trigger: removing code asks for no new tests.
+    let has_companion = files
+        .iter()
+        .any(|f| f.status != "deleted" && require.matches(&f.path));
+    if has_companion {
+        return Vec::new();
+    }
+    let wanted = require.patterns().join(", ");
+    files
+        .iter()
+        .filter(|f| f.status != "deleted" && when.contains(&f.path))
+        .map(|f| {
+            let message = format!("changed without a companion change matching [{wanted}]");
+            violation(Some(&f.path), message)
+        })
+        .collect()
+}
+
+fn classify_waivers(
+    waivers: &[Waiver],
+    today: Date,
+    used: &BTreeSet<usize>,
+) -> (Vec<WaiverNote>, Vec<WaiverNote>) {
+    let note = |index: usize, w: &Waiver| WaiverNote {
+        index,
+        rule: w.rule.clone(),
+        owner: w.owner.clone(),
+        expires: w.expires.to_string(),
+    };
+    let expired = waivers
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.expires < today)
+        .map(|(i, w)| note(i, w))
+        .collect();
+    let unused = waivers
+        .iter()
+        .enumerate()
+        .filter(|(i, w)| w.expires >= today && !used.contains(i))
+        .map(|(i, w)| note(i, w))
+        .collect();
+    (expired, unused)
+}
+
+fn notes_for(rank: &RankDoc) -> Vec<Note> {
+    let mut notes = Vec::new();
+    if rank.files.is_empty() {
+        notes.push(Note {
+            code: "empty_ranking",
+            path: None,
+            detail: "the ranking lists no files; there is nothing to judge, so nothing passes by default".to_owned(),
+        });
+    }
+    for file in &rank.files {
+        for signal in file.signals.iter().filter(|s| !is_known_signal(s)) {
+            notes.push(Note {
+                code: "unknown_signal",
+                path: Some(file.path.clone()),
+                detail: format!(
+                    "signal `{signal}` is not in this forge-warden's vocabulary; upgrade forge-warden or review it by hand"
+                ),
+            });
+        }
+        if !is_known_status(&file.status) {
+            notes.push(Note {
+                code: "unknown_status",
+                path: Some(file.path.clone()),
+                detail: format!(
+                    "status `{}` is not in this forge-warden's vocabulary",
+                    file.status
+                ),
+            });
+        }
+    }
+    notes
+}

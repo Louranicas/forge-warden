@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "2653c01ecfa5a27f6d2a83d0ccb629319a9c1f25e7f08253659b4694f2ed7d06",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "assets/hook", "status": "added", "score": 7, "signals": ["new_file", "symlink_change"]},
+    {"path": "src/main.rs", "status": "modified", "score": 2, "signals": []}
+  ]
+}

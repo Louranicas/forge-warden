@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "aa069152d50d6d08929b7b660326a975152032f9ad70bf02fadff78b2dfc5a90",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "calc.py", "status": "modified", "score": 6, "signals": ["dynamic_eval"], "evidence": [{"signal": "dynamic_eval", "address": "0845348700ea87eab070c6aa5df2884ff955d403fa45c4ad03930c68741342d5", "side": "new", "line": 3, "basis": "lexical"}]}
+  ]
+}
