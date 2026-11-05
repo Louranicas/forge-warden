@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(cargo doc *)",
+      "Bash(cargo run *)",
+      "Bash(cargo mutants *)",
+      "Bash(scripts/ci_fast.sh)",
+      "Bash(scripts/ci_local.sh)",
+      "Bash(scripts/check_vocab.sh *)",
+      "Bash(just fast)",
+      "Bash(just ci)",
+      "Bash(just mutants)",
+      "Bash(just judge)",
+      "Bash(deep-diff-forge *)",
+      "Bash(git diff *)",
+      "Bash(git status *)",
+      "Bash(git log *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git commit * --no-verify *)",
+      "Bash(scripts/bless.sh)",
+      "Bash(just bless)",
+      "Edit(/clippy.toml)",
+      "Edit(/crates/*/clippy.toml)",
+      "Edit(/deny.toml)",
+      "Edit(/rustfmt.toml)",
+      "Edit(/warden.toml)",
+      "Edit(/.github/**)",
+      "Edit(/.githooks/**)",
+      "Edit(/.claude/settings.json)",
+      "Edit(/.claude/hooks/**)",
+      "Edit(/crates/forge-warden-cli/tests/repo_invariants.rs)",
+      "Edit(/crates/forge-warden-cli/src/doors.rs)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" pre" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" post" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" stop", "timeout": 900 }
+        ]
+      }
+    ]
+  }
+}

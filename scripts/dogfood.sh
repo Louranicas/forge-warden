@@ -8,11 +8,19 @@ base="${1:?base sha}"
 acknowledged="${2:-false}"
 git diff --binary "${base}...HEAD" > change.patch
 deep-diff-forge --stdin-patch --rank --json < change.patch > rank.json
+# Judge with the BASE branch's policy: a pull request must not be able to loosen the rules that
+# judge it. (Its own warden.toml change is judged too: `quality-config-is-owned` holds it.)
+# The first pull request, before warden.toml exists on the base, falls back to its own.
+if git cat-file -e "${base}:warden.toml" 2>/dev/null; then
+  git show "${base}:warden.toml" > policy.toml
+else
+  cp warden.toml policy.toml
+fi
 set +e
-./target/release/forge-warden check --policy warden.toml --rank rank.json --patch change.patch --json > verdict.json
+./target/release/forge-warden check --policy policy.toml --rank rank.json --patch change.patch --json > verdict.json
 code=$?
 set -e
-./target/release/forge-warden check --policy warden.toml --rank rank.json --patch change.patch > verdict.txt || true
+./target/release/forge-warden check --policy policy.toml --rank rank.json --patch change.patch > verdict.txt || true
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo '## forge-warden verdict'; echo; echo '```text'; cat verdict.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 fi

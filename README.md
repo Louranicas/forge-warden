@@ -152,7 +152,8 @@ as JSON, and a test fails if this table drifts from it.
 ```
 
 This repository's own workflow ([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) does exactly
-this on every pull request: forge-warden judges its own changes with [`warden.toml`](warden.toml).
+this on every pull request: forge-warden judges its own changes with [`warden.toml`](warden.toml)
+**as it stands on the base branch**, so a pull request cannot loosen the rules that judge it.
 A `hold` passes only once a maintainer adds the `warden:acknowledged` label, so a person always
 makes that call.
 
