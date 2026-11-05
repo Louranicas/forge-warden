@@ -142,6 +142,23 @@ mod tests {
     }
 
     #[test]
+    fn lookups_find_every_entry_and_nothing_else() {
+        for entry in &EXIT_REGISTRY {
+            assert_eq!(entry_by_code(entry.code), Some(entry));
+            assert_eq!(entry_by_name(entry.name), Some(entry));
+        }
+        assert_eq!(entry_by_code(1), None);
+        assert_eq!(entry_by_name("no_such_name"), None);
+    }
+
+    #[test]
+    fn labels_are_the_document_spellings() {
+        assert_eq!(Outcome::Pass.label(), "pass");
+        assert_eq!(Outcome::Hold.label(), "hold");
+        assert_eq!(Outcome::Fail.label(), "fail");
+    }
+
+    #[test]
     fn strictest_outcome_wins() {
         assert_eq!(
             [Outcome::Pass, Outcome::Fail, Outcome::Hold]

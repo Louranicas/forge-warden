@@ -275,6 +275,21 @@ mod tests {
     }
 
     #[test]
+    fn the_budget_is_64_mib_and_one_byte_more_is_refused_unparsed() {
+        assert_eq!(crate::MAX_INPUT_BYTES, 67_108_864);
+        let over = vec![b' '; crate::MAX_INPUT_BYTES + 1];
+        assert_eq!(
+            parse_rank(&over),
+            Err(RankError::TooLarge(crate::MAX_INPUT_BYTES + 1))
+        );
+        let at = vec![b' '; crate::MAX_INPUT_BYTES];
+        assert!(
+            matches!(parse_rank(&at), Err(RankError::Malformed(_))),
+            "at the budget it is parsed"
+        );
+    }
+
+    #[test]
     fn negative_scores_are_refused() {
         let text = doc(r#"{"path":"a","status":"added","score":-1,"signals":[]}"#);
         assert!(matches!(

@@ -833,6 +833,100 @@ severity = "hold""#;
     }
 
     #[test]
+    fn empty_lists_are_refused_because_they_would_never_fire() {
+        let issues = issues_of(&rule(&GOOD.replace("[\"secret_like\"]", "[]")));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("`signals` must not be empty")),
+            "{issues:?}"
+        );
+        let companion = r#"id = "c"
+why = "Behaviour changes ship with their tests."
+kind = "require_companion"
+severity = "fail"
+when = []
+require = ["tests/**"]"#;
+        assert!(
+            issues_of(&rule(companion))
+                .iter()
+                .any(|i| i.contains("`when` must not be empty"))
+        );
+    }
+
+    #[test]
+    fn rationale_minimums_are_inclusive() {
+        let why = |text: &str| {
+            rule(&GOOD.replace("A credential committed once is compromised forever.", text))
+        };
+        assert!(parse_policy(why(&"x".repeat(MIN_WHY_CHARS)).as_bytes()).is_ok());
+        assert!(parse_policy(why(&"x".repeat(MIN_WHY_CHARS - 1)).as_bytes()).is_err());
+
+        let waiver = |reason: &str| {
+            format!(
+                "{}[[waiver]]\nrule = \"no-secrets\"\npaths = [\"a\"]\nreason = \"{reason}\"\nowner = \"@o\"\nexpires = \"2030-01-01\"\n",
+                rule(GOOD)
+            )
+        };
+        assert!(parse_policy(waiver(&"y".repeat(MIN_WHY_CHARS)).as_bytes()).is_ok());
+        assert!(parse_policy(waiver(&"y".repeat(MIN_WHY_CHARS - 1)).as_bytes()).is_err());
+    }
+
+    #[test]
+    fn kebab_ids_are_exactly_specified() {
+        for good in [
+            "a",
+            "no-secrets",
+            "rule-2",
+            "a1-b2-c3",
+            &"a".repeat(MAX_ID_CHARS),
+        ] {
+            assert!(is_kebab_id(good), "{good:?} should be accepted");
+        }
+        let too_long = "a".repeat(MAX_ID_CHARS + 1);
+        for bad in [
+            "",
+            "-a",
+            "a-",
+            "a--b",
+            "1rule",
+            "No-Secrets",
+            "no_secrets",
+            "no secrets",
+            "é",
+            too_long.as_str(),
+        ] {
+            assert!(!is_kebab_id(bad), "{bad:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn the_policy_budget_is_enforced_before_parsing() {
+        let over = vec![b' '; crate::MAX_INPUT_BYTES + 1];
+        assert_eq!(
+            parse_policy(&over).unwrap_err(),
+            PolicyError::TooLarge(crate::MAX_INPUT_BYTES + 1)
+        );
+        let at = vec![b' '; crate::MAX_INPUT_BYTES];
+        assert!(
+            matches!(parse_policy(&at), Err(PolicyError::Malformed(_))),
+            "at the budget it is parsed"
+        );
+    }
+
+    #[test]
+    fn invalid_policies_print_one_issue_per_line() {
+        let error = PolicyError::Invalid(vec![
+            issue("policy", "first".to_owned()),
+            issue("rule[0] \"x\"", "second".to_owned()),
+        ]);
+        assert_eq!(
+            error.to_string(),
+            "policy refused with 2 issue(s):\n  - policy: first\n  - rule[0] \"x\": second"
+        );
+    }
+
+    #[test]
     fn non_utf8_is_malformed() {
         assert!(matches!(
             parse_policy(b"\xff"),

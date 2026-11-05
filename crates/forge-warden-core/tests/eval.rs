@@ -93,6 +93,7 @@ fn forbid_signal_cites_evidence_and_respects_except() {
 
     assert_eq!(verdict.verdict, Outcome::Fail);
     assert_eq!(verdict.exit.code, 7);
+    assert_eq!(verdict.rules[0].severity, "fail");
     let rule = &verdict.rules[0];
     assert_eq!(
         rule.violations.len(),
@@ -160,6 +161,8 @@ paths = [".github/workflows/**"]
     assert_eq!(verdict.verdict, Outcome::Hold);
     assert_eq!(verdict.exit.code, 8);
     assert_eq!(verdict.exit.action, "review_evidence");
+    assert_eq!(verdict.rules[0].severity, "hold");
+    assert_eq!(verdict.rules[0].kind, "protect_paths");
 }
 
 #[test]
@@ -210,6 +213,99 @@ paths = ["src/**"]
     );
 }
 
+/// Boundaries found by cargo-mutants: `>` vs `>=`, and scope vs score.
+#[test]
+fn budgets_are_strict_at_the_boundary_and_respect_scope() {
+    let p = policy(
+        r#"
+[[rule]]
+id = "file-budget"
+why = "A single file this risky deserves its own change."
+kind = "max_score"
+severity = "fail"
+limit = 10
+per = "file"
+paths = ["src/**"]
+
+[[rule]]
+id = "change-budget"
+why = "Large risky changes are reviewed in pieces."
+kind = "max_score"
+severity = "fail"
+limit = 20
+per = "change"
+paths = ["src/**"]
+
+[[rule]]
+id = "small-changes"
+why = "Small changes get real review."
+kind = "max_files"
+severity = "fail"
+limit = 2
+paths = ["src/**"]
+"#,
+    );
+    let at_limit = rank(vec![
+        file("src/a.rs", "modified", 10, &[]),
+        file("src/b.rs", "modified", 10, &[]),
+        file("docs/huge.md", "modified", 99, &[]),
+    ]);
+    let verdict = evaluate(&p, &at_limit, seals(), today());
+    assert_eq!(
+        verdict.verdict,
+        Outcome::Pass,
+        "a score equal to its limit is within it, and docs/ is out of scope: {verdict:#?}"
+    );
+
+    let over = rank(vec![
+        file("src/a.rs", "modified", 11, &[]),
+        file("src/b.rs", "modified", 10, &[]),
+        file("src/c.rs", "modified", 0, &[]),
+    ]);
+    let outcomes: Vec<_> = evaluate(&p, &over, seals(), today())
+        .rules
+        .iter()
+        .map(|r| r.outcome)
+        .collect();
+    assert_eq!(
+        outcomes,
+        [RuleOutcome::Fail, RuleOutcome::Fail, RuleOutcome::Fail]
+    );
+}
+
+#[test]
+fn waivers_cover_only_their_own_rule_and_paths() {
+    let text = format!(
+        "{NO_UNSAFE}{TESTS_WITH_SOURCE}
+[[waiver]]
+rule = \"tests-with-source\"
+paths = [\"src/**\"]
+reason = \"Covers the other rule, never no-unsafe.\"
+owner = \"@louranicas\"
+expires = \"2099-01-01\"
+
+[[waiver]]
+rule = \"no-unsafe\"
+paths = [\"src/simd/**\"]
+reason = \"Covers a different directory only.\"
+owner = \"@louranicas\"
+expires = \"2099-01-01\"
+"
+    );
+    let r = rank(vec![
+        file("src/lib.rs", "modified", 9, &["unsafe_added"]),
+        file("tests/it.rs", "modified", 1, &["test_only"]),
+    ]);
+    let verdict = evaluate(&policy(&text), &r, seals(), today());
+    assert_eq!(verdict.rules[0].outcome, RuleOutcome::Fail);
+    assert_eq!(verdict.rules[0].violations[0].waived_by, None);
+    assert_eq!(
+        verdict.rules[0].violations[0].signal.as_deref(),
+        Some("unsafe_added")
+    );
+    assert_eq!(verdict.verdict, Outcome::Fail);
+}
+
 #[test]
 fn waivers_cover_matching_paths_until_they_expire() {
     let waived = format!(
@@ -234,10 +330,18 @@ expires = \"2026-11-05\"
     assert_eq!(on_last_day.verdict, Outcome::Pass);
     assert_eq!(on_last_day.rules[0].outcome, RuleOutcome::Waived);
     assert_eq!(on_last_day.rules[0].violations[0].waived_by, Some(0));
+    assert!(
+        on_last_day.unused_waivers.is_empty(),
+        "a waiver that covered something is used"
+    );
 
     let next_day = evaluate(&p, &r, seals(), Date::new(2026, 11, 6).unwrap());
     assert_eq!(next_day.verdict, Outcome::Fail);
     assert_eq!(next_day.expired_waivers.len(), 1);
+    assert!(
+        next_day.unused_waivers.is_empty(),
+        "an expired waiver is reported as expired, not unused"
+    );
 
     let unrelated = evaluate(
         &p,

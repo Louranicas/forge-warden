@@ -166,10 +166,35 @@ mod tests {
             "2026-1a-05",
             "",
             "1969-12-31",
+            "2026-11/05",
+            "2026/11-05",
         ] {
             assert_eq!(Date::parse(bad), None, "{bad:?} must be refused");
         }
-        assert_eq!(Date::parse("2024-02-29"), Date::new(2024, 2, 29));
+    }
+
+    /// The calendar is checked against independent facts, not against itself: `parse`,
+    /// `from_unix_days` and the round-trip property all share `Date::new`, so a bug there would
+    /// pass them all (cargo-mutants found exactly that).
+    #[test]
+    fn the_calendar_matches_known_facts() {
+        for (text, exists) in [
+            ("2024-02-29", true),  // divisible by 4
+            ("2026-02-29", false), // not divisible by 4
+            ("2000-02-29", true),  // divisible by 400
+            ("2100-02-29", false), // divisible by 100, not 400
+            ("2026-02-28", true),
+            ("2026-04-30", true),
+            ("2026-04-31", false), // 30 days hath September, April, June and November
+            ("2026-06-31", false),
+            ("2026-09-31", false),
+            ("2026-11-31", false),
+            ("2026-12-31", true),
+            ("2026-01-31", true),
+            ("9999-12-31", true),
+        ] {
+            assert_eq!(Date::parse(text).is_some(), exists, "{text}");
+        }
     }
 
     #[test]
