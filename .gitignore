@@ -1,0 +1,7 @@
+/target
+/mutants.out*
+/change.patch
+/rank.json
+/verdict.json
+/verdict.txt
+/.claude/settings.local.json

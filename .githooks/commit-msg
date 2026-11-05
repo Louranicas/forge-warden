@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Commit subjects are imperative, at most 72 characters, and say what changed:
+#   "policy: refuse waivers without an owner"   good
+#   "fix", "wip", "updates"                      refused
+set -euo pipefail
+subject="$(head -n1 "$1")"
+case "$subject" in
+  Merge*|Revert*|fixup!*|squash!*) exit 0 ;;
+esac
+if [ "${#subject}" -gt 72 ]; then
+  echo "commit-msg: subject is ${#subject} characters; keep it to 72" >&2; exit 1
+fi
+if [ "${#subject}" -lt 12 ] || printf '%s' "$subject" | grep -qiE '^(wip|fix|fixes|update|updates|changes|stuff|misc|tmp)\.?$'; then
+  echo "commit-msg: \"$subject\" does not say what changed; write \"<area>: <what changed>\"" >&2; exit 1
+fi

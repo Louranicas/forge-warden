@@ -1,0 +1,34 @@
+# `just` lists the recipes. Every recipe is a thin wrapper over a script CI also runs.
+default:
+    @just --list
+
+# One-time setup: use the versioned git hooks.
+install-hooks:
+    git config core.hooksPath .githooks
+    @echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
+
+# fmt + clippy + tests: seconds. The pre-commit hook and Claude Code's Stop hook run this.
+fast:
+    scripts/ci_fast.sh
+
+# Every CI gate that can run locally.
+ci:
+    scripts/ci_local.sh
+
+# Regenerate golden verdicts after an intended change; review the diff before committing.
+bless:
+    scripts/bless.sh
+
+# Mutation-test the lines changed since main. A surviving mutant is a missing test.
+mutants:
+    git diff "$(git merge-base HEAD origin/main)" -- 'crates/*/src/**.rs' > target/pr.diff
+    cargo mutants --no-config --in-diff target/pr.diff --workspace
+
+# Check the signal vocabulary against a deep-diff-forge checkout or commit.
+vocab rev="587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54":
+    scripts/check_vocab.sh {{rev}}
+
+# Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
+judge:
+    git diff --binary "$(git merge-base HEAD origin/main)" > target/change.patch
+    deep-diff-forge --stdin-patch --rank --json < target/change.patch | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch

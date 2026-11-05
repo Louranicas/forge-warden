@@ -1,0 +1,12 @@
+# The quality configuration is owned: changing what "good" means needs the owner's review.
+*                                   @Louranicas
+/.github/                           @Louranicas
+/.claude/                           @Louranicas
+/.githooks/                         @Louranicas
+/Cargo.toml                         @Louranicas
+/clippy.toml                        @Louranicas
+/crates/*/clippy.toml               @Louranicas
+/deny.toml                          @Louranicas
+/warden.toml                        @Louranicas
+/schemas/                           @Louranicas
+/crates/forge-warden-cli/src/doors.rs @Louranicas

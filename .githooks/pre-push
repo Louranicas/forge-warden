@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Runs the full local replica of CI before anything leaves the machine.
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/ci_local.sh"

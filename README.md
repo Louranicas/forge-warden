@@ -30,8 +30,8 @@ forge-warden 0.1.0: FAIL (exit 7 policy_fail, next: change_input)
 ```
 
 Real output: `fixtures/demo.patch` ranked by deep-diff-forge 0.7.0 and judged by
-`examples/starter.warden.toml`. The full JSON is `fixtures/demo.verdict.json`, and a test fails if
-either drifts.
+`examples/starter.warden.toml`. The full JSON is the golden file `fixtures/demo.verdict.json`, and a test fails if
+it drifts.
 
 ---
 

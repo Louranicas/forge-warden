@@ -1,0 +1,148 @@
+# Every job here is a required check on `main` (see CONTRIBUTING.md#branch-protection).
+# Hardening: read-only token by default, no persisted credentials, every action pinned to a commit
+# SHA (the trailing comment names the tag; dependabot keeps both current), and `zizmor` audits
+# this file on every run.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUSTDOCFLAGS: "-D warnings"
+  # deep-diff-forge, pinned by commit, for the dogfood job and the vocabulary check.
+  DDF_REV: 587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54
+
+jobs:
+  gate:
+    name: gate (fmt, clippy, test, doc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
+      - run: cargo doc --workspace --no-deps --locked
+
+  msrv:
+    name: declared Rust 1.88 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@360a4e93673de6630fac2478bc9e35244b01a759 # 1.88.0
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - run: cargo check --workspace --all-targets --locked
+        env:
+          # The MSRV toolchain may not know newer lints; the gate job runs the full wall.
+          RUSTFLAGS: ""
+
+  supply-chain:
+    name: supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        with:
+          command: check
+
+  workflow-audit:
+    name: workflow audit (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: zizmor
+      - run: zizmor --persona=pedantic .github/workflows
+
+  mutation:
+    name: diff mutation (cargo-mutants)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: cargo-mutants
+      - name: Mutate only the lines this pull request changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff "${BASE_SHA}...HEAD" -- 'crates/*/src/**.rs' > pr.diff
+          if [ ! -s pr.diff ]; then echo "no Rust source changed"; exit 0; fi
+          # --no-config: a pull request cannot shrink its own mutation scope via .cargo/mutants.toml.
+          cargo mutants --no-config --in-diff pr.diff --workspace --no-shuffle -vV
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-out
+          path: mutants.out
+
+  dogfood:
+    name: dogfood (forge-warden judges this change)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - name: Install deep-diff-forge at the pinned commit
+        run: cargo install --git https://github.com/Louranicas/deep-diff-forge --rev "${DDF_REV}" deep-diff-forge-cli --locked
+      - name: Build forge-warden from this change
+        run: cargo build --release --locked --bin forge-warden
+      - name: Rank and judge the change
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ACKNOWLEDGED: ${{ contains(github.event.pull_request.labels.*.name, 'warden:acknowledged') }}
+        run: scripts/dogfood.sh "${BASE_SHA}" "${ACKNOWLEDGED}"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: warden-verdict
+          path: |
+            change.patch
+            rank.json
+            verdict.json
+
+  vocabulary:
+    name: vocabulary tracks deep-diff-forge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare signal labels with deep-diff-forge's source at the pinned commit
+        run: scripts/check_vocab.sh "${DDF_REV}"
