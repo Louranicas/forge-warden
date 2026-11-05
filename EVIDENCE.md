@@ -11,8 +11,8 @@ Environment: Linux x86_64, Rust 1.97.0 stable, deep-diff-forge 0.7.0 at
 | Claim | Command | Result |
 | --- | --- | --- |
 | The lint wall, tests and docs are green | `scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | green |
-| Every test passes | `cargo test --workspace` | 84 passed, 0 failed |
-| The engine's tests catch every viable mutant | `cargo mutants -p forge-warden-core` | 0 missed (first run: 32 missed; each closed by a test, see commit `tests: close the gaps cargo-mutants found`) |
+| Every test passes | `cargo test --workspace` | 81 passed, 0 failed |
+| The tests catch every viable mutant | `cargo mutants -p forge-warden-core`; `cargo mutants -p forge-warden-cli --file crates/forge-warden-cli/src/doors.rs` | 0 missed in both (first runs: 32 missed in the core, 7 in the doors; each closed by a test or by deleting dead code) |
 | Supply chain is clean | `cargo deny check` | advisories, bans, licences, sources ok |
 | Workflows have no audit findings | `zizmor --persona=pedantic .github/workflows` | no findings (first run flagged a superfluous toolchain action, replaced with `rustup`) |
 | The vocabulary equals deep-diff-forge's | `scripts/check_vocab.sh 587a6af… <checkout>` | 21 signals match; renaming one fails with a diff |
