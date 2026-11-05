@@ -61,7 +61,9 @@ fn suppressions_are_expectations_with_reasons() {
         for (n, line) in code_lines(&text) {
             let code = line.trim_start();
             assert!(
-                !code.starts_with("#[allow(") && !code.starts_with("#![allow("),
+                !(code.starts_with("#[allow(")
+                    || code.starts_with("#![allow(")
+                    || (code.contains("cfg_attr(") && code.contains("allow("))),
                 "{path}:{}: use #[expect(lint, reason = \"…\")], which fails once it is no longer needed",
                 n + 1
             );

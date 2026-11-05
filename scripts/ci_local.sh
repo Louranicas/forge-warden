@@ -21,7 +21,7 @@ fi
 if command -v deep-diff-forge >/dev/null; then
   step dogfood
   base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
-  git diff --binary "$base" > target/change.patch
+  git diff --binary --no-renames "$base" > target/change.patch
   if [ -s target/change.patch ]; then
     deep-diff-forge --stdin-patch --rank --json < target/change.patch \
       | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch || true

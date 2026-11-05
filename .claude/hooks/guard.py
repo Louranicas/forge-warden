@@ -40,8 +40,24 @@ PROTECTED = (
     re.compile(r"^crates/forge-warden-cli/src/doors\.rs$"),
 )
 
+# The same paths, unanchored, for spotting them inside a shell command.
+PROTECTED_IN_COMMAND = re.compile(
+    r"(?<![\w./-])(\./)?("
+    r"clippy\.toml|crates/[^/\s]+/clippy\.toml|deny\.toml|rustfmt\.toml|warden\.toml|Cargo\.toml"
+    r"|\.github(/\S*)?|\.githooks(/\S*)?|\.claude/settings\.json|\.claude/hooks(/\S*)?"
+    r"|crates/forge-warden-cli/tests/repo_invariants\.rs|crates/forge-warden-cli/src/doors\.rs"
+    r")(?![\w.-])"
+)
+
+# Shell constructs that can change a file. A command that names a protected path and contains one
+# of these is refused; reading a protected file (cat, grep, git diff) is fine.
+WRITES_IN_COMMAND = re.compile(
+    r">|\bsed\b[^|;&]*\s-i|\bperl\b[^|;&]*\s-i|\b(mv|rm|cp|tee|truncate|chmod|ln|install|dd|patch)\b"
+    r"|\bgit\s+(mv|rm|checkout|restore|apply|am|reset|stash)\b|\b(python3?|node|ruby)\b"
+)
+
 RUST_REFUSALS = (
-    (re.compile(r"#!?\[allow\("), "use #[expect(lint, reason = \"...\")] instead of #[allow]: it fails once it is no longer needed (ADR 0002)"),
+    (re.compile(r"#!?\[(cfg_attr\([^\]]*)?allow\("), "use #[expect(lint, reason = \"...\")] instead of #[allow]: it fails once it is no longer needed (ADR 0002)"),
     (re.compile(r"\bunsafe\s*(\{|fn\b|impl\b|trait\b|extern\b)"), "unsafe code is forbidden in this workspace (unsafe_code = \"forbid\")"),
     (re.compile(r"#!?\[expect\((?![^\]]*reason\s*=)[^\]]*\]"), "every #[expect] needs reason = \"...\" saying why the lint is wrong here"),
 )
@@ -115,6 +131,12 @@ def pre(event: dict) -> None:
         for pattern, why in BASH_REFUSALS:
             if pattern.search(command):
                 refuse(why)
+        touched = PROTECTED_IN_COMMAND.search(command)
+        if touched and WRITES_IN_COMMAND.search(command):
+            refuse(
+                f"this command may change {touched.group(0)}, part of the quality wall. "
+                "Do not edit it from the shell either: tell the human what you need changed and why."
+            )
         return
     if tool not in ("Edit", "Write"):
         return

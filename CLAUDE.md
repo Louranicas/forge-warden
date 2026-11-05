@@ -43,7 +43,7 @@ A change is done when all of these hold, and not before:
 | read a file, the clock, or the environment | add a door in `doors.rs`: that file is owned, so ask the human |
 | use `HashMap` / `HashSet` | `BTreeMap` / `BTreeSet`: output order must not depend on a hash seed |
 | add a dependency | say why in your summary; `deny.toml` bans I/O-heavy crates from the tree |
-| relax a lint, a policy rule, CI, a hook or `repo_invariants.rs` | stop and ask. The PreToolUse hook blocks it, CODEOWNERS requires the owner, and `warden.toml` holds the PR |
+| relax a lint, a policy rule, CI, a hook or `repo_invariants.rs` | stop and ask. The PreToolUse hook refuses edits to those files and shell commands that could change them (it errs towards refusing), CODEOWNERS requires the owner, and `warden.toml` holds the PR |
 | skip hooks (`--no-verify`, `-n`), force-push | never. The hook refuses; fix what the hook reports |
 | leave a `TODO` | `TODO(#issue)`, or fix it now; a test refuses bare markers |
 
@@ -66,7 +66,7 @@ scripts/ci_fast.sh                                   # the fast gate
 scripts/ci_local.sh                                  # everything CI runs that works offline
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
-git diff main... | deep-diff-forge --stdin-patch --rank --json \
+git diff --no-renames main... | deep-diff-forge --stdin-patch --rank --json \
   | cargo run -q --bin forge-warden -- check --policy warden.toml   # judge your own change
 ```
 

@@ -152,6 +152,10 @@ pub struct Violation {
     /// Where deep-diff-forge found the evidence, so a person or agent can check it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<Citation>,
+    /// deep-diff-forge found more evidence for this file than it listed (it lists at most 32), so
+    /// `evidence` is incomplete. Present only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub evidence_truncated: bool,
     /// The index of the `[[waiver]]` that covers it, if one does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub waived_by: Option<usize>,
@@ -184,7 +188,7 @@ pub struct WaiverNote {
 /// Something the policy cannot judge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Note {
-    /// `empty_ranking`, `unknown_signal` or `unknown_status`.
+    /// `empty_ranking`, `unknown_signal`, `unknown_status` or `source_path_unknown`.
     pub code: &'static str,
     /// The file involved, if any.
     #[serde(skip_serializing_if = "Option::is_none")]

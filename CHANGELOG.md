@@ -21,3 +21,6 @@ listed, because consumers parse them.
 - Exit-code registry: 0 `pass`, 2 `usage`, 3 `io`, 4 `invalid_input`, 7 `policy_fail`,
   8 `policy_hold`, 101 `internal`.
 - JSON Schemas for the policy and the verdict, checked against the code by tests.
+- Verdict notes `empty_ranking`, `unknown_signal`, `unknown_status` and `source_path_unknown`
+  (renamed or copied files), each holding the verdict; `evidence_truncated` on violations whose
+  evidence deep-diff-forge capped.

@@ -5,7 +5,7 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 *does this change meet the standards this repository wrote down?*
 
 ```bash
-git diff origin/main... > change.patch
+git diff --no-renames origin/main... > change.patch
 deep-diff-forge --stdin-patch --rank --json < change.patch \
   | forge-warden check --policy warden.toml --patch change.patch
 ```
@@ -118,7 +118,10 @@ editors that read JSON Schema (taplo, Even Better TOML) flag most of these as yo
 - `verdict`: `pass`, `hold` or `fail`, the strictest of every rule, note and expired waiver.
 - `rules`: one result per rule in policy order, each with its violations in deep-diff-forge's
   risk order. Waived violations stay listed with `waived_by`, so exceptions remain visible.
-- `expired_waivers`, `unused_waivers`, `notes`.
+- `expired_waivers`, `unused_waivers`, `notes`. A note (`empty_ranking`, `unknown_signal`,
+  `unknown_status`, `source_path_unknown`) holds the verdict: it marks something the policy
+  cannot judge. Renames produce `source_path_unknown`, because `rank.v0` reports only the new
+  path, so rank with `git diff --no-renames`.
 
 The same policy bytes, ranking bytes and date always give byte-identical output. Results go to
 **stdout**, diagnostics to **stderr**, and on error stdout is empty. Paths in the human output
@@ -144,7 +147,7 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- run: git diff "origin/${BASE_REF}...HEAD" > change.patch
+- run: git diff --binary --no-renames "origin/${BASE_REF}...HEAD" > change.patch
   env: { BASE_REF: "${{ github.base_ref }}" }
 - run: |
     deep-diff-forge --stdin-patch --rank --json < change.patch > rank.json

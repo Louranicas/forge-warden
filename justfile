@@ -30,5 +30,5 @@ vocab rev="587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54":
 
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
 judge:
-    git diff --binary "$(git merge-base HEAD origin/main)" > target/change.patch
+    git diff --binary --no-renames "$(git merge-base HEAD origin/main)" > target/change.patch
     deep-diff-forge --stdin-patch --rank --json < target/change.patch | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch

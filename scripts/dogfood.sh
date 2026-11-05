@@ -6,16 +6,19 @@
 set -euo pipefail
 base="${1:?base sha}"
 acknowledged="${2:-false}"
-git diff --binary "${base}...HEAD" > change.patch
+# --no-renames: rank.v0 reports only a renamed file's new path, so a rename is split into a deletion
+# and an addition that every path rule can see.
+git diff --binary --no-renames "${base}...HEAD" > change.patch
 deep-diff-forge --stdin-patch --rank --json < change.patch > rank.json
 # Judge with the BASE branch's policy: a pull request must not be able to loosen the rules that
 # judge it. (Its own warden.toml change is judged too: `quality-config-is-owned` holds it.)
-# The first pull request, before warden.toml exists on the base, falls back to its own.
-if git cat-file -e "${base}:warden.toml" 2>/dev/null; then
-  git show "${base}:warden.toml" > policy.toml
-else
-  cp warden.toml policy.toml
+# A base without a policy is refused rather than replaced by the pull request's own: otherwise a
+# change that deleted warden.toml would let the next one choose its judge.
+if ! git cat-file -e "${base}:warden.toml" 2>/dev/null; then
+  echo "dogfood: the base commit has no warden.toml; restore it on main before merging anything" >&2
+  exit 1
 fi
+git show "${base}:warden.toml" > policy.toml
 set +e
 ./target/release/forge-warden check --policy policy.toml --rank rank.json --patch change.patch --json > verdict.json
 code=$?

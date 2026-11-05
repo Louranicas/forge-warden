@@ -83,6 +83,7 @@
         "message": { "type": "string" },
         "signal": { "type": "string" },
         "evidence": { "type": "array", "items": { "$ref": "#/$defs/citation" } },
+        "evidence_truncated": { "const": true, "description": "Present only when deep-diff-forge listed less evidence than it found." },
         "waived_by": { "type": "integer", "minimum": 0 }
       }
     },
@@ -112,7 +113,7 @@
       "additionalProperties": false,
       "required": ["code", "detail"],
       "properties": {
-        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status"] },
+        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status", "source_path_unknown"] },
         "path": { "type": "string" },
         "detail": { "type": "string" }
       }

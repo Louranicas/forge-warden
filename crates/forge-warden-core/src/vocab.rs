@@ -37,8 +37,10 @@ pub const KNOWN_SIGNALS: [&str; 21] = [
     "test_removed",
 ];
 
-/// Every file status deep-diff-forge 0.7.0 writes.
-pub const KNOWN_STATUSES: [&str; 9] = [
+/// Every file status deep-diff-forge 0.7.0 writes **that says what happened to the file**.
+/// deep-diff-forge also writes `unknown` when it cannot tell; that is deliberately absent, so such
+/// a file holds the verdict (ADR 0003) instead of passing silently.
+pub const KNOWN_STATUSES: [&str; 8] = [
     "added",
     "modified",
     "deleted",
@@ -47,7 +49,6 @@ pub const KNOWN_STATUSES: [&str; 9] = [
     "type_changed",
     "mode_changed",
     "binary_changed",
-    "unknown",
 ];
 
 /// Whether `name` is a signal this version of forge-warden understands.

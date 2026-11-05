@@ -14,6 +14,7 @@
         "public_api_surface",
         "unsafe_added"
       ],
+      "evidence_truncated": true,
       "evidence": [
         {
           "signal": "unsafe_added",

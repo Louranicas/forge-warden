@@ -418,6 +418,120 @@ fn what_the_policy_cannot_judge_holds() {
     assert_eq!(codes, ["unknown_signal", "unknown_status"]);
 }
 
+// Regressions from the independent review of 2026-11-05: each of these passed (exit 0) before.
+
+/// rank.v0 reports only a renamed file's new path, so renaming a protected file away would pass
+/// every path rule. A rename or copy now holds until it is ranked with `--no-renames`.
+#[test]
+fn renames_and_copies_hold_because_their_source_is_invisible() {
+    let p = policy(
+        r#"
+[[rule]]
+id = "policy-is-owned"
+why = "The policy decides what every other check means."
+kind = "protect_paths"
+severity = "hold"
+paths = ["warden.toml"]
+"#,
+    );
+    for status in ["renamed", "copied"] {
+        let r = rank(vec![file("docs/old-policy.toml", status, 2, &[])]);
+        let verdict = evaluate(&p, &r, seals(), today());
+        assert_eq!(verdict.verdict, Outcome::Hold, "{status}");
+        assert_eq!(verdict.notes[0].code, "source_path_unknown");
+    }
+    // Ranked with --no-renames, the same change is a deletion plus an addition: fully judged.
+    let split = rank(vec![
+        file("warden.toml", "deleted", 4, &["deleted_file"]),
+        file("docs/old-policy.toml", "added", 3, &["new_file"]),
+    ]);
+    let verdict = evaluate(&p, &split, seals(), today());
+    assert_eq!(verdict.rules[0].outcome, RuleOutcome::Hold);
+    assert!(verdict.notes.is_empty());
+}
+
+/// deep-diff-forge labels a deleted binary file `binary_changed` (with the `deleted_file`
+/// signal), so status alone let a binary test deletion stand as the companion change.
+#[test]
+fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
+    let p = policy(TESTS_WITH_SOURCE);
+    let source = || file("src/a.rs", "modified", 2, &[]);
+    let deleted_blob = rank(vec![
+        source(),
+        file(
+            "tests/blob.bin",
+            "binary_changed",
+            4,
+            &["deleted_file", "binary_change"],
+        ),
+    ]);
+    assert_eq!(
+        evaluate(&p, &deleted_blob, seals(), today()).verdict,
+        Outcome::Fail
+    );
+    let changed_blob = rank(vec![
+        source(),
+        file("tests/blob.bin", "binary_changed", 2, &["binary_change"]),
+    ]);
+    assert_eq!(
+        evaluate(&p, &changed_blob, seals(), today()).verdict,
+        Outcome::Fail
+    );
+    let new_blob = rank(vec![
+        source(),
+        file(
+            "tests/blob.bin",
+            "binary_changed",
+            4,
+            &["new_file", "binary_change"],
+        ),
+    ]);
+    assert_eq!(
+        evaluate(&p, &new_blob, seals(), today()).verdict,
+        Outcome::Pass
+    );
+    let deleted_source = rank(vec![file(
+        "src/a.rs",
+        "binary_changed",
+        4,
+        &["deleted_file"],
+    )]);
+    assert_eq!(
+        evaluate(&p, &deleted_source, seals(), today()).verdict,
+        Outcome::Pass,
+        "a deletion triggers nothing"
+    );
+}
+
+/// deep-diff-forge writes status `unknown` when it cannot tell what happened to a file.
+#[test]
+fn status_unknown_holds() {
+    let r = rank(vec![file("src/x.rs", "unknown", 0, &[])]);
+    let verdict = evaluate(&policy(NO_UNSAFE), &r, seals(), today());
+    assert_eq!(verdict.verdict, Outcome::Hold);
+    assert_eq!(verdict.notes[0].code, "unknown_status");
+}
+
+#[test]
+fn truncated_evidence_is_flagged_on_the_violation() {
+    let mut lib = file("src/lib.rs", "modified", 9, &["unsafe_added"]);
+    lib.evidence_truncated = true;
+    let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib]), seals(), today());
+    assert!(verdict.rules[0].violations[0].evidence_truncated);
+    let json = verdict.to_json();
+    assert!(json.contains("\"evidence_truncated\": true"));
+    let quiet = evaluate(
+        &policy(NO_UNSAFE),
+        &rank(vec![file("src/lib.rs", "modified", 9, &["unsafe_added"])]),
+        seals(),
+        today(),
+    );
+    assert!(
+        !quiet.to_json().contains("evidence_truncated"),
+        "absent when false"
+    );
+}
+
 #[test]
 fn serialization_is_deterministic_and_round_trips_as_json() {
     let r = rank(vec![file("src/lib.rs", "modified", 9, &["unsafe_added"])]);

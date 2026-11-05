@@ -121,6 +121,7 @@ fn violation(path: Option<&str>, message: String) -> Violation {
         message,
         signal: None,
         evidence: Vec::new(),
+        evidence_truncated: false,
         waived_by: None,
     }
 }
@@ -200,6 +201,7 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
             out.push(Violation {
                 signal: Some(signal.clone()),
                 evidence,
+                evidence_truncated: file.evidence_truncated,
                 ..violation(Some(&file.path), message)
             });
         }
@@ -207,19 +209,34 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
     out
 }
 
+/// Whether a file was removed by the change. deep-diff-forge classifies a deleted binary file as
+/// `binary_changed` and marks the deletion only with the `deleted_file` signal, so the status
+/// alone is not enough.
+fn is_deleted(file: &RankedFile) -> bool {
+    file.status == "deleted" || file.signals.iter().any(|s| s == "deleted_file")
+}
+
+/// Whether a file can stand as a companion: it must exist after the change, and its change must be
+/// knowable. A `binary_changed` file without `new_file` may be a deletion deep-diff-forge could not
+/// label, so it does not count.
+fn is_live_companion(file: &RankedFile) -> bool {
+    !is_deleted(file)
+        && (file.status != "binary_changed" || file.signals.iter().any(|s| s == "new_file"))
+}
+
 fn missing_companions(when: &Scope, require: &PathSet, files: &[RankedFile]) -> Vec<Violation> {
     // A deleted file is not a companion: deleting the tests must not satisfy "tests must change".
     // Nor is it a trigger: removing code asks for no new tests.
     let has_companion = files
         .iter()
-        .any(|f| f.status != "deleted" && require.matches(&f.path));
+        .any(|f| is_live_companion(f) && require.matches(&f.path));
     if has_companion {
         return Vec::new();
     }
     let wanted = require.patterns().join(", ");
     files
         .iter()
-        .filter(|f| f.status != "deleted" && when.contains(&f.path))
+        .filter(|f| !is_deleted(f) && when.contains(&f.path))
         .map(|f| {
             let message = format!("changed without a companion change matching [{wanted}]");
             violation(Some(&f.path), message)
@@ -272,7 +289,17 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
                 ),
             });
         }
-        if !is_known_status(&file.status) {
+        if file.status == "renamed" || file.status == "copied" {
+            notes.push(Note {
+                code: "source_path_unknown",
+                path: Some(file.path.clone()),
+                detail: format!(
+                    "{} from a path rank.v0 does not report, so rules cannot see where it came from; \
+                     rank with `git diff --no-renames` to judge both paths",
+                    file.status
+                ),
+            });
+        } else if !is_known_status(&file.status) {
             notes.push(Note {
                 code: "unknown_status",
                 path: Some(file.path.clone()),

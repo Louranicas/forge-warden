@@ -31,8 +31,11 @@ evidence for that signal (hunk address, side, line) when deep-diff-forge listed 
 Fields: `signals` (required), `paths` (default `["**"]`), `except`.
 
 ### `require_companion`
-If any non-deleted file in `when` (minus `except`) changes, at least one non-deleted file
-matching `require` must change too. One violation per triggering file.
+If any non-deleted file in `when` (minus `except`) changes, at least one file matching `require`
+must change too, and that companion must still exist afterwards and have a knowable change. A
+file is deleted when its status is `deleted` **or** it carries the `deleted_file` signal
+(deep-diff-forge labels a deleted binary `binary_changed`). A `binary_changed` file counts as a
+companion only if it is a `new_file`. One violation per triggering file.
 Fields: `when`, `require` (both required), `except`.
 
 ### `protect_paths`

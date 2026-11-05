@@ -11,8 +11,13 @@ reports nothing wrong.
 
 ## Decision
 
-- An empty ranking, an unknown signal and an unknown status each add a `note` and hold the
-  verdict (exit 8). They never fail it (the change may be fine) and never pass it.
+- An empty ranking, an unknown signal, an unknown status (including deep-diff-forge's own
+  `unknown`, which means it could not tell what happened), and a renamed or copied file each add
+  a `note` and hold the verdict (exit 8). They never fail it (the change may be fine) and never
+  pass it. Renames hold because `rank.v0` reports only the new path: a rule cannot see that a
+  protected file was moved away. Ranking with `git diff --no-renames` splits a rename into a
+  deletion and an addition that every rule sees, and is what every pipeline in this repository
+  does.
 - An expired waiver fails the verdict whether or not it still matches anything, so exemptions
   cannot outlive their date silently.
 - A policy with no rules, or naming a signal the vocabulary lacks, is refused at load (exit 4):
