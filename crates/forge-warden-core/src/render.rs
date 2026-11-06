@@ -133,7 +133,7 @@ fn render_notes(out: &mut String, notes: &[Note]) {
         let _ = writeln!(
             out,
             "  [NOTE] {}{path} {}",
-            n.code,
+            n.code.name(),
             terminal_safe(&n.detail)
         );
     }

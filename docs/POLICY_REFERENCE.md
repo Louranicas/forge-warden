@@ -1,7 +1,12 @@
-# Policy reference (`forge-warden.policy.v0`)
+# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v1`)
 
-The authority is `forge-warden lint`. The JSON Schema `schemas/policy.v0.schema.json` gives
-editors the same rules as you type; a test keeps the two equal.
+The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v0.schema.json`
+gives editors the same rules as you type, and `schemas/verdict.v1.schema.json` describes every
+verdict; tests keep both equal to the code, and keep the note and seal tables below complete.
+
+Contents: the policy file (top level, `[producer]`, rules, kinds, signals, globs, waivers), then
+how `check` runs (modes), the verdict's seals, notes, what is refused and what is held, and the
+known costs of failing closed.
 
 ## Top level
 
@@ -10,9 +15,31 @@ editors the same rules as you type; a test keeps the two equal.
 | `schema` | yes | Exactly `"forge-warden.policy.v0"`. |
 | `[[rule]]` | yes, one or more | An empty policy is refused: it would pass every change. |
 | `[[waiver]]` | no | Dated, owned exemptions. |
+| `[producer]` | for authority mode | The rankers `check --ranker` may run (below). |
 
 Unknown keys anywhere are refused, not ignored: a misspelt key would otherwise silently disable
 what it meant to configure.
+
+## `[producer]`: the ranker allowlist
+
+```toml
+[producer]
+sha256 = ["<64 lowercase hex digits>"]   # sha256sum of the deep-diff-forge binary
+```
+
+It pins the **bytes of the ranker executable**. In authority mode forge-warden opens the
+`--ranker` path once without following a symlink, refuses it unless it is a regular file owned by
+root or the current user and writable by neither group nor others, hashes the bytes read through
+that descriptor, and runs exactly that descriptor only if the hash is listed here. Swapping the
+path after the hash changes nothing. The list must be non-empty, every entry 64 lowercase hex
+digits, none repeated; a policy without `[producer]` can only be used in advisory mode.
+
+Updating it is a reviewed diff like any other policy change: build or obtain the new ranker in
+the trusted environment, take `sha256sum` of the binary, add the digest (keep the old one until
+nothing uses it), and merge the policy change. The verdict seals both the policy's SHA-256 and the
+ranker's, so a reviewer can see which allowlist admitted which binary. Where authority comes from
+is outside the file: the policy and the forge-warden binary must come from the trusted base or a
+pinned release, never from the change being judged (ADR 0005 §2.6).
 
 ## Every rule
 
@@ -81,3 +108,94 @@ A violation is covered by the first active waiver (today on or before `expires`)
 whose `paths` match. Change-wide violations (`max_score` per change, `max_files`) have no path
 and cannot be waived. From the day after `expires`, the waiver fails the verdict until it is
 renewed or deleted. An active waiver that covered nothing is listed in `unused_waivers`.
+
+## How `check` runs: authority and advisory
+
+| Mode | Command | What is judged | Best outcome |
+| --- | --- | --- | --- |
+| Authority (default) | `check --policy P --patch C --ranker R` | the ranking forge-warden produced by running R on C | `pass` (exit 0) |
+| Advisory | `check --policy P --patch C --advisory --rank FILE` (`-` reads stdin) | the supplied ranking | `hold` (exit 8) |
+
+- `--patch` is required in both modes, and is read once: the same bytes are hashed, given to the
+  ranker and given to Git. Produce it with `git diff --binary --no-renames` (not `format-patch`).
+- Exactly one of `--ranker` and `--advisory` must be given; `--advisory` needs `--rank`.
+- **Advisory can never pass.** forge-warden cannot tell who wrote a supplied ranking, so it can
+  inform a person but not approve a change: every advisory verdict carries `rank_unverified`, and
+  its outcome type has no pass (ADR 0005 §2.7).
+- `--rank` in authority mode is a comparison, not an input: forge-warden still produces its own
+  ranking, judges and seals that one, and adds `rank_mismatch` if the supplied bytes differ in any
+  way (byte for byte). Identical bytes add nothing.
+- In both modes Git reads the patch (`git apply --numstat -z` and `--summary`, isolated per ADR
+  0010) and the ranking is checked against it: every file Git sees must be ranked, nothing else may
+  be, and statuses must agree. Rules then judge each file's signals **plus** the change kinds Git
+  implies (`new_file`, `deleted_file`, `binary_change`, `symlink_change`, `executable_bit`): Git
+  can only add.
+- `--git PATH` (default `/usr/bin/git`) must be absolute; it is recorded, with `git --version`.
+- `--base REV` / `--head REV` (4–64 lowercase hex) are recorded as `claims` with
+  `verified: false`. They never change an outcome.
+
+## Verdict seals (`forge-warden.verdict.v1`)
+
+| Member | Meaning |
+| --- | --- |
+| `policy_sha256` | SHA-256 of the policy bytes. |
+| `rank_sha256` | SHA-256 of the judged ranking's bytes (the produced one, in authority mode). |
+| `patch_sha256` | SHA-256 of the patch; the ranking's own seal must equal it. |
+| `patch_facts_sha256` | SHA-256 of Git's facts: `--numstat -z` output, one 0x00 byte, `--summary` output. `null` when Git refused the patch. |
+| `provenance` | `produced` (authority) or `supplied` (advisory). |
+| `ranked_by` | `{version, sha256}`: the version the ranking reports, and the ranker binary's SHA-256 (`null` when supplied). |
+| `git` | `{path, version}` of the Git that read the patch: recorded for audit, not attested. |
+| `claims` | Only when `--base`/`--head` were given: `{base?, head?, verified: false}`. |
+
+`sha256sum` reproduces every digest. v0's `patch_verified` is gone: the patch is always hashed.
+
+## Notes
+
+A note is something the policy cannot judge. **Every note holds the verdict at least** (`hold`,
+exit 8); rules still run, so a failing rule still fails (exit 7). Notes never make a verdict looser.
+
+| Code | Trigger | Outcome |
+| --- | --- | --- |
+| `empty_ranking` | The ranking lists no file. | hold |
+| `unknown_signal` | A file carries a signal this forge-warden does not know. | hold |
+| `unknown_status` | A file's status is not one this forge-warden knows (including `unknown`). | hold |
+| `source_path_unknown` | A `renamed` or `copied` file: rank.v0 does not say where it came from. Rank `git diff --no-renames`. | hold |
+| `duplicate_paths` | The ranking lists one path more than once (deep-diff-forge does this for a type change). | hold |
+| `rank_incomplete` | Git sees a file in the patch that the ranking does not list. | hold |
+| `rank_extraneous` | The ranking lists a file the patch does not change. | hold |
+| `status_mismatch` | The ranking's status or change-kind signals contradict Git's (e.g. deep-diff-forge 0.7.0 ranks a binary deletion without `deleted_file`). | hold; rules also see Git's change kinds |
+| `patch_unverifiable` | Git refused the patch, or its facts are outside what forge-warden verifies (reason in the detail; see the costs below). Coverage cannot be checked. | hold |
+| `rank_unverified` | Advisory mode: the ranking was supplied. | hold at best, never pass |
+| `rank_mismatch` | Authority mode: the `--rank` bytes differ from the produced ranking. | hold; the produced ranking is the one judged |
+
+## Refuse or hold
+
+A **refusal** prints nothing on stdout, explains on stderr, and exits without a verdict. A
+**hold** is a verdict (exit 8) that asks a person to look.
+
+| Situation | Result | Exit |
+| --- | --- | --- |
+| No mode, both modes, `--advisory` without `--rank`, no `--patch`, relative `--git`, malformed `--base`/`--head`/`--today` | refused | 2 `usage` |
+| A file cannot be read; Git cannot run; the temporary directory is relative, contains `:` or is not UTF-8; `/proc/self/fd` is missing | refused | 3 `io` |
+| The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB), cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
+| The policy is invalid; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
+| Any note above | hold (or fail, if a rule fails) | 8 (7) |
+| A rule of severity `hold` is violated | hold | 8 |
+| A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |
+
+## Known costs of failing closed
+
+forge-warden refuses what it cannot verify instead of guessing, so some honest patches hold:
+
+- **`git format-patch` output**: a commit-message line that starts with a mode keyword (`index`,
+  `new`, `deleted`, `old`) and does not have an exact header shape is refused as
+  `unreadable mode header` → `patch_unverifiable`. Pass `git diff` output, which has no message.
+- **Renames and copies** → `patch_unverifiable` (and `source_path_unknown` from the ranking).
+  Use `git diff --no-renames`, so each side is judged as a deletion and an addition.
+- **Submodules and unknown file modes** (anything but 100644, 100755, 120000) →
+  `patch_unverifiable`.
+- **A symlink whose target changes** → `patch_unverifiable`: the change cannot be verified per file.
+- **Type changes** (e.g. file → symlink): Git and deep-diff-forge each describe one path twice →
+  `patch_unverifiable` / `duplicate_paths`.
+- **deep-diff-forge 0.7.0 omissions**: a binary added without `new_file` or deleted without
+  `deleted_file` → `status_mismatch` until the ranker reports them (Git's kind is still applied).

@@ -16,8 +16,8 @@ use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
 use crate::rank::{RankDoc, RankedFile};
 use crate::verdict::{
-    Citation, ExitInfo, Note, RuleOutcome, RuleResult, Seals, Summary, Tool, VERDICT_SCHEMA,
-    Verdict, Violation, WaiverNote,
+    Citation, ExitInfo, Note, NoteCode, RuleOutcome, RuleResult, Seals, Summary, Tool,
+    VERDICT_SCHEMA, Verdict, Violation, WaiverNote,
 };
 use crate::vocab::{is_known_signal, is_known_status};
 use std::collections::BTreeSet;
@@ -282,7 +282,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
     let mut notes = Vec::new();
     if rank.files().is_empty() {
         notes.push(Note {
-            code: "empty_ranking",
+            code: NoteCode::EmptyRanking,
             path: None,
             detail: "the ranking lists no files; there is nothing to judge, so nothing passes by default".to_owned(),
         });
@@ -298,7 +298,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
     }
     for path in duplicated {
         notes.push(Note {
-            code: "duplicate_paths",
+            code: NoteCode::DuplicatePaths,
             path: Some(path.to_owned()),
             detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
         });
@@ -306,7 +306,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
     for file in rank.files() {
         for signal in file.signals().iter().filter(|s| !is_known_signal(s)) {
             notes.push(Note {
-                code: "unknown_signal",
+                code: NoteCode::UnknownSignal,
                 path: Some(file.path().to_string()),
                 detail: format!(
                     "signal `{signal}` is not in this forge-warden's vocabulary; upgrade forge-warden or review it by hand"
@@ -315,7 +315,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
         }
         if file.status() == "renamed" || file.status() == "copied" {
             notes.push(Note {
-                code: "source_path_unknown",
+                code: NoteCode::SourcePathUnknown,
                 path: Some(file.path().to_string()),
                 detail: format!(
                     "{} from a path rank.v0 does not report, so rules cannot see where it came from; \
@@ -325,7 +325,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
             });
         } else if !is_known_status(file.status()) {
             notes.push(Note {
-                code: "unknown_status",
+                code: NoteCode::UnknownStatus,
                 path: Some(file.path().to_string()),
                 detail: format!(
                     "status `{}` is not in this forge-warden's vocabulary",

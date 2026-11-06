@@ -84,7 +84,7 @@ signals = ["deleted_file"]
 "#;
 
 fn codes(notes: &[forge_warden_core::verdict::Note]) -> Vec<&str> {
-    notes.iter().map(|n| n.code).collect()
+    notes.iter().map(|n| n.code.name()).collect()
 }
 
 #[test]

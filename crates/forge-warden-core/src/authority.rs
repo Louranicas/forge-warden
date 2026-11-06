@@ -18,7 +18,7 @@ use crate::exit::Outcome;
 use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_signals};
 use crate::policy::Policy;
 use crate::rank::{RankDoc, RankedFile};
-use crate::verdict::{ExitInfo, Note, Provenance, RankedBy, Seals, Verdict};
+use crate::verdict::{ExitInfo, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
@@ -106,14 +106,14 @@ impl Checked {
 
     /// One note per disagreement, or the refusal; each holds the verdict.
     fn notes(&self) -> Vec<Note> {
-        let note = |code: &'static str, path: &crate::path::RepoPath, detail: &str| Note {
+        let note = |code: NoteCode, path: &crate::path::RepoPath, detail: &str| Note {
             code,
             path: Some(path.to_string()),
             detail: detail.to_owned(),
         };
         match &self.facts {
             Err(why) => vec![Note {
-                code: "patch_unverifiable",
+                code: NoteCode::PatchUnverifiable,
                 path: None,
                 detail: format!("{why}; coverage cannot be verified, so nothing passes by default"),
             }],
@@ -122,17 +122,17 @@ impl Checked {
                 .iter()
                 .map(|d| match d {
                     Disagreement::Missing(path) => note(
-                        "rank_incomplete",
+                        NoteCode::RankIncomplete,
                         path,
                         "git sees this file in the patch, but the ranking does not list it",
                     ),
                     Disagreement::Extraneous(path) => note(
-                        "rank_extraneous",
+                        NoteCode::RankExtraneous,
                         path,
                         "the ranking lists this file, but the patch does not change it",
                     ),
                     Disagreement::Status(path) => note(
-                        "status_mismatch",
+                        NoteCode::StatusMismatch,
                         path,
                         "the ranking's status or change-kind signals contradict git",
                     ),
@@ -264,7 +264,7 @@ pub fn evaluate_authority(
     let extra = match supplied {
         SuppliedCopy::Absent | SuppliedCopy::Identical => Vec::new(),
         SuppliedCopy::Different => vec![Note {
-            code: "rank_mismatch",
+            code: NoteCode::RankMismatch,
             path: None,
             detail:
                 "the supplied ranking differs from the one forge-warden produced; the produced \
@@ -297,7 +297,7 @@ pub fn evaluate_advisory(
     today: Date,
 ) -> AdvisoryVerdict {
     let unverified = Note {
-        code: "rank_unverified",
+        code: NoteCode::RankUnverified,
         path: None,
         detail:
             "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
