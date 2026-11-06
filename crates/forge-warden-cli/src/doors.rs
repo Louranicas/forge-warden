@@ -124,15 +124,12 @@ pub(crate) fn diagnose(text: &str) {
 }
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "WP-C1a builds the doors; WP-C1c wires them into `check`"
-    )
-)]
 pub(crate) mod child {
     use super::{DoorError, read_within};
+    use forge_warden_core::Policy;
+    use forge_warden_core::authority::{Produced, Ranking};
+    use forge_warden_core::rank::parse_rank;
+    use forge_warden_core::seal::sha256_hex;
     use std::io::{Read as _, Write as _};
     use std::path::Path;
     use std::process::ExitStatus;
@@ -140,13 +137,13 @@ pub(crate) mod child {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// `O_NOFOLLOW` on Linux (`x86_64`, `aarch64`): open refuses a symlink in the final path component.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", test))]
     pub(super) const O_NOFOLLOW: i32 = 0o400_000;
 
     /// `O_NONBLOCK` on Linux (`x86_64`, `aarch64`): opening a FIFO with no writer returns at once
     /// instead of blocking, so a non-regular file is refused by `fstat` rather than hanging the
     /// open (Bastion B-C1a-01). Reads of a regular file are unaffected.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", test))]
     pub(super) const O_NONBLOCK: i32 = 0o4_000;
 
     /// The flags `pin_executable` opens with: `O_NOFOLLOW | O_NONBLOCK` (`O_RDONLY` is 0; std adds
@@ -261,7 +258,7 @@ pub(crate) mod child {
         let bytes = read_within(&mut file, &what, budget)?;
         Ok(PinnedExecutable {
             file,
-            sha256: forge_warden_core::seal::sha256_hex(&bytes),
+            sha256: sha256_hex(&bytes),
         })
     }
 
@@ -418,15 +415,8 @@ pub(crate) mod child {
     }
 
     impl PrivateDir {
-        /// Create one under the system temp directory, exclusively (a name that already exists is
-        /// never reused).
-        #[expect(clippy::disallowed_methods, reason = "door: private_dir")]
-        pub(crate) fn create() -> Result<Self, DoorError> {
-            Self::create_in(&std::env::temp_dir())
-        }
-
-        /// [`PrivateDir::create`] under `base`. Any error other than "already exists" is reported
-        /// at once, not retried.
+        /// A private directory under `base`, created exclusively: a name that already exists is
+        /// never reused, and any other error is reported at once, not retried.
         pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
             use std::os::unix::fs::DirBuilderExt as _;
             for attempt in 0..64_u32 {
@@ -502,6 +492,46 @@ pub(crate) mod child {
         Ok(text.to_owned())
     }
 
+    /// A private directory under an admitted base, and the ADR 0010 environment that points at
+    /// it. Every child (Git and the ranker) runs with exactly this environment and that cwd.
+    pub(super) struct Isolation {
+        pub(super) dir: PrivateDir,
+        home: String,
+        ceiling: String,
+    }
+
+    impl Isolation {
+        /// Admit `base` ([`admit_base`]) and create the private directory under it.
+        pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
+            let ceiling = admit_base(base)?;
+            let dir = PrivateDir::create_in(Path::new(&ceiling))?;
+            // The private dir is `<admitted base>/<ASCII name>`, so its path is UTF-8 without `:`
+            // too; were it ever not, that is refused, never converted lossily.
+            let home = dir
+                .path()
+                .to_str()
+                .ok_or_else(|| DoorError {
+                    message: "private directory path is not UTF-8".to_owned(),
+                    over_budget: false,
+                })?
+                .to_owned();
+            Ok(Self { dir, home, ceiling })
+        }
+
+        /// The whole child environment: nothing else is inherited (no `PATH`, no `LD_*`).
+        pub(super) fn env(&self) -> [(&str, &str); 7] {
+            [
+                ("LC_ALL", "C"),
+                ("HOME", self.home.as_str()),
+                ("GIT_CONFIG_NOSYSTEM", "1"),
+                ("GIT_CONFIG_GLOBAL", "/dev/null"),
+                ("GIT_ATTR_NOSYSTEM", "1"),
+                ("GIT_NO_REPLACE_OBJECTS", "1"),
+                ("GIT_CEILING_DIRECTORIES", self.ceiling.as_str()),
+            ]
+        }
+    }
+
     /// [`git_facts`] with an explicit temporary base (tests use this; `git_facts` passes the
     /// system temp dir).
     pub(super) fn git_facts_in(
@@ -509,27 +539,10 @@ pub(crate) mod child {
         patch: &[u8],
         base: &Path,
     ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
-        let ceiling = admit_base(base).map_err(|e| GitFactsFailure::Unavailable(e.message))?;
-        let dir = PrivateDir::create_in(Path::new(&ceiling))
-            .map_err(|e| GitFactsFailure::Unavailable(e.message))?;
-        // The private dir is `<admitted base>/<ASCII name>`, so its path is UTF-8 without `:` too;
-        // were it ever not, that is refused, never converted lossily.
-        let home = dir
-            .path()
-            .to_str()
-            .ok_or_else(|| {
-                GitFactsFailure::Unavailable("private directory path is not UTF-8".to_owned())
-            })?
-            .to_owned();
-        let env = [
-            ("LC_ALL", "C"),
-            ("HOME", home.as_str()),
-            ("GIT_CONFIG_NOSYSTEM", "1"),
-            ("GIT_CONFIG_GLOBAL", "/dev/null"),
-            ("GIT_ATTR_NOSYSTEM", "1"),
-            ("GIT_NO_REPLACE_OBJECTS", "1"),
-            ("GIT_CEILING_DIRECTORIES", ceiling.as_str()),
-        ];
+        let isolation =
+            Isolation::create_in(base).map_err(|e| GitFactsFailure::Unavailable(e.message))?;
+        let env = isolation.env();
+        let dir = &isolation.dir;
         let run = |mode: &[&str]| {
             let mut args = vec![
                 "-c",
@@ -577,6 +590,139 @@ pub(crate) mod child {
         let numstat = run(&["--numstat", "-z"])?;
         let summary = run(&["--summary"])?;
         Ok((numstat, summary))
+    }
+
+    /// `git --version`, run isolated like every Git call and trimmed. The verdict records it for an
+    /// auditor; forge-warden does not attest it (ADR 0005 §2.4).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: git_version (the system temp dir)"
+    )]
+    pub(crate) fn git_version(git: &Path) -> Result<String, DoorError> {
+        let isolation = Isolation::create_in(&std::env::temp_dir())?;
+        let env = isolation.env();
+        let refuse = |why: String| DoorError {
+            message: format!("{} --version {why}", git.display()),
+            over_budget: false,
+        };
+        let out = run_child(&ChildSpec {
+            program: Program::Absolute(git),
+            args: &["--version"],
+            stdin: b"",
+            env: &env,
+            cwd: isolation.dir.path(),
+            timeout: GIT_TIMEOUT,
+            stdout_cap: GIT_STDERR_CAP,
+            stderr_cap: GIT_STDERR_CAP,
+        })
+        .map_err(|failure| refuse(describe(&failure)))?;
+        let text =
+            String::from_utf8(out.stdout).map_err(|_| refuse("printed non-UTF-8".to_owned()))?;
+        Ok(text.trim().to_owned())
+    }
+
+    /// A child failure in words, for a diagnostic.
+    fn describe(failure: &ChildFailure) -> String {
+        match failure {
+            ChildFailure::Spawn(why) => format!("could not be started: {why}"),
+            ChildFailure::Timeout => "timed out".to_owned(),
+            ChildFailure::StdoutOverflow => "wrote more than its stdout budget".to_owned(),
+            ChildFailure::StderrOverflow => "wrote more than its stderr budget".to_owned(),
+            ChildFailure::Signal(signal) => format!("was killed by signal {signal}"),
+            ChildFailure::Exit(code) => format!("exited {code}"),
+            ChildFailure::Io(why) => format!("failed: {why}"),
+        }
+    }
+
+    /// Why authority mode produced no ranking. Neither case gives a verdict.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(crate) enum RankerFailure {
+        /// The policy does not admit this ranker (exit 4: change the policy or the ranker).
+        NotAdmitted(String),
+        /// The ranker could not be pinned or run, or wrote no ranking of this patch (exit 3).
+        Failed(String),
+    }
+
+    /// The arguments the ranker gets: deep-diff-forge reading the patch from stdin.
+    pub(super) const RANKER_ARGS: [&str; 3] = ["--stdin-patch", "--rank", "--json"];
+    /// Wall-clock limit for the ranker (ADR 0005 §2.5).
+    const RANKER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    /// The ranker's stderr is diagnostic only.
+    pub(super) const RANKER_STDERR_CAP: usize = 64 * 1024;
+
+    /// Authority mode's ranking (ADR 0005 §2.1-§2.5): pin `ranker` by descriptor, require the
+    /// policy's `[producer] sha256` to list the pinned bytes, run exactly those bytes isolated on
+    /// `patch` (the one buffer), and admit the output only if it is a ranking sealed to that patch.
+    /// This is the only place the binary mints a [`Ranking<Produced>`]. Returns the ranking and its
+    /// exact bytes.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: produce_ranking (the system temp dir)"
+    )]
+    pub(crate) fn produce_ranking(
+        ranker: &Path,
+        policy: &Policy,
+        patch: &[u8],
+    ) -> Result<(Ranking<Produced>, Vec<u8>), RankerFailure> {
+        produce_ranking_in(ranker, policy, patch, &std::env::temp_dir())
+    }
+
+    /// [`produce_ranking`] with an explicit temporary base.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: produce_ranking mints Ranking<Produced> (the only place the binary may)"
+    )]
+    pub(super) fn produce_ranking_in(
+        ranker: &Path,
+        policy: &Policy,
+        patch: &[u8],
+        base: &Path,
+    ) -> Result<(Ranking<Produced>, Vec<u8>), RankerFailure> {
+        if policy.producers().is_empty() {
+            return Err(RankerFailure::NotAdmitted(
+                "the policy has no [producer] sha256 allowlist, so authority mode admits no ranker \
+                 (add the ranker's sha256, or judge a supplied ranking with --advisory)"
+                    .to_owned(),
+            ));
+        }
+        if !Path::new("/proc/self/fd").is_dir() {
+            return Err(RankerFailure::Failed(
+                "authority mode needs /proc/self/fd to run a pinned ranker; it is not weakened"
+                    .to_owned(),
+            ));
+        }
+        let pinned = pin_executable(ranker).map_err(|e| RankerFailure::Failed(e.message))?;
+        if !policy.admits_producer(&pinned.sha256) {
+            return Err(RankerFailure::NotAdmitted(format!(
+                "ranker {} has sha256 {}, which the policy's [producer] sha256 does not list",
+                ranker.display(),
+                pinned.sha256
+            )));
+        }
+        let isolation = Isolation::create_in(base).map_err(|e| RankerFailure::Failed(e.message))?;
+        let env = isolation.env();
+        let out = run_child(&ChildSpec {
+            program: Program::Pinned(&pinned),
+            args: &RANKER_ARGS,
+            stdin: patch,
+            env: &env,
+            cwd: isolation.dir.path(),
+            timeout: RANKER_TIMEOUT,
+            stdout_cap: forge_warden_core::MAX_INPUT_BYTES,
+            stderr_cap: RANKER_STDERR_CAP,
+        })
+        .map_err(|failure| RankerFailure::Failed(format!("the ranker {}", describe(&failure))))?;
+        let doc = parse_rank(&out.stdout).map_err(|e| {
+            RankerFailure::Failed(format!("the ranker's output is not a ranking: {e}"))
+        })?;
+        let patch_sha256 = sha256_hex(patch);
+        if doc.input_sha256() != patch_sha256 {
+            return Err(RankerFailure::Failed(format!(
+                "the ranker sealed patch {} but was given {patch_sha256}",
+                doc.input_sha256()
+            )));
+        }
+        Ok((Ranking::attest(doc, pinned.sha256), out.stdout))
     }
 
     /// Wall-clock limit for one Git call.
@@ -645,6 +791,20 @@ mod child_tests {
             .filter_map(|e| std::fs::read(e.path().join("cmdline")).ok())
             .map(|raw| String::from_utf8_lossy(&raw).replace('\0', " "))
             .all(|cmdline| !cmdline.contains(marker))
+    }
+
+    /// Create `to` as a copy of `from` by a child process, so this test process never holds a write
+    /// descriptor on a file it later executes. With one open, another test thread's concurrent fork
+    /// inherits it until that child's exec, and executing the file fails with ETXTBSY (MEASURED: 4 in
+    /// 2000 runs of `a_pinned_executable_runs_the_hashed_bytes_after_its_path_is_swapped` on 9d57295).
+    fn copy_out_of_process(from: &str, to: &Path) {
+        let status = std::process::Command::new("/usr/bin/cp")
+            .arg("--")
+            .arg(from)
+            .arg(to)
+            .status()
+            .unwrap();
+        assert!(status.success(), "cp {from} {}", to.display());
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -729,7 +889,10 @@ mod child_tests {
     fn a_private_dir_is_empty_0700_and_removed_on_drop_and_a_missing_git_is_unavailable() {
         use super::child::{GitFactsFailure, PrivateDir, git_facts};
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = PrivateDir::create().unwrap();
+        // An exclusive base: in the shared temp dir another test's private dir may legitimately
+        // reuse this process-scoped name after the drop (Bastion, C1c v4.2 receipt).
+        let base = scratch("private-dir");
+        let dir = PrivateDir::create_in(&base).unwrap();
         let path = dir.path().to_owned();
         let meta = std::fs::metadata(&path).unwrap();
         assert!(meta.is_dir());
@@ -743,6 +906,23 @@ mod child_tests {
             git_facts(Path::new("/nonexistent/git"), tiny_patch),
             Err(GitFactsFailure::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn a_freed_private_dir_name_is_reused_so_absence_needs_an_exclusive_base() {
+        // The C1c v4.2 race, measured: names are `forge-warden-<pid>-<attempt>` and attempts start
+        // at 0, so after a drop the next private dir in the same base takes the freed name. Creation
+        // stays exclusive (a live name is never reused), but a test asserting a dropped path is gone
+        // must own its base; in the shared temp dir a concurrent test may legitimately recreate it.
+        use super::child::PrivateDir;
+        let base = scratch("name-reuse");
+        let first = PrivateDir::create_in(&base).unwrap();
+        let name = first.path().to_owned();
+        drop(first);
+        let second = PrivateDir::create_in(&base).unwrap();
+        assert_eq!(second.path(), name);
+        let live = PrivateDir::create_in(&base).unwrap();
+        assert_ne!(live.path(), second.path(), "a live name is never reused");
     }
 
     #[test]
@@ -766,6 +946,13 @@ mod child_tests {
         );
         let _cleaned = std::fs::remove_dir_all(&base);
         assert_eq!(GIT_STDERR_CAP, 65_536);
+    }
+
+    #[test]
+    fn the_ranker_runs_as_deep_diff_forge_with_its_stderr_capped_at_64_kib() {
+        use super::child::{RANKER_ARGS, RANKER_STDERR_CAP};
+        assert_eq!(RANKER_ARGS, ["--stdin-patch", "--rank", "--json"]);
+        assert_eq!(RANKER_STDERR_CAP, 65_536);
     }
 
     #[test]
@@ -836,7 +1023,9 @@ mod child_tests {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write as _;
-                child.stdin.take().unwrap().write_all(patch)?;
+                // Git may refuse the config and exit before reading stdin (EPIPE): only its
+                // exit status matters here.
+                let _written = child.stdin.take().unwrap().write_all(patch);
                 child.wait()
             })
             .unwrap();
@@ -970,8 +1159,8 @@ mod child_tests {
     fn a_pinned_executable_runs_the_hashed_bytes_after_its_path_is_swapped() {
         let dir = scratch("swap");
         let path = dir.join("ranker");
-        std::fs::copy("/usr/bin/true", &path).unwrap();
-        std::fs::copy("/usr/bin/false", dir.join("other")).unwrap();
+        copy_out_of_process("/usr/bin/true", &path);
+        copy_out_of_process("/usr/bin/false", &dir.join("other"));
         let pinned = pin_executable(&path).unwrap();
         let expected =
             forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/true").unwrap());
@@ -989,7 +1178,7 @@ mod child_tests {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = scratch("refuse");
         let real = dir.join("real");
-        std::fs::copy("/usr/bin/true", &real).unwrap();
+        copy_out_of_process("/usr/bin/true", &real);
         std::os::unix::fs::symlink(&real, dir.join("link")).unwrap();
         assert!(pin_executable(&dir.join("link")).is_err(), "symlink");
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o775)).unwrap();
@@ -1000,12 +1189,14 @@ mod child_tests {
             writable.message
         );
         let script = dir.join("script");
-        std::fs::write(&script, "#!/bin/sh\necho ran\n").unwrap();
+        let source = dir.join("script.src");
+        std::fs::write(&source, "#!/bin/sh\necho ran\n").unwrap();
+        copy_out_of_process(source.to_str().unwrap(), &script);
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let pinned = pin_executable(&script).unwrap();
         // The interpreter starts but cannot reopen the closed descriptor: the script never runs.
         let out = run_child(&spec(Program::Pinned(&pinned), &[], b""));
-        assert!(matches!(out, Err(ChildFailure::Exit(_))), "{out:?}");
+        assert!(matches!(&out, Err(ChildFailure::Exit(_))), "{out:?}");
     }
 }
 

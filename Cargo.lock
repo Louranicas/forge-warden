@@ -165,7 +165,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "forge-warden-core",
+ "proc-macro2",
  "serde_json",
+ "syn",
  "toml",
 ]
 

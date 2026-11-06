@@ -57,8 +57,15 @@ fn rich_verdict() -> Value {
             "check",
             "--policy",
             "fixtures/rich.warden.toml",
+            "--patch",
+            "fixtures/rich.patch",
+            "--advisory",
             "--rank",
             "fixtures/rich.rank.json",
+            "--base",
+            "1234abcd",
+            "--head",
+            "abcdef01",
             "--today",
             "2026-11-05",
             "--json",
@@ -71,7 +78,7 @@ fn rich_verdict() -> Value {
 
 #[test]
 fn verdict_schema_tracks_the_serialized_document() {
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v0.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v1.schema.json")).unwrap();
     let defs = &schema["$defs"];
     let v = rich_verdict();
 
@@ -79,6 +86,10 @@ fn verdict_schema_tracks_the_serialized_document() {
     for member in ["tool", "seals", "exit", "summary"] {
         conforms(&v[member], &schema["properties"][member], member);
     }
+    let seals = &schema["properties"]["seals"]["properties"];
+    conforms(&v["seals"]["ranked_by"], &seals["ranked_by"], "ranked_by");
+    conforms(&v["seals"]["git"], &seals["git"]["oneOf"][0], "git");
+    conforms(&v["seals"]["claims"], &seals["claims"], "claims");
     let mut seen = BTreeSet::new();
     for rule in v["rules"].as_array().unwrap() {
         conforms(rule, &defs["rule"], "rule");
@@ -160,7 +171,7 @@ fn policy_schema_tracks_the_reader() {
 fn schema_subcommand_prints_the_committed_files() {
     assert_eq!(
         run(&["schema", "verdict"], b"").stdout,
-        read("schemas/verdict.v0.schema.json")
+        read("schemas/verdict.v1.schema.json")
     );
     assert_eq!(
         run(&["schema", "policy"], b"").stdout,

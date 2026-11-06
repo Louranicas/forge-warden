@@ -11,12 +11,21 @@ use crate::nonempty::NonEmpty;
 pub struct Policy {
     rules: NonEmpty<Rule>,
     waivers: Vec<Waiver>,
+    producers: Vec<String>,
 }
 
 impl Policy {
     /// Only `parse_policy` builds a policy, so every one in existence was validated and has a rule.
-    pub(super) const fn new(rules: NonEmpty<Rule>, waivers: Vec<Waiver>) -> Self {
-        Self { rules, waivers }
+    pub(super) const fn new(
+        rules: NonEmpty<Rule>,
+        waivers: Vec<Waiver>,
+        producers: Vec<String>,
+    ) -> Self {
+        Self {
+            rules,
+            waivers,
+            producers,
+        }
     }
 
     /// Rules, in the order the file declares them (and the verdict reports them). Never empty.
@@ -29,6 +38,20 @@ impl Policy {
     #[must_use]
     pub fn waivers(&self) -> &[Waiver] {
         &self.waivers
+    }
+
+    /// `[producer] sha256`: the SHA-256 of every ranker binary authority mode may run, each 64
+    /// lowercase hex digits, in file order. Empty when the policy has no `[producer]` table: such a
+    /// policy can only be used in advisory mode (ADR 0005 §2.4).
+    #[must_use]
+    pub fn producers(&self) -> &[String] {
+        &self.producers
+    }
+
+    /// Whether `sha256` is on the producer allowlist.
+    #[must_use]
+    pub fn admits_producer(&self, sha256: &str) -> bool {
+        self.producers.iter().any(|p| p == sha256)
     }
 }
 

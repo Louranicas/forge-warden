@@ -5,9 +5,10 @@ use super::issues::{Issues, Rejected};
 use super::kind::{Field, Kind};
 use super::model::{Check, Policy, Rule, ScorePer, Severity, Waiver};
 use super::paths::{PathSet, Scope, compile};
-use super::raw::{RawPolicy, RawRule, RawWaiver};
+use super::raw::{RawPolicy, RawProducer, RawRule, RawWaiver};
 use crate::date::Date;
 use crate::nonempty::NonEmpty;
+use crate::seal::is_sha256_hex;
 use crate::vocab::{is_known_signal, suggest_signal};
 use std::collections::BTreeSet;
 
@@ -66,14 +67,43 @@ pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
             waivers.push(waiver);
         }
     }
+    let producers = match raw.producer {
+        Some(producer) => validate_producers(producer, &mut issues),
+        None => Vec::new(),
+    };
     // An empty rule list always comes with an issue ("declares no [[rule]]", or the rule's own
     // refusal), so the `None` arm returns those issues; the policy is refused either way.
     let Some(rules) = NonEmpty::from_vec(rules) else {
         return Err(PolicyError::Invalid(issues.into_vec()));
     };
     issues
-        .finish(Policy::new(rules, waivers))
+        .finish(Policy::new(rules, waivers, producers))
         .map_err(PolicyError::Invalid)
+}
+
+/// `[producer] sha256`: at least one digest, each a well-formed seal, none repeated. A table that
+/// admits nothing is refused rather than read as "no producer": it is a mistake, not a mode.
+fn validate_producers(raw: RawProducer, issues: &mut Issues) -> Vec<String> {
+    let location = "producer";
+    if raw.sha256.is_empty() {
+        issues.push(
+            location,
+            "`sha256` lists no ranker; remove [producer] for advisory-only use".to_owned(),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    for (index, digest) in raw.sha256.iter().enumerate() {
+        if !is_sha256_hex(digest) {
+            issues.push(
+                location,
+                format!("sha256[{index}] {digest:?} is not 64 lowercase hex digits"),
+            );
+        }
+        if !seen.insert(digest.as_str()) {
+            issues.push(location, format!("sha256[{index}] {digest:?} is repeated"));
+        }
+    }
+    raw.sha256
 }
 
 pub(super) fn is_kebab_id(id: &str) -> bool {

@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Louranicas/forge-warden/schemas/verdict.v0.schema.json",
-  "title": "forge-warden.verdict.v0",
+  "$id": "https://github.com/Louranicas/forge-warden/schemas/verdict.v1.schema.json",
+  "title": "forge-warden.verdict.v1",
   "description": "A sealed, deterministic verdict on one change. Every object below is closed: a member not listed here is a schema change, and tests/schema_tracks_code.rs fails on it.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "tool", "evaluated_on", "seals", "verdict", "exit", "summary", "rules", "expired_waivers", "unused_waivers", "notes"],
   "properties": {
-    "schema": { "const": "forge-warden.verdict.v0" },
+    "schema": { "const": "forge-warden.verdict.v1" },
     "tool": {
       "type": "object",
       "additionalProperties": false,
@@ -21,13 +21,54 @@
     "seals": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["policy_sha256", "rank_sha256", "patch_sha256", "patch_verified", "ranked_by"],
+      "required": ["policy_sha256", "rank_sha256", "patch_sha256", "patch_facts_sha256", "provenance", "ranked_by", "git"],
       "properties": {
         "policy_sha256": { "$ref": "#/$defs/sha256" },
         "rank_sha256": { "$ref": "#/$defs/sha256" },
         "patch_sha256": { "$ref": "#/$defs/sha256" },
-        "patch_verified": { "type": "boolean" },
-        "ranked_by": { "type": "string" }
+        "patch_facts_sha256": {
+          "description": "SHA-256 of `git apply --numstat -z` output, one 0x00 byte, then `git apply --summary` output; null when Git refused the patch.",
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "provenance": {
+          "description": "`produced`: forge-warden ran the pinned ranker (authority mode, the only mode that can pass). `supplied`: the ranking was given (advisory mode).",
+          "enum": ["produced", "supplied"]
+        },
+        "ranked_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "sha256"],
+          "properties": {
+            "version": { "type": "string" },
+            "sha256": {
+              "description": "SHA-256 of the ranker binary that ran; null for a supplied ranking.",
+              "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+            }
+          }
+        },
+        "git": {
+          "description": "The Git that read the patch: recorded for audit, not attested.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "version"],
+              "properties": { "path": { "type": "string" }, "version": { "type": "string" } }
+            },
+            { "type": "null" }
+          ]
+        },
+        "claims": {
+          "description": "What the caller claimed (--base, --head). Recorded, never verified, never used.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verified"],
+          "properties": {
+            "base": { "type": "string", "pattern": "^[0-9a-f]{4,64}$" },
+            "head": { "type": "string", "pattern": "^[0-9a-f]{4,64}$" },
+            "verified": { "const": false }
+          }
+        }
       }
     },
     "verdict": { "enum": ["pass", "hold", "fail"] },
@@ -113,7 +154,7 @@
       "additionalProperties": false,
       "required": ["code", "detail"],
       "properties": {
-        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status", "source_path_unknown"] },
+        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status", "source_path_unknown", "rank_incomplete", "rank_extraneous", "status_mismatch", "patch_unverifiable", "rank_unverified", "rank_mismatch"] },
         "path": { "type": "string" },
         "detail": { "type": "string" }
       }

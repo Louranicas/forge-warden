@@ -49,12 +49,17 @@ def expected(args, signer, expires_at):
         require(re.fullmatch(r"[0-9a-f]{40}", commit), "full lowercase commit IDs required")
     raw = read(args.verdict, LIMIT)
     verdict = decode(raw)
-    require(verdict["schema"] == "forge-warden.verdict.v0", "unsupported verdict schema")
+    require(verdict["schema"] == "forge-warden.verdict.v1", "unsupported verdict schema")
     require(verdict["verdict"] == "hold" and verdict["exit"]["code"] == 8,
             "only HOLD may be acknowledged")
     require(verdict["notes"] == [] and verdict["expired_waivers"] == [],
             "unknown evidence or expired waivers cannot be acknowledged")
-    require(verdict["seals"]["patch_verified"] is True, "unverified patch cannot be acknowledged")
+    # v1 (ADR 0005): only a ranking forge-warden produced itself, from an allowlisted ranker, can
+    # be acknowledged; a supplied ranking (advisory mode) is never authority.
+    require(verdict["seals"]["provenance"] == "produced"
+            and isinstance(verdict["seals"]["ranked_by"]["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", verdict["seals"]["ranked_by"]["sha256"]),
+            "a supplied ranking cannot be acknowledged")
     held = []
     ids = set()
     for rule in verdict["rules"]:

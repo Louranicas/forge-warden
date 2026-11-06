@@ -1,4 +1,4 @@
-//! CLI trust-boundary controls; ignored cases specify open Mission 3 findings.
+//! CLI trust-boundary controls; R-01 and R-05 (Mission 3) are closed by C1c (ADR 0005).
 #![expect(
     clippy::unwrap_used,
     reason = "test helpers: failure to decode the fixture verdict fails the test"
@@ -25,6 +25,9 @@ fn check(policy: &str, input: &Value, patch: Option<&str>) -> Run {
         "check",
         "--policy",
         policy,
+        "--advisory",
+        "--rank",
+        "-",
         "--today",
         "2026-11-06",
         "--json",
@@ -36,12 +39,16 @@ fn check(policy: &str, input: &Value, patch: Option<&str>) -> Run {
 }
 
 #[test]
-fn matching_patch_and_known_ranking_have_a_pass_control() {
+fn matching_patch_and_known_ranking_hold_in_advisory_mode() {
+    // C1c (ADR 0005 §2.1): a supplied ranking is advisory, so its best outcome is HOLD with only
+    // `rank_unverified`; the authority-mode PASS control is in authority_mode.rs.
     let out = check(POLICY, &rank("src/lib.rs", "modified", &[]), Some(PATCH));
-    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.code, 8, "{}", out.stderr);
     let v: Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(v["verdict"], "pass");
-    assert_eq!(v["seals"]["patch_verified"], true);
+    assert_eq!(v["verdict"], "hold");
+    assert_eq!(v["notes"][0]["code"], "rank_unverified");
+    assert_eq!(v["notes"].as_array().unwrap().len(), 1);
+    assert_eq!(v["seals"]["provenance"], "supplied");
     assert_eq!(v["seals"]["patch_sha256"], sha256_hex(&read_bytes(PATCH)));
 }
 
@@ -91,6 +98,9 @@ fn malformed_stdin_refuses_with_empty_stdout() {
                 POLICY,
                 "--patch",
                 PATCH,
+                "--advisory",
+                "--rank",
+                "-",
                 "--today",
                 "2026-11-06",
                 "--json",
@@ -103,7 +113,6 @@ fn malformed_stdin_refuses_with_empty_stdout() {
 }
 
 #[test]
-#[ignore = "R-01 open: WP-C1 trusted patch coverage after ADR 0005"]
 fn a_forged_file_list_with_a_real_patch_hash_cannot_pass() {
     let control = check(PROTECT, &rank("src/lib.rs", "modified", &[]), Some(PATCH));
     assert_eq!(control.code, 7);
@@ -117,7 +126,6 @@ fn a_forged_file_list_with_a_real_patch_hash_cannot_pass() {
 }
 
 #[test]
-#[ignore = "R-05 open: WP-C1 patch binding required after ADR 0005"]
 fn omitting_the_patch_requires_review_or_refusal() {
     let out = check(POLICY, &rank("src/lib.rs", "modified", &[]), None);
     assert!(
