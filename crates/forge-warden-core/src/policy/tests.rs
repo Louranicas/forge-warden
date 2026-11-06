@@ -1,6 +1,5 @@
 //! Policy reader tests.
 
-use super::error::issue;
 use super::validate::is_kebab_id;
 use super::*;
 
@@ -25,7 +24,7 @@ signals = ["secret_like"]"#;
 fn a_good_rule_loads() {
     let policy = parse_policy(rule(GOOD).as_bytes()).unwrap();
     assert_eq!(policy.rules.len(), 1);
-    assert_eq!(policy.rules[0].check.kind(), "forbid_signal");
+    assert_eq!(policy.rules[0].check.kind(), Kind::ForbidSignal);
 }
 
 #[test]
@@ -242,8 +241,14 @@ fn the_policy_budget_is_enforced_before_parsing() {
 #[test]
 fn invalid_policies_print_one_issue_per_line() {
     let error = PolicyError::Invalid(vec![
-        issue("policy", "first".to_owned()),
-        issue("rule[0] \"x\"", "second".to_owned()),
+        PolicyIssue {
+            location: "policy".to_owned(),
+            message: "first".to_owned(),
+        },
+        PolicyIssue {
+            location: "rule[0] \"x\"".to_owned(),
+            message: "second".to_owned(),
+        },
     ]);
     assert_eq!(
         error.to_string(),

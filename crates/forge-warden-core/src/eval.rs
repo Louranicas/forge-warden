@@ -107,7 +107,7 @@ fn judge_rule(
     };
     RuleResult {
         id: rule.id.clone(),
-        kind: rule.check.kind(),
+        kind: rule.check.kind().name(),
         severity: rule.severity.label(),
         outcome,
         why: rule.why.clone(),

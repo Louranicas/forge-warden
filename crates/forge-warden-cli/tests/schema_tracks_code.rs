@@ -9,7 +9,7 @@
 
 mod common;
 use common::{read, run};
-use forge_warden_core::policy::RULE_FIELD_KINDS;
+use forge_warden_core::policy::{Field, Kind};
 use forge_warden_core::vocab::KNOWN_SIGNALS;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -122,11 +122,7 @@ fn policy_schema_tracks_the_reader() {
         .iter()
         .map(|s| (*s).to_owned())
         .collect();
-    accepted.extend(
-        RULE_FIELD_KINDS
-            .iter()
-            .map(|(field, _)| (*field).to_owned()),
-    );
+    accepted.extend(Field::ALL.iter().map(|field| field.name().to_owned()));
     assert_eq!(keys(&rule["properties"]), accepted);
 
     let enum_signals = strings(&schema["$defs"]["signal"]["enum"]);
@@ -134,11 +130,30 @@ fn policy_schema_tracks_the_reader() {
     assert_eq!(enum_signals, known);
 
     let kinds = strings(&rule["properties"]["kind"]["enum"]);
-    let code_kinds: BTreeSet<String> = forge_warden_core::policy::KINDS
-        .iter()
-        .map(|s| (*s).to_owned())
-        .collect();
+    let code_kinds: BTreeSet<String> = Kind::ALL.iter().map(|k| k.name().to_owned()).collect();
     assert_eq!(kinds, code_kinds);
+
+    // Per kind, the schema forbids (`false`) exactly the optional fields the reader refuses.
+    let clauses = rule["allOf"].as_array().unwrap();
+    for kind in Kind::ALL {
+        let clause = clauses
+            .iter()
+            .find(|c| c["if"]["properties"]["kind"]["const"] == kind.name())
+            .unwrap_or_else(|| panic!("schema has no allOf clause for {}", kind.name()));
+        let forbidden: BTreeSet<String> = clause["then"]["properties"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(_, v)| **v == Value::Bool(false))
+            .map(|(k, _)| k.clone())
+            .collect();
+        let refused: BTreeSet<String> = Field::ALL
+            .iter()
+            .filter(|f| !kind.fields().contains(f))
+            .map(|f| f.name().to_owned())
+            .collect();
+        assert_eq!(forbidden, refused, "schema vs reader for {}", kind.name());
+    }
 }
 
 #[test]

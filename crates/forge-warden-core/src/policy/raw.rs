@@ -1,5 +1,6 @@
-//! The TOML shapes a policy is read into, and the table of kinds and fields.
+//! The TOML shapes a policy is read into.
 
+use super::kind::Field;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -28,6 +29,21 @@ pub(super) struct RawRule {
     pub(super) per: Option<String>,
 }
 
+impl RawRule {
+    /// Whether the rule carries `field`. One arm per field, so a new field must be wired here.
+    pub(super) const fn has(&self, field: Field) -> bool {
+        match field {
+            Field::Signals => self.signals.is_some(),
+            Field::Paths => self.paths.is_some(),
+            Field::Except => self.except.is_some(),
+            Field::When => self.when.is_some(),
+            Field::Require => self.require.is_some(),
+            Field::Limit => self.limit.is_some(),
+            Field::Per => self.per.is_some(),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawWaiver {
@@ -37,36 +53,3 @@ pub(super) struct RawWaiver {
     pub(super) owner: String,
     pub(super) expires: String,
 }
-
-/// Every optional field a rule may carry, and the kinds that accept it. (`id`, `why`, `kind` and
-/// `severity` are required on every rule.)
-pub const RULE_FIELD_KINDS: [(&str, &[&str]); 7] = [
-    ("signals", &["forbid_signal"]),
-    (
-        "paths",
-        &["forbid_signal", "protect_paths", "max_score", "max_files"],
-    ),
-    (
-        "except",
-        &[
-            "forbid_signal",
-            "require_companion",
-            "protect_paths",
-            "max_score",
-            "max_files",
-        ],
-    ),
-    ("when", &["require_companion"]),
-    ("require", &["require_companion"]),
-    ("limit", &["max_score", "max_files"]),
-    ("per", &["max_score"]),
-];
-
-/// The kinds a policy may use.
-pub const KINDS: [&str; 5] = [
-    "forbid_signal",
-    "require_companion",
-    "protect_paths",
-    "max_score",
-    "max_files",
-];

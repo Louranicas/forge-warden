@@ -44,10 +44,3 @@ impl fmt::Display for IssueList<'_> {
         Ok(())
     }
 }
-
-pub(super) fn issue(location: &str, message: String) -> PolicyIssue {
-    PolicyIssue {
-        location: location.to_owned(),
-        message,
-    }
-}
