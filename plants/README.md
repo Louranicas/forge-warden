@@ -1,4 +1,4 @@
-# Named guardrail plants (WP-A4, third batch)
+# Named guardrail plants (WP-A4, fourth batch)
 
 Run from a neutral directory. The runner creates one disposable `git clone --no-local`, checks out
 an exact commit, and applies each plant only there. It never writes the source repository or hub.
@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This third batch implements 32 named plants. The remaining 19 register rows are explicitly PENDING
+This fourth batch implements 35 named plants. The remaining 16 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, default markers and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -61,9 +61,25 @@ with --runner (Cargo only). Selecting a script recipe with a Cargo-only backend 
 creating evidence or executing anything; it never falls back to native execution. Native script
 execution is explicit by omitting both backends. Generic commands are trusted catalog argv, not
 untrusted command text. The receipt records the execution profile and exact command argv. The
-backend remains responsible for network/process/filesystem isolation and compiler pins. Eight
+backend remains responsible for network/process/filesystem isolation and compiler pins. Nine
 runner controls now include actual script argv/cwd checks and refusal of backend downgrade. Seven
 new script/hook plants cover swallowed judge exits, lost shell tokenization, malformed hook input,
 unsupported tools, candidate judge builds, stale-head acknowledgement replay, and candidate-supplied
 review policy/contracts. These fixtures prove local controls; they do not establish a hosted
 required-workflow identity, real signer enrollment or managed-provider isolation.
+
+Fourth-batch admission checks reject a diagnostic already present in the green baseline
+(ERROR_DIAGNOSTIC_AMBIGUOUS). After every case, actual Git status must prove that source and
+Cargo.lock were restored; a failed restore is ERROR_RESTORE and aborts later cases. The harness
+neutralizes inherited RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS and CARGO_BUILD_RUSTFLAGS; intentional
+mutation commands still set --cap-lints true themselves and unset CARGO_TARGET_DIR. Controls
+include a broken-restorer CLI run and hostile parent lint flags.
+
+Three more product plants cover enum wildcards, raw terminal control characters, and actual
+mutation-survivor rejection. The last one first requires normal all-targets Clippy to pass, then
+runs a bounded selected mutation experiment against an explicitly untested named function. Its
+normal baseline has no such function; the plant adds it. Only an exit2 with nonempty missed
+mutants of that exact function, no timeout and no unviable outcome emits MISSED_SURVIVOR_REJECTED.
+The helper prints the real outcome totals and mutant names into the retained case log. These
+intentionally MISSED mutants demonstrate a correctly rejected bad change; they are not a green
+mutation-quality receipt for the repository. Source selection is bounded to render.rs.
