@@ -143,6 +143,12 @@ pub(crate) mod child {
     #[cfg(target_os = "linux")]
     const O_NOFOLLOW: i32 = 0o400_000;
 
+    /// `O_NONBLOCK` on Linux (`x86_64`, `aarch64`): opening a FIFO with no writer returns at once
+    /// instead of blocking, so a non-regular file is refused by `fstat` rather than hanging the
+    /// open (Bastion B-C1a-01). Reads of a regular file are unaffected.
+    #[cfg(target_os = "linux")]
+    const O_NONBLOCK: i32 = 0o4_000;
+
     /// The largest executable forge-warden will pin (hash) before running it.
     pub(super) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
 
@@ -226,7 +232,7 @@ pub(crate) mod child {
         let what = format!("pinning {}", path.display());
         let mut file = std::fs::OpenOptions::new()
             .read(true)
-            .custom_flags(O_NOFOLLOW)
+            .custom_flags(O_NOFOLLOW | O_NONBLOCK)
             .open(path)
             .map_err(|e| DoorError::io(&what, &e))?;
         let meta = file.metadata().map_err(|e| DoorError::io(&what, &e))?;
@@ -415,6 +421,7 @@ pub(crate) mod child {
 #[cfg(test)]
 #[expect(
     clippy::disallowed_methods,
+    clippy::disallowed_types,
     reason = "tests build fixtures and inspect processes; a panic is a failed test"
 )]
 mod child_tests {
@@ -442,12 +449,21 @@ mod child_tests {
         vec!["-c", script]
     }
 
+    /// No live process has `marker` in its command line, read straight from `/proc` (no `pgrep`:
+    /// the offline verification image has none).
     fn none_left(marker: &str) -> bool {
-        let out = std::process::Command::new("/usr/bin/pgrep")
-            .args(["-f", marker])
-            .output()
-            .unwrap();
-        out.stdout.is_empty()
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .bytes()
+                    .all(|b| b.is_ascii_digit())
+            })
+            .filter_map(|e| std::fs::read(e.path().join("cmdline")).ok())
+            .map(|raw| String::from_utf8_lossy(&raw).replace('\0', " "))
+            .all(|cmdline| !cmdline.contains(marker))
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -455,6 +471,37 @@ mod child_tests {
         let _gone = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_fifo_is_refused_at_once_not_waited_on() {
+        let dir = scratch("fifo");
+        let fifo = dir.join("ranker");
+        let made = std::process::Command::new("/usr/bin/mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let target = fifo.clone();
+        let pinning = std::thread::spawn(move || {
+            let _sent = tx.send(pin_executable(&target).map(|p| p.sha256));
+        });
+        let outcome = rx.recv_timeout(Duration::from_millis(900));
+        if outcome.is_err() {
+            // Release a blocked open so this test fails instead of hanging the suite.
+            let _writer = std::fs::OpenOptions::new().write(true).open(&fifo);
+        }
+        let _joined = pinning.join();
+        let refused = outcome
+            .expect("pin_executable blocked on a FIFO for 900 ms")
+            .unwrap_err();
+        assert!(
+            refused.message.ends_with("not a regular file"),
+            "{}",
+            refused.message
+        );
+        let _cleaned = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
