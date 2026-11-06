@@ -199,7 +199,7 @@ fn every_note_code_is_in_the_schema_and_nothing_else_is() {
         assert_eq!(
             serde_json::to_value(code).unwrap(),
             Value::String(code.name().to_owned()),
-            "{code} serializes as its name"
+            "{code:?} serializes as its name"
         );
     }
 }

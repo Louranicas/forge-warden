@@ -359,12 +359,6 @@ impl Serialize for NoteCode {
     }
 }
 
-impl std::fmt::Display for NoteCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
 impl PartialEq<&str> for NoteCode {
     fn eq(&self, other: &&str) -> bool {
         self.name() == *other
@@ -386,5 +380,24 @@ impl Verdict {
         });
         text.push('\n');
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NoteCode;
+
+    #[test]
+    fn a_note_code_equals_its_own_name_and_no_other() {
+        for code in NoteCode::ALL {
+            for other in NoteCode::ALL {
+                assert_eq!(
+                    *code == other.name(),
+                    code == other,
+                    "{code:?} vs {other:?}"
+                );
+            }
+            assert!(*code != "", "{code:?}");
+        }
     }
 }
