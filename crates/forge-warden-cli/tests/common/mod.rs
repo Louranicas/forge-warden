@@ -469,3 +469,25 @@ pub(crate) fn sources_with_evidence() -> (Sources, String, PathBuf) {
 pub(crate) fn production_sources() -> std::collections::BTreeSet<String> {
     sources().production
 }
+
+/// Write `bytes` to `dir/name` through a `/usr/bin/cp` child, for a file that will be EXECUTED: this
+/// test process then never holds a write descriptor on it, which a concurrent fork in another test
+/// thread would inherit until its exec, making the exec fail with ETXTBSY (C1c v4.4). The bytes go
+/// first to `dir/name.src`, which is never executed.
+pub(crate) fn write_executable(dir: &std::path::Path, name: &str, bytes: &[u8]) -> PathBuf {
+    let source = write(dir, &format!("{name}.src"), bytes);
+    let path = dir.join(name);
+    let status = Command::new("/usr/bin/cp")
+        .arg("--")
+        .arg(&source)
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "cp {} {}",
+        source.display(),
+        path.display()
+    );
+    path
+}

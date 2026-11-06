@@ -307,7 +307,8 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
     std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o775)).unwrap();
     // A script, admitted by its hash: it is pinned, but a script cannot run from the pinned
     // descriptor (native executables only, ADR 0005 §2.4).
-    let script = write(&dir, "script", b"#!/bin/sh\necho '{}'\n");
+    // Created out of process: this test never holds a write fd on a file forge-warden executes.
+    let script = common::write_executable(&dir, "script", b"#!/bin/sh\necho '{}'\n");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let policy = policy_admitting(
         &dir,
@@ -317,15 +318,24 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
             sha256_hex(&std::fs::read(&script).unwrap()),
         ],
     );
-    for (what, candidate) in [
-        ("symlink", link),
-        ("group-writable", writable),
-        ("script", script),
-        ("missing", dir.join("missing")),
+    // Each refusal has its own exact reason. The script is pinned and admitted, so it must reach exec
+    // and its interpreter must EXIT (it cannot reopen the closed descriptor); "could not be started"
+    // (e.g. ETXTBSY) is a different outcome and fails this test (Touchstone C1c v4.4 audit).
+    for (what, candidate, reason) in [
+        ("symlink", link, "Too many levels of symbolic links"),
+        ("group-writable", writable, "writable by group or others"),
+        ("script", script, "forge-warden: the ranker exited "),
+        ("missing", dir.join("missing"), "No such file or directory"),
     ] {
         let out = authority(&policy, &patch, &candidate, &[]);
         assert_eq!(out.code, 3, "{what}: {}", out.stderr);
         assert_eq!(out.stdout, "", "{what}");
+        assert!(out.stderr.contains(reason), "{what}: {}", out.stderr);
+        assert!(
+            !out.stderr.contains("could not be started"),
+            "{what}: {}",
+            out.stderr
+        );
     }
 }
 
