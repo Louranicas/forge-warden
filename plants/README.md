@@ -54,3 +54,13 @@ Serde additive-member tolerance. These are named counterexamples, not exhaustive
 The expanded-dependency recipe deliberately omits --locked so Cargo can update its private clone's
 lock for an already cached transitive dependency; the manifest and lock bytes are both restored.
 The normal gate still uses --locked. Two existing recipes now use B2's validated getters.
+
+Third batch in progress: --exec-runner /absolute/trusted/backend runs BACKEND CHECKOUT PROGRAM
+ARGUMENTS for both Cargo and script recipes, without shell evaluation. It is mutually exclusive
+with --runner (Cargo only). Selecting a script recipe with a Cargo-only backend refuses before
+creating evidence or executing anything; it never falls back to native execution. Native script
+execution is explicit by omitting both backends. Generic commands are trusted catalog argv, not
+untrusted command text. The receipt records the execution profile and exact command argv. The
+backend remains responsible for network/process/filesystem isolation and compiler pins. Eight
+runner controls now include actual script argv/cwd checks and refusal of backend downgrade. Seven
+new script/hook recipes are awaiting their measured batch run (32 runnable,19 pending recipes).

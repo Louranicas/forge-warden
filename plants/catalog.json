@@ -413,6 +413,100 @@
       ],
       "old": "#[derive(Deserialize)]\nstruct RawFile {",
       "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {"
+    },
+    {
+      "id": "swallowed-judge-exit",
+      "guardrail": "G-17",
+      "path": "scripts/ci_local.sh",
+      "diagnostic": "FAIL ci_local.sh fail: expected 7, got 0",
+      "command": [
+        "bash",
+        "scripts/tests/ci_local.sh"
+      ],
+      "old": "      --rank target/rank.json --patch target/change.patch",
+      "new": "      --rank target/rank.json --patch target/change.patch || true"
+    },
+    {
+      "id": "hook-shell-spelling",
+      "guardrail": "G-31",
+      "path": ".claude/hooks/guard.py",
+      "diagnostic": "FAIL: test_shell_tokenization_and_rust_writes \\(",
+      "command": [
+        "python3",
+        "-I",
+        ".claude/hooks/test_guard.py",
+        "Guard.test_shell_tokenization_and_rust_writes"
+      ],
+      "old": "tokens = list(lexer)  # Concatenated quotes and absolute paths are checked after tokenization.",
+      "new": "tokens = command.split()  # Deliberately discard shell quote concatenation."
+    },
+    {
+      "id": "hook-malformed-open",
+      "guardrail": "G-32",
+      "path": ".claude/hooks/guard.py",
+      "diagnostic": "FAIL: test_malformed_events_fail_closed \\(",
+      "command": [
+        "python3",
+        "-I",
+        ".claude/hooks/test_guard.py",
+        "Guard.test_malformed_events_fail_closed"
+      ],
+      "old": "        refuse(f\"malformed event or unavailable check: {error}\")",
+      "new": "        return  # Deliberately turn malformed input into success."
+    },
+    {
+      "id": "hook-unsupported-tool-open",
+      "guardrail": "G-34",
+      "path": ".claude/hooks/guard.py",
+      "diagnostic": "FAIL: test_alternative_edit_tools_refuse \\(",
+      "command": [
+        "python3",
+        "-I",
+        ".claude/hooks/test_guard.py",
+        "Guard.test_alternative_edit_tools_refuse"
+      ],
+      "old": "        refuse(f\"unsupported tool {tool!r}: no checked mutation adapter (including multi-edit/patch tools)\")",
+      "new": "        return  # Deliberately permit unsupported mutation adapters."
+    },
+    {
+      "id": "candidate-judge-build",
+      "guardrail": "G-35",
+      "path": "scripts/dogfood.sh",
+      "diagnostic": "FAIL pass: expected 0 got 93",
+      "command": [
+        "bash",
+        "scripts/tests/dogfood.sh"
+      ],
+      "old": "cd \"$trusted\"",
+      "new": "cd \"$candidate\""
+    },
+    {
+      "id": "ack-head-replay",
+      "guardrail": "G-36",
+      "path": "scripts/hold_ack.py",
+      "diagnostic": "FAIL: test_valid_receipt_and_new_push \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/hold_ack.py",
+        "BoundAck.test_valid_receipt_and_new_push"
+      ],
+      "old": "require(receipt == wanted, \"acknowledgement does not match current subject and verdict\")",
+      "new": "require({k: v for k, v in receipt.items() if k != \"head\"} == {k: v for k, v in wanted.items() if k != \"head\"}, \"acknowledgement does not match current subject and verdict\")"
+    },
+    {
+      "id": "candidate-review-policy",
+      "guardrail": "G-37",
+      "path": "scripts/managed_review_bundle.sh",
+      "diagnostic": "FAIL: test_candidate_cannot_supply_instructions_or_policy \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/managed_review_bundle.py",
+        "ReviewBundle.test_candidate_cannot_supply_instructions_or_policy"
+      ],
+      "old": "  trusted_git show \"$base:$file\" > \"$out/$(basename \"$file\")\"",
+      "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\""
     }
   ],
   "pending_guardrails": [
@@ -447,12 +541,6 @@
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
     {
-      "id": "G-17",
-      "title": "Script swallows a failure (R-10)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-18",
       "title": "A skipped gate reads as a passed gate",
       "status": "PENDING",
@@ -479,42 +567,6 @@
     {
       "id": "G-30",
       "title": "Public-surface creep",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-31",
-      "title": "Agent hook bypass by shell spelling (R-04)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-32",
-      "title": "Hook fails open on malformed input (R-11)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-34",
-      "title": "Edit tool not matched by the hook",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-35",
-      "title": "The change under review controls its own judge (R-02)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-36",
-      "title": "HOLD acknowledgement replay (R-03)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-37",
-      "title": "Managed reviewer uses the candidate's policy or contract (R-13)",
       "status": "PENDING",
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },

@@ -15,6 +15,24 @@ SPEC.loader.exec_module(RUN)
 
 
 class Runner(unittest.TestCase):
+    def test_execution_profiles_keep_argv_and_refuse_silent_native_fallback(self):
+        root, target = Path('/checkout'), Path('/target')
+        cargo = dict(cargo=['test', '--offline'])
+        script = dict(command=['python3', '-I', 'fixture.py', 'literal; $(false)'])
+        self.assertEqual(RUN.command_for(cargo, root, target, '/cargo-backend'),
+                         ['/cargo-backend', '/checkout', 'test', '--offline'])
+        self.assertEqual(RUN.command_for(cargo, root, target, exec_runner='/exec-backend'),
+                         ['/exec-backend', '/checkout', 'cargo', 'test', '--offline'])
+        self.assertEqual(RUN.command_for(script, root, target, exec_runner='/exec-backend'),
+                         ['/exec-backend', '/checkout', *script['command']])
+        self.assertEqual(RUN.command_for(script, root, target), script['command'])
+        with self.assertRaises(ValueError):
+            RUN.command_for(script, root, target, cargo_runner='/cargo-only')
+        for invalid in ({}, dict(cargo=[], command=[]), dict(command=[]),
+                        dict(command=['']), dict(command=['python3', None]), dict(command=['x\0y'])):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                RUN.command_for(invalid, root, target)
+
     def test_named_red_is_required(self):
         green = dict(exit=0, error=None)
         self.assertEqual(RUN.classify(green, dict(exit=101, error=None, text='named violation'), 'named violation'), 'CAUGHT')
@@ -48,6 +66,53 @@ class Runner(unittest.TestCase):
             result=RUN.execute([sys.executable, '-c', 'import time; time.sleep(20)'], root, root/'log', timeout=0.05)
             self.assertEqual(result['error'], 'timeout')
             self.assertNotEqual(result['exit'], 0)
+
+    def test_script_profile_runs_real_argv_in_the_disposable_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'; source.mkdir()
+            (source / 'Cargo.lock').write_text('fixture lock\n')
+            (source / 'fixture').write_text('clean\n')
+            literal = 'literal; $(false)'
+            (source / 'check.py').write_text(
+                'from pathlib import Path\nimport sys\n'
+                f'assert sys.argv[1:] == [{literal!r}]\n'
+                'bad=Path("fixture").read_text()=="breach\\n"\n'
+                'print("named script breach" if bad else "clean script baseline")\n'
+                'sys.exit(101 if bad else 0)\n')
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null',
+                    '-C', str(source), *args], env=RUN.environment(), stderr=subprocess.PIPE)
+            git('init', '-q'); git('add', '--', 'Cargo.lock', 'fixture', 'check.py')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            revision = git('rev-parse', 'HEAD').decode().strip()
+            (root / 'run.py').write_bytes(Path(__file__).with_name('run.py').read_bytes())
+            (root / 'catalog.json').write_text(json.dumps(dict(register={},
+                cases=[dict(id='script', guardrail='G-31', path='fixture', old='clean', new='breach',
+                    command=[sys.executable, '-I', 'check.py', literal], diagnostic='named script breach')],
+                pending_guardrails=[])))
+            backend = root / 'backend'
+            backend.write_text('#!' + sys.executable + '\nimport subprocess,sys\n'
+                'sys.exit(subprocess.run(sys.argv[2:], cwd=sys.argv[1]).returncode)\n')
+            backend.chmod(0o700)
+            common = [sys.executable, '-I', str(root / 'run.py'), '--source', str(source),
+                      '--revision', revision]
+            for name, options in [('native', []), ('exec-runner', ['--exec-runner', str(backend)])]:
+                output = root / name
+                result = subprocess.run([*common, '--output', str(output), *options], capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads((output / 'report.json').read_text())
+                self.assertEqual(report['execution_profile'], name)
+                self.assertEqual(report['results'][0]['status'], 'CAUGHT')
+                self.assertIn(literal, report['results'][0]['baseline']['argv'])
+            # A cargo-only backend must refuse before any checkout or command, not run scripts natively.
+            refused = root / 'refused'
+            result = subprocess.run([*common, '--output', str(refused), '--runner', str(backend)], capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(refused.exists())
+            self.assertEqual((source / 'fixture').read_text(), 'clean\n')
+            self.assertEqual(git('status', '--porcelain'), b'')
 
     def test_missing_executable_is_an_error(self):
         with tempfile.TemporaryDirectory() as directory:

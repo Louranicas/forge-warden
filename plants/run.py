@@ -90,12 +90,33 @@ def edit(root, recipe):
     return path, before
 
 
+def command_for(case, root, target, cargo_runner=None, exec_runner=None):
+    """Two explicit argv profiles; no shell evaluation or implicit backend downgrade."""
+    if ('cargo' in case) == ('command' in case):
+        raise ValueError('recipe must have exactly one cargo or command argv')
+    generic = 'command' in case
+    argv = case['command'] if generic else ['cargo', *case['cargo']]
+    if not isinstance(argv, list) or not argv or not argv[0] or any(not isinstance(a, str) or '\0' in a for a in argv):
+        raise ValueError('recipe argv must be a nonempty string array')
+    if exec_runner:
+        return [exec_runner, str(root), *argv]
+    if generic:
+        if cargo_runner:
+            raise ValueError('script recipe requires --exec-runner or explicit native execution')
+        return argv
+    if cargo_runner:
+        return [cargo_runner, str(root), *case['cargo']]
+    return [*argv, '--target-dir', str(target)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True, help='local repository, read only')
     parser.add_argument('--revision', required=True, help='exact full lowercase commit id')
     parser.add_argument('--output', type=Path, required=True, help='new private evidence directory')
-    parser.add_argument('--runner', type=Path, help='trusted executable taking CHECKOUT then cargo arguments')
+    backends = parser.add_mutually_exclusive_group()
+    backends.add_argument('--runner', type=Path, help='trusted executable taking CHECKOUT then cargo arguments')
+    backends.add_argument('--exec-runner', type=Path, help='trusted executable taking CHECKOUT PROGRAM ARGUMENTS')
     parser.add_argument('--case', action='append', help='case id; repeat to select; default all runnable')
     args = parser.parse_args()
     if not re.fullmatch('[0-9a-f]{40}', args.revision):
@@ -108,11 +129,19 @@ def main():
     if selected - {c['id'] for c in cases}:
         parser.error('unknown case id')
     output = args.output.absolute()
-    output.mkdir(mode=0o700, parents=False, exist_ok=False)
     runner = str(args.runner.resolve()) if args.runner else None
+    exec_runner = str(args.exec_runner.resolve()) if args.exec_runner else None
+    for case in cases:
+        if case['id'] in selected:
+            try:
+                command_for(case, Path('/validation'), Path('/validation-target'), runner, exec_runner)
+            except ValueError as error:
+                parser.error(str(error))
+    output.mkdir(mode=0o700, parents=False, exist_ok=False)
     rows = []
     report = {'schema': 'forge-warden.plants.v1', 'revision': args.revision,
               'catalog_sha256': hashlib.sha256((HERE / 'catalog.json').read_bytes()).hexdigest(),
+              'execution_profile': 'exec-runner' if exec_runner else ('cargo-runner' if runner else 'native'),
               'register': catalog['register'], 'results': rows,
               'pending_guardrails': catalog['pending_guardrails']}
     with tempfile.TemporaryDirectory(prefix='fw-plants-') as directory:
@@ -132,9 +161,7 @@ def main():
                     continue
                 row = {'id': case['id'], 'guardrail': case['guardrail']}
                 rows.append(row)
-                command = ([runner, str(root)] if runner else ['cargo']) + case['cargo']
-                if not runner:
-                    command += ['--target-dir', str(target)]
+                command = command_for(case, root, target, runner, exec_runner)
                 baseline = execute(command, root, output / (case['id'] + '-baseline.log'))
                 row['baseline'] = baseline
                 if baseline['exit'] or baseline['error']:
