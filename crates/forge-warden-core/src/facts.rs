@@ -73,6 +73,9 @@ pub enum Unverifiable {
     RenameOrCopy,
     /// A mode other than `100644`, `100755` or `120000` (a submodule is `160000`).
     UnsupportedMode(String),
+    /// A mode-bearing header line (`index`, `new file mode`, `deleted file mode`, `old mode`,
+    /// `new mode`) of a shape the grammar does not admit.
+    UnreadableModeHeader(String),
     /// An existing symlink's target changes (`index a..b 120000`): Git's summary has no record
     /// for it, so the change kind cannot be tied to a path (Touchstone C1b-O3-01).
     SymlinkTargetEdit,
@@ -102,6 +105,7 @@ impl fmt::Display for Unverifiable {
                     "unsupported file mode {m} (a submodule or unknown file type)"
                 )
             }
+            Self::UnreadableModeHeader(line) => write!(f, "unreadable mode header {line:?}"),
             Self::SymlinkTargetEdit => f.write_str(
                 "an existing symlink's target changes; that change cannot be verified per file",
             ),
@@ -135,35 +139,45 @@ fn mode(text: &str) -> Result<Mode, Unverifiable> {
         .ok_or_else(|| Unverifiable::UnsupportedMode(text.to_owned()))
 }
 
-/// Every mode a git-format patch states in a header line. Hunk lines start with ` `, `+`, `-` or
-/// `\`, and base85 binary-patch lines contain no space, so only header lines match these
-/// prefixes. An unchanged submodule (`index a..b 160000`) has no `--summary` record (ADR 0005 T1).
+/// Admit every mode a git-format patch states in a header line, by one total grammar
+/// (Touchstone C1b-O3-01, C1b-O3-02). A header line starts at column 0 with a keyword; hunk lines
+/// start with ` `, `+`, `-` or `\`, and base85 binary-patch lines contain no whitespace, so they
+/// never match. Tokens are whitespace runs (Git accepts extra spaces and tabs), and each form has an
+/// exact token count:
+///
+/// - `index A..B` (mode unchanged and unstated) or `index A..B MODE` (mode unchanged);
+/// - `new file mode MODE`, `deleted file mode MODE`, `old mode MODE`, `new mode MODE`.
+///
+/// A keyword line of any other shape is refused, never skipped. An unchanged submodule
+/// (`index a..b 160000`) has no `--summary` record (T1); an unchanged symlink is a target edit.
 fn check_header_modes(patch: &[u8]) -> Result<(), Unverifiable> {
-    const PREFIXES: [&str; 4] = [
-        "new file mode ",
-        "deleted file mode ",
-        "old mode ",
-        "new mode ",
-    ];
     for raw in patch.split(|b| *b == b'\n') {
         let line = String::from_utf8_lossy(raw);
-        let line = line.trim_end_matches('\r');
-        if let Some(rest) = line.strip_prefix("index ") {
-            let parts: Vec<&str> = rest.split(' ').collect();
-            if let [_, stated] = parts.as_slice() {
-                // A mode on the `index` line means the mode did not change (creations, deletions
-                // and mode changes state theirs on their own header lines), so 120000 here is an
-                // edit of an existing symlink's target: a change kind no summary record carries.
+        if line.starts_with(|c: char| c.is_whitespace()) {
+            continue;
+        }
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let unreadable = || Unverifiable::UnreadableModeHeader(line.trim_end().to_owned());
+        let stated = match tokens.as_slice() {
+            ["index", _] => continue,
+            ["index", _, stated] => {
+                // A mode on the `index` line means it did not change (creations, deletions and
+                // mode changes state theirs on their own header lines), so 120000 here is an edit
+                // of an existing symlink's target: a change kind no summary record carries.
                 if mode(stated)? == Mode::Symlink {
                     return Err(Unverifiable::SymlinkTargetEdit);
                 }
+                continue;
             }
-        }
-        for prefix in PREFIXES {
-            if let Some(stated) = line.strip_prefix(prefix) {
-                mode(stated)?;
+            ["new" | "deleted", "file", "mode", stated] | ["old" | "new", "mode", stated] => stated,
+            ["index", ..]
+            | ["new" | "deleted", "file", "mode", ..]
+            | ["old" | "new", "mode", ..] => {
+                return Err(unreadable());
             }
-        }
+            _ => continue,
+        };
+        mode(stated)?;
     }
     Ok(())
 }
@@ -503,6 +517,55 @@ mod tests {
     }
 
     #[test]
+    fn every_mode_bearing_header_is_admitted_by_one_total_grammar() {
+        let check = |header: &str| check_header_modes(header.as_bytes());
+        // Git-accepted whitespace never skips admission (Touchstone C1b-O3-02).
+        for spelling in [
+            "index 3fcd8c9..905671c  160000",
+            "index 3fcd8c9..905671c\t160000",
+            "index 3fcd8c9..905671c 160000 ",
+            "new file mode\t160000",
+            "deleted  file mode 160000",
+            "old mode 160000",
+        ] {
+            assert_eq!(
+                check(spelling),
+                Err(Unverifiable::UnsupportedMode("160000".to_owned())),
+                "{spelling:?}"
+            );
+        }
+        assert_eq!(
+            check("index a..b  120000"),
+            Err(Unverifiable::SymlinkTargetEdit)
+        );
+        // Positive controls: supported modes in any Git spelling are admitted.
+        for ok in [
+            "index a..b",
+            "index a..b  100644",
+            "index a..b\t100755 ",
+            "new file mode\t100755",
+            "new mode 100644",
+            " index a..b 160000",
+            "+index a..b 160000",
+            "Some text that is not a header",
+        ] {
+            assert_eq!(check(ok), Ok(()), "{ok:?}");
+        }
+        // A keyword line of any other shape is refused, never skipped.
+        for odd in [
+            "index",
+            "index a..b 100644 extra",
+            "new file mode",
+            "old mode 100644 100755",
+        ] {
+            assert!(
+                matches!(check(odd), Err(Unverifiable::UnreadableModeHeader(_))),
+                "{odd:?}"
+            );
+        }
+    }
+
+    #[test]
     fn every_refusal_says_why() {
         let cases = [
             (
@@ -539,6 +602,10 @@ mod tests {
             (
                 Unverifiable::SymlinkTargetEdit,
                 "an existing symlink's target changes; that change cannot be verified per file",
+            ),
+            (
+                Unverifiable::UnreadableModeHeader("index a b c d".to_owned()),
+                "unreadable mode header \"index a b c d\"",
             ),
             (
                 Unverifiable::UnreadableGitOutput("q".to_owned()),

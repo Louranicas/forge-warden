@@ -481,6 +481,46 @@
    ],
    "source": "mission4/lanes/touchstone/C1b/symlink-modified.* (Touchstone C1b-O3-01)",
    "why": "an existing symlink target edit (index a..b 120000, empty summary) is refused: SymlinkTargetEdit"
+  },
+  {
+   "name": "ts-c1b-v3-double-space",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/v3/double-space.patch (Touchstone C1b-O3-02)",
+   "why": "a 160000 index mode in a Git-accepted whitespace spelling is still refused"
+  },
+  {
+   "name": "ts-c1b-v3-tab-space",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/v3/tab-space.patch (Touchstone C1b-O3-02)",
+   "why": "a 160000 index mode in a Git-accepted whitespace spelling is still refused"
+  },
+  {
+   "name": "ts-c1b-v3-trailing-space",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/v3/trailing-space.patch (Touchstone C1b-O3-02)",
+   "why": "a 160000 index mode in a Git-accepted whitespace spelling is still refused"
+  },
+  {
+   "name": "keel-c1b-v4-respaced-ordinary-mode",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "fixtures/coverage/m3-demo-real.patch with one index header respaced",
+   "why": "positive control: a supported mode in any Git spelling is admitted"
   }
  ],
  "classes": "rank_refused | unverifiable | covered | '+'-joined subset of status_mismatch, duplicate_paths, rank_incomplete, rank_extraneous (in that order)"
