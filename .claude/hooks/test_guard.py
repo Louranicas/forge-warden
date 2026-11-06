@@ -16,6 +16,7 @@ class Guard(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="guard-test-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        (self.root / "protected-paths.txt").write_bytes(GUARD.parents[2].joinpath("protected-paths.txt").read_bytes())
         (self.root / "crates/core").mkdir(parents=True)
         (self.root / "src").mkdir()
         (self.root / "src/lib.rs").write_text("pub fn f() {}\n")
@@ -79,13 +80,13 @@ class Guard(unittest.TestCase):
         for content in ('[workspace.lints.clippy]\nunwrap_used = "warn"\n',
                         '[workspace.lints.clippy.unwrap_used]\nlevel = "warn"\n', "[workspace]\n", "["):
             self.run_guard(self.tool("Write", file_path="Cargo.toml", content=content))
-        self.run_guard(self.tool("Write", file_path="Cargo.toml", content='[workspace.lints.clippy.unwrap_used]\nlevel = "deny"\n'), expected=0)
+        self.run_guard(self.tool("Write", file_path="Cargo.toml", content='[workspace.lints.clippy.unwrap_used]\nlevel = "deny"\n'))
         self.run_guard(self.tool("Write", file_path="crates/core/Cargo.toml", content='[package]\nname="core"\n'))
 
-    def test_existing_named_lint_exceptions_can_remain(self):
+    def test_owner_protected_manifest_refuses_even_unchanged_content(self):
         content = '[workspace.lints.clippy]\nmultiple_crate_versions = "allow"\nunwrap_used = "deny"\n'
         (self.root / "Cargo.toml").write_text(content)
-        self.run_guard(self.tool("Write", file_path="Cargo.toml", content=content), expected=0)
+        self.run_guard(self.tool("Write", file_path="Cargo.toml", content=content))
 
     def test_invalid_edit_shape_refuses(self):
         for data in ({"file_path":"src/lib.rs","new_string":"x"},
