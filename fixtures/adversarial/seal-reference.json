@@ -1,0 +1,6 @@
+{
+  "provenance": "Independently computed with GNU sha256sum over the committed bytes; no forge-warden code or blessing script used.",
+  "policy_sha256": "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731",
+  "rank_sha256": "9a183a4197f417f49cf70999e14c6015ea12913ef59af3924204230d2e3379b5",
+  "patch_sha256": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
+}
