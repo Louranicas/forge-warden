@@ -23,7 +23,8 @@ reports nothing wrong.
 - A policy with no rules, or naming a signal the vocabulary lacks, is refused at load (exit 4):
   the author meant something the tool cannot enforce.
 - The overall verdict is the maximum of every contribution under `pass < hold < fail`. The
-  property `adding_a_rule_never_loosens_the_verdict` checks monotonicity over random inputs.
+  law `adding_a_rule_cannot_loosen_the_verdict` (`crates/forge-warden-core/tests/laws.rs`) checks
+  monotonicity over random inputs against an independent reference.
 
 ## Consequences
 

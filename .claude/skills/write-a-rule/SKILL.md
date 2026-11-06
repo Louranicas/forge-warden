@@ -12,9 +12,10 @@ in order. Work in this order and run `scripts/ci_fast.sh` after each numbered st
 1. **Decide the semantics first, in writing.** One sentence: "violated when …". Then answer:
    - Is a violation tied to a path (waivable) or to the whole change (never waivable)?
    - What does it do with `deleted` files? (Companions and triggers ignore them; say why if not.)
-   - Can it ever make a verdict *looser* than without it? It must not: the property
-     `adding_a_rule_never_loosens_the_verdict` in `crates/forge-warden-core/tests/eval.rs` will
-     try. Add the new kind to that test's `RULES` list.
+   - Can it ever make a verdict *looser* than without it? It must not: the law
+     `adding_a_rule_cannot_loosen_the_verdict` in `crates/forge-warden-core/tests/laws.rs` will
+     try. Add the new kind to `CheckSpec` and the independent `reference` in
+     `fixtures/adversarial/reference_model.rs`, and to `rule_strategy` in `laws.rs`.
 2. **Reader** (`policy.rs`): a `Check` variant with typed fields; its name in `KINDS`; each new
    field in `RawRule` and in `RULE_FIELD_KINDS`; validation in `build_check` that reports
    problems with `issue(location, …)` and never panics. Required fields have no defaults.
