@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 bash scripts/tests/ci_local.sh
 bash scripts/tests/dogfood.sh
+python3 -I scripts/tests/hold_ack.py
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked --quiet
 cargo test --workspace --locked --quiet

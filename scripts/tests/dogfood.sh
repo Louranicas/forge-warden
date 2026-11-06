@@ -8,19 +8,26 @@ export HOME="$sandbox/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 mkdir -p "$HOME" "$sandbox/trusted/scripts" "$sandbox/bin"
 trusted="$sandbox/trusted"
 cp "$source_root/scripts/dogfood.sh" "$trusted/scripts/dogfood.sh"
+cat > "$trusted/scripts/hold_ack.py" <<'ACK'
+import os, sys
+assert sys.argv[1:4] == ["verify", "--base", os.environ["ACK_BASE"]]
+assert sys.argv[4:6] == ["--head", os.environ["ACK_HEAD"]]
+print('{"fixture_ack":true}')
+sys.exit(int(os.environ["ACK_EXIT"]))
+ACK
 printf 'trusted-policy\n' > "$trusted/warden.toml"
 printf 'trusted-build\n' > "$trusted/build.rs"
 git -C "$trusted" init -q
 # Do not inherit signing, hooks or identities from the reviewer's environment.
-git -C "$trusted" add -- scripts/dogfood.sh warden.toml build.rs
-git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh warden.toml build.rs
+git -C "$trusted" add -- scripts/dogfood.sh scripts/hold_ack.py warden.toml build.rs
+git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/hold_ack.py warden.toml build.rs
 base="$(git -C "$trusted" rev-parse HEAD)"
 git clone -q --no-local "$trusted" "$sandbox/candidate"
 candidate="$sandbox/candidate"
 printf 'exit 0 # candidate-controlled driver\n' > "$candidate/scripts/dogfood.sh"
 printf 'allow-all\n' > "$candidate/warden.toml"
 printf 'malicious-build\n' > "$candidate/build.rs"
-git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh warden.toml build.rs
+git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/hold_ack.py warden.toml build.rs
 head="$(git -C "$candidate" rev-parse HEAD)"
 cat > "$sandbox/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
@@ -71,6 +78,20 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 9' 'bu
  fi
  if [ "$RANK_EXIT" -ne 0 ] || [ "$BUILD_EXIT" -ne 0 ]; then test ! -e "$out/verdict.json"; fi
  echo "PASS $name exit=$actual"
+done
+# Receipt verification is independently tested with real signatures in hold_ack.py.
+# Here a stub proves the driver admits only successful verification of a HOLD.
+export ACK_BASE="$base" ACK_HEAD="$head" BUILD_EXIT=0 RANK_EXIT=0
+for row in 'accepted 8 0 0' 'stale 8 8 8' 'broken-verifier 8 3 8' 'fail-with-ack 7 0 7'; do
+ read -r name JUDGE_EXIT ACK_EXIT expected <<< "$row"
+ export JUDGE_EXIT ACK_EXIT
+ set +e
+ bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/ack-$name" \
+   "$sandbox/receipt.json" "$sandbox/receipt.sig" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL ack $name"; exit 1; fi
+ echo "PASS ack $name exit=$actual"
 done
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
 set +e
