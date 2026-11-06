@@ -1,0 +1,11 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "src/lib.rs", "status": "modified", "score": 17, "signals": ["public_api_surface", "unsafe_added", "process_spawn", "check_suppressed"], "evidence": [{"signal": "check_suppressed", "address": "063a52daefc55ed67277eb09d90dea3671b6d2d27bde69a683a50a7462a438a7", "side": "new", "line": 2, "basis": "lexical"}, {"signal": "unsafe_added", "address": "063a52daefc55ed67277eb09d90dea3671b6d2d27bde69a683a50a7462a438a7", "side": "new", "line": 3, "basis": "lexical"}, {"signal": "process_spawn", "address": "063a52daefc55ed67277eb09d90dea3671b6d2d27bde69a683a50a7462a438a7", "side": "new", "line": 4, "basis": "lexical"}]},
+    {"path": ".github/workflows/ci.yml", "status": "modified", "score": 6, "signals": ["config_or_lockfile", "ci_privilege"], "evidence": [{"signal": "ci_privilege", "address": "210b042e087371f9b773ac460f511aaa431cf4ec0f2005cf4c58b5723ea1aaef", "side": "new", "line": 2, "basis": "lexical"}, {"signal": "ci_privilege", "address": "210b042e087371f9b773ac460f511aaa431cf4ec0f2005cf4c58b5723ea1aaef", "side": "new", "line": 3, "basis": "lexical"}]},
+    {"path": "tests/it.rs", "status": "modified", "score": 4, "signals": ["test_only", "test_removed"], "evidence": [{"signal": "test_removed", "address": "dd29cef50a30e4b55bca2f745d04887c9002380dcc36e24a94de01643c382c3e", "side": "old", "line": 1, "basis": "lexical"}]},
+    {"path": "src/util.rs", "status": "modified", "score": 2, "signals": []}
+  ]
+}

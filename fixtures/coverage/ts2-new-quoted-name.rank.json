@@ -1,0 +1,18 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "f89c7cccb0134463fa3cc6ab981170947117d0e4e9da61d6a283c57ca0c204ea",
+  "tool": {
+    "name": "deep-diff-forge",
+    "version": "0.7.0"
+  },
+  "ranked": [
+    {
+      "path": "quote\"\\tab\tname",
+      "status": "added",
+      "score": 4,
+      "signals": [
+        "new_file"
+      ]
+    }
+  ]
+}

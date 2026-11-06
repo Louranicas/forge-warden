@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "36b93741bb30b4efcc070d5ef9ba9ebddddeb7eeff30bb2e4da39959c6f70030",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "dir sp/ü\ttab.rs", "status": "modified", "score": 2, "signals": []}
+  ]
+}

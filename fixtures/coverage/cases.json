@@ -1,0 +1,537 @@
+{
+ "git": "git version 2.56.0",
+ "cases": [
+  {
+   "name": "m3-demo-real",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/repo/fixtures/demo.patch"
+  },
+  {
+   "name": "m3-keel-drop-ci",
+   "expect": "rank_incomplete",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/repo/fixtures/demo.patch"
+  },
+  {
+   "name": "m3-keel-only-test",
+   "expect": "rank_incomplete",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/repo/fixtures/demo.patch"
+  },
+  {
+   "name": "m3-o3-omit-ci",
+   "expect": "rank_incomplete",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/repo/fixtures/demo.patch"
+  },
+  {
+   "name": "m3-o3-replace-ranked",
+   "expect": "rank_incomplete+rank_extraneous",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/repo/fixtures/demo.patch"
+  },
+  {
+   "name": "m3-o3-dot-patch-ddf-ranked",
+   "expect": "rank_refused",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "review/O3/evidence/dot.patch",
+   "expect_prototype": "unverifiable",
+   "why": "WP-B2: RepoPath refuses a non-canonical ranked path at admission, before coverage is compared"
+  },
+  {
+   "name": "m3-o3-path-1--src",
+   "expect": "rank_refused",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/srclib.patch",
+   "expect_prototype": "rank_incomplete+rank_extraneous",
+   "why": "WP-B2: RepoPath refuses a non-canonical ranked path at admission, before coverage is compared"
+  },
+  {
+   "name": "m3-o3-path-2--src",
+   "expect": "rank_refused",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/srclib.patch",
+   "expect_prototype": "rank_incomplete+rank_extraneous",
+   "why": "WP-B2: RepoPath refuses a non-canonical ranked path at admission, before coverage is compared"
+  },
+  {
+   "name": "m3-o3-path-3-src--src",
+   "expect": "rank_refused",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/srclib.patch",
+   "expect_prototype": "rank_incomplete+rank_extraneous",
+   "why": "WP-B2: RepoPath refuses a non-canonical ranked path at admission, before coverage is compared"
+  },
+  {
+   "name": "m3-o3-path-4-src",
+   "expect": "rank_refused",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/srclib.patch",
+   "expect_prototype": "rank_incomplete+rank_extraneous",
+   "why": "WP-B2: RepoPath refuses a non-canonical ranked path at admission, before coverage is compared"
+  },
+  {
+   "name": "m3-o3-path-5--src",
+   "expect": "rank_refused",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/srclib.patch",
+   "expect_prototype": "rank_incomplete+rank_extraneous",
+   "why": "WP-B2: RepoPath refuses a non-canonical ranked path at admission, before coverage is compared"
+  },
+  {
+   "name": "m3-o3-duplicate-paths",
+   "expect": "duplicate_paths",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/readme.patch"
+  },
+  {
+   "name": "new-rename",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/rename.patch"
+  },
+  {
+   "name": "new-rename-split",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/rename-split.patch"
+  },
+  {
+   "name": "new-bindel",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/bindel.patch"
+  },
+  {
+   "name": "new-mode",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/mode.patch"
+  },
+  {
+   "name": "new-symlink",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/symlink.patch"
+  },
+  {
+   "name": "new-oddname",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/oddname.patch"
+  },
+  {
+   "name": "new-empty",
+   "expect": "unverifiable",
+   "git_rc": [
+    128,
+    128
+   ],
+   "source": "~cache/c0/empty.patch"
+  },
+  {
+   "name": "forged-bindel-as-modified",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/bindel.patch"
+  },
+  {
+   "name": "forged-split-del-as-modified",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/rename-split.patch"
+  },
+  {
+   "name": "forged-rename-as-modified",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/rename.patch"
+  },
+  {
+   "name": "forged-add-as-modified",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/symlink.patch"
+  },
+  {
+   "name": "new-addodd",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/addodd.patch"
+  },
+  {
+   "name": "new-delodd",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/delodd.patch"
+  },
+  {
+   "name": "m-binadd",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-binadd.patch"
+  },
+  {
+   "name": "m-binmod",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-binmod.patch"
+  },
+  {
+   "name": "m-content-and-mode",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-content-and-mode.patch"
+  },
+  {
+   "name": "m-exec-add",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-exec-add.patch"
+  },
+  {
+   "name": "m-symlink-del",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-symlink-del.patch"
+  },
+  {
+   "name": "m-file-to-symlink",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-file-to-symlink.patch"
+  },
+  {
+   "name": "ts-mode-collision-real",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-mode-suffix-collision.patch"
+  },
+  {
+   "name": "ts-forged-mode",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-mode-suffix-collision.patch"
+  },
+  {
+   "name": "ts-text-as-binary",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-mode-suffix-collision.patch"
+  },
+  {
+   "name": "ts-binary-deletion-1",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-case-1.patch"
+  },
+  {
+   "name": "ts-binary-deletion-2",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-case-2.patch"
+  },
+  {
+   "name": "ts-binary-deletion-3",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-case-3.patch"
+  },
+  {
+   "name": "ts-binary-deletion-4",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-case-4.patch"
+  },
+  {
+   "name": "ts-binary-deletion-5",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-case-5.patch"
+  },
+  {
+   "name": "ts-binary-deletion-6",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-case-6.patch"
+  },
+  {
+   "name": "ts-file-to-symlink",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-file-to-symlink.patch"
+  },
+  {
+   "name": "ts-no-prefix",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0-no-prefix.patch"
+  },
+  {
+   "name": "ts-crlf",
+   "expect": "unverifiable",
+   "git_rc": [
+    128,
+    128
+   ],
+   "source": "mission4/lanes/touchstone/C0-crlf.patch"
+  },
+  {
+   "name": "keel-submodule-add",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-submodule-add.patch"
+  },
+  {
+   "name": "keel-submodule-update",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "~cache/c0/m-submodule-update.patch"
+  },
+  {
+   "name": "ts2-new-submodule-update",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0v2/new-submodule-update.patch"
+  },
+  {
+   "name": "ts2-new-submodule-add",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0v2/new-submodule-add.patch"
+  },
+  {
+   "name": "ts2-new-rename-and-mode",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0v2/new-rename-and-mode.patch"
+  },
+  {
+   "name": "ts2-new-empty-add-delete",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0v2/new-empty-add-delete.patch"
+  },
+  {
+   "name": "ts2-new-quoted-name",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0v2/new-quoted-name.patch"
+  },
+  {
+   "name": "ts2-new-binary-add",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C0v2/new-binary-add.patch"
+  },
+  {
+   "name": "ts-c1b-symlink-target-edit",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/symlink-modified.* (Touchstone C1b-O3-01)",
+   "why": "an existing symlink target edit (index a..b 120000, empty summary) is refused: SymlinkTargetEdit"
+  },
+  {
+   "name": "ts-c1b-v3-double-space",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/v3/double-space.patch (Touchstone C1b-O3-02)",
+   "why": "a 160000 index mode in a Git-accepted whitespace spelling is still refused"
+  },
+  {
+   "name": "ts-c1b-v3-tab-space",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/v3/tab-space.patch (Touchstone C1b-O3-02)",
+   "why": "a 160000 index mode in a Git-accepted whitespace spelling is still refused"
+  },
+  {
+   "name": "ts-c1b-v3-trailing-space",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/v3/trailing-space.patch (Touchstone C1b-O3-02)",
+   "why": "a 160000 index mode in a Git-accepted whitespace spelling is still refused"
+  },
+  {
+   "name": "keel-c1b-v4-respaced-ordinary-mode",
+   "expect": "covered",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "fixtures/coverage/m3-demo-real.patch with one index header respaced",
+   "why": "positive control: a supported mode in any Git spelling is admitted"
+  },
+  {
+   "name": "keel-c1b-v4-mode-line-tab",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "fixtures/coverage/keel-submodule-add.patch with `new file mode<TAB>160000`",
+   "why": "mode-line negative control (Lodestar #294): a Git-accepted spelling of a 160000 mode line is refused"
+  }
+ ],
+ "classes": "rank_refused | unverifiable | covered | '+'-joined subset of status_mismatch, duplicate_paths, rank_incomplete, rank_extraneous (in that order)"
+}

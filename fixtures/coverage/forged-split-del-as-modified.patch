@@ -1,0 +1,14 @@
+diff --git a/src/new_name.rs b/src/new_name.rs
+new file mode 100644
+index 0000000..3367afd
+--- /dev/null
++++ b/src/new_name.rs
+@@ -0,0 +1 @@
++old
+diff --git a/src/old_name.rs b/src/old_name.rs
+deleted file mode 100644
+index 3367afd..0000000
+--- a/src/old_name.rs
++++ /dev/null
+@@ -1 +0,0 @@
+-old

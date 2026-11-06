@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "a44631ba97f5beb3661ee7851e39288858258c7fbb084cbd533a7ceb5a626c7d",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "back\\slash.bin", "status": "binary_changed", "score": 3, "signals": ["binary_change"]}
+  ]
+}

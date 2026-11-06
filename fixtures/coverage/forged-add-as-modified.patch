@@ -1,0 +1,8 @@
+diff --git a/link.rs b/link.rs
+new file mode 120000
+index 0000000..c7ca8e3
+--- /dev/null
++++ b/link.rs
+@@ -0,0 +1 @@
++src/lib.rs
+\ No newline at end of file
