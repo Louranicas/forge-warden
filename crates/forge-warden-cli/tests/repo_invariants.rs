@@ -127,7 +127,8 @@ fn production_part(text: &str) -> &str {
 
 #[test]
 fn raw_defaults_are_disallowed_in_both_crates() {
-    // G-04 (WP-B7): `.unwrap_or(Outcome::Pass)` decided a verdict silently. A default is now chosen
+    // G-04 (WP-B7, B7.1): `.unwrap_or(Outcome::Pass)` decided a verdict silently; `map_or` and
+    // `get_or_insert*` pick a default the same way. A default is now chosen
     // through forge_warden_core::defaults::NamedDefault (or_fail_closed / or_fail_safe / or_display),
     // and clippy refuses the raw methods in every target of both crates (measured: method call,
     // UFCS, fn pointer, alias, use-as, closure). The configs are PARSED (Touchstone B7-O3-01): only an
@@ -141,6 +142,13 @@ fn raw_defaults_are_disallowed_in_both_crates() {
             "core::result::Result::unwrap_or",
             "core::result::Result::unwrap_or_else",
             "core::result::Result::unwrap_or_default",
+            "core::option::Option::map_or",
+            "core::option::Option::map_or_else",
+            "core::result::Result::map_or",
+            "core::result::Result::map_or_else",
+            "core::option::Option::get_or_insert",
+            "core::option::Option::get_or_insert_with",
+            "core::option::Option::get_or_insert_default",
         ] {
             assert!(
                 active.contains(method),

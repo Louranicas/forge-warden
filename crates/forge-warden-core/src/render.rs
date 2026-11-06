@@ -73,7 +73,8 @@ pub fn render_text(verdict: &Verdict) -> String {
             let path = v
                 .path
                 .as_deref()
-                .map_or_else(|| "(whole change)".to_owned(), terminal_safe);
+                .map(terminal_safe)
+                .or_display("(whole change)".to_owned());
             // An unwaived violation carries no waiver annotation.
             let waived = v
                 .waived_by
