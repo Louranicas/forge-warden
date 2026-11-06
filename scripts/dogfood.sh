@@ -1,36 +1,62 @@
 #!/usr/bin/env bash
-# CI job `dogfood`: rank this pull request with deep-diff-forge and judge it with warden.toml.
-#   exit 7 (fail)  -> the job fails.
-#   exit 8 (hold)  -> the job fails unless a maintainer labelled the PR `warden:acknowledged`.
-# Usage: scripts/dogfood.sh <base sha> <acknowledged: true|false>
+# forge-warden trusted-dogfood-driver v1
+# Run from a clean trusted base checkout. The candidate is Git data, never executable code.
+# Usage: dogfood.sh <base-sha> <head-sha> <candidate-checkout> <new-evidence-directory>
 set -euo pipefail
 base="${1:?base sha}"
-acknowledged="${2:-false}"
-# --no-renames: rank.v0 reports only a renamed file's new path, so a rename is split into a deletion
-# and an addition that every path rule can see.
-git diff --binary --no-renames "${base}...HEAD" > change.patch
-deep-diff-forge --stdin-patch --rank --json < change.patch > rank.json
-# Judge with the BASE branch's policy: a pull request must not be able to loosen the rules that
-# judge it. (Its own warden.toml change is judged too: `quality-config-is-owned` holds it.)
-# A base without a policy is refused rather than replaced by the pull request's own: otherwise a
-# change that deleted warden.toml would let the next one choose its judge.
-if ! git cat-file -e "${base}:warden.toml" 2>/dev/null; then
-  echo "dogfood: the base commit has no warden.toml; restore it on main before merging anything" >&2
-  exit 1
+head="${2:?head sha}"
+candidate="${3:?candidate checkout}"
+out="${4:?new evidence directory}"
+if [[ ! "$base" =~ ^[0-9a-f]{40}$ || ! "$head" =~ ^[0-9a-f]{40}$ ]]; then
+  echo 'dogfood: base and head must be full commit IDs' >&2
+  exit 2
 fi
-git show "${base}:warden.toml" > policy.toml
+# The runner and this script must be trusted independently of the candidate workflow.
+trusted="$(cd "$(dirname "$0")/.." && pwd -P)"
+candidate="$(cd "$candidate" && pwd -P)"
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_NO_REPLACE_OBJECTS=1
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+if [ "$trusted" = "$candidate" ] || [ "$(git -C "$trusted" rev-parse HEAD)" != "$base" ]; then
+  echo 'dogfood: judge checkout must be the distinct trusted base' >&2
+  exit 2
+fi
+if [ -n "$(git -C "$trusted" status --porcelain --untracked-files=all --ignored)" ]; then
+  echo 'dogfood: trusted checkout must be clean, including ignored files' >&2
+  exit 2
+fi
+for commit in "$base" "$head"; do
+  test "$(git -C "$candidate" rev-parse --verify "$commit^{commit}")" = "$commit"
+done
+if [[ "$out" != /* || -e "$out" || -L "$out" ]]; then
+  echo 'dogfood: evidence directory must be a new absolute path' >&2
+  exit 2
+fi
+umask 077
+mkdir -- "$out"
+out="$(cd "$out" && pwd -P)"
+case "$out/" in
+  "$trusted/"*|"$candidate/"*) echo 'dogfood: evidence must be outside both checkouts' >&2; exit 2 ;;
+esac
+# Diff endpoints are immutable commits; no external diff or textconv can execute candidate config.
+git -C "$candidate" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv \
+  --binary --no-renames "$base...$head" > "$out/change.patch"
+# Source, policy, lockfile and build configuration all come from the trusted checkout.
+cd "$trusted"
+cp -- warden.toml "$out/policy.toml"
+export CARGO_TARGET_DIR="$out/target"
+cargo build --release --locked --bin forge-warden
+# The producer pin is part of this trusted script, not a PR environment variable.
+ddf_rev=587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54
+cargo install --git https://github.com/Louranicas/deep-diff-forge --rev "$ddf_rev" \
+  deep-diff-forge-cli --locked --root "$out/ranker"
+"$out/ranker/bin/deep-diff-forge" --stdin-patch --rank --json < "$out/change.patch" > "$out/rank.json"
+printf 'base=%s\nhead=%s\nddf_rev=%s\n' "$base" "$head" "$ddf_rev" > "$out/provenance.txt"
+sha256sum "$out/target/release/forge-warden" "$out/ranker/bin/deep-diff-forge" \
+  "$out/change.patch" "$out/policy.toml" "$out/rank.json" >> "$out/provenance.txt"
+# No bare label can discharge a HOLD. WP-D2 may introduce a subject-bound attestation.
 set +e
-./target/release/forge-warden check --policy policy.toml --rank rank.json --patch change.patch --json > verdict.json
+"$out/target/release/forge-warden" check --policy "$out/policy.toml" \
+  --rank "$out/rank.json" --patch "$out/change.patch" --json > "$out/verdict.json"
 code=$?
 set -e
-./target/release/forge-warden check --policy policy.toml --rank rank.json --patch change.patch > verdict.txt || true
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  { echo '## forge-warden verdict'; echo; echo '```text'; cat verdict.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-fi
-cat verdict.txt
-case "$code" in
-  0) exit 0 ;;
-  8) if [ "$acknowledged" = "true" ]; then echo "hold acknowledged by a maintainer (label warden:acknowledged)"; exit 0; fi
-     echo "HOLD: a maintainer must review the held rules and add the label warden:acknowledged" >&2; exit 1 ;;
-  *) exit "$code" ;;
-esac
+exit "$code"
