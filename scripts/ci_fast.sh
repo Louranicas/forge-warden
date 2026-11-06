@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 bash scripts/tests/ci_local.sh
+python3 -I scripts/tests/mutation_env.py
 bash scripts/tests/dogfood.sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked --quiet

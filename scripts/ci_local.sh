@@ -14,7 +14,7 @@ if command -v cargo-mutants >/dev/null; then
   step mutation
   base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
   git diff "$base" -- 'crates/*/src/**.rs' > target/pr.diff
-  if [ -s target/pr.diff ]; then cargo mutants --no-config --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
+  if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
 else
   echo "skip mutation: cargo install cargo-mutants --locked"
 fi
