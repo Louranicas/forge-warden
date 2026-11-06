@@ -1,6 +1,7 @@
-//! Every ranking in `fixtures/corpus/` was written by a real deep-diff-forge 0.7.0 binary from
-//! deep-diff-forge's own patch and evaluation corpus. forge-warden must read every one, know its
-//! whole vocabulary, and judge it deterministically.
+//! Every ranking in `fixtures/corpus/` was written by a real deep-diff-forge 0.7.0 binary: 39 from
+//! deep-diff-forge's own patch and evaluation corpus, and `shape-many-hunks` from the patch beside
+//! it (five hunks in one file). forge-warden must read every one, know its whole vocabulary, and
+//! judge it deterministically; together they exercise every signal forge-warden knows.
 #![expect(
     clippy::disallowed_methods,
     reason = "test door: reads committed fixtures"
@@ -30,9 +31,13 @@ fn every_real_ranking_parses_with_known_vocabulary() {
             }
         }
     }
-    assert!(
-        signals.len() >= 20,
-        "the corpus should exercise nearly every signal, got {signals:?}"
+    let known: std::collections::BTreeSet<String> = forge_warden_core::vocab::KNOWN_SIGNALS
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    assert_eq!(
+        signals, known,
+        "the real-producer corpus must exercise exactly the known vocabulary (R-17)"
     );
 }
 
