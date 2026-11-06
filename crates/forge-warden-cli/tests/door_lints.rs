@@ -88,6 +88,12 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
         if let TokenTree::Group(group) = tree {
             check_tokens(group.stream(), found);
         }
+        if let TokenTree::Ident(ident) = tree
+            && ident.unraw() == "include"
+            && matches!(trees.get(index.saturating_add(1)), Some(TokenTree::Punct(p)) if p.as_char() == '!')
+        {
+            found.push("include!".to_owned());
+        }
         let TokenTree::Punct(pound) = tree else {
             continue;
         };
@@ -123,6 +129,10 @@ impl<'ast> Visit<'ast> for Scan {
         if last(&mac.path) == "macro_rules" {
             // A macro could assemble a lint attribute from fragments no parser sees as one.
             self.found.push("macro_rules!".to_owned());
+        }
+        if last(&mac.path) == "include" {
+            // Code from a file this check never parses (B-C1c-04); data uses include_str!/bytes!.
+            self.found.push("include!".to_owned());
         }
         check_tokens(mac.tokens.clone(), &mut self.found);
         syn::visit::visit_macro(self, mac);
@@ -263,31 +273,41 @@ fn the_parser_ignores_names_outside_lint_attributes() {
 
 #[test]
 fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
-    let files = files_under("crates/forge-warden-cli", ".rs");
-    assert!(files.len() >= 10, "found only {} files", files.len());
-    let doors = root().join("crates/forge-warden-cli/src/doors.rs");
+    // Scanned: every source compiled into production (whatever crate or directory it lives in, B-C1c-04)
+    // and every Rust file of the CLI crate. Production is decided by the compiler (B-C1c-03).
     let production = common::production_sources();
-    for path in files {
-        if path.components().any(|c| c.as_os_str() == "target") || path == doors {
+    let doors = "crates/forge-warden-cli/src/doors.rs";
+    let mut scanned: std::collections::BTreeSet<String> = production.clone();
+    scanned.extend(
+        files_under("crates/forge-warden-cli", ".rs")
+            .iter()
+            .filter(|p| !p.components().any(|c| c.as_os_str() == "target"))
+            .map(|p| common::relative(p)),
+    );
+    assert!(scanned.len() >= 10, "found only {} files", scanned.len());
+    for name in scanned {
+        if name == doors {
             continue;
         }
-        let shown = common::relative(&path);
-        let source = std::fs::read_to_string(&path).unwrap();
-        // Production is what the compiler built into the binary (B-C1c-03), never a path guess.
-        let test_code = !production.contains(&shown);
-        // Tests may open test doors (expect disallowed_methods / disallowed_types); nothing else.
+        let source = std::fs::read_to_string(root().join(&name)).unwrap();
+        let shipped = production.contains(&name);
+        let cli = name.starts_with("crates/forge-warden-cli/");
         let found: Vec<String> = door_lint_controls(&source)
             .into_iter()
             .filter(|f| {
-                !(test_code
-                    && (f == "expect(clippy::disallowed_methods)"
-                        || f == "expect(clippy::disallowed_types)"))
+                // Test code may open test doors and include fixtures; production may not.
+                let test_door = f == "expect(clippy::disallowed_methods)"
+                    || f == "expect(clippy::disallowed_types)"
+                    || f == "include!";
+                // macro_rules! is refused in the CLI crate only (core declares note codes by macro).
+                let core_macro = f == "macro_rules!" && !cli;
+                !((!shipped && test_door) || core_macro)
             })
             .collect();
         assert_eq!(
             found,
             Vec::<String>::new(),
-            "{shown} could switch off the door lints"
+            "{name} could switch off the door lints (production: {shipped})"
         );
     }
 }

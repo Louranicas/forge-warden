@@ -218,22 +218,98 @@ fn artifact_dep_info(message: &serde_json::Value, kinds: &[&str]) -> PathBuf {
     depfiles.into_iter().next().unwrap()
 }
 
+/// A non-Rust production input: it must be on [`PRODUCTION_DATA`] with exactly the pinned bytes.
+fn admit_data(name: &str) {
+    let Some((_, pin)) = PRODUCTION_DATA.iter().find(|(path, _)| *path == name) else {
+        panic!("unreviewed non-Rust input compiled into production: {name}");
+    };
+    let bytes = std::fs::read(root().join(name)).unwrap();
+    assert_eq!(
+        forge_warden_core::seal::sha256_hex(&bytes),
+        *pin,
+        "reviewed production data changed without its pin: {name}"
+    );
+}
+
 /// Production and test-only Rust sources of the workspace, decided by the compiler.
 pub(crate) struct Sources {
     /// Compiled into a `lib` or `bin` target built without `test` (what ships).
     pub(crate) production: std::collections::BTreeSet<String>,
     /// Compiled only by test, example or bench targets, or under `cfg(test)`.
     pub(crate) test_only: std::collections::BTreeSet<String>,
+    /// The exact `cargo check --message-format=json` stream these sets were classified from, so a
+    /// second classifier (D6's `guardrail_sources.py`, Rulings #9 agreement check) can judge the same build.
+    pub(crate) evidence: String,
 }
 
-/// Every first-party Rust source, classified by **compilation context**, never by its path (Bastion
-/// B-C1c-03; the contract of D6's `guardrail_sources.py`). A nested `cargo check --workspace
-/// --all-targets --message-format=json` (persistent discovery dir, inherited rustflags and wrappers
-/// cleared) reports every first-party artifact with its kind, its test profile and its dep-info.
-/// Refused, never guessed: unparseable dep-info; a missing or ambiguous dep-info file; a Rust input
-/// outside the repository; a source with a `tests` path component compiled into production; and
-/// any `crates/*/src` source the compiler did not compile at all (inactive source).
-pub(crate) fn sources() -> Sources {
+/// Every non-Rust file the production build reads, pinned by the SHA-256 of its exact bytes and sorted
+/// by path: reviewed data (`include_str!` of a schema or the starter policy). Production code may not
+/// `include!` anything (`tests/door_lints.rs`), so these can only ever be data, and a changed byte
+/// fails until the pin is updated in a reviewed diff (B-C1c-04, Lodestar's v4.2 ruling).
+pub(crate) const PRODUCTION_DATA: [(&str, &str); 3] = [
+    (
+        "examples/starter.warden.toml",
+        "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731",
+    ),
+    (
+        "schemas/policy.v0.schema.json",
+        "c519ee66ea998552723607a204926166963cfafa52231fb1848654d20ad59546",
+    ),
+    (
+        "schemas/verdict.v1.schema.json",
+        "6a10eed5e011c9c4b1534de9d30abfc166c48f54316b4b4e9fe399040438c5ed",
+    ),
+];
+/// The workspace's members, from `cargo metadata --no-deps`: their exact package IDs and their
+/// directories relative to the repository root.
+pub(crate) struct Members {
+    /// `workspace_members` package IDs.
+    pub(crate) ids: std::collections::BTreeSet<String>,
+    /// Each member's manifest directory (`crates/…`, or wherever it lives).
+    pub(crate) dirs: Vec<String>,
+}
+
+/// The workspace members, by exact ID (Touchstone C1c-O3-04: never by name substring).
+pub(crate) fn workspace_members() -> Members {
+    let out = Command::new(env!("CARGO"))
+        .args([
+            "metadata",
+            "--no-deps",
+            "--locked",
+            "--offline",
+            "--format-version=1",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let ids: std::collections::BTreeSet<String> = metadata["workspace_members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_owned())
+        .collect();
+    let dirs = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| ids.contains(p["id"].as_str().unwrap()))
+        .map(|p| {
+            let manifest = PathBuf::from(p["manifest_path"].as_str().unwrap());
+            relative(manifest.parent().unwrap())
+        })
+        .collect();
+    Members { ids, dirs }
+}
+
+/// The nested `cargo check --workspace --all-targets --message-format=json` stream: its own
+/// persistent discovery dir, inherited rustflags, wrappers and target dir cleared.
+fn discovery_stream() -> String {
     let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("source-discovery");
     let out = Command::new(env!("CARGO"))
         .args([
@@ -260,16 +336,74 @@ pub(crate) fn sources() -> Sources {
         "source discovery failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// The evidence names the anchors, every crates/*/src source was compiled (no inactive source), and
+/// the production data is exactly the reviewed ledger.
+fn check_coverage(
+    members: &Members,
+    production: &std::collections::BTreeSet<String>,
+    compiled: &std::collections::BTreeSet<String>,
+    data: &std::collections::BTreeSet<String>,
+) {
+    for anchor in [
+        "crates/forge-warden-cli/src/main.rs",
+        "crates/forge-warden-cli/src/doors.rs",
+        "crates/forge-warden-core/src/lib.rs",
+    ] {
+        assert!(
+            production.contains(anchor),
+            "compiler evidence lacks {anchor}"
+        );
+    }
+    // Every Rust file anywhere in every member's directory was compiled by some target, so no
+    // source, test, example or extra root of any member is invisible to the checks.
+    for dir in &members.dirs {
+        for path in files_under(dir, ".rs") {
+            if path.components().any(|c| c.as_os_str() == "target") {
+                continue;
+            }
+            let name = relative(&path);
+            assert!(
+                compiled.contains(&name),
+                "inactive Rust source (the compiler never compiled it): {name}"
+            );
+        }
+    }
+    assert_eq!(
+        data.iter().map(String::as_str).collect::<Vec<_>>(),
+        PRODUCTION_DATA.map(|(path, _)| path),
+        "the reviewed production data ledger is stale"
+    );
+}
+
+/// Every first-party Rust source, classified by **compilation context**, never by its path (Bastion
+/// B-C1c-03; the contract of D6's `guardrail_sources.py`). A nested `cargo check --workspace
+/// --all-targets --message-format=json` (persistent discovery dir, inherited rustflags and wrappers
+/// cleared) reports every first-party artifact with its kind, its test profile and its dep-info.
+/// Refused, never guessed: unparseable dep-info; a missing or ambiguous dep-info file; a Rust input
+/// outside the repository; a source with a `tests` path component compiled into production; and
+/// any `crates/*/src` source the compiler did not compile at all (inactive source).
+pub(crate) fn sources() -> Sources {
+    let members = workspace_members();
+    let evidence = discovery_stream();
     let mut production = std::collections::BTreeSet::new();
     let mut compiled = std::collections::BTreeSet::new();
-    for line in String::from_utf8(out.stdout).unwrap().lines() {
+    let mut data = std::collections::BTreeSet::new();
+    for line in evidence.lines() {
         let message: serde_json::Value = serde_json::from_str(line).unwrap();
-        if message["reason"] != "compiler-artifact"
-            || !message["package_id"]
-                .as_str()
-                .unwrap()
-                .contains("forge-warden")
-        {
+        if message["reason"] != "compiler-artifact" {
+            continue;
+        }
+        // First party is exactly cargo metadata's workspace members (Touchstone C1c-O3-04); a
+        // registry package is a dependency; any other package (an unlisted path crate) is refused.
+        let package = message["package_id"].as_str().unwrap();
+        if !members.ids.contains(package) {
+            assert!(
+                package.starts_with("registry+"),
+                "a non-member, non-registry package was compiled: {package}"
+            );
             continue;
         }
         let kinds: Vec<&str> = message["target"]["kind"]
@@ -278,6 +412,12 @@ pub(crate) fn sources() -> Sources {
             .iter()
             .map(|k| k.as_str().unwrap())
             .collect();
+        // A build script's OUT_DIR output can be include!d as code no check reads (B-C1c-04); as in
+        // D6, first-party build scripts are refused outright.
+        assert!(
+            !kinds.contains(&"custom-build"),
+            "first-party build scripts are unsupported (their OUT_DIR output is never inspected): {package}"
+        );
         // Rulings #9 (one rule for C1c and D6): production = any artifact of a shipping kind built
         // without test; test, example and bench targets never ship.
         let ships = kinds.iter().any(|kind| {
@@ -287,13 +427,19 @@ pub(crate) fn sources() -> Sources {
             )
         }) && message["profile"]["test"] == serde_json::Value::Bool(false);
         for input in dep_info_inputs(&artifact_dep_info(&message, &kinds)) {
+            let name = relative(&root().join(&input));
             if std::path::Path::new(&input)
                 .extension()
                 .is_none_or(|e| e != "rs")
             {
+                // A non-Rust input is admitted only as reviewed data (B-C1c-04): `include!` is not
+                // bound to `.rs`, so an unknown input could be code no check ever reads.
+                if ships {
+                    admit_data(&name);
+                    data.insert(name);
+                }
                 continue;
             }
-            let name = relative(&root().join(&input));
             if ships {
                 assert!(
                     !std::path::Path::new(&name)
@@ -306,32 +452,12 @@ pub(crate) fn sources() -> Sources {
             compiled.insert(name);
         }
     }
-    for anchor in [
-        "crates/forge-warden-cli/src/main.rs",
-        "crates/forge-warden-cli/src/doors.rs",
-        "crates/forge-warden-core/src/lib.rs",
-    ] {
-        assert!(
-            production.contains(anchor),
-            "compiler evidence lacks {anchor}"
-        );
-    }
-    for member in [
-        "crates/forge-warden-cli/src",
-        "crates/forge-warden-core/src",
-    ] {
-        for path in files_under(member, ".rs") {
-            let name = relative(&path);
-            assert!(
-                compiled.contains(&name),
-                "inactive Rust source (the compiler never compiled it): {name}"
-            );
-        }
-    }
+    check_coverage(&members, &production, &compiled, &data);
     let test_only = compiled.difference(&production).cloned().collect();
     Sources {
         production,
         test_only,
+        evidence,
     }
 }
 

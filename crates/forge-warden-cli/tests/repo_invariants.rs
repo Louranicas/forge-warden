@@ -21,22 +21,28 @@ fn is_production(path: &str) -> bool {
 }
 
 fn rust_sources() -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for dir in ["crates"] {
+    // Every Rust file under crates/, under every workspace member wherever it lives, and every source
+    // compiled into production (Touchstone C1c-O3-04, B-C1c-04): nothing first-party is out of view.
+    let mut names = std::collections::BTreeSet::new();
+    let mut dirs = vec!["crates".to_owned()];
+    dirs.extend(common::workspace_members().dirs);
+    for dir in &dirs {
         for path in files_under(dir, ".rs") {
-            let rel = path
-                .strip_prefix(root())
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace("/crates/../..", "");
-            // This file names the markers and attributes it searches for, so it cannot scan itself.
-            if rel.ends_with("tests/repo_invariants.rs") {
-                continue;
+            if !path.components().any(|c| c.as_os_str() == "target") {
+                names.insert(common::relative(&path));
             }
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
-            out.push((rel, text));
         }
     }
+    names.extend(common::production_sources());
+    let out: Vec<(String, String)> = names
+        .into_iter()
+        // This file names the markers and attributes it searches for, so it cannot scan itself.
+        .filter(|rel| !rel.ends_with("tests/repo_invariants.rs"))
+        .map(|rel| {
+            let text = std::fs::read_to_string(root().join(&rel)).unwrap_or_default();
+            (rel, text)
+        })
+        .collect();
     assert!(
         out.len() >= 10,
         "found only {} Rust files; is the walk broken?",
@@ -47,7 +53,11 @@ fn rust_sources() -> Vec<(String, String)> {
 
 #[test]
 fn every_crate_inherits_the_workspace_lints() {
-    for manifest in files_under("crates", "Cargo.toml") {
+    let mut manifests = files_under("crates", "Cargo.toml");
+    for dir in common::workspace_members().dirs {
+        manifests.push(root().join(dir).join("Cargo.toml"));
+    }
+    for manifest in manifests {
         let text = std::fs::read_to_string(&manifest).unwrap();
         assert!(
             text.contains("[lints]\nworkspace = true"),
