@@ -7,6 +7,7 @@ use super::model::{Check, Policy, Rule, ScorePer, Severity, Waiver};
 use super::paths::{PathSet, Scope, compile};
 use super::raw::{RawPolicy, RawRule, RawWaiver};
 use crate::date::Date;
+use crate::nonempty::NonEmpty;
 use crate::vocab::{is_known_signal, suggest_signal};
 use std::collections::BTreeSet;
 
@@ -65,8 +66,13 @@ pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
             waivers.push(waiver);
         }
     }
+    // An empty rule list always comes with an issue ("declares no [[rule]]", or the rule's own
+    // refusal), so the `None` arm returns those issues; the policy is refused either way.
+    let Some(rules) = NonEmpty::from_vec(rules) else {
+        return Err(PolicyError::Invalid(issues.into_vec()));
+    };
     issues
-        .finish(Policy { rules, waivers })
+        .finish(Policy::new(rules, waivers))
         .map_err(PolicyError::Invalid)
 }
 

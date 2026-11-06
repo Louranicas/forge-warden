@@ -8,6 +8,7 @@
     reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
 )]
 
+use forge_warden_core::path::RepoPath;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{Evidence, RankDoc, RankedFile};
 use forge_warden_core::verdict::{RuleOutcome, Seals};
@@ -17,22 +18,34 @@ use proptest::prelude::*;
 const SEAL: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
 
 fn file(path: &str, status: &str, score: u32, signals: &[&str]) -> RankedFile {
-    RankedFile {
-        path: path.to_owned(),
-        status: status.to_owned(),
+    file_with(path, status, score, signals, Vec::new(), false)
+}
+
+fn file_with(
+    path: &str,
+    status: &str,
+    score: u32,
+    signals: &[&str],
+    evidence: Vec<Evidence>,
+    evidence_truncated: bool,
+) -> RankedFile {
+    RankedFile::new(
+        RepoPath::parse(path).unwrap(),
+        status.to_owned(),
         score,
-        signals: signals.iter().map(|s| (*s).to_owned()).collect(),
-        evidence: Vec::new(),
-        evidence_truncated: false,
-    }
+        signals.iter().map(|s| (*s).to_owned()).collect(),
+        evidence,
+        evidence_truncated,
+    )
+    .unwrap()
+}
+
+fn evidence(signal: &str, side: &str, line: u64) -> Evidence {
+    Evidence::new(signal.to_owned(), SEAL.to_owned(), side.to_owned(), line).unwrap()
 }
 
 fn rank(files: Vec<RankedFile>) -> RankDoc {
-    RankDoc {
-        input_sha256: SEAL.to_owned(),
-        tool_version: "0.7.0".to_owned(),
-        files,
-    }
+    RankDoc::new(SEAL.to_owned(), "0.7.0".to_owned(), files).unwrap()
 }
 
 fn seals() -> Seals {
@@ -75,33 +88,27 @@ require = ["tests/**"]
 "#;
 
 #[test]
-fn an_empty_policy_holds_with_a_note_instead_of_passing() {
-    // R-19 / G-04: `parse_policy` refuses a policy with no rules, but a library caller can still
-    // build one. Judging nothing must hold, never pass (it used to: `.max().unwrap_or(Pass)`).
-    let empty = forge_warden_core::Policy {
-        rules: Vec::new(),
-        waivers: Vec::new(),
-    };
-    let clean = rank(vec![file("README.md", "modified", 1, &[])]);
-    let verdict = evaluate(&empty, &clean, seals(), today());
-    assert_eq!(verdict.verdict, Outcome::Hold);
-    let codes: Vec<&str> = verdict.notes.iter().map(|n| n.code).collect();
-    assert_eq!(codes, ["empty_policy"]);
-}
-
-#[test]
 fn the_text_summary_shows_outcome_seals_evidence_and_notes() {
-    // The core owns the human summary; these facts are pinned here, not only by CLI tests (the
-    // repo's mutation gate judges a core mutant by core tests alone).
-    let mut lib = file("src/lib.rs", "modified", 9, &["unsafe_added"]);
-    lib.evidence.push(Evidence {
-        signal: "unsafe_added".to_owned(),
-        address: SEAL.to_owned(),
-        side: "old".to_owned(),
-        line: 3,
-    });
+    // The core owns the human summary; these facts are pinned here, not only by CLI tests.
+    let lib = file_with(
+        "src/lib.rs",
+        "modified",
+        9,
+        &["unsafe_added"],
+        vec![evidence("unsafe_added", "old", 3)],
+        false,
+    );
     let odd = file("docs/x.md", "unknown", 0, &[]);
     let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib, odd]), seals(), today());
+    let citation = &verdict.rules[0].violations[0].evidence[0];
+    assert_eq!(
+        (
+            citation.address.as_str(),
+            citation.side.as_str(),
+            citation.line
+        ),
+        (SEAL, "old", 3)
+    );
     let text = forge_warden_core::render::render_text(&verdict);
     let short = SEAL.get(..12).unwrap();
     assert!(text.starts_with("forge-warden "), "{text}");
@@ -119,18 +126,14 @@ fn the_text_summary_shows_outcome_seals_evidence_and_notes() {
 
 #[test]
 fn forbid_signal_cites_evidence_and_respects_except() {
-    let mut lib = file(
+    let lib = file_with(
         "src/lib.rs",
         "modified",
         9,
         &["public_api_surface", "unsafe_added"],
+        vec![evidence("unsafe_added", "new", 3)],
+        false,
     );
-    lib.evidence.push(Evidence {
-        signal: "unsafe_added".to_owned(),
-        address: SEAL.to_owned(),
-        side: "new".to_owned(),
-        line: 3,
-    });
     let ffi = file("crates/ffi/src/lib.rs", "modified", 9, &["unsafe_added"]);
     let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib, ffi]), seals(), today());
 
@@ -566,8 +569,14 @@ fn status_unknown_holds() {
 
 #[test]
 fn truncated_evidence_is_flagged_on_the_violation() {
-    let mut lib = file("src/lib.rs", "modified", 9, &["unsafe_added"]);
-    lib.evidence_truncated = true;
+    let lib = file_with(
+        "src/lib.rs",
+        "modified",
+        9,
+        &["unsafe_added"],
+        Vec::new(),
+        true,
+    );
     let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib]), seals(), today());
     assert!(verdict.rules[0].violations[0].evidence_truncated);
     let json = verdict.to_json();

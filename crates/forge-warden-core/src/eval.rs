@@ -12,6 +12,7 @@
 
 use crate::date::Date;
 use crate::exit::Outcome;
+use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
 use crate::rank::{RankDoc, RankedFile};
 use crate::verdict::{
@@ -25,29 +26,26 @@ use std::collections::BTreeSet;
 #[must_use]
 pub fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict {
     let mut used_waivers = BTreeSet::new();
-    let rules: Vec<RuleResult> = policy
-        .rules
-        .iter()
-        .map(|rule| judge_rule(rule, rank, &policy.waivers, today, &mut used_waivers))
-        .collect();
+    let judged: NonEmpty<RuleResult> = policy
+        .rules()
+        .map(|rule| judge_rule(rule, rank, policy.waivers(), today, &mut used_waivers));
 
-    let (expired, unused) = classify_waivers(&policy.waivers, today, &used_waivers);
-    let notes = notes_for(policy, rank);
+    let (expired, unused) = classify_waivers(policy.waivers(), today, &used_waivers);
+    let notes = notes_for(rank);
 
-    let verdict = rules
+    // A policy always has a rule, so the strictest outcome starts from the first one: there is
+    // no empty case and no default.
+    let verdict = judged
         .iter()
         .map(|r| r.outcome.overall())
         .chain(notes.iter().map(|_| Outcome::Hold))
         .chain(expired.iter().map(|_| Outcome::Fail))
-        .max();
-    // Every policy that parses has a rule, so `max` has a value; a library caller that builds an
-    // empty `Policy` gets the `empty_policy` note above, so this default is never what decides.
-    // fails closed: with nothing to judge the verdict holds, never passes (ADR 0003)
-    let verdict = verdict.unwrap_or(Outcome::Hold);
+        .fold(judged.first().outcome.overall(), Outcome::max);
+    let rules = judged.into_vec();
     let entry = verdict.exit_entry();
     let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
     let summary = Summary {
-        files: rank.files.len(),
+        files: rank.files().len(),
         rules: rules.len(),
         passed: count(RuleOutcome::Pass),
         waived: count(RuleOutcome::Waived),
@@ -84,7 +82,7 @@ fn judge_rule(
     today: Date,
     used: &mut BTreeSet<usize>,
 ) -> RuleResult {
-    let mut violations = find_violations(&rule.check, &rank.files);
+    let mut violations = find_violations(&rule.check, rank.files());
     for violation in &mut violations {
         let Some(path) = violation.path.as_deref() else {
             continue;
@@ -135,10 +133,10 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
         Check::RequireCompanion { when, require } => missing_companions(when, require, files),
         Check::ProtectPaths { scope } => files
             .iter()
-            .filter(|f| scope.contains(&f.path))
+            .filter(|f| scope.contains(f.path().as_str()))
             .map(|f| {
-                let message = format!("protected path changed ({})", f.status);
-                violation(Some(&f.path), message)
+                let message = format!("protected path changed ({})", f.status());
+                violation(Some(f.path().as_str()), message)
             })
             .collect(),
         Check::MaxScore {
@@ -147,10 +145,13 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
             scope,
         } => files
             .iter()
-            .filter(|f| scope.contains(&f.path) && f.score > *limit)
+            .filter(|f| scope.contains(f.path().as_str()) && f.score() > *limit)
             .map(|f| {
-                let message = format!("risk score {} exceeds the per-file limit {limit}", f.score);
-                violation(Some(&f.path), message)
+                let message = format!(
+                    "risk score {} exceeds the per-file limit {limit}",
+                    f.score()
+                );
+                violation(Some(f.path().as_str()), message)
             })
             .collect(),
         Check::MaxScore {
@@ -160,14 +161,17 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
         } => {
             let total: u64 = files
                 .iter()
-                .filter(|f| scope.contains(&f.path))
-                .fold(0_u64, |sum, f| sum.saturating_add(u64::from(f.score)));
+                .filter(|f| scope.contains(f.path().as_str()))
+                .fold(0_u64, |sum, f| sum.saturating_add(u64::from(f.score())));
             over_budget(total, *limit, |total| {
                 format!("total risk score {total} exceeds the change limit {limit}")
             })
         }
         Check::MaxFiles { limit, scope } => {
-            let count = files.iter().filter(|f| scope.contains(&f.path)).count();
+            let count = files
+                .iter()
+                .filter(|f| scope.contains(f.path().as_str()))
+                .count();
             // fails closed: an uncountable file count is treated as over every budget
             let count = u64::try_from(count).unwrap_or(u64::MAX);
             over_budget(count, *limit, |count| {
@@ -188,16 +192,16 @@ fn over_budget(value: u64, limit: u32, message: impl FnOnce(u64) -> String) -> V
 
 fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) -> Vec<Violation> {
     let mut out = Vec::new();
-    for file in files.iter().filter(|f| scope.contains(&f.path)) {
-        for signal in signals.iter().filter(|s| file.signals.contains(s)) {
+    for file in files.iter().filter(|f| scope.contains(f.path().as_str())) {
+        for signal in signals.iter().filter(|s| file.signals().contains(s)) {
             let mut evidence: Vec<Citation> = file
-                .evidence
+                .evidence()
                 .iter()
-                .filter(|e| &e.signal == signal)
+                .filter(|e| e.signal() == signal)
                 .map(|e| Citation {
-                    address: e.address.clone(),
-                    side: e.side.clone(),
-                    line: e.line,
+                    address: e.address().to_owned(),
+                    side: e.side().to_owned(),
+                    line: e.line(),
                 })
                 .collect();
             evidence.sort();
@@ -205,8 +209,8 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
             out.push(Violation {
                 signal: Some(signal.clone()),
                 evidence,
-                evidence_truncated: file.evidence_truncated,
-                ..violation(Some(&file.path), message)
+                evidence_truncated: file.evidence_truncated(),
+                ..violation(Some(file.path().as_str()), message)
             });
         }
     }
@@ -217,7 +221,7 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
 /// `binary_changed` and marks the deletion only with the `deleted_file` signal, so the status
 /// alone is not enough.
 fn is_deleted(file: &RankedFile) -> bool {
-    file.status == "deleted" || file.signals.iter().any(|s| s == "deleted_file")
+    file.status() == "deleted" || file.signals().iter().any(|s| s == "deleted_file")
 }
 
 /// Whether a file can stand as a companion: it must exist after the change, and its change must be
@@ -225,7 +229,7 @@ fn is_deleted(file: &RankedFile) -> bool {
 /// label, so it does not count.
 fn is_live_companion(file: &RankedFile) -> bool {
     !is_deleted(file)
-        && (file.status != "binary_changed" || file.signals.iter().any(|s| s == "new_file"))
+        && (file.status() != "binary_changed" || file.signals().iter().any(|s| s == "new_file"))
 }
 
 fn missing_companions(when: &Scope, require: &PathSet, files: &[RankedFile]) -> Vec<Violation> {
@@ -233,17 +237,17 @@ fn missing_companions(when: &Scope, require: &PathSet, files: &[RankedFile]) -> 
     // Nor is it a trigger: removing code asks for no new tests.
     let has_companion = files
         .iter()
-        .any(|f| is_live_companion(f) && require.matches(&f.path));
+        .any(|f| is_live_companion(f) && require.matches(f.path().as_str()));
     if has_companion {
         return Vec::new();
     }
     let wanted = require.patterns().join(", ");
     files
         .iter()
-        .filter(|f| !is_deleted(f) && when.contains(&f.path))
+        .filter(|f| !is_deleted(f) && when.contains(f.path().as_str()))
         .map(|f| {
             let message = format!("changed without a companion change matching [{wanted}]");
-            violation(Some(&f.path), message)
+            violation(Some(f.path().as_str()), message)
         })
         .collect()
 }
@@ -274,50 +278,58 @@ fn classify_waivers(
     (expired, unused)
 }
 
-fn notes_for(policy: &Policy, rank: &RankDoc) -> Vec<Note> {
+fn notes_for(rank: &RankDoc) -> Vec<Note> {
     let mut notes = Vec::new();
-    if policy.rules.is_empty() {
-        notes.push(Note {
-            code: "empty_policy",
-            path: None,
-            detail: "the policy has no rules; nothing was judged, so nothing passes by default"
-                .to_owned(),
-        });
-    }
-    if rank.files.is_empty() {
+    if rank.files().is_empty() {
         notes.push(Note {
             code: "empty_ranking",
             path: None,
             detail: "the ranking lists no files; there is nothing to judge, so nothing passes by default".to_owned(),
         });
     }
-    for file in &rank.files {
-        for signal in file.signals.iter().filter(|s| !is_known_signal(s)) {
+    // A real producer lists one path twice for a type change (file -> symlink: an addition and a
+    // deletion; MATRIX.md). Which entry a rule sees would then be an accident of order, so hold.
+    let mut seen = BTreeSet::new();
+    let mut duplicated = BTreeSet::new();
+    for file in rank.files() {
+        if !seen.insert(file.path().as_str()) {
+            duplicated.insert(file.path().as_str());
+        }
+    }
+    for path in duplicated {
+        notes.push(Note {
+            code: "duplicate_paths",
+            path: Some(path.to_owned()),
+            detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
+        });
+    }
+    for file in rank.files() {
+        for signal in file.signals().iter().filter(|s| !is_known_signal(s)) {
             notes.push(Note {
                 code: "unknown_signal",
-                path: Some(file.path.clone()),
+                path: Some(file.path().to_string()),
                 detail: format!(
                     "signal `{signal}` is not in this forge-warden's vocabulary; upgrade forge-warden or review it by hand"
                 ),
             });
         }
-        if file.status == "renamed" || file.status == "copied" {
+        if file.status() == "renamed" || file.status() == "copied" {
             notes.push(Note {
                 code: "source_path_unknown",
-                path: Some(file.path.clone()),
+                path: Some(file.path().to_string()),
                 detail: format!(
                     "{} from a path rank.v0 does not report, so rules cannot see where it came from; \
                      rank with `git diff --no-renames` to judge both paths",
-                    file.status
+                    file.status()
                 ),
             });
-        } else if !is_known_status(&file.status) {
+        } else if !is_known_status(file.status()) {
             notes.push(Note {
                 code: "unknown_status",
-                path: Some(file.path.clone()),
+                path: Some(file.path().to_string()),
                 detail: format!(
                     "status `{}` is not in this forge-warden's vocabulary",
-                    file.status
+                    file.status()
                 ),
             });
         }

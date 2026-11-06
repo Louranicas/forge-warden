@@ -202,12 +202,12 @@ fn check(
         Some(path) => {
             let patch_bytes = doors::read_file(&path).map_err(Failure::from_door)?;
             let actual = sha256_hex(&patch_bytes);
-            if actual != rank.input_sha256 {
+            if actual != rank.input_sha256() {
                 return Err(Failure::new(
                     Exit::InvalidInput,
                     format!(
                         "the ranking describes patch {} but {} hashes to {actual}; re-rank the patch you mean to judge",
-                        rank.input_sha256,
+                        rank.input_sha256(),
                         path.display()
                     ),
                 ));
@@ -220,9 +220,9 @@ fn check(
     let seals = Seals {
         policy_sha256: sha256_hex(&policy_bytes),
         rank_sha256: sha256_hex(&rank_bytes),
-        patch_sha256: rank.input_sha256.clone(),
+        patch_sha256: rank.input_sha256().to_owned(),
         patch_verified,
-        ranked_by: rank.tool_version.clone(),
+        ranked_by: rank.tool_version().to_owned(),
     };
     let verdict = evaluate(&policy, &rank, seals, today);
     let text = if json {
@@ -239,8 +239,8 @@ fn lint(policy_path: &Path) -> Result<Exit, Failure> {
     let policy = parse_policy(&bytes).map_err(|e| policy_failure(&e))?;
     emit(&format!(
         "ok: {} rule(s), {} waiver(s), policy sha256 {}\n",
-        policy.rules.len(),
-        policy.waivers.len(),
+        policy.rules().len(),
+        policy.waivers().len(),
         sha256_hex(&bytes)
     ))
 }

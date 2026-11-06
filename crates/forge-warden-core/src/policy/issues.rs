@@ -49,6 +49,11 @@ impl Issues {
         }
     }
 
+    /// Every issue recorded so far.
+    pub(super) fn into_vec(self) -> Vec<PolicyIssue> {
+        self.0
+    }
+
     /// `value` when no issue was recorded; every issue otherwise.
     pub(super) fn finish<T>(self, value: T) -> Result<T, Vec<PolicyIssue>> {
         if self.0.is_empty() {

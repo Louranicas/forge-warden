@@ -331,7 +331,6 @@ fn waiver_expiry_is_inclusive_and_expired_unused_waivers_fail() {
 }
 
 #[test]
-#[ignore = "R-06 open: WP-B2 canonical RepoPath admission"]
 fn noncanonical_paths_are_refused_not_silently_out_of_scope() {
     for path in [
         "./src/lib.rs",
@@ -349,7 +348,6 @@ fn noncanonical_paths_are_refused_not_silently_out_of_scope() {
 }
 
 #[test]
-#[ignore = "Residual duplicate rank paths open: WP-B2"]
 fn duplicate_ranked_paths_hold() {
     let f = file("README.md", "modified", &[]);
     let verdict = judge(SECRET, &document(vec![f.clone(), f]), "2026-11-06");
@@ -364,7 +362,6 @@ fn duplicate_ranked_paths_hold() {
 }
 
 #[test]
-#[ignore = "Residual producer identity open: WP-B2"]
 fn whitespace_producer_version_is_refused() {
     let mut rank = document(vec![file("README.md", "modified", &[])]);
     rank["tool"]["version"] = json!(" \t\n");
