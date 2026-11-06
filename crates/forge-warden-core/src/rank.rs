@@ -5,6 +5,7 @@
 //! relies on is checked: the schema name, the seal, the tool, and each file's path, status, score,
 //! signals and evidence. A document that fails any check is refused as a whole.
 
+use crate::path::RepoPath;
 use crate::seal::is_sha256_hex;
 use serde::Deserialize;
 
@@ -25,8 +26,8 @@ pub struct RankDoc {
 /// One ranked file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RankedFile {
-    /// The path as deep-diff-forge reports it (patch-author controlled: data, never instruction).
-    pub path: String,
+    /// The path as deep-diff-forge reports it, canonical (patch-author controlled: data, never instruction).
+    pub path: RepoPath,
     /// The file status, such as `modified`.
     pub status: String,
     /// The additive risk score.
@@ -130,8 +131,16 @@ pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError> {
             raw.tool.name
         )));
     }
-    if raw.tool.version.is_empty() {
-        return Err(RankError::Invalid("tool.version is empty".to_owned()));
+    if raw.tool.version.trim().is_empty() {
+        return Err(RankError::Invalid(
+            "tool.version is empty or whitespace".to_owned(),
+        ));
+    }
+    if raw.tool.version.trim() != raw.tool.version {
+        return Err(RankError::Invalid(format!(
+            "tool.version {:?} has surrounding whitespace",
+            raw.tool.version
+        )));
     }
     let files = raw
         .ranked
@@ -148,12 +157,7 @@ pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError> {
 
 fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
     let at = |what: &str| RankError::Invalid(format!("ranked[{index}]: {what}"));
-    if raw.path.is_empty() {
-        return Err(at("path is empty"));
-    }
-    if raw.path.contains('\0') {
-        return Err(at("path contains NUL"));
-    }
+    let path = RepoPath::parse(&raw.path).map_err(|e| at(&format!("path {e}")))?;
     if raw.status.is_empty() {
         return Err(at("status is empty"));
     }
@@ -189,7 +193,7 @@ fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
         });
     }
     Ok(RankedFile {
-        path: raw.path,
+        path,
         status: raw.status,
         score: raw.score,
         signals: raw.signals,
@@ -230,6 +234,14 @@ mod tests {
             (
                 doc("").replace("\"name\":\"deep-diff-forge\"", "\"name\":\"other\""),
                 "tool.name",
+            ),
+            (
+                doc("").replace("\"version\":\"0.7.0\"", "\"version\":\" 0.7.0\""),
+                "surrounding whitespace",
+            ),
+            (
+                doc("").replace("\"version\":\"0.7.0\"", "\"version\":\" \""),
+                "empty or whitespace",
             ),
             (
                 doc(r#"{"path":"","status":"added","score":1,"signals":[]}"#),

@@ -135,10 +135,10 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
         Check::RequireCompanion { when, require } => missing_companions(when, require, files),
         Check::ProtectPaths { scope } => files
             .iter()
-            .filter(|f| scope.contains(&f.path))
+            .filter(|f| scope.contains(f.path.as_str()))
             .map(|f| {
                 let message = format!("protected path changed ({})", f.status);
-                violation(Some(&f.path), message)
+                violation(Some(f.path.as_str()), message)
             })
             .collect(),
         Check::MaxScore {
@@ -147,10 +147,10 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
             scope,
         } => files
             .iter()
-            .filter(|f| scope.contains(&f.path) && f.score > *limit)
+            .filter(|f| scope.contains(f.path.as_str()) && f.score > *limit)
             .map(|f| {
                 let message = format!("risk score {} exceeds the per-file limit {limit}", f.score);
-                violation(Some(&f.path), message)
+                violation(Some(f.path.as_str()), message)
             })
             .collect(),
         Check::MaxScore {
@@ -160,14 +160,17 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
         } => {
             let total: u64 = files
                 .iter()
-                .filter(|f| scope.contains(&f.path))
+                .filter(|f| scope.contains(f.path.as_str()))
                 .fold(0_u64, |sum, f| sum.saturating_add(u64::from(f.score)));
             over_budget(total, *limit, |total| {
                 format!("total risk score {total} exceeds the change limit {limit}")
             })
         }
         Check::MaxFiles { limit, scope } => {
-            let count = files.iter().filter(|f| scope.contains(&f.path)).count();
+            let count = files
+                .iter()
+                .filter(|f| scope.contains(f.path.as_str()))
+                .count();
             // fails closed: an uncountable file count is treated as over every budget
             let count = u64::try_from(count).unwrap_or(u64::MAX);
             over_budget(count, *limit, |count| {
@@ -188,7 +191,7 @@ fn over_budget(value: u64, limit: u32, message: impl FnOnce(u64) -> String) -> V
 
 fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) -> Vec<Violation> {
     let mut out = Vec::new();
-    for file in files.iter().filter(|f| scope.contains(&f.path)) {
+    for file in files.iter().filter(|f| scope.contains(f.path.as_str())) {
         for signal in signals.iter().filter(|s| file.signals.contains(s)) {
             let mut evidence: Vec<Citation> = file
                 .evidence
@@ -206,7 +209,7 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
                 signal: Some(signal.clone()),
                 evidence,
                 evidence_truncated: file.evidence_truncated,
-                ..violation(Some(&file.path), message)
+                ..violation(Some(file.path.as_str()), message)
             });
         }
     }
@@ -233,17 +236,17 @@ fn missing_companions(when: &Scope, require: &PathSet, files: &[RankedFile]) -> 
     // Nor is it a trigger: removing code asks for no new tests.
     let has_companion = files
         .iter()
-        .any(|f| is_live_companion(f) && require.matches(&f.path));
+        .any(|f| is_live_companion(f) && require.matches(f.path.as_str()));
     if has_companion {
         return Vec::new();
     }
     let wanted = require.patterns().join(", ");
     files
         .iter()
-        .filter(|f| !is_deleted(f) && when.contains(&f.path))
+        .filter(|f| !is_deleted(f) && when.contains(f.path.as_str()))
         .map(|f| {
             let message = format!("changed without a companion change matching [{wanted}]");
-            violation(Some(&f.path), message)
+            violation(Some(f.path.as_str()), message)
         })
         .collect()
 }
@@ -291,11 +294,27 @@ fn notes_for(policy: &Policy, rank: &RankDoc) -> Vec<Note> {
             detail: "the ranking lists no files; there is nothing to judge, so nothing passes by default".to_owned(),
         });
     }
+    // A real producer lists one path twice for a type change (file -> symlink: an addition and a
+    // deletion; MATRIX.md). Which entry a rule sees would then be an accident of order, so hold.
+    let mut seen = BTreeSet::new();
+    let mut duplicated = BTreeSet::new();
+    for file in &rank.files {
+        if !seen.insert(file.path.as_str()) {
+            duplicated.insert(file.path.as_str());
+        }
+    }
+    for path in duplicated {
+        notes.push(Note {
+            code: "duplicate_paths",
+            path: Some(path.to_owned()),
+            detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
+        });
+    }
     for file in &rank.files {
         for signal in file.signals.iter().filter(|s| !is_known_signal(s)) {
             notes.push(Note {
                 code: "unknown_signal",
-                path: Some(file.path.clone()),
+                path: Some(file.path.to_string()),
                 detail: format!(
                     "signal `{signal}` is not in this forge-warden's vocabulary; upgrade forge-warden or review it by hand"
                 ),
@@ -304,7 +323,7 @@ fn notes_for(policy: &Policy, rank: &RankDoc) -> Vec<Note> {
         if file.status == "renamed" || file.status == "copied" {
             notes.push(Note {
                 code: "source_path_unknown",
-                path: Some(file.path.clone()),
+                path: Some(file.path.to_string()),
                 detail: format!(
                     "{} from a path rank.v0 does not report, so rules cannot see where it came from; \
                      rank with `git diff --no-renames` to judge both paths",
@@ -314,7 +333,7 @@ fn notes_for(policy: &Policy, rank: &RankDoc) -> Vec<Note> {
         } else if !is_known_status(&file.status) {
             notes.push(Note {
                 code: "unknown_status",
-                path: Some(file.path.clone()),
+                path: Some(file.path.to_string()),
                 detail: format!(
                     "status `{}` is not in this forge-warden's vocabulary",
                     file.status

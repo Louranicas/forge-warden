@@ -25,6 +25,7 @@
 pub mod date;
 pub mod eval;
 pub mod exit;
+pub mod path;
 pub mod policy;
 pub mod rank;
 pub mod render;

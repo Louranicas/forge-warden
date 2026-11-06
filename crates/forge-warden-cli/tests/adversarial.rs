@@ -129,7 +129,6 @@ fn omitting_the_patch_requires_review_or_refusal() {
 }
 
 #[test]
-#[ignore = "R-06 open: WP-B2 canonical RepoPath admission"]
 fn dot_prefixed_paths_are_refused_at_the_cli_boundary() {
     let out = check(PROTECT, &rank("./src/lib.rs", "modified", &[]), Some(PATCH));
     assert_eq!(out.code, 4, "{}", out.stdout);

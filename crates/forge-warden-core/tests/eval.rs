@@ -8,6 +8,7 @@
     reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
 )]
 
+use forge_warden_core::path::RepoPath;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{Evidence, RankDoc, RankedFile};
 use forge_warden_core::verdict::{RuleOutcome, Seals};
@@ -18,7 +19,7 @@ const SEAL: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b
 
 fn file(path: &str, status: &str, score: u32, signals: &[&str]) -> RankedFile {
     RankedFile {
-        path: path.to_owned(),
+        path: RepoPath::parse(path).unwrap(),
         status: status.to_owned(),
         score,
         signals: signals.iter().map(|s| (*s).to_owned()).collect(),
