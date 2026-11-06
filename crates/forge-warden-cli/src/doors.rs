@@ -825,31 +825,49 @@ pub(crate) mod child {
     /// Git's stderr is diagnostic only.
     pub(super) const GIT_STDERR_CAP: usize = 64 * 1024;
 
+    /// The group kill's own wall-clock limit: it sends one signal and exits at once.
+    const KILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
     /// Kill every process in `group` with SIGKILL (`<kill> -KILL -- -<group>`); no `unsafe` and no
     /// new dependency. Called while the group's leader is unreaped, so the group exists: a kill
-    /// that cannot start or exits nonzero is an error the caller reports (Q2-04).
-    #[expect(clippy::disallowed_methods, reason = "door: kill_group")]
+    /// that cannot start, exits nonzero, or does not finish within [`KILL_TIMEOUT`] (it is a child
+    /// too, Bastion E3c-O4-01) is an error the caller reports (Q2-04).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: kill_group (spawn, poll sleep)"
+    )]
     fn kill_group(kill: &Path, group: u32) -> Result<(), String> {
-        let status = std::process::Command::new(kill)
+        let failed = |why: String| {
+            format!(
+                "killing the child's process group: {} {why}",
+                kill.display()
+            )
+        };
+        let mut killer = std::process::Command::new(kill)
             .args(["-KILL", "--", &format!("-{group}")])
             .env_clear()
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| {
-                format!(
-                    "killing the child's process group: {} could not be started: {e}",
-                    kill.display()
-                )
-            })?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "killing the child's process group: {} {status}",
-                kill.display()
-            ))
+            .spawn()
+            .map_err(|e| failed(format!("could not be started: {e}")))?;
+        let started = std::time::Instant::now();
+        loop {
+            match killer.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(status)) => return Err(failed(status.to_string())),
+                Ok(None) if started.elapsed() < KILL_TIMEOUT => std::thread::sleep(POLL),
+                Ok(None) => {
+                    let _killed = killer.kill();
+                    let _reaped = killer.wait();
+                    return Err(failed(format!("did not finish within {KILL_TIMEOUT:?}")));
+                }
+                Err(e) => {
+                    let _killed = killer.kill();
+                    let _reaped = killer.wait();
+                    return Err(failed(format!("could not be waited on: {e}")));
+                }
+            }
         }
     }
 }
@@ -1016,6 +1034,34 @@ mod child_tests {
             "the descendant never left the group, so this did not test the escaped case"
         );
         assert_eq!(got, Err(ChildFailure::Timeout));
+        let _cleaned = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_group_kill_that_hangs_is_bounded_and_reported() {
+        // Bastion E3c-O4-01 / Q2-04 (3): the kill is a third child; it has its own deadline. A
+        // stand-in that never exits must not hold the call, and is reported, not ignored.
+        use super::child::run_child_killing_with;
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("hung-kill");
+        let source = dir.join("source");
+        std::fs::write(&source, "#!/bin/sh\nexec /usr/bin/sleep 30\n").unwrap();
+        let kill = dir.join("kill");
+        copy_out_of_process(source.to_str().unwrap(), &kill);
+        std::fs::set_permissions(&kill, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let args = sh("exit 0");
+        let quick = spec(Program::Absolute(Path::new("/bin/sh")), &args, b"");
+        let started = Instant::now();
+        let got = run_child_killing_with(&quick, &kill);
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_secs(5),
+            "the hung kill held the call for {took:?}"
+        );
+        match got {
+            Err(ChildFailure::Io(why)) => assert!(why.contains("did not finish"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _cleaned = std::fs::remove_dir_all(&dir);
     }
 
