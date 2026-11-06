@@ -173,8 +173,10 @@ the ranking reports, never remove them. Pass `git diff --binary --no-renames` ou
 
   Renames produce `source_path_unknown`, so rank with `git diff --no-renames`.
 
-The same inputs always give byte-identical output: the policy, patch, ranking (or admitted
-ranker), Git, date, and any `--base`/`--head` claims. Results go to
+Evaluation and rendering are deterministic. Identical policy, patch, ranking, Git facts and
+metadata, date, and `--base`/`--head` claims always give byte-identical output. Repeating a
+command reproduces that output only if the ranker (in authority mode) and Git also produce
+identical output. An admitted ranker's digest pins its identity, not its correctness. Results go to
 **stdout**, diagnostics to **stderr**, and on error stdout is empty. Paths in the human output
 are printed with every character outside printable ASCII escaped, so a hostile file name cannot
 inject terminal escapes or reorder text with bidi controls.

@@ -23,8 +23,9 @@ environment, a timeout and capped output:
 - Git, which reads the patch's facts inside a private 0700 temporary directory that it removes
   afterwards (ADR 0005, ADR 0010).
 
-The third, `/usr/bin/kill`, runs only to clean up a timed-out child's process group. It has a
-cleared environment but runs outside that timeout wrapper, and a failed kill is not reported.
+The third, `/usr/bin/kill`, cleans up the child's process group after every run, whether it
+finished, was refused, or timed out, and also when the child's pipes could not be set up. It has
+a cleared environment but runs outside that timeout wrapper, and a failed kill is not reported.
 
 It writes no other files.
 
