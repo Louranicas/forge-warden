@@ -919,6 +919,13 @@ mod child_tests {
     }
 
     #[test]
+    fn the_ranker_runs_as_deep_diff_forge_with_its_stderr_capped_at_64_kib() {
+        use super::child::{RANKER_ARGS, RANKER_STDERR_CAP};
+        assert_eq!(RANKER_ARGS, ["--stdin-patch", "--rank", "--json"]);
+        assert_eq!(RANKER_STDERR_CAP, 65_536);
+    }
+
+    #[test]
     fn the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling() {
         use super::child::admit_base;
         use std::os::unix::ffi::OsStrExt as _;
@@ -986,7 +993,9 @@ mod child_tests {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write as _;
-                child.stdin.take().unwrap().write_all(patch)?;
+                // Git may refuse the config and exit before reading stdin (EPIPE): only its
+                // exit status matters here.
+                let _written = child.stdin.take().unwrap().write_all(patch);
                 child.wait()
             })
             .unwrap();
@@ -1155,7 +1164,13 @@ mod child_tests {
         let pinned = pin_executable(&script).unwrap();
         // The interpreter starts but cannot reopen the closed descriptor: the script never runs.
         let out = run_child(&spec(Program::Pinned(&pinned), &[], b""));
-        assert!(matches!(out, Err(ChildFailure::Exit(_))), "{out:?}");
+        // The interpreter exits nonzero; if another test thread's fork still holds the script's
+        // write descriptor, exec fails with ETXTBSY instead. Either way the script never ran.
+        assert!(
+            matches!(&out, Err(ChildFailure::Exit(_)))
+                || matches!(&out, Err(ChildFailure::Spawn(why)) if why.contains("Text file busy")),
+            "{out:?}"
+        );
     }
 }
 
