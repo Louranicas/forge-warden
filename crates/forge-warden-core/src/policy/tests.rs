@@ -23,8 +23,8 @@ signals = ["secret_like"]"#;
 #[test]
 fn a_good_rule_loads() {
     let policy = parse_policy(rule(GOOD).as_bytes()).unwrap();
-    assert_eq!(policy.rules.len(), 1);
-    assert_eq!(policy.rules[0].check.kind(), Kind::ForbidSignal);
+    assert_eq!(policy.rules().len(), 1);
+    assert_eq!(policy.rules().first().check.kind(), Kind::ForbidSignal);
 }
 
 #[test]
@@ -94,7 +94,7 @@ severity = "hold"
 paths = ["src/*.rs"]"#,
     );
     let policy = parse_policy(text.as_bytes()).unwrap();
-    let Check::ProtectPaths { scope } = &policy.rules[0].check else {
+    let Check::ProtectPaths { scope } = &policy.rules().first().check else {
         panic!()
     };
     assert!(scope.contains("src/lib.rs"));

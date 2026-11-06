@@ -19,8 +19,8 @@ fn every_real_ranking_parses_with_known_vocabulary() {
     for path in &files {
         let bytes = std::fs::read(path).unwrap();
         let rank = parse_rank(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        for file in &rank.files {
-            for signal in &file.signals {
+        for file in rank.files() {
+            for signal in file.signals() {
                 assert!(
                     is_known_signal(signal),
                     "{}: unknown signal {signal}",

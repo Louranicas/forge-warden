@@ -4,14 +4,32 @@ use super::kind::Kind;
 use super::paths::{PathSet, Scope};
 use crate::date::Date;
 use crate::exit::Outcome;
+use crate::nonempty::NonEmpty;
 
 /// A validated policy.
 #[derive(Debug, Clone)]
 pub struct Policy {
-    /// Rules, in the order the file declares them (and the verdict reports them).
-    pub rules: Vec<Rule>,
+    rules: NonEmpty<Rule>,
+    waivers: Vec<Waiver>,
+}
+
+impl Policy {
+    /// Only `parse_policy` builds a policy, so every one in existence was validated and has a rule.
+    pub(super) const fn new(rules: NonEmpty<Rule>, waivers: Vec<Waiver>) -> Self {
+        Self { rules, waivers }
+    }
+
+    /// Rules, in the order the file declares them (and the verdict reports them). Never empty.
+    #[must_use]
+    pub const fn rules(&self) -> &NonEmpty<Rule> {
+        &self.rules
+    }
+
     /// Waivers, in file order.
-    pub waivers: Vec<Waiver>,
+    #[must_use]
+    pub fn waivers(&self) -> &[Waiver] {
+        &self.waivers
+    }
 }
 
 /// One rule.
