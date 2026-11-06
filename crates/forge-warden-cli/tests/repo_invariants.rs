@@ -184,9 +184,45 @@ fn the_core_imports_no_effect_module() {
     }
 }
 
-#[test]
-fn the_core_depends_only_on_its_allow_list() {
-    // G-21: a new dependency in the core is a reviewed decision, not a line in Cargo.toml.
+/// Every dependency a manifest declares, as `(table, crate)`, in every form Cargo accepts: the
+/// `[dependencies]` table and its `[dependencies.<name>]` sub-tables (one TOML table either way),
+/// dev and build dependencies (and their `_` spellings), `[target.<cfg>.*]` tables, and renames
+/// (`alias = { package = "<crate>" }` is the crate `<crate>`).
+fn declared_dependencies(manifest: &str) -> Result<Vec<(String, String)>, String> {
+    const KINDS: [&str; 5] = [
+        "dependencies",
+        "dev-dependencies",
+        "dev_dependencies",
+        "build-dependencies",
+        "build_dependencies",
+    ];
+    fn collect(out: &mut Vec<(String, String)>, table: &str, deps: &toml::Value) {
+        for (key, spec) in deps.as_table().into_iter().flatten() {
+            let package = spec.get("package").and_then(toml::Value::as_str);
+            out.push((table.to_owned(), package.unwrap_or(key).to_owned()));
+        }
+    }
+    let doc: toml::Table = toml::from_str(manifest).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for kind in KINDS {
+        if let Some(deps) = doc.get(kind) {
+            collect(&mut out, kind, deps);
+        }
+    }
+    let targets = doc.get("target").and_then(toml::Value::as_table);
+    for (cfg, target) in targets.into_iter().flatten() {
+        for kind in KINDS {
+            if let Some(deps) = target.get(kind) {
+                collect(&mut out, &format!("target.{cfg}.{kind}"), deps);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The dependencies of a core manifest that are not on the core's allow-list. A manifest that is
+/// not valid TOML is itself a violation (fails closed).
+fn core_dependency_violations(manifest: &str) -> Vec<String> {
     const ALLOWED: [&str; 6] = [
         "globset",
         "serde",
@@ -196,33 +232,89 @@ fn the_core_depends_only_on_its_allow_list() {
         "toml",
     ];
     const ALLOWED_DEV: [&str; 1] = ["proptest"];
+    let declared = match declared_dependencies(manifest) {
+        Ok(declared) => declared,
+        Err(error) => return vec![format!("the manifest is not valid TOML: {error}")],
+    };
+    declared
+        .into_iter()
+        .filter(|(table, name)| match table.as_str() {
+            "dependencies" => !ALLOWED.contains(&name.as_str()),
+            "dev-dependencies" => !ALLOWED_DEV.contains(&name.as_str()),
+            _ => true,
+        })
+        .map(|(table, name)| format!("{table}: {name}"))
+        .collect()
+}
+
+#[test]
+fn the_core_depends_only_on_its_allow_list() {
+    // G-21: a new dependency in the core is a reviewed decision, not a line in Cargo.toml.
     let manifest = read("crates/forge-warden-core/Cargo.toml");
-    let mut section = String::new();
-    for line in manifest.lines().map(str::trim) {
-        if line.starts_with('[') {
-            section = line.to_owned();
-            assert!(
-                !section.contains("build-dependencies") && !section.starts_with("[target"),
-                "crates/forge-warden-core/Cargo.toml: `{section}` is not allowed in the core"
-            );
-            continue;
-        }
-        let Some(name) = line.split(['=', '.']).next().map(str::trim) else {
-            continue;
-        };
-        if name.is_empty() || name.starts_with('#') {
-            continue;
-        }
-        let allowed: &[&str] = match section.as_str() {
-            "[dependencies]" => &ALLOWED,
-            "[dev-dependencies]" => &ALLOWED_DEV,
-            _ => continue,
-        };
+    assert_eq!(
+        core_dependency_violations(&manifest),
+        Vec::<String>::new(),
+        "crates/forge-warden-core/Cargo.toml: not on the core's allow-list (adding one is a reviewed change to repo_invariants.rs)"
+    );
+}
+
+#[test]
+fn the_dependency_scan_reads_every_cargo_form() {
+    // Touchstone B6-VERDICT 7192058f: `[dependencies.memchr]` passed a scan that read only the
+    // `[dependencies]` header. Each form below adds memchr; each must be reported.
+    let base = "[package]\nname = \"x\"\n\n[dependencies]\nserde.workspace = true\n\n[dev-dependencies]\nproptest.workspace = true\n";
+    assert_eq!(core_dependency_violations(base), Vec::<String>::new());
+    let forms = [
+        (
+            "[dependencies.memchr] table",
+            "\n[dependencies.memchr]\nversion = \"2\"\n",
+        ),
+        (
+            "target cfg",
+            "\n[target.'cfg(unix)'.dependencies]\nmemchr = \"2\"\n",
+        ),
+        ("build", "\n[build-dependencies]\nmemchr = \"2\"\n"),
+        (
+            "underscore build",
+            "\n[build_dependencies]\nmemchr = \"2\"\n",
+        ),
+        (
+            "[dev-dependencies.memchr] table",
+            "\n[dev-dependencies.memchr]\nversion = \"2\"\n",
+        ),
+        (
+            "target triple dev",
+            "\n[target.x86_64-unknown-linux-gnu.dev-dependencies]\nmemchr = \"2\"\n",
+        ),
+    ];
+    for (form, extra) in forms {
+        let found = core_dependency_violations(&format!("{base}{extra}"));
         assert!(
-            allowed.contains(&name),
-            "crates/forge-warden-core/Cargo.toml {section}: `{name}` is not on the core's allow-list; adding one is a reviewed change to repo_invariants.rs"
+            found.iter().any(|v| v.ends_with(": memchr")),
+            "{form}: {found:?}"
         );
     }
+    let renamed = base.replace(
+        "serde.workspace = true",
+        "serde = { package = \"memchr\", version = \"2\" }",
+    );
+    assert_eq!(
+        core_dependency_violations(&renamed),
+        ["dependencies: memchr"]
+    );
+    let one_line = base.replace(
+        "[dependencies]\nserde.workspace = true",
+        "[dependencies]\nserde.workspace = true\nmemchr = \"2\"",
+    );
+    assert_eq!(
+        core_dependency_violations(&one_line),
+        ["dependencies: memchr"]
+    );
+    assert_eq!(
+        core_dependency_violations("not = [toml").len(),
+        1,
+        "unparseable is refused"
+    );
 }
 
 #[test]
