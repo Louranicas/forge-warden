@@ -409,6 +409,131 @@ pub(crate) mod child {
         }
     }
 
+    /// A private, empty, 0700 directory under the system temp directory, removed on drop. Git runs
+    /// with it as both `HOME` and cwd, and with its parent as `GIT_CEILING_DIRECTORIES`, so no
+    /// repository above it is ever discovered (ADR 0010).
+    pub(crate) struct PrivateDir {
+        path: std::path::PathBuf,
+    }
+
+    impl PrivateDir {
+        /// Create one, exclusively (a name that already exists is never reused).
+        #[expect(clippy::disallowed_methods, reason = "door: private_dir")]
+        pub(crate) fn create() -> Result<Self, DoorError> {
+            use std::os::unix::fs::DirBuilderExt as _;
+            let base = std::env::temp_dir();
+            for attempt in 0..64_u32 {
+                let path = base.join(format!("forge-warden-{}-{attempt}", std::process::id()));
+                match std::fs::DirBuilder::new().mode(0o700).create(&path) {
+                    Ok(()) => return Ok(Self { path }),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(DoorError::io("creating a private directory", &e)),
+                }
+            }
+            Err(DoorError {
+                message: "no free private directory name after 64 attempts".to_owned(),
+                over_budget: false,
+            })
+        }
+
+        pub(crate) fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for PrivateDir {
+        fn drop(&mut self) {
+            // Git writes nothing here; an unexpected leftover makes removal fail, which is left
+            // visible on disk rather than deleted recursively.
+            let _removed = std::fs::remove_dir(&self.path);
+        }
+    }
+
+    /// Why Git's facts could not be read.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(crate) enum GitFactsFailure {
+        /// Git ran and refused the patch (a fact about the patch: HOLD).
+        Refused(String),
+        /// Git could not be run within its bounds (an environment problem: no verdict).
+        Unavailable(String),
+    }
+
+    /// `git apply --numstat -z` and `git apply --summary` on the same patch bytes, isolated per
+    /// ADR 0010: an absolute Git, argv only, a cleared environment with exactly the contract's
+    /// controls (no `PATH`), a private empty cwd and `HOME`, and the candidate-free config overrides.
+    pub(crate) fn git_facts(
+        git: &Path,
+        patch: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
+        let dir = PrivateDir::create().map_err(|e| GitFactsFailure::Unavailable(e.message))?;
+        let home = dir.path().to_string_lossy().into_owned();
+        let ceiling = dir
+            .path()
+            .parent()
+            .map_or_else(|| home.clone(), |p| p.to_string_lossy().into_owned());
+        let env = [
+            ("LC_ALL", "C"),
+            ("HOME", home.as_str()),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_ATTR_NOSYSTEM", "1"),
+            ("GIT_NO_REPLACE_OBJECTS", "1"),
+            ("GIT_CEILING_DIRECTORIES", ceiling.as_str()),
+        ];
+        let run = |mode: &[&str]| {
+            let mut args = vec![
+                "-c",
+                "core.attributesFile=/dev/null",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "core.fsmonitor=false",
+                "apply",
+            ];
+            args.extend_from_slice(mode);
+            args.push("-");
+            run_child(&ChildSpec {
+                program: Program::Absolute(git),
+                args: &args,
+                stdin: patch,
+                env: &env,
+                cwd: dir.path(),
+                timeout: GIT_TIMEOUT,
+                stdout_cap: forge_warden_core::MAX_INPUT_BYTES,
+                stderr_cap: GIT_STDERR_CAP,
+            })
+            .map(|out| out.stdout)
+            .map_err(|failure| match failure {
+                ChildFailure::Exit(code) => {
+                    GitFactsFailure::Refused(format!("git apply exited {code}"))
+                }
+                ChildFailure::Spawn(why) | ChildFailure::Io(why) => {
+                    GitFactsFailure::Unavailable(format!("git apply: {why}"))
+                }
+                ChildFailure::Timeout => {
+                    GitFactsFailure::Unavailable("git apply timed out".to_owned())
+                }
+                ChildFailure::StdoutOverflow => {
+                    GitFactsFailure::Unavailable("git apply wrote more than the budget".to_owned())
+                }
+                ChildFailure::StderrOverflow => {
+                    GitFactsFailure::Unavailable("git apply wrote too much to stderr".to_owned())
+                }
+                ChildFailure::Signal(signal) => {
+                    GitFactsFailure::Unavailable(format!("git apply was killed by signal {signal}"))
+                }
+            })
+        };
+        let numstat = run(&["--numstat", "-z"])?;
+        let summary = run(&["--summary"])?;
+        Ok((numstat, summary))
+    }
+
+    /// Wall-clock limit for one Git call.
+    const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    /// Git's stderr is diagnostic only.
+    const GIT_STDERR_CAP: usize = 64 * 1024;
+
     /// Kill every process in `group` with SIGKILL (`/usr/bin/kill -KILL -- -<group>`); no `unsafe`
     /// and no new dependency. Failure to kill is ignored here: the caller has already decided the
     /// outcome, and a group that is already gone is the common case.
@@ -515,6 +640,59 @@ mod child_tests {
             refused.message
         );
         let _cleaned = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_facts_reproduces_the_coverage_corpus_captures_byte_for_byte() {
+        use super::child::{GitFactsFailure, git_facts};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/coverage");
+        let index: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("cases.json")).unwrap()).unwrap();
+        let cases = index["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 51);
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let patch = std::fs::read(root.join(format!("{name}.patch"))).unwrap();
+            let got = git_facts(Path::new("/usr/bin/git"), &patch);
+            if case["git_rc"] == serde_json::json!([0, 0]) {
+                let (numstat, summary) = got.unwrap_or_else(|e| panic!("{name}: {e:?}"));
+                assert_eq!(
+                    numstat,
+                    std::fs::read(root.join(format!("{name}.numstat"))).unwrap(),
+                    "{name}"
+                );
+                assert_eq!(
+                    summary,
+                    std::fs::read(root.join(format!("{name}.summary"))).unwrap(),
+                    "{name}"
+                );
+            } else {
+                assert!(
+                    matches!(got, Err(GitFactsFailure::Refused(_))),
+                    "{name}: {got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_private_dir_is_empty_0700_and_removed_on_drop_and_a_missing_git_is_unavailable() {
+        use super::child::{GitFactsFailure, PrivateDir, git_facts};
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = PrivateDir::create().unwrap();
+        let path = dir.path().to_owned();
+        let meta = std::fs::metadata(&path).unwrap();
+        assert!(meta.is_dir());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+        drop(dir);
+        assert!(!path.exists(), "{}", path.display());
+        let tiny_patch = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
+        assert!(git_facts(Path::new("/usr/bin/git"), tiny_patch).is_ok());
+        assert!(matches!(
+            git_facts(Path::new("/nonexistent/git"), tiny_patch),
+            Err(GitFactsFailure::Unavailable(_))
+        ));
     }
 
     #[test]
