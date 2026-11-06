@@ -7,12 +7,12 @@
 )]
 
 use forge_warden_core::authority::{
-    AdvisoryOutcome, Ranking, check, evaluate_advisory, evaluate_authority,
+    AdvisoryOutcome, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
 };
 use forge_warden_core::facts::PatchFacts;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankDoc, parse_rank};
-use forge_warden_core::verdict::Seals;
+use forge_warden_core::verdict::{Provenance, RankedBy, Seals};
 use forge_warden_core::{Date, Outcome, Policy, evaluate};
 use std::path::PathBuf;
 
@@ -44,13 +44,20 @@ fn policy(body: &str) -> Policy {
 }
 
 fn seals() -> Seals {
-    Seals {
-        policy_sha256: HASH.to_owned(),
-        rank_sha256: HASH.to_owned(),
-        patch_sha256: HASH.to_owned(),
-        patch_verified: true,
-        ranked_by: "0.7.0".to_owned(),
-    }
+    Seals::new(
+        HASH.to_owned(),
+        HASH.to_owned(),
+        HASH.to_owned(),
+        "0.7.0".to_owned(),
+    )
+}
+
+/// The seals an authority verdict carries for a ranking attested with `HASH`.
+fn produced_seals() -> Seals {
+    let mut seals = seals();
+    seals.provenance = Provenance::Produced;
+    seals.ranked_by.sha256 = Some(HASH.to_owned());
+    seals
 }
 
 fn today() -> Date {
@@ -121,6 +128,7 @@ fn a_forged_ranking_with_the_real_patch_holds_instead_of_passing() {
         &p,
         &Ranking::attest(doc, HASH.to_owned()),
         &checked,
+        SuppliedCopy::Absent,
         seals(),
         today(),
     );
@@ -145,6 +153,7 @@ fn git_adds_the_deletion_the_producer_omitted() {
         &p,
         &Ranking::attest(doc, HASH.to_owned()),
         &checked,
+        SuppliedCopy::Absent,
         seals(),
         today(),
     );
@@ -162,13 +171,14 @@ fn a_covered_ranking_is_judged_exactly_as_before() {
     ] {
         let doc = rank(name).unwrap();
         let p = policy(PERMISSIVE);
-        let before = evaluate(&p, &doc, seals(), today());
+        let before = evaluate(&p, &doc, produced_seals(), today());
         let checked = check(&doc, facts(name));
         assert!(checked.is_covered(), "{name}");
         let after = evaluate_authority(
             &p,
             &Ranking::attest(doc, HASH.to_owned()),
             &checked,
+            SuppliedCopy::Absent,
             seals(),
             today(),
         );
@@ -185,6 +195,7 @@ fn an_unverifiable_patch_holds_with_the_reason() {
         &policy(PERMISSIVE),
         &Ranking::attest(doc, HASH.to_owned()),
         &checked,
+        SuppliedCopy::Absent,
         seals(),
         today(),
     );
@@ -208,4 +219,92 @@ fn only_a_produced_ranking_names_its_producer() {
     let produced = Ranking::attest(doc.clone(), HASH.to_owned());
     assert_eq!(produced.producer_sha256(), Some(HASH));
     assert_eq!(produced.doc(), &doc);
+}
+
+#[test]
+fn a_differing_supplied_copy_holds_and_an_identical_one_changes_nothing() {
+    assert_eq!(SuppliedCopy::compare(None, b"x"), SuppliedCopy::Absent);
+    assert_eq!(
+        SuppliedCopy::compare(Some(b"x"), b"x"),
+        SuppliedCopy::Identical
+    );
+    assert_eq!(
+        SuppliedCopy::compare(Some(b"x "), b"x"),
+        SuppliedCopy::Different
+    );
+    assert_eq!(
+        SuppliedCopy::compare(Some(b""), b"x"),
+        SuppliedCopy::Different
+    );
+
+    let name = "new-mode";
+    let doc = rank(name).unwrap();
+    let p = policy(PERMISSIVE);
+    let checked = check(&doc, facts(name));
+    let judge = |copy| {
+        evaluate_authority(
+            &p,
+            &Ranking::attest(doc.clone(), HASH.to_owned()),
+            &checked,
+            copy,
+            seals(),
+            today(),
+        )
+    };
+    let absent = judge(SuppliedCopy::Absent);
+    assert_eq!(absent.verdict, Outcome::Pass);
+    assert_eq!(judge(SuppliedCopy::Identical), absent);
+    let different = judge(SuppliedCopy::Different);
+    assert_eq!(different.verdict, Outcome::Hold);
+    assert_eq!(different.exit.code, 8);
+    assert_eq!(codes(&different.notes), ["rank_mismatch"]);
+    assert_eq!(
+        different.rules, absent.rules,
+        "the produced ranking is still the one judged"
+    );
+}
+
+#[test]
+fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
+    let name = "new-mode";
+    let doc = rank(name).unwrap();
+    let p = policy(PERMISSIVE);
+    let checked = check(&doc, facts(name));
+    let mut lying = seals();
+    lying.provenance = Provenance::Produced;
+    lying.ranked_by = RankedBy {
+        version: "9.9.9".to_owned(),
+        sha256: Some("f".repeat(64)),
+    };
+    let authority = evaluate_authority(
+        &p,
+        &Ranking::attest(doc.clone(), HASH.to_owned()),
+        &checked,
+        SuppliedCopy::Absent,
+        lying.clone(),
+        today(),
+    );
+    assert_eq!(authority.seals.provenance, Provenance::Produced);
+    assert_eq!(
+        authority.seals.ranked_by,
+        RankedBy {
+            version: doc.tool_version().to_owned(),
+            sha256: Some(HASH.to_owned()),
+        }
+    );
+    let advisory = evaluate_advisory(
+        &p,
+        &Ranking::supplied(doc.clone()),
+        &checked,
+        lying,
+        today(),
+    );
+    assert_eq!(advisory.verdict().seals.provenance, Provenance::Supplied);
+    assert_eq!(
+        advisory.verdict().seals.ranked_by,
+        RankedBy {
+            version: doc.tool_version().to_owned(),
+            sha256: None,
+        }
+    );
 }

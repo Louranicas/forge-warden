@@ -11,6 +11,14 @@ pub(super) struct RawPolicy {
     pub(super) rules: Vec<RawRule>,
     #[serde(default, rename = "waiver")]
     pub(super) waivers: Vec<RawWaiver>,
+    pub(super) producer: Option<RawProducer>,
+}
+
+/// `[producer]`: the rankers authority mode admits, by the SHA-256 of their bytes.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawProducer {
+    pub(super) sha256: Vec<String>,
 }
 
 #[derive(Deserialize)]

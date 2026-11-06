@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # Regenerate golden verdicts after an intended change, then review `git diff fixtures/`.
 # A golden file is a contract: bless only what you meant to change.
+#
+# The golden verdict is authority mode on the demo patch: the fixture ranker (built by `cargo test`)
+# replays deep-diff-forge 0.7.0's recorded ranking. Seals that depend on the build or the machine
+# (the fixture ranker's hash, the policy that admits it, the Git version) are placeholders, so the
+# file is the same everywhere. The test itself writes the file and still checks the exit status (7).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-cargo build --quiet --bin forge-warden
-set +e
-./target/debug/forge-warden check --policy examples/starter.warden.toml \
-  --rank fixtures/demo.rank.json --patch fixtures/demo.patch --today 2026-11-05 --json \
-  > fixtures/demo.verdict.json
-code=$?
-set -e
-[ "$code" -eq 7 ] || { echo "bless: expected exit 7 for the demo, got $code" >&2; exit 1; }
+FORGE_WARDEN_BLESS=1 cargo test --quiet --locked -p forge-warden-cli --test cli golden_verdict_for_the_demo_change
 git --no-pager diff --stat -- fixtures/

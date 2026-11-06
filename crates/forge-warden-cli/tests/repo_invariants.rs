@@ -410,3 +410,34 @@ fn readme_exit_table_tracks_the_registry() {
         );
     }
 }
+
+#[test]
+fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
+    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in doors.rs, right after the pinned
+    // ranker ran; and the binary judges only through `evaluate_authority`/`evaluate_advisory`.
+    for (path, text) in rust_sources() {
+        if path.contains("/tests/") || path.ends_with("crates/forge-warden-core/src/authority.rs") {
+            continue;
+        }
+        let attests = text.matches("attest(").count();
+        if path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+            assert_eq!(
+                attests, 1,
+                "{path}: exactly one attest call, in produce_ranking"
+            );
+        } else {
+            assert_eq!(attests, 0, "{path}: only doors.rs may call Ranking::attest");
+        }
+    }
+    let main = read("crates/forge-warden-cli/src/main.rs");
+    for (index, line) in main.lines().enumerate() {
+        let raw = line
+            .match_indices("evaluate(")
+            .any(|(at, _)| !line.get(..at).is_some_and(|before| before.ends_with('_')));
+        assert!(
+            !raw,
+            "crates/forge-warden-cli/src/main.rs:{}: judge through evaluate_authority or evaluate_advisory, never raw evaluate",
+            index.saturating_add(1)
+        );
+    }
+}

@@ -2,7 +2,7 @@
 //!
 //! The pure engine behind `forge-warden`: a repository-owned change policy, evaluated over the
 //! sealed risk ranking that [deep-diff-forge] produces (`deep-diff-forge.rank.v0`), giving a
-//! sealed, deterministic verdict (`forge-warden.verdict.v0`).
+//! sealed, deterministic verdict (`forge-warden.verdict.v1`).
 //!
 //! deep-diff-forge answers *"what does this change do, and where is the risk?"*. forge-warden
 //! answers the question that follows: *"does this change meet the standards this repository has

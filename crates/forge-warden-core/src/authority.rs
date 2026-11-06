@@ -18,7 +18,7 @@ use crate::exit::Outcome;
 use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_signals};
 use crate::policy::Policy;
 use crate::rank::{RankDoc, RankedFile};
-use crate::verdict::{ExitInfo, Note, Seals, Verdict};
+use crate::verdict::{ExitInfo, Note, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
@@ -163,14 +163,14 @@ impl Checked {
                 widened(file, signals)
             })
             .collect();
-        // fails safe: the seal and version were already valid, so this cannot be refused; were it
-        // ever, the unwidened ranking is judged and Git's facts still hold it via status_mismatch
-        RankDoc::new(
+        let widened = RankDoc::new(
             rank.input_sha256().to_owned(),
             rank.tool_version().to_owned(),
             files,
-        )
-        .unwrap_or_else(|_| rank.clone())
+        );
+        // fails safe: the seal and version were already valid, so this cannot be refused; were it
+        // ever, the unwidened ranking is judged and Git's facts still hold it via status_mismatch
+        widened.unwrap_or_else(|_| rank.clone())
     }
 }
 
@@ -179,16 +179,16 @@ impl Checked {
 /// original file is kept, which can only miss an added signal, and Git's facts still hold the
 /// verdict through `status_mismatch`.
 fn widened(file: &RankedFile, signals: Vec<String>) -> RankedFile {
-    // fails safe: see above; the unwidened file can only miss an added signal
-    RankedFile::new(
+    let wide = RankedFile::new(
         file.path().clone(),
         file.status().to_owned(),
         file.score(),
         signals,
         file.evidence().to_vec(),
         file.evidence_truncated(),
-    )
-    .unwrap_or_else(|_| file.clone())
+    );
+    // fails safe: see above; the unwidened file can only miss an added signal
+    wide.unwrap_or_else(|_| file.clone())
 }
 
 /// A verdict on a supplied ranking. Its outcome type has no pass: a supplied ranking can at best
@@ -226,19 +226,68 @@ impl AdvisoryVerdict {
     }
 }
 
-/// Judge a ranking forge-warden produced itself. Only this can pass.
+/// A ranking the caller also supplied in authority mode (`--rank`), compared byte for byte with
+/// the produced one (ADR 0005 §2.1). The produced ranking is always the one judged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuppliedCopy {
+    /// No ranking was supplied.
+    Absent,
+    /// The supplied bytes equal the produced bytes.
+    Identical,
+    /// They differ: the verdict holds with `rank_mismatch`.
+    Different,
+}
+
+impl SuppliedCopy {
+    /// Compare a supplied ranking's bytes (if any) with the produced ranking's bytes.
+    #[must_use]
+    pub fn compare(supplied: Option<&[u8]>, produced: &[u8]) -> Self {
+        match supplied {
+            None => Self::Absent,
+            Some(bytes) if bytes == produced => Self::Identical,
+            Some(_) => Self::Different,
+        }
+    }
+}
+
+/// Judge a ranking forge-warden produced itself. Only this can pass. `provenance` and `ranked_by`
+/// in `seals` are set from `ranking`, whatever the caller put there.
 #[must_use]
 pub fn evaluate_authority(
     policy: &Policy,
     ranking: &Ranking<Produced>,
     checked: &Checked,
+    supplied: SuppliedCopy,
     seals: Seals,
     today: Date,
 ) -> Verdict {
-    judge(policy, &ranking.doc, checked, Vec::new(), seals, today)
+    let extra = match supplied {
+        SuppliedCopy::Absent | SuppliedCopy::Identical => Vec::new(),
+        SuppliedCopy::Different => vec![Note {
+            code: "rank_mismatch",
+            path: None,
+            detail:
+                "the supplied ranking differs from the one forge-warden produced; the produced \
+                     ranking is the one judged and sealed"
+                    .to_owned(),
+        }],
+    };
+    let seals = provenance(seals, ranking, Provenance::Produced);
+    judge(policy, &ranking.doc, checked, extra, seals, today)
 }
 
-/// Judge a ranking the caller supplied. It is held at least, never passed.
+/// `seals` with `provenance` and `ranked_by` taken from the ranking itself.
+fn provenance<P>(mut seals: Seals, ranking: &Ranking<P>, kind: Provenance) -> Seals {
+    seals.provenance = kind;
+    seals.ranked_by = RankedBy {
+        version: ranking.doc.tool_version().to_owned(),
+        sha256: ranking.producer_sha256.clone(),
+    };
+    seals
+}
+
+/// Judge a ranking the caller supplied. It is held at least, never passed. `provenance` and
+/// `ranked_by` in `seals` are set from `ranking`.
 #[must_use]
 pub fn evaluate_advisory(
     policy: &Policy,
@@ -254,6 +303,7 @@ pub fn evaluate_advisory(
             "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
                 .to_owned(),
     };
+    let seals = provenance(seals, ranking, Provenance::Supplied);
     let mut verdict = judge(
         policy,
         &ranking.doc,

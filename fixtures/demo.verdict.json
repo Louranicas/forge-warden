@@ -1,16 +1,24 @@
 {
-  "schema": "forge-warden.verdict.v0",
+  "schema": "forge-warden.verdict.v1",
   "tool": {
     "name": "forge-warden",
     "version": "0.1.0"
   },
   "evaluated_on": "2026-11-05",
   "seals": {
-    "policy_sha256": "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731",
+    "policy_sha256": "<policy admitting the fixture ranker>",
     "rank_sha256": "9a183a4197f417f49cf70999e14c6015ea12913ef59af3924204230d2e3379b5",
     "patch_sha256": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
-    "patch_verified": true,
-    "ranked_by": "0.7.0"
+    "patch_facts_sha256": "c20420b7dac6c82e4f8a7758bb50422b046833514047fd647bd06465f81e8075",
+    "provenance": "produced",
+    "ranked_by": {
+      "version": "0.7.0",
+      "sha256": "<fixture ranker>"
+    },
+    "git": {
+      "path": "/usr/bin/git",
+      "version": "<git --version>"
+    }
   },
   "verdict": "fail",
   "exit": {

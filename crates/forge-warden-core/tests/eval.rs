@@ -49,13 +49,12 @@ fn rank(files: Vec<RankedFile>) -> RankDoc {
 }
 
 fn seals() -> Seals {
-    Seals {
-        policy_sha256: SEAL.to_owned(),
-        rank_sha256: SEAL.to_owned(),
-        patch_sha256: SEAL.to_owned(),
-        patch_verified: false,
-        ranked_by: "0.7.0".to_owned(),
-    }
+    Seals::new(
+        SEAL.to_owned(),
+        SEAL.to_owned(),
+        SEAL.to_owned(),
+        "0.7.0".to_owned(),
+    )
 }
 
 fn today() -> Date {
@@ -114,7 +113,9 @@ fn the_text_summary_shows_outcome_seals_evidence_and_notes() {
     assert!(text.starts_with("forge-warden "), "{text}");
     assert!(text.contains(": FAIL (exit 7 policy_fail"), "{text}");
     assert!(
-        text.contains(&format!("patch {short} (as claimed)")),
+        text.contains(&format!(
+            "patch {short}, policy {short}, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05"
+        )),
         "{text}"
     );
     assert!(
@@ -601,7 +602,7 @@ fn serialization_is_deterministic_and_round_trips_as_json() {
     let b = evaluate(&p, &r, seals(), today()).to_json();
     assert_eq!(a, b);
     let value: serde_json::Value = serde_json::from_str(&a).unwrap();
-    assert_eq!(value["schema"], "forge-warden.verdict.v0");
+    assert_eq!(value["schema"], "forge-warden.verdict.v1");
     assert_eq!(value["rules"][1]["violations"][0]["path"], "src/lib.rs");
 }
 
