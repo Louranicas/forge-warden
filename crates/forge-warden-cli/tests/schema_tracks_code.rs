@@ -184,3 +184,63 @@ fn schema_subcommand_prints_the_committed_files() {
         forge_warden_core::EXIT_REGISTRY.len()
     );
 }
+
+#[test]
+fn every_note_code_is_in_the_schema_and_nothing_else_is() {
+    // B2 added `duplicate_paths` without the schema enum; the code list now drives this check.
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v1.schema.json")).unwrap();
+    let enumerated = strings(&schema["$defs"]["note"]["properties"]["code"]["enum"]);
+    let codes: BTreeSet<String> = forge_warden_core::verdict::NoteCode::ALL
+        .iter()
+        .map(|c| c.name().to_owned())
+        .collect();
+    assert_eq!(enumerated, codes);
+    for code in forge_warden_core::verdict::NoteCode::ALL {
+        assert_eq!(
+            serde_json::to_value(code).unwrap(),
+            Value::String(code.name().to_owned()),
+            "{code:?} serializes as its name"
+        );
+    }
+}
+
+/// The first-column code spans (`| `x` |`) of the Markdown table under `heading` in `doc`.
+fn table_keys(doc: &str, heading: &str) -> Vec<String> {
+    assert!(
+        doc.contains(heading),
+        "docs/POLICY_REFERENCE.md has no {heading:?} section"
+    );
+    let (_, section) = doc.split_once(heading).unwrap();
+    let section = section.split("\n## ").next().unwrap_or(section);
+    section
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `"))
+        .filter_map(|rest| rest.split_once('`'))
+        .map(|(key, _)| key.to_owned())
+        .collect()
+}
+
+#[test]
+fn the_reference_documents_every_note_code_and_seal_exactly_once() {
+    // WP-E3a: a new note code or seal member cannot ship undocumented, and the reference cannot
+    // describe one the verdict does not have.
+    let doc = read("docs/POLICY_REFERENCE.md");
+    let notes = table_keys(&doc, "\n## Notes\n");
+    let codes: Vec<String> = forge_warden_core::verdict::NoteCode::ALL
+        .iter()
+        .map(|c| c.name().to_owned())
+        .collect();
+    assert_eq!(
+        notes, codes,
+        "the Notes table lists every NoteCode once, in declaration order"
+    );
+
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v1.schema.json")).unwrap();
+    let seals: BTreeSet<String> = table_keys(&doc, "\n## Verdict seals").into_iter().collect();
+    assert_eq!(seals, keys(&schema["properties"]["seals"]["properties"]));
+    assert_eq!(
+        table_keys(&doc, "\n## Verdict seals").len(),
+        seals.len(),
+        "each seal member is documented once"
+    );
+}

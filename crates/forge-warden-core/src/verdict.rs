@@ -292,15 +292,77 @@ pub struct WaiverNote {
 /// Something the policy cannot judge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Note {
-    /// `empty_ranking`, `unknown_signal`, `unknown_status`, `source_path_unknown`, or one of the
-    /// coverage notes: `rank_incomplete`, `rank_extraneous`, `status_mismatch`,
-    /// `patch_unverifiable`, `rank_unverified`, `rank_mismatch`.
-    pub code: &'static str,
+    /// Why the verdict holds; see [`NoteCode`].
+    pub code: NoteCode,
     /// The file involved, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// What and why.
     pub detail: String,
+}
+
+/// Declares [`NoteCode`] from one list, so its variants, [`NoteCode::name`] and [`NoteCode::ALL`]
+/// cannot disagree: a code exists in all three or in none.
+macro_rules! note_codes {
+    ($($doc:literal $variant:ident => $name:literal,)*) => {
+        /// Why a verdict holds when the policy alone cannot decide. Every note holds the verdict at
+        /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and
+        /// the schema's enum lists exactly these names (tests check both).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum NoteCode {
+            $(#[doc = $doc] $variant,)*
+        }
+
+        impl NoteCode {
+            /// Every code, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
+
+            /// The name the verdict writes.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+note_codes! {
+    "The ranking lists no file: there is nothing to judge."
+    EmptyRanking => "empty_ranking",
+    "A signal this forge-warden does not know."
+    UnknownSignal => "unknown_signal",
+    "A status this forge-warden does not know (including deep-diff-forge's `unknown`)."
+    UnknownStatus => "unknown_status",
+    "A rename or copy: rank.v0 does not report the source path."
+    SourcePathUnknown => "source_path_unknown",
+    "One path is listed more than once (deep-diff-forge does this for a type change)."
+    DuplicatePaths => "duplicate_paths",
+    "Git sees a file in the patch that the ranking does not list."
+    RankIncomplete => "rank_incomplete",
+    "The ranking lists a file the patch does not change."
+    RankExtraneous => "rank_extraneous",
+    "The ranking's status or change-kind signals contradict Git."
+    StatusMismatch => "status_mismatch",
+    "Git refused the patch, or its facts cannot be read; coverage cannot be verified."
+    PatchUnverifiable => "patch_unverifiable",
+    "The ranking was supplied, not produced (advisory mode)."
+    RankUnverified => "rank_unverified",
+    "The ranking supplied with `--rank` differs from the one forge-warden produced."
+    RankMismatch => "rank_mismatch",
+}
+
+impl Serialize for NoteCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+impl PartialEq<&str> for NoteCode {
+    fn eq(&self, other: &&str) -> bool {
+        self.name() == *other
+    }
 }
 
 impl Verdict {
@@ -318,5 +380,24 @@ impl Verdict {
         });
         text.push('\n');
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NoteCode;
+
+    #[test]
+    fn a_note_code_equals_its_own_name_and_no_other() {
+        for code in NoteCode::ALL {
+            for other in NoteCode::ALL {
+                assert_eq!(
+                    *code == other.name(),
+                    code == other,
+                    "{code:?} vs {other:?}"
+                );
+            }
+            assert!(*code != "", "{code:?}");
+        }
     }
 }

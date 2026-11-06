@@ -154,7 +154,7 @@
       "additionalProperties": false,
       "required": ["code", "detail"],
       "properties": {
-        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status", "source_path_unknown", "rank_incomplete", "rank_extraneous", "status_mismatch", "patch_unverifiable", "rank_unverified", "rank_mismatch"] },
+        "code": { "enum": ["empty_ranking", "unknown_signal", "unknown_status", "source_path_unknown", "duplicate_paths", "rank_incomplete", "rank_extraneous", "status_mismatch", "patch_unverifiable", "rank_unverified", "rank_mismatch"] },
         "path": { "type": "string" },
         "detail": { "type": "string" }
       }

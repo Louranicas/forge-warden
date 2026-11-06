@@ -81,6 +81,21 @@ fn check_meta(meta: &Meta, found: &mut Vec<String>) {
     }
 }
 
+/// Whether the tokens of an attribute are EXACTLY a doc attribute that cannot change a lint level:
+/// `doc = <literal>` or, in a macro body, `doc = $name` (one metavariable). Anything else that
+/// starts with `doc` (`doc::allow(..)`, `doc = "a" allow(..)`, `doc = $($t)*`) is not admitted here
+/// and goes through the full parse and lint check (Touchstone E3a v4 boundary matrix).
+fn is_plain_doc(tokens: &TokenStream) -> bool {
+    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    let doc_eq = matches!(trees.first(), Some(TokenTree::Ident(i)) if i == "doc")
+        && matches!(trees.get(1), Some(TokenTree::Punct(p)) if p.as_char() == '=');
+    match trees.as_slice() {
+        [_, _, TokenTree::Literal(_)] => doc_eq,
+        [_, _, TokenTree::Punct(dollar), TokenTree::Ident(_)] => doc_eq && dollar.as_char() == '$',
+        _ => false,
+    }
+}
+
 /// `#[…]` / `#![…]` written as tokens inside a macro invocation, checked as attributes.
 fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
@@ -106,6 +121,7 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
         }
         if let Some(TokenTree::Group(group)) = trees.get(next)
             && group.delimiter() == Delimiter::Bracket
+            && !is_plain_doc(&group.stream())
         {
             match syn::parse2::<Meta>(group.stream()) {
                 Ok(meta) => check_meta(&meta, found),
@@ -222,6 +238,22 @@ fn the_parser_finds_every_suppression_form() {
         ),
         ("macro_rules", "macro_rules! hide { () => {} }"),
         (
+            "a metavariable attribute in a macro body",
+            "some_macro! { #[$lint] fn f() {} }",
+        ),
+        (
+            "a doc-prefixed path hiding allow",
+            "some_macro! { #[doc::allow(warnings)] fn f() {} }",
+        ),
+        (
+            "a doc literal with a trailing allow",
+            "some_macro! { #[doc = \"a\" allow(warnings)] fn f() {} }",
+        ),
+        (
+            "a doc metavariable repetition",
+            "some_macro! { #[doc = $($t)*] fn f() {} }",
+        ),
+        (
             "unparseable lint list",
             "#[expect(clippy::all reason)]\nfn f() {}",
         ),
@@ -253,6 +285,14 @@ fn the_parser_ignores_names_outside_lint_attributes() {
         (
             "the name only in a string",
             "fn f() -> &'static str { \"#[expect(clippy::all)]\" }",
+        ),
+        (
+            "a doc metavariable in a macro body",
+            "some_macro! { #[doc = $doc] fn f() {} }",
+        ),
+        (
+            "a doc literal in a macro body",
+            "some_macro! { #[doc = \"text\"] fn f() {} }",
         ),
         (
             "deny is stricter, not looser",
