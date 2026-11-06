@@ -62,4 +62,11 @@ disallowed-methods = [
     { path = "core::result::Result::unwrap_or", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
     { path = "core::result::Result::unwrap_or_else", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
     { path = "core::result::Result::unwrap_or_default", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
+    { path = "core::option::Option::map_or", reason = "map, then name the default: .map(f).or_fail_closed / or_fail_safe / or_display (G-04, B7.1)" },
+    { path = "core::option::Option::map_or_else", reason = "map, then name the default: .map(f).or_fail_closed_with / or_fail_safe / or_display (G-04, B7.1)" },
+    { path = "core::result::Result::map_or", reason = "map, then name the default: .map(f).or_fail_closed / or_fail_safe / or_display (G-04, B7.1)" },
+    { path = "core::result::Result::map_or_else", reason = "map, then name the default: .map(f).or_fail_closed_with / or_fail_safe / or_display (G-04, B7.1)" },
+    { path = "core::option::Option::get_or_insert", reason = "a stored default is a default: match, or name it with NamedDefault (G-04, B7.1)" },
+    { path = "core::option::Option::get_or_insert_with", reason = "a stored default is a default: match, or name it with NamedDefault (G-04, B7.1)" },
+    { path = "core::option::Option::get_or_insert_default", reason = "a stored default is a default: match, or name it with NamedDefault (G-04, B7.1)" },
 ]

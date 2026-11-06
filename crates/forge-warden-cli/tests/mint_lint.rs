@@ -5,8 +5,10 @@
 //! names the two functions in every form measured for C1c v2, and requires each form to be refused
 //! and the two controls (the door's `#[expect]`, and an allowed function) not to be.
 //!
-//! G-04 (WP-B7): the same real clippy, run once with each crate's own `clippy.toml`, refuses every
-//! way of choosing a raw `unwrap_or*` default, and admits the named `NamedDefault` defaults.
+//! G-04 (WP-B7, B7.1): the same real clippy, run once with each crate's own `clippy.toml`, refuses
+//! every way of choosing a raw default (`unwrap_or*`, `map_or*`, `get_or_insert*`), and admits the
+//! named `NamedDefault` defaults and the boolean predicates (`is_some_and`, `is_none_or`, `is_ok_and`),
+//! whose default is spelled by the method name.
 #![expect(
     clippy::disallowed_methods,
     clippy::unwrap_used,
@@ -108,6 +110,34 @@ pub fn forms(o: Option<u8>, r: Result<u8, String>, verdict: Option<Outcome>) -> 
     n += usize::from(Lookalike.unwrap_or(0)); // CONTROL: the same name on another type
     n
 }
+
+/// WP-B7.1: the other value-default pickers. `map_or` / `map_or_else` substitute a value for a
+/// missing one exactly like `unwrap_or`; `get_or_insert*` store one.
+pub fn pickers(
+    o: Option<u8>,
+    r: Result<u8, String>,
+    verdict: Option<Outcome>,
+    mut slot: Option<u8>,
+) -> usize {
+    let mut n = 0_usize;
+    let _a = verdict.map_or(Outcome::Pass, |v| v); // FORM: Option::map_or (the G-04 case again)
+    let _b = o.map_or_else(|| 0, |x| x); // FORM: Option::map_or_else
+    let _c = r.clone().map_or(0, |x| x); // FORM: Result::map_or
+    let _d = r.clone().map_or_else(|_| 0, |x| x); // FORM: Result::map_or_else
+    let _e = Option::map_or(o, 0, |x| x); // FORM: map_or UFCS
+    let _f = std::option::Option::<u8>::map_or_else(o, || 0, |x| x); // FORM: map_or_else qualified UFCS
+    let choose = Option::<u8>::map_or::<u8, fn(u8) -> u8>; // FORM: map_or alias binding
+    let _g = choose(o, 0, |x| x);
+    let _h = Some(o).map(|x| x.map_or(0, |y| y)); // FORM: map_or in a closure
+    let _i = *slot.get_or_insert(0); // FORM: Option::get_or_insert
+    let _j = *slot.get_or_insert_with(|| 0); // FORM: Option::get_or_insert_with
+    let _k = *slot.get_or_insert_default(); // FORM: Option::get_or_insert_default
+    n += o.map(usize::from).or_fail_safe(0); // CONTROL: map, then a named default
+    n += usize::from(o.is_some_and(|x| x > 1)); // CONTROL: a boolean predicate (default named by the method)
+    n += usize::from(o.is_none_or(|x| x > 1)); // CONTROL: a boolean predicate (default named by the method)
+    n += usize::from(r.is_ok_and(|x| x > 1)); // CONTROL: a boolean predicate on Result
+    n
+}
 ";
 
 #[test]
@@ -117,13 +147,13 @@ fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() 
 
 #[test]
 fn clippy_refuses_every_raw_default_under_the_cli_configuration() {
-    check_plants("default-lint-cli", DEFAULT_PLANTS, &root(), 16, &[]);
+    check_plants("default-lint-cli", DEFAULT_PLANTS, &root(), 27, &[]);
 }
 
 #[test]
 fn clippy_refuses_every_raw_default_under_the_core_configuration() {
     let core = root().join("crates/forge-warden-core");
-    check_plants("default-lint-core", DEFAULT_PLANTS, &core, 16, &[]);
+    check_plants("default-lint-core", DEFAULT_PLANTS, &core, 27, &[]);
 }
 
 #[test]
