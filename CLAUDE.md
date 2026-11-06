@@ -13,7 +13,7 @@ following it is the fastest path, not the polite one.
   stderr, clock) goes through one function in `src/doors.rs` (ADR 0001).
 - Input: `deep-diff-forge.rank.v0` from deep-diff-forge, read tolerantly (additive fields are
   ignored) and validated strictly (everything forge-warden relies on is checked).
-- Output: `forge-warden.verdict.v0`, sealed and deterministic. Schemas live in `schemas/` and
+- Output: `forge-warden.verdict.v1`, sealed and deterministic. Schemas live in `schemas/` and
   tests keep them equal to the code.
 
 ## Definition of done

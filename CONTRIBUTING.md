@@ -29,9 +29,13 @@ rules, with what to do instead of each forbidden move.
 Protect `main` with: require a pull request; require branches to be up to date; require these
 checks: `gate (fmt, clippy, test, doc)`, `declared Rust 1.88 compatibility`,
 `supply chain (cargo-deny)`, `workflow audit (zizmor)`, `diff mutation (cargo-mutants)`,
-`dogfood (forge-warden judges this change)`, `vocabulary tracks deep-diff-forge`; require review
-from code owners; disallow bypass. Create the label `warden:acknowledged` and grant it only to
-maintainers: it is how a person accepts a `hold`.
+`dogfood (trusted base judges candidate data)`, `vocabulary tracks deep-diff-forge`; require
+review from code owners; disallow bypass.
+
+A `hold` is accepted only with an OpenSSH-signed acknowledgement from a reviewer enrolled in
+`.github/hold-reviewers/allowed_signers` on the base branch (ADR 0007). A label grants nothing.
+Until reviewer keys are enrolled and an external trust root enforces the check (ADR 0006), CI
+fails closed on every hold.
 
 ## Decisions
 
