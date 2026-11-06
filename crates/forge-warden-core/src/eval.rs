@@ -11,6 +11,7 @@
 //!    for each expired waiver. Unknown vocabulary and empty input can never make it looser.
 
 use crate::date::Date;
+use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
@@ -172,8 +173,8 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
                 .iter()
                 .filter(|f| scope.contains(f.path().as_str()))
                 .count();
-            // fails closed: an uncountable file count is treated as over every budget
-            let count = u64::try_from(count).unwrap_or(u64::MAX);
+            // An uncountable file count is treated as over every budget.
+            let count = u64::try_from(count).or_fail_closed(u64::MAX);
             over_budget(count, *limit, |count| {
                 format!("{count} files in scope changed; the limit is {limit}")
             })

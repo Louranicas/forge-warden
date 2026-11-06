@@ -6,7 +6,7 @@
     "supersessions": [
       "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
       "G-15 authenticates exact producer binary, not version string.",
-      "G-04 reviewed default markers, not a blanket clippy ban.",
+      "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR."
     ]
   },
@@ -38,7 +38,7 @@
         "--locked",
         "--offline"
       ],
-      "old": "seal.get(..12).unwrap_or(seal).to_owned()",
+      "old": "seal.get(..12).or_fail_safe(seal).to_owned()",
       "new": "seal[..12].to_owned()"
     },
     {
@@ -251,19 +251,16 @@
       "id": "unreviewed-default",
       "guardrail": "G-04",
       "path": "crates/forge-warden-core/src/eval.rs",
-      "diagnostic": "defaults_say_which_way_they_fail.*FAILED",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
       "cargo": [
-        "test",
-        "-p",
-        "forge-warden-cli",
-        "--test",
-        "repo_invariants",
-        "defaults_say_which_way_they_fail",
+        "clippy",
+        "--workspace",
+        "--all-targets",
         "--locked",
         "--offline"
       ],
-      "old": "            // fails closed: an uncountable file count is treated as over every budget\n",
-      "new": ""
+      "old": "u64::try_from(count).or_fail_closed(u64::MAX)",
+      "new": "u64::try_from(count).unwrap_or(0)"
     },
     {
       "id": "effect-outside-door",
@@ -423,8 +420,8 @@
         "bash",
         "scripts/tests/ci_local.sh"
       ],
-      "old": "      --rank target/rank.json --patch target/change.patch",
-      "new": "      --rank target/rank.json --patch target/change.patch || true"
+      "old": "        --advisory --rank target/rank.json --patch target/change.patch",
+      "new": "        --advisory --rank target/rank.json --patch target/change.patch || true"
     },
     {
       "id": "hook-shell-spelling",
@@ -596,86 +593,187 @@
       ],
       "old": "    \"many_hunks\",",
       "new": "    \"o3_unpublished_signal\","
+    },
+    {
+      "id": "missing-patch-success",
+      "guardrail": "G-13",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "omitting_the_patch_requires_review_or_refusal.*FAILED",
+      "old": "doors::diagnose(&text);\n                Exit::Usage",
+      "new": "doors::diagnose(&text);\n                Exit::Pass",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "adversarial",
+        "omitting_the_patch_requires_review_or_refusal",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ]
+    },
+    {
+      "id": "omitted-file-coverage",
+      "guardrail": "G-14",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "a_forged_ranking_with_the_real_patch_holds_instead_of_passing.*FAILED",
+      "old": "extra.extend(checked.notes());",
+      "new": "extra.extend(checked.notes().into_iter().filter(|note| note.code != NoteCode::RankIncomplete));",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "authority",
+        "a_forged_ranking_with_the_real_patch_holds_instead_of_passing",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ]
+    },
+    {
+      "id": "unadmitted-producer",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
+      "old": "if !policy.admits_producer(&pinned.sha256) {",
+      "new": "if false && !policy.admits_producer(&pinned.sha256) {",
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import json,subprocess,sys\nsteps=[[\"cargo\",\"build\",\"--workspace\",\"--examples\",\"--locked\",\"--offline\"],[\"cargo\",\"test\",\"-p\",\"forge-warden-cli\",\"--test\",\"authority_mode\",\"a_ranker_the_policy_does_not_list_is_refused_without_a_verdict\",\"--locked\",\"--offline\",\"--\",\"--nocapture\"]]\nfor cmd in steps:\n print(\"COMMAND \"+json.dumps(cmd),flush=True)\n result=subprocess.run(cmd)\n if result.returncode: sys.exit(result.returncode)"
+      ]
+    },
+    {
+      "id": "citation-order-drift",
+      "guardrail": "G-25",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "citations_follow_explicit_address_side_line_order.*FAILED",
+      "old": "            evidence.sort();",
+      "new": "            evidence.sort_by(|left, right| right.cmp(left));",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "adversarial_output",
+        "citations_follow_explicit_address_side_line_order",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ]
+    },
+    {
+      "id": "oversized-function",
+      "guardrail": "G-29",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "too[-_]many[-_]lines",
+      "append": "\n/// Deliberately oversized function specimen.\n#[must_use]\npub fn planted_oversized_function(value: u8) -> u8 {\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    value\n}\n",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ]
+    },
+    {
+      "id": "unreachable-public-item",
+      "guardrail": "G-30",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "unreachable[-_]pub|unreachable .pub. item",
+      "append": "\nmod planted_private_api {\n    /// Deliberately overexposed item behind a private module.\n    #[must_use]\n    pub fn exposed(value: u8) -> u8 { value }\n}\n\n/// Use the inaccessible item so dead-code is not the refusal reason.\n#[must_use]\npub fn planted_public_caller(value: u8) -> u8 { planted_private_api::exposed(value) }\n",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ]
+    },
+    {
+      "id": "codeowners-protected-drift",
+      "guardrail": "G-39",
+      "path": ".github/CODEOWNERS",
+      "diagnostic": "CODEOWNERS protected paths drift",
+      "old": "\n* @Louranicas\n",
+      "new": "\n* @o3-unreviewed-owner\n",
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import runpy; from pathlib import Path; runpy.run_path(\"scripts/check_guardrails.py\")[\"check_paths\"](Path.cwd())"
+      ]
+    },
+    {
+      "id": "reference-forbidden-file-skip",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "finite_boundary_matrix_matches_the_independent_reference.*FAILED",
+      "old": "for file in files.iter().filter(|f| scope.contains(f.path().as_str())) {",
+      "new": "for file in files.iter().filter(|f| scope.contains(f.path().as_str())).skip(1) {",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "laws",
+        "finite_boundary_matrix_matches_the_independent_reference",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ]
+    },
+    {
+      "id": "swallowed-authority-judge-exit",
+      "guardrail": "G-17",
+      "path": "scripts/ci_local.sh",
+      "diagnostic": "AUTHORITY_JUDGE_EXIT_MISMATCH expected=4 actual=0",
+      "command": [
+        "python3",
+        "-I",
+        "plants/authority_script.py"
+      ],
+      "old": "        --ranker \"$ranker\" --patch target/change.patch",
+      "new": "        --ranker \"$ranker\" --patch target/change.patch || true"
     }
   ],
   "pending_guardrails": [
     {
-      "id": "G-13",
-      "title": "Unverified patch binding passes (R-05)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-14",
-      "title": "Ranking does not cover the patch (R-01)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-15",
-      "title": "Producer is not authenticated or version-gated (R-14)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-16",
       "title": "Toolchain drift (R-08)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
+      "reason": "Exact toolchain pin exists, but no local CI toolchain-drift invariant is implemented; missing offline toolchains must not count as caught."
     },
     {
       "id": "G-18",
       "title": "A skipped gate reads as a passed gate",
       "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-25",
-      "title": "Nondeterministic output",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-29",
-      "title": "Oversized or mixed-reason module",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-30",
-      "title": "Public-surface creep",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
+      "reason": "ci_local still permits optional-tool skips; a strict missing-required-tool refusal has not been implemented. No passing plant is claimed."
     },
     {
       "id": "G-38",
       "title": "Required CI check names drift",
       "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-39",
-      "title": "Protected-path lists diverge",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
+      "reason": "Required-check names are enforced by hosted admission, but this offline runner has no approved check-name snapshot/identity adapter."
     },
     {
       "id": "G-40",
       "title": "Docs and comments that name non-existent tests (R-15)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-45",
-      "title": "Test that checks self-agreement",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
+      "reason": "No general documentation/test-reference invariant is implemented. Naming a nonexistent test is still a review obligation."
     },
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
       "status": "PENDING",
-      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
+      "reason": "Hosted zizmor audit exists, but the trusted offline execution image has no zizmor. No installation or weaker replacement audit is performed."
     }
   ]
 }

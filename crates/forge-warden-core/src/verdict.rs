@@ -8,6 +8,7 @@
 //! v1 (ADR 0005 §5) seals where the ranking came from (`provenance`, `ranked_by.sha256`), what Git
 //! saw in the patch (`patch_facts_sha256`, `git`), and any unverified `claims` about the change.
 
+use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use serde::Serialize;
 
@@ -370,8 +371,8 @@ impl Verdict {
     /// cannot fail, so this does not return a `Result`.
     #[must_use]
     pub fn to_json(&self) -> String {
-        // fails closed: the fallback document has no `verdict` member, so no consumer can read it as a pass
-        let mut text = serde_json::to_string_pretty(self).unwrap_or_else(|e| {
+        // The fallback document has no `verdict` member, so no consumer can read it as a pass.
+        let mut text = serde_json::to_string_pretty(self).or_fail_closed_with(|e| {
             // Unreachable in practice: every field is a string, number, bool or list of them.
             format!(
                 "{{\"schema\":\"{VERDICT_SCHEMA}\",\"serialization_error\":{:?}}}",

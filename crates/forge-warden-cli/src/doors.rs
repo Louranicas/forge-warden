@@ -5,6 +5,7 @@
 //! `clippy.toml` makes the same call anywhere else a compile error, and `repo_invariants.rs`
 //! fails if any other file opens a door.
 
+use forge_warden_core::defaults::NamedDefault as _;
 use forge_warden_core::{Date, Exit, MAX_INPUT_BYTES};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
@@ -39,8 +40,8 @@ fn read_within(
     what: &str,
     budget: usize,
 ) -> Result<Vec<u8>, DoorError> {
-    // fails closed: a budget that does not fit in u64 reads at most one byte, so any input is refused
-    let limit = u64::try_from(budget).unwrap_or(0).saturating_add(1);
+    // A budget that does not fit in u64 reads at most one byte, so any input is refused.
+    let limit = u64::try_from(budget).or_fail_closed(0).saturating_add(1);
     let mut bytes = Vec::new();
     reader
         .by_ref()
@@ -128,6 +129,7 @@ pub(crate) mod child {
     use super::{DoorError, read_within};
     use forge_warden_core::Policy;
     use forge_warden_core::authority::{Produced, Ranking};
+    use forge_warden_core::defaults::NamedDefault as _;
     use forge_warden_core::rank::parse_rank;
     use forge_warden_core::seal::sha256_hex;
     use std::io::{Read as _, Write as _};
@@ -313,8 +315,8 @@ pub(crate) mod child {
             let flag = Arc::clone(&over);
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                // fails closed: a cap that does not fit in u64 reads one byte, so any output overflows
-                let limit = u64::try_from(cap).unwrap_or(0).saturating_add(1);
+                // A cap that does not fit in u64 reads one byte, so any output overflows.
+                let limit = u64::try_from(cap).or_fail_closed(0).saturating_add(1);
                 let mut bytes = Vec::new();
                 let read = pipe.take(limit).read_to_end(&mut bytes);
                 if bytes.len() > cap {

@@ -1,4 +1,4 @@
-# Named guardrail plants (WP-A4, fifth batch)
+# Named guardrail plants (WP-A4, post-C1c batch)
 
 Run from a neutral directory. The runner creates one disposable `git clone --no-local`, checks out
 an exact commit, and applies each plant only there. It never writes the source repository or hub.
@@ -34,9 +34,9 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This fifth batch implements 38 named plants. The remaining 13 register rows are explicitly PENDING
+This revision implements 47 named plants over 46 guardrail rows. The remaining 5 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
-its hash and binding corrections for duplicate paths, producer authentication, default markers and
+its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
 implemented missing-row direction; it does not claim an extra-row drift check exists.
 
@@ -85,3 +85,30 @@ intentionally MISSED mutants demonstrate a correctly rejected bad change; they a
 mutation-quality receipt for the repository. Source selection is bounded to render.rs.
 
 Batch 5 adds an external-consumer private-constructor probe, a measured normal-compiler/MSRV boundary probe, and corpus vocabulary drift. The MSRV recipe requires the preinstalled 1.88.0 toolchain; backends must expose it without downloads.
+
+B7 v3 compatibility: string-slice targets the named fail-safe helper; unreviewed-default now
+plants the fail-open raw `unwrap_or(0)` at the file-count conversion and requires the compiler's
+`disallowed_methods` diagnostic. It no longer relies on removing a comment marker. The swallowed
+judge-exit recipe targets D8's explicit advisory command. Those three recipe updates preserved
+the original 38-case count and require fresh baselines, named red diagnostics and clean restoration.
+
+Post-C1c additions exercise missing-patch usage errors mapped to success, an omitted-file coverage
+floor, producer digest admission, canonical citation ordering, oversized-function linting,
+unreachable public items, CODEOWNERS drift, and the independent finite reference. The producer
+recipe explicitly builds the fixture-ranker example before running the named process-boundary
+test. Citation ordering is deliberately reversed, keeping the mutated source valid.
+
+G-29 measures the existing function-length lint, not a 400-line whole-module budget. G-30 measures
+unreachable public visibility, not a public API snapshot. These are the implemented controls;
+stronger controls proposed in the register remain outside these observations. G-13 specifically
+checks that a missing-patch usage refusal cannot report success. G-15 qualifies an explicitly
+admitted fixture binary digest, not its release string, provenance, or hostile-runtime isolation.
+
+A second G-17 plant covers the authority command. Its small adapter runs the maintained shell
+fixture suite in a private copy and adds a named diagnostic to the existing exact-exit assertion,
+without relaxing that assertion or changing checked-out source. These controlled command fixtures
+prove script exit propagation; they do not qualify a live ranker or hosted admission.
+
+The five pending rows have individual reasons in the catalog: unavailable local enforcement for
+CI toolchain/name drift or documentation references, the unimplemented strict skip contract, and
+a missing offline zizmor backend. Missing tools and missing checks are never counted as caught.

@@ -7,6 +7,7 @@ use super::model::{Check, Policy, Rule, ScorePer, Severity, Waiver};
 use super::paths::{PathSet, Scope, compile};
 use super::raw::{RawPolicy, RawProducer, RawRule, RawWaiver};
 use crate::date::Date;
+use crate::defaults::NamedDefault as _;
 use crate::nonempty::NonEmpty;
 use crate::seal::is_sha256_hex;
 use crate::vocab::{is_known_signal, suggest_signal};
@@ -201,10 +202,10 @@ fn build_check(
             let signals = required(location, "signals", raw.signals.as_ref(), issues)?;
             for signal in signals {
                 if !is_known_signal(signal) {
-                    // display only: no hint when nothing is close; the signal is refused either way
+                    // No hint when nothing is close; the signal is refused either way.
                     let hint = suggest_signal(signal)
                         .map(|s| format!(" (did you mean {s:?}?)"))
-                        .unwrap_or_default();
+                        .or_display(String::new());
                     issues.push(location, format!("unknown signal {signal:?}{hint}"));
                 }
             }
