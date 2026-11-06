@@ -56,4 +56,10 @@ disallowed-methods = [
     { path = "std::env::temp_dir", reason = "the core reads no environment (ADR 0001)" },
     { path = "std::process::exit", reason = "the core never ends the process; it returns a Verdict" },
     { path = "std::process::abort", reason = "the core never ends the process; it returns a Verdict" },
+    { path = "core::option::Option::unwrap_or", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
+    { path = "core::option::Option::unwrap_or_else", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
+    { path = "core::option::Option::unwrap_or_default", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
+    { path = "core::result::Result::unwrap_or", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
+    { path = "core::result::Result::unwrap_or_else", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
+    { path = "core::result::Result::unwrap_or_default", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
 ]

@@ -147,10 +147,12 @@ fn policy_schema_tracks_the_reader() {
     // Per kind, the schema forbids (`false`) exactly the optional fields the reader refuses.
     let clauses = rule["allOf"].as_array().unwrap();
     for kind in Kind::ALL {
-        let clause = clauses
+        let Some(clause) = clauses
             .iter()
             .find(|c| c["if"]["properties"]["kind"]["const"] == kind.name())
-            .unwrap_or_else(|| panic!("schema has no allOf clause for {}", kind.name()));
+        else {
+            panic!("schema has no allOf clause for {}", kind.name());
+        };
         let forbidden: BTreeSet<String> = clause["then"]["properties"]
             .as_object()
             .unwrap()
@@ -211,7 +213,7 @@ fn table_keys(doc: &str, heading: &str) -> Vec<String> {
         "docs/POLICY_REFERENCE.md has no {heading:?} section"
     );
     let (_, section) = doc.split_once(heading).unwrap();
-    let section = section.split("\n## ").next().unwrap_or(section);
+    let section = section.split("\n## ").next().unwrap();
     section
         .lines()
         .filter_map(|line| line.strip_prefix("| `"))

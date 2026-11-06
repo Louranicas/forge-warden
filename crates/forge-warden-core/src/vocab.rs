@@ -11,6 +11,8 @@
 //! `crates/forge-warden-cli/tests/corpus.rs` requires the signals a real deep-diff-forge binary
 //! wrote into `fixtures/corpus/` to equal it.
 
+use crate::defaults::NamedDefault as _;
+
 /// Every risk signal deep-diff-forge 0.7.0 can put in a `rank.v0` file entry: path signals first,
 /// then code-evidence signals.
 pub const KNOWN_SIGNALS: [&str; 21] = [
@@ -99,8 +101,8 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
     // `row` always has `b.len() + 1 >= 1` entries. Were it ever empty, the distance would read as
     // "infinitely far" (no suggestion), never as 0 (an exact match).
-    // fails safe: an impossible empty row means no suggestion, not a match
-    row.last().copied().unwrap_or(usize::MAX)
+    // An impossible empty row means no suggestion, not a match.
+    row.last().copied().or_fail_safe(usize::MAX)
 }
 
 #[cfg(test)]
