@@ -200,3 +200,12 @@ fn an_unverifiable_patch_holds_with_the_reason() {
         note.detail
     );
 }
+
+#[test]
+fn only_a_produced_ranking_names_its_producer() {
+    let doc = rank("new-mode").unwrap();
+    assert_eq!(Ranking::supplied(doc.clone()).producer_sha256(), None);
+    let produced = Ranking::attest(doc.clone(), HASH.to_owned());
+    assert_eq!(produced.producer_sha256(), Some(HASH));
+    assert_eq!(produced.doc(), &doc);
+}
