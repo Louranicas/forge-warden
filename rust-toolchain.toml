@@ -1,0 +1,9 @@
+# The gate toolchain (Mission 4 decision D2, ADR 0002). The lint wall denies whole clippy families,
+# so a new stable release can turn unchanged code red (R-08: Rust 1.99 added `assert_is_empty`).
+# Pinning makes the wall reproducible; bumping it is a reviewed diff that also fixes what the new
+# lints find. The MSRV (`rust-version` in Cargo.toml) is checked separately with an explicit
+# `cargo +<msrv>` invocation, which overrides this file.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
