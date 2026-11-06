@@ -3,6 +3,7 @@
 import importlib.util
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -259,8 +260,35 @@ class CompiledSources(unittest.TestCase):
                 checks.sources.dependencies(text)
 
 
+class DependencyPrecondition(unittest.TestCase):
+    def test_empty_cargo_home_fails_before_agreement_fixtures(self):
+        with tempfile.TemporaryDirectory(prefix="guardrails-empty-cargo-") as cargo_home:
+            env = dict(os.environ, CARGO_HOME=cargo_home, CARGO_NET_OFFLINE="true")
+            result = subprocess.run(
+                [sys.executable, "-I", str(Path(__file__).resolve()), "AgreementFixtures"],
+                cwd=ROOT, env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("GUARDRAILS_DEPENDENCIES_UNAVAILABLE", result.stderr)
+        self.assertIn("cargo fetch --locked", result.stderr)
+        self.assertIn("Ran 0 tests", result.stderr)
+
+
 class AgreementFixtures(unittest.TestCase):
-    """Real workspace integration: shared-build sets and paired refusal controls."""
+    """Real workspace integration; first run `cargo fetch --locked` in this tree.
+
+    Fixture execution stays offline. Check the complete locked dependency set
+    before copying or modifying the workspace, even when a build cache is warm.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        fetched = subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT,
+                                 capture_output=True, text=True)
+        if fetched.returncode:
+            raise RuntimeError(
+                "GUARDRAILS_DEPENDENCIES_UNAVAILABLE: prepare the locked dependency set "
+                "with `cargo fetch --locked` in the source workspace, using the same "
+                "CARGO_HOME as these fixtures. Offline preflight failed:\n" + fetched.stderr)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="source-contract-")
