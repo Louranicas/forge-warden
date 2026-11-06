@@ -16,8 +16,14 @@ in the repository under review and is owned (CODEOWNERS, `protect_paths`).
 | Supply chain | `cargo-deny` (sources, licences, advisories, bans), Dependabot, actions pinned by SHA, `zizmor` workflow audit. |
 | Panics as denial of service | No `unwrap`/`expect`/`panic`/indexing in production code (lint wall); a panic exits 101 and is a bug. |
 
-forge-warden has no `unsafe` code (forbidden), spawns no processes, opens no network
-connections and writes no files.
+forge-warden has no `unsafe` code (forbidden) and opens no network connections. It starts
+exactly two kinds of child process, both through `doors.rs` with a cleared environment, a
+timeout and capped output:
+- in authority mode, the deep-diff-forge binary the policy admits by SHA-256;
+- Git, which reads the patch's facts inside a private 0700 temporary directory that it removes
+  afterwards (ADR 0005, ADR 0010).
+
+It writes no other files.
 
 ## Reporting
 
