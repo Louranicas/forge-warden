@@ -304,13 +304,13 @@ pub struct Note {
 /// Declares [`NoteCode`] from one list, so its variants, [`NoteCode::name`] and [`NoteCode::ALL`]
 /// cannot disagree: a code exists in all three or in none.
 macro_rules! note_codes {
-    ($($(#[$doc:meta])* $variant:ident => $name:literal,)*) => {
+    ($($doc:literal $variant:ident => $name:literal,)*) => {
         /// Why a verdict holds when the policy alone cannot decide. Every note holds the verdict at
         /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and
         /// the schema's enum lists exactly these names (tests check both).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
         pub enum NoteCode {
-            $($(#[$doc])* $variant,)*
+            $(#[doc = $doc] $variant,)*
         }
 
         impl NoteCode {
@@ -329,27 +329,27 @@ macro_rules! note_codes {
 }
 
 note_codes! {
-    /// The ranking lists no file: there is nothing to judge.
+    "The ranking lists no file: there is nothing to judge."
     EmptyRanking => "empty_ranking",
-    /// A signal this forge-warden does not know.
+    "A signal this forge-warden does not know."
     UnknownSignal => "unknown_signal",
-    /// A status this forge-warden does not know (including deep-diff-forge's `unknown`).
+    "A status this forge-warden does not know (including deep-diff-forge's `unknown`)."
     UnknownStatus => "unknown_status",
-    /// A rename or copy: rank.v0 does not report the source path.
+    "A rename or copy: rank.v0 does not report the source path."
     SourcePathUnknown => "source_path_unknown",
-    /// One path is listed more than once (deep-diff-forge does this for a type change).
+    "One path is listed more than once (deep-diff-forge does this for a type change)."
     DuplicatePaths => "duplicate_paths",
-    /// Git sees a file in the patch that the ranking does not list.
+    "Git sees a file in the patch that the ranking does not list."
     RankIncomplete => "rank_incomplete",
-    /// The ranking lists a file the patch does not change.
+    "The ranking lists a file the patch does not change."
     RankExtraneous => "rank_extraneous",
-    /// The ranking's status or change-kind signals contradict Git.
+    "The ranking's status or change-kind signals contradict Git."
     StatusMismatch => "status_mismatch",
-    /// Git refused the patch, or its facts cannot be read; coverage cannot be verified.
+    "Git refused the patch, or its facts cannot be read; coverage cannot be verified."
     PatchUnverifiable => "patch_unverifiable",
-    /// The ranking was supplied, not produced (advisory mode).
+    "The ranking was supplied, not produced (advisory mode)."
     RankUnverified => "rank_unverified",
-    /// The ranking supplied with `--rank` differs from the one forge-warden produced.
+    "The ranking supplied with `--rank` differs from the one forge-warden produced."
     RankMismatch => "rank_mismatch",
 }
 

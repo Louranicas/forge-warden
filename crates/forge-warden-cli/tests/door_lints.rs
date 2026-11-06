@@ -107,9 +107,17 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
         if let Some(TokenTree::Group(group)) = trees.get(next)
             && group.delimiter() == Delimiter::Bracket
         {
-            match syn::parse2::<Meta>(group.stream()) {
-                Ok(meta) => check_meta(&meta, found),
-                Err(_) => found.push("an attribute in a macro that does not parse".to_owned()),
+            // `#[doc = …]` (also `#[doc = $doc]` in a macro body) only documents: it cannot change a
+            // lint level, so it is the one attribute admitted without parsing its value.
+            let is_doc = matches!(
+                group.stream().into_iter().next(),
+                Some(TokenTree::Ident(ident)) if ident == "doc"
+            );
+            if !is_doc {
+                match syn::parse2::<Meta>(group.stream()) {
+                    Ok(meta) => check_meta(&meta, found),
+                    Err(_) => found.push("an attribute in a macro that does not parse".to_owned()),
+                }
             }
         }
     }
@@ -222,6 +230,10 @@ fn the_parser_finds_every_suppression_form() {
         ),
         ("macro_rules", "macro_rules! hide { () => {} }"),
         (
+            "a metavariable attribute in a macro body",
+            "some_macro! { #[$lint] fn f() {} }",
+        ),
+        (
             "unparseable lint list",
             "#[expect(clippy::all reason)]\nfn f() {}",
         ),
@@ -253,6 +265,10 @@ fn the_parser_ignores_names_outside_lint_attributes() {
         (
             "the name only in a string",
             "fn f() -> &'static str { \"#[expect(clippy::all)]\" }",
+        ),
+        (
+            "a doc metavariable in a macro body",
+            "some_macro! { #[doc = $doc] fn f() {} }",
         ),
         (
             "deny is stricter, not looser",
