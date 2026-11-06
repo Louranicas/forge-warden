@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "5203842521264e727b740c3b5c5176bcf9c98e8d935e51d3f085c9e970005775",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": ".gitmodules", "status": "added", "score": 4, "signals": ["new_file"]},
+    {"path": "sub", "status": "added", "score": 4, "signals": ["new_file"]}
+  ]
+}

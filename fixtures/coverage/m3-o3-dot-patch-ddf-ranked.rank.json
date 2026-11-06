@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "f75d109fa5352007ada32cebe8e938821871e7727ede403671800dfc4145aa12",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "./src/lib.rs", "status": "modified", "score": 7, "signals": ["public_api_surface"]}
+  ]
+}

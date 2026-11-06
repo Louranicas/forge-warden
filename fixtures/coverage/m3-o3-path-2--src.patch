@@ -1,0 +1,7 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ca05282..83021ca 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,2 @@
+ fn a() {}
++fn b() {}

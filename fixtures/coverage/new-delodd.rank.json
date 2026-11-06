@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "ef840fa76ded29bbea40677d67d11e47e9a3ba75a6e3d724a39a40669af4248a",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "dir sp/new\tü.rs", "status": "deleted", "score": 5, "signals": ["deleted_file"]}
+  ]
+}

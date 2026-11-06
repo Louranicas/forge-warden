@@ -1,0 +1,392 @@
+//! What Git says a patch does, and whether a ranking agrees (ADR 0005 §2.2, §2.8, §2.9).
+//!
+//! The CLI runs `git apply --numstat -z` and `git apply --summary` on the patch bytes (ADR 0010's
+//! isolated environment) and passes their output here with the patch itself. Parsing is pure and
+//! strict: every form this module cannot read exactly is a refusal ([`Unverifiable`]), never a guess.
+//! Facts derived this way are Git's, so they outrank the ranking on file identity and change kind;
+//! the ranking still supplies scores and code-evidence signals.
+
+use crate::path::RepoPath;
+use crate::rank::{RankDoc, RankedFile};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+/// What happened to a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ChangeKind {
+    /// The file is new.
+    Added,
+    /// The file is removed.
+    Deleted,
+    /// The file exists before and after.
+    Modified,
+}
+
+/// A Git file mode forge-warden supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Mode {
+    /// `100644`
+    File,
+    /// `100755`
+    Exec,
+    /// `120000`
+    Symlink,
+}
+
+/// Git's facts about one file in a patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange {
+    path: RepoPath,
+    kind: ChangeKind,
+    old_mode: Option<Mode>,
+    new_mode: Option<Mode>,
+    binary: bool,
+    content: bool,
+}
+
+/// Git's facts about a whole patch: one record per file, each path once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchFacts {
+    files: BTreeMap<RepoPath, FileChange>,
+}
+
+/// Why Git's view of a patch cannot be trusted as complete. Each one holds the verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unverifiable {
+    /// Git refused the patch (nonzero exit).
+    GitRefused(String),
+    /// Git found no file in the patch.
+    Empty,
+    /// A path is not UTF-8.
+    NonUtf8Path,
+    /// A path contains a newline (the summary could not be read unambiguously).
+    NewlineInPath,
+    /// A path is not canonical (`./x`, `/x`, `a//b`, `..`).
+    NonCanonicalPath(String),
+    /// Git lists one path twice (repeated operations; `--no-prefix` folding).
+    RepeatedPath(String),
+    /// A summary record names a path the numstat does not.
+    SummaryPathUnknown(String),
+    /// More than one summary record for one path (a file/symlink type change).
+    TypeChange(String),
+    /// A rename or a copy: rank `git diff --no-renames` instead.
+    RenameOrCopy,
+    /// A mode other than `100644`, `100755` or `120000` (a submodule is `160000`).
+    UnsupportedMode(String),
+    /// Output this module does not recognise.
+    UnreadableGitOutput(String),
+}
+
+impl fmt::Display for Unverifiable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GitRefused(why) => write!(f, "git refused the patch: {why}"),
+            Self::Empty => f.write_str("git found no file in the patch"),
+            Self::NonUtf8Path => f.write_str("a path is not UTF-8"),
+            Self::NewlineInPath => f.write_str("a path contains a newline"),
+            Self::NonCanonicalPath(p) => write!(f, "path {p:?} is not canonical"),
+            Self::RepeatedPath(p) => write!(f, "git lists {p:?} more than once"),
+            Self::SummaryPathUnknown(p) => {
+                write!(f, "git's summary names {p:?}, which its numstat does not")
+            }
+            Self::TypeChange(p) => write!(f, "{p:?} changes type (more than one summary record)"),
+            Self::RenameOrCopy => {
+                f.write_str("the patch renames or copies a file; rank `git diff --no-renames`")
+            }
+            Self::UnsupportedMode(m) => {
+                write!(
+                    f,
+                    "unsupported file mode {m} (a submodule or unknown file type)"
+                )
+            }
+            Self::UnreadableGitOutput(what) => write!(f, "unreadable git output: {what}"),
+        }
+    }
+}
+
+/// Where the ranking and Git disagree.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Disagreement {
+    /// Git sees this path; the ranking does not list it.
+    Missing(RepoPath),
+    /// The ranking lists this path; Git does not see it.
+    Extraneous(RepoPath),
+    /// Both list it, but the ranking's status or change-kind signals contradict Git.
+    Status(RepoPath),
+}
+
+const SUPPORTED_MODES: [(&str, Mode); 3] = [
+    ("100644", Mode::File),
+    ("100755", Mode::Exec),
+    ("120000", Mode::Symlink),
+];
+
+fn mode(text: &str) -> Result<Mode, Unverifiable> {
+    SUPPORTED_MODES
+        .iter()
+        .find(|(m, _)| *m == text)
+        .map(|(_, mode)| *mode)
+        .ok_or_else(|| Unverifiable::UnsupportedMode(text.to_owned()))
+}
+
+/// Every mode a git-format patch states in a header line. Hunk lines start with ` `, `+`, `-` or
+/// `\`, and base85 binary-patch lines contain no space, so only header lines match these
+/// prefixes. An unchanged submodule (`index a..b 160000`) has no `--summary` record (ADR 0005 T1).
+fn check_header_modes(patch: &[u8]) -> Result<(), Unverifiable> {
+    const PREFIXES: [&str; 4] = [
+        "new file mode ",
+        "deleted file mode ",
+        "old mode ",
+        "new mode ",
+    ];
+    for raw in patch.split(|b| *b == b'\n') {
+        let line = String::from_utf8_lossy(raw);
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("index ") {
+            let parts: Vec<&str> = rest.split(' ').collect();
+            if let [_, stated] = parts.as_slice() {
+                mode(stated)?;
+            }
+        }
+        for prefix in PREFIXES {
+            if let Some(stated) = line.strip_prefix(prefix) {
+                mode(stated)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn utf8(bytes: &[u8]) -> Result<&str, Unverifiable> {
+    std::str::from_utf8(bytes).map_err(|_| Unverifiable::NonUtf8Path)
+}
+
+impl PatchFacts {
+    /// Git's facts, from `git apply --numstat -z`, `git apply --summary` and the patch bytes they
+    /// were run on.
+    ///
+    /// # Errors
+    ///
+    /// [`Unverifiable`] for every form that cannot be read exactly.
+    pub fn from_git(numstat_z: &[u8], summary: &[u8], patch: &[u8]) -> Result<Self, Unverifiable> {
+        check_header_modes(patch)?;
+        let mut files = BTreeMap::new();
+        let mut fields = numstat_z.split(|b| *b == 0).peekable();
+        while let Some(record) = fields.next() {
+            if record.is_empty() {
+                if fields.peek().is_none() {
+                    break;
+                }
+                return Err(Unverifiable::UnreadableGitOutput(
+                    "empty numstat record".to_owned(),
+                ));
+            }
+            let mut columns = record.splitn(3, |b| *b == b'\t');
+            let (Some(added), Some(deleted), Some(path_bytes)) =
+                (columns.next(), columns.next(), columns.next())
+            else {
+                return Err(Unverifiable::UnreadableGitOutput(
+                    "short numstat record".to_owned(),
+                ));
+            };
+            if path_bytes.is_empty() {
+                // `add\tdel\t\0old\0new\0`: the rename/copy form.
+                return Err(Unverifiable::RenameOrCopy);
+            }
+            let text = utf8(path_bytes)?;
+            if text.contains('\n') {
+                return Err(Unverifiable::NewlineInPath);
+            }
+            let repo_path = RepoPath::parse(text)
+                .map_err(|_| Unverifiable::NonCanonicalPath(text.to_owned()))?;
+            let binary = added == b"-" && deleted == b"-";
+            let change = FileChange {
+                path: repo_path.clone(),
+                kind: ChangeKind::Modified,
+                old_mode: None,
+                new_mode: None,
+                binary,
+                content: binary || added != b"0" || deleted != b"0",
+            };
+            if files.insert(repo_path, change).is_some() {
+                return Err(Unverifiable::RepeatedPath(text.to_owned()));
+            }
+        }
+        if files.is_empty() {
+            return Err(Unverifiable::Empty);
+        }
+        apply_summary(&mut files, summary)?;
+        Ok(Self { files })
+    }
+
+    /// Every file Git sees, by path.
+    pub fn files(&self) -> impl Iterator<Item = &FileChange> {
+        self.files.values()
+    }
+}
+
+/// Read `--summary` whole-line by fixed format: `" create mode " MODE " " PATH`,
+/// `" delete mode " MODE " " PATH`, `" mode change " MODE " => " MODE " " PATH`, where PATH is the
+/// entire rest of the line, compared byte for byte with a numstat path. Never a suffix match.
+fn apply_summary(
+    files: &mut BTreeMap<RepoPath, FileChange>,
+    summary: &[u8],
+) -> Result<(), Unverifiable> {
+    let mut seen = BTreeSet::new();
+    for raw in summary.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        let line = utf8(raw)?;
+        let unreadable = || Unverifiable::UnreadableGitOutput(line.to_owned());
+        let (kind, old, new, path) = if let Some(rest) = line.strip_prefix(" create mode ") {
+            let (stated, path) = rest.split_once(' ').ok_or_else(unreadable)?;
+            (Some(ChangeKind::Added), None, Some(mode(stated)?), path)
+        } else if let Some(rest) = line.strip_prefix(" delete mode ") {
+            let (stated, path) = rest.split_once(' ').ok_or_else(unreadable)?;
+            (Some(ChangeKind::Deleted), Some(mode(stated)?), None, path)
+        } else if let Some(rest) = line.strip_prefix(" mode change ") {
+            // `OLD => NEW PATH`
+            let (from, rest) = rest.split_once(" => ").ok_or_else(unreadable)?;
+            let (to, path) = rest.split_once(' ').ok_or_else(unreadable)?;
+            (None, Some(mode(from)?), Some(mode(to)?), path)
+        } else if line.starts_with(" rename ") || line.starts_with(" copy ") {
+            return Err(Unverifiable::RenameOrCopy);
+        } else {
+            return Err(unreadable());
+        };
+        let repo_path =
+            RepoPath::parse(path).map_err(|_| Unverifiable::SummaryPathUnknown(path.to_owned()))?;
+        let Some(change) = files.get_mut(&repo_path) else {
+            return Err(Unverifiable::SummaryPathUnknown(path.to_owned()));
+        };
+        if !seen.insert(repo_path) {
+            return Err(Unverifiable::TypeChange(path.to_owned()));
+        }
+        if let Some(kind) = kind {
+            change.kind = kind;
+        }
+        change.old_mode = old;
+        change.new_mode = new;
+    }
+    Ok(())
+}
+
+/// The change-kind signals Git's facts imply. A rule sees these **added** to the ranking's
+/// signals; Git never removes one (ADR 0005 §2.8, T2).
+#[must_use]
+pub fn derived_signals(change: &FileChange) -> BTreeSet<&'static str> {
+    let FileChange {
+        path: _,
+        kind,
+        old_mode,
+        new_mode,
+        binary,
+        content: _,
+    } = change;
+    let mut out = BTreeSet::new();
+    match kind {
+        ChangeKind::Added => {
+            out.insert("new_file");
+        }
+        ChangeKind::Deleted => {
+            out.insert("deleted_file");
+        }
+        ChangeKind::Modified => {}
+    }
+    if *binary {
+        out.insert("binary_change");
+    }
+    if *old_mode == Some(Mode::Symlink) || *new_mode == Some(Mode::Symlink) {
+        out.insert("symlink_change");
+    }
+    let gained_exec = *new_mode == Some(Mode::Exec)
+        && match kind {
+            ChangeKind::Added => true,
+            ChangeKind::Modified => old_mode.is_some_and(|m| m != Mode::Exec),
+            ChangeKind::Deleted => false,
+        };
+    if gained_exec {
+        out.insert("executable_bit");
+    }
+    out
+}
+
+/// Does the ranking's entry agree with Git's facts? The status must be the one the measured
+/// producer writes for this kind of change (ADR 0005 §2.9), every derived signal must be present,
+/// and no change-kind signal may contradict Git.
+fn agrees(change: &FileChange, ranked: &RankedFile) -> bool {
+    let FileChange {
+        path: _,
+        kind,
+        old_mode,
+        new_mode,
+        binary,
+        content,
+    } = change;
+    let signals: BTreeSet<&str> = ranked.signals().iter().map(String::as_str).collect();
+    let forbidden: &[&str] = match kind {
+        ChangeKind::Added => &["deleted_file"],
+        ChangeKind::Deleted => &["new_file"],
+        ChangeKind::Modified => &["new_file", "deleted_file"],
+    };
+    if forbidden.iter().any(|s| signals.contains(s)) {
+        return false;
+    }
+    if !derived_signals(change).iter().all(|s| signals.contains(s)) {
+        return false;
+    }
+    let mode_changed = old_mode.is_some() && old_mode != new_mode;
+    let status = match (kind, *binary, mode_changed, *content) {
+        (ChangeKind::Added | ChangeKind::Deleted | ChangeKind::Modified, true, _, _) => {
+            "binary_changed"
+        }
+        (ChangeKind::Added, false, _, _) => "added",
+        (ChangeKind::Deleted, false, _, _) => "deleted",
+        (ChangeKind::Modified, false, true, false) => "mode_changed",
+        (ChangeKind::Modified, false, _, _) => "modified",
+    };
+    ranked.status() == status
+}
+
+/// Where `rank` and Git's `facts` disagree, in path order. Empty means the ranking covers the
+/// patch exactly and agrees with Git on every file it lists.
+#[must_use]
+pub fn compare(rank: &RankDoc, facts: &PatchFacts) -> Vec<Disagreement> {
+    let mut ranked: BTreeMap<&RepoPath, &RankedFile> = BTreeMap::new();
+    for file in rank.files() {
+        ranked.entry(file.path()).or_insert(file);
+    }
+    let mut out = Vec::new();
+    for (path, change) in &facts.files {
+        match ranked.get(path) {
+            None => out.push(Disagreement::Missing(path.clone())),
+            Some(file) if !agrees(change, file) => out.push(Disagreement::Status(path.clone())),
+            Some(_) => {}
+        }
+    }
+    for path in ranked.keys() {
+        if !facts.files.contains_key(*path) {
+            out.push(Disagreement::Extraneous((*path).clone()));
+        }
+    }
+    out.sort();
+    out
+}
+
+impl FileChange {
+    /// The file's path.
+    #[must_use]
+    pub const fn path(&self) -> &RepoPath {
+        &self.path
+    }
+
+    /// What happened to it.
+    #[must_use]
+    pub const fn kind(&self) -> ChangeKind {
+        self.kind
+    }
+
+    /// Whether Git treats it as binary.
+    #[must_use]
+    pub const fn binary(&self) -> bool {
+        self.binary
+    }
+}

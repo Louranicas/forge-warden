@@ -1,0 +1,7 @@
+diff --git "a/quote\"\\tab\tname" "b/quote\"\\tab\tname"
+new file mode 100644
+index 0000000..ce01362
+--- /dev/null
++++ "b/quote\"\\tab\tname"
+@@ -0,0 +1 @@
++hello

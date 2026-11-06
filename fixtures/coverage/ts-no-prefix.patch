@@ -1,0 +1,10 @@
+diff --git other src/a other src/a
+old mode 100644
+new mode 100755
+diff --git src/a src/a
+index 3367afd..3e75765 100644
+--- src/a
++++ src/a
+@@ -1 +1 @@
+-old
++new

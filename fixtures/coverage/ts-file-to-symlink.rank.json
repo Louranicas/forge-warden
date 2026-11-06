@@ -1,0 +1,9 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "1dad655df1b18a9e6c32b5d5d2203d93e50b03b5714cd27c535b9e3d9ead91c6",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "a", "status": "added", "score": 7, "signals": ["new_file", "symlink_change"]},
+    {"path": "a", "status": "deleted", "score": 5, "signals": ["deleted_file"]}
+  ]
+}

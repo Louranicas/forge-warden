@@ -1,0 +1,15 @@
+diff --git a/lnk2 b/lnk2
+deleted file mode 100644
+index b9bca01..0000000
+--- a/lnk2
++++ /dev/null
+@@ -1 +0,0 @@
+-plain
+diff --git a/lnk2 b/lnk2
+new file mode 120000
+index 0000000..c7ca8e3
+--- /dev/null
++++ b/lnk2
+@@ -0,0 +1 @@
++src/lib.rs
+\ No newline at end of file
