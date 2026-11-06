@@ -447,7 +447,11 @@ paths = ["warden.toml"]
     ]);
     let verdict = evaluate(&p, &split, seals(), today());
     assert_eq!(verdict.rules[0].outcome, RuleOutcome::Hold);
-    assert!(verdict.notes.is_empty());
+    assert_eq!(
+        verdict.notes,
+        Vec::new(),
+        "a --no-renames split leaves nothing unjudged"
+    );
 }
 
 /// deep-diff-forge labels a deleted binary file `binary_changed` (with the `deleted_file`

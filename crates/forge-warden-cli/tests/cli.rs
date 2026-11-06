@@ -86,7 +86,7 @@ fn a_patch_that_is_not_the_ranked_one_is_refused() {
 fn an_invalid_policy_lists_every_issue() {
     let out = run(&["lint", "fixtures/bad.warden.toml"], b"");
     assert_eq!(out.code, 4);
-    assert!(out.stdout.is_empty());
+    assert_eq!(out.stdout, "", "stdout must be empty on error");
     for needle in [
         "unknown signal \"secrets_like\" (did you mean \"secret_like\"?)",
         "kebab-case",
@@ -108,7 +108,7 @@ fn a_ranking_from_another_tool_is_refused() {
         br#"{"schema":"something.else","ranked":[]}"#,
     );
     assert_eq!(out.code, 4);
-    assert!(out.stdout.is_empty());
+    assert_eq!(out.stdout, "", "stdout must be empty on error");
 }
 
 #[test]
