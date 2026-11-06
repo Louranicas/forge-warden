@@ -4,6 +4,9 @@
 //! This test runs the real clippy, with this repository's `clippy.toml`, on a scratch crate that
 //! names the two functions in every form measured for C1c v2, and requires each form to be refused
 //! and the two controls (the door's `#[expect]`, and an allowed function) not to be.
+//!
+//! G-04 (WP-B7): the same real clippy, run once with each crate's own `clippy.toml`, refuses every
+//! way of choosing a raw `unwrap_or*` default, and admits the named `NamedDefault` defaults.
 #![expect(
     clippy::disallowed_methods,
     clippy::unwrap_used,
@@ -12,7 +15,7 @@
 
 mod common;
 use common::root;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Each line carrying `// FORM:` must be reported as a disallowed method; `// CONTROL:` lines must not.
@@ -61,9 +64,66 @@ fn door(doc: RankDoc) -> usize {
 }
 "#;
 
+/// G-04: every way of choosing a raw default; each `// FORM:` line must be refused by both crates'
+/// configurations, and the named defaults and a same-named method on another type must not be.
+const DEFAULT_PLANTS: &str = r"
+use forge_warden_core::Outcome;
+use forge_warden_core::defaults::NamedDefault as _;
+use std::option::Option as Maybe;
+
+fn apply<T>(f: impl Fn(Option<T>, T) -> T, o: Option<T>, d: T) -> T {
+    f(o, d)
+}
+
+struct Lookalike;
+impl Lookalike {
+    fn unwrap_or(self, d: u8) -> u8 {
+        d
+    }
+}
+
+pub fn forms(o: Option<u8>, r: Result<u8, String>, verdict: Option<Outcome>) -> usize {
+    let mut n = 0_usize;
+    let _a = verdict.unwrap_or(Outcome::Pass); // FORM: Option::unwrap_or (the G-04 case)
+    let _b = o.unwrap_or_else(|| 0); // FORM: Option::unwrap_or_else
+    let _c = o.unwrap_or_default(); // FORM: Option::unwrap_or_default
+    let _d = r.clone().unwrap_or(0); // FORM: Result::unwrap_or
+    let _e = r.clone().unwrap_or_else(|_| 0); // FORM: Result::unwrap_or_else
+    let _f = r.clone().unwrap_or_default(); // FORM: Result::unwrap_or_default
+    let _g = Option::unwrap_or(o, 0); // FORM: UFCS
+    let _h = std::option::Option::<u8>::unwrap_or(o, 0); // FORM: qualified UFCS
+    let _i = Maybe::unwrap_or(o, 0); // FORM: via use-as
+    let pick = Option::<u8>::unwrap_or; // FORM: alias binding
+    let _j = pick(o, 0);
+    let _k = apply(Option::unwrap_or, o, 0); // FORM: passed as a function
+    let p: fn(Option<u8>, u8) -> u8 = Option::unwrap_or; // FORM: fn pointer
+    let _l = p(o, 0);
+    let _m = Some(o).map(|x| x.unwrap_or(0)); // FORM: in a closure
+    let _n = vec![o.unwrap_or(0)]; // FORM: inside an external macro
+    let _q = <Result<u8, String>>::unwrap_or_default(r.clone()); // FORM: Result UFCS
+    let _s = r.clone().ok().unwrap_or(0); // FORM: Result converted to Option
+    n += usize::from(o.or_fail_closed(0)); // CONTROL: a named fail-closed default
+    n += usize::from(r.clone().or_fail_safe(0)); // CONTROL: a named fail-safe default on Result
+    n += o.map(usize::from).or_display(0); // CONTROL: a named display default
+    n += usize::from(Lookalike.unwrap_or(0)); // CONTROL: the same name on another type
+    n
+}
+";
+
 #[test]
 fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() {
-    check_plants("mint-lint", &[]);
+    check_plants("mint-lint", PLANTS, &root(), 16, &[]);
+}
+
+#[test]
+fn clippy_refuses_every_raw_default_under_the_cli_configuration() {
+    check_plants("default-lint-cli", DEFAULT_PLANTS, &root(), 16, &[]);
+}
+
+#[test]
+fn clippy_refuses_every_raw_default_under_the_core_configuration() {
+    let core = root().join("crates/forge-warden-core");
+    check_plants("default-lint-core", DEFAULT_PLANTS, &core, 16, &[]);
 }
 
 #[test]
@@ -73,6 +133,9 @@ fn an_outer_cap_lints_cannot_silence_the_regression() {
     // baseline red. The same hostile environment is applied here before the nested command clears it.
     check_plants(
         "mint-lint-capped",
+        PLANTS,
+        &root(),
+        16,
         &[
             ("RUSTFLAGS", "--cap-lints=allow"),
             ("CARGO_ENCODED_RUSTFLAGS", "--cap-lints\u{1f}allow"),
@@ -81,9 +144,16 @@ fn an_outer_cap_lints_cannot_silence_the_regression() {
     );
 }
 
-/// Run clippy on the plants in a scratch crate under `name`, with `hostile` environment variables
-/// set first (the nested command must clear them), and check every form and control.
-fn check_plants(name: &str, hostile: &[(&str, &str)]) {
+/// Run clippy, configured by the `clippy.toml` in `config`, on `plants` in a scratch crate under
+/// `name`, with `hostile` environment variables set first (the nested command must clear them), and
+/// check that all `expected` forms are refused and no control is.
+fn check_plants(
+    name: &str,
+    plants: &str,
+    config: &Path,
+    expected: usize,
+    hostile: &[(&str, &str)],
+) {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let core = root().join("crates/forge-warden-core");
@@ -95,7 +165,7 @@ fn check_plants(name: &str, hostile: &[(&str, &str)]) {
         ),
     )
     .unwrap();
-    std::fs::write(dir.join("src/lib.rs"), PLANTS).unwrap();
+    std::fs::write(dir.join("src/lib.rs"), plants).unwrap();
     std::fs::copy(root().join("Cargo.lock"), dir.join("Cargo.lock")).unwrap();
     let out = Command::new(env!("CARGO"))
         .args([
@@ -117,7 +187,7 @@ fn check_plants(name: &str, hostile: &[(&str, &str)]) {
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("CARGO_BUILD_RUSTFLAGS")
-        .env("CLIPPY_CONF_DIR", root())
+        .env("CLIPPY_CONF_DIR", config)
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .unwrap();
@@ -133,7 +203,7 @@ fn check_plants(name: &str, hostile: &[(&str, &str)]) {
         .filter_map(|l| l.split(':').next()?.parse().ok())
         .collect();
     let mut forms = 0_usize;
-    for (index, line) in PLANTS.lines().enumerate() {
+    for (index, line) in plants.lines().enumerate() {
         let number = index.saturating_add(1);
         if let Some((_, form)) = line.split_once("// FORM: ") {
             forms = forms.saturating_add(1);
@@ -149,6 +219,6 @@ fn check_plants(name: &str, hostile: &[(&str, &str)]) {
             );
         }
     }
-    assert_eq!(forms, 16);
+    assert_eq!(forms, expected, "plant count");
     assert!(!out.status.success(), "planted forms must fail the build");
 }

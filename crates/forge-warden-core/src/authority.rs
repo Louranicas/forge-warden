@@ -13,6 +13,7 @@
 //! - [`evaluate_advisory`] returns an [`AdvisoryVerdict`], whose outcome type has no pass.
 
 use crate::date::Date;
+use crate::defaults::NamedDefault as _;
 use crate::eval::evaluate;
 use crate::exit::Outcome;
 use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_signals};
@@ -168,9 +169,9 @@ impl Checked {
             rank.tool_version().to_owned(),
             files,
         );
-        // fails safe: the seal and version were already valid, so this cannot be refused; were it
-        // ever, the unwidened ranking is judged and Git's facts still hold it via status_mismatch
-        widened.unwrap_or_else(|_| rank.clone())
+        // The seal and version were already valid, so this cannot be refused; were it ever, the
+        // unwidened ranking is judged and Git's facts still hold it via status_mismatch.
+        widened.or_fail_safe(rank.clone())
     }
 }
 
@@ -187,8 +188,8 @@ fn widened(file: &RankedFile, signals: Vec<String>) -> RankedFile {
         file.evidence().to_vec(),
         file.evidence_truncated(),
     );
-    // fails safe: see above; the unwidened file can only miss an added signal
-    wide.unwrap_or_else(|_| file.clone())
+    // See above: the unwidened file can only miss an added signal.
+    wide.or_fail_safe(file.clone())
 }
 
 /// A verdict on a supplied ranking. Its outcome type has no pass: a supplied ranking can at best

@@ -129,9 +129,9 @@ pub(crate) mod child {
     use super::{DoorError, read_within};
     use forge_warden_core::Policy;
     use forge_warden_core::authority::{Produced, Ranking};
+    use forge_warden_core::defaults::NamedDefault as _;
     use forge_warden_core::rank::parse_rank;
     use forge_warden_core::seal::sha256_hex;
-    use forge_warden_core::defaults::NamedDefault as _;
     use std::io::{Read as _, Write as _};
     use std::path::Path;
     use std::process::ExitStatus;

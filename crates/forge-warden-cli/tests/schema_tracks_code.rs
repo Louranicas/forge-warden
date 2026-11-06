@@ -213,7 +213,7 @@ fn table_keys(doc: &str, heading: &str) -> Vec<String> {
         "docs/POLICY_REFERENCE.md has no {heading:?} section"
     );
     let (_, section) = doc.split_once(heading).unwrap();
-    let section = section.split("\n## ").next().unwrap_or(section);
+    let section = section.split("\n## ").next().unwrap();
     section
         .lines()
         .filter_map(|line| line.strip_prefix("| `"))
