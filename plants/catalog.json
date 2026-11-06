@@ -511,14 +511,14 @@
     {
       "id": "untested-mutation-branch",
       "guardrail": "G-46",
-      "path": "crates/forge-warden-core/src/eval.rs",
+      "path": "crates/forge-warden-core/src/render.rs",
       "diagnostic": "MISSED_SURVIVOR_REJECTED",
       "command": [
         "python3",
         "-I",
         "plants/mutation_survivor.py"
       ],
-      "append": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> bool {\n    if value { true } else { false }\n}\n"
+      "append": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n"
     },
     {
       "id": "enum-wildcard",

@@ -18,7 +18,8 @@ LIMIT = 4 * 1024 * 1024
 def environment():
     """Neutral Git configuration and offline tools; this is not an execution sandbox."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
-    env.pop('CARGO_TARGET_DIR', None)
+    for key in ('CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS'):
+        env.pop(key, None)
     env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
                GIT_NO_REPLACE_OBJECTS='1', CARGO_NET_OFFLINE='true', RUSTUP_AUTO_INSTALL='0')
     return env
@@ -62,11 +63,25 @@ def execute(argv, cwd, log, timeout=300):
 def classify(baseline, planted, diagnostic):
     if baseline['error'] or baseline['exit'] != 0:
         return 'ERROR_BASELINE'
+    if re.search(diagnostic, baseline.get('text', '')):
+        return 'ERROR_DIAGNOSTIC_AMBIGUOUS'
     if planted['error'] or planted['exit'] < 0:
         return 'ERROR_COMMAND'
     if planted['exit'] == 0:
         return 'ESCAPED'
     return 'CAUGHT' if re.search(diagnostic, planted['text']) else 'ERROR_DIAGNOSTIC'
+
+
+def check_restore(root, output, case_id, row):
+    """A dirty checkout invalidates the case and stops later plants from consuming it."""
+    log = output / (case_id + '-restore.log')
+    result = execute(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
+                      'status', '--porcelain=v1', '--untracked-files=all'], root, log, timeout=30)
+    row['restore'] = result
+    if result['error'] or result['exit'] or log.stat().st_size:
+        row['status'] = 'ERROR_RESTORE'
+        return False
+    return True
 
 
 def edit(root, recipe):
@@ -167,6 +182,17 @@ def main():
                 row['baseline'] = baseline
                 if baseline['exit'] or baseline['error']:
                     row['status'] = 'ERROR_BASELINE'
+                    if not check_restore(root, output, case['id'], row):
+                        report['aborted_after_restore_error'] = True
+                        break
+                    continue
+                baseline_text = (output / baseline['log']).read_bytes()[:LIMIT].decode('utf-8', errors='replace')
+                positive = {**baseline, 'text': baseline_text}
+                if re.search(case['diagnostic'], baseline_text):
+                    row['status'] = 'ERROR_DIAGNOSTIC_AMBIGUOUS'
+                    if not check_restore(root, output, case['id'], row):
+                        report['aborted_after_restore_error'] = True
+                        break
                     continue
                 snapshots = {root / 'Cargo.lock': (root / 'Cargo.lock').read_bytes()}
                 try:
@@ -175,15 +201,22 @@ def main():
                     planted = execute(command, root, output / (case['id'] + '-planted.log'))
                     row['planted'] = planted
                     planted['text'] = (output / planted['log']).read_bytes()[:LIMIT].decode('utf-8', errors='replace')
-                    row['status'] = classify(baseline, planted, case['diagnostic'])
+                    row['status'] = classify(positive, planted, case['diagnostic'])
                     planted.pop('text')
                 except (ValueError, OSError) as error:
                     row.update(status='ERROR_RECIPE', detail=str(error))
                 finally:
                     for path, before in snapshots.items():
-                        path.write_bytes(before)
+                        try:
+                            path.write_bytes(before)
+                        except OSError as error:
+                            row.update(status='ERROR_RESTORE', detail=str(error))
+                clean = check_restore(root, output, case['id'], row)
                 # Do not cache baselines: a broken restore must not contaminate later evidence.
                 (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+                if not clean or row['status'] == 'ERROR_RESTORE':
+                    report['aborted_after_restore_error'] = True
+                    break
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))
     if report.get('setup_error') or any(r['status'] != 'CAUGHT' for r in rows):

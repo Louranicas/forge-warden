@@ -8,14 +8,15 @@ import tempfile
 
 def main():
     # A zero-site mutation selection alone is not a build-positive control.
-    baseline = subprocess.run(['cargo', 'check', '--workspace', '--all-targets', '--locked', '--offline'],
+    baseline = subprocess.run(['cargo', 'clippy', '--workspace', '--all-targets', '--locked', '--offline'],
                               capture_output=True, text=True, timeout=120)
     if baseline.returncode:
         print('ERROR_MUTATION_BUILD:', baseline.stderr)
         return 1
     with tempfile.TemporaryDirectory(prefix='a4-survivor-') as directory:
         command = ['env', '-u', 'CARGO_TARGET_DIR', 'cargo', 'mutants', '--no-config',
-                   '--cap-lints', 'true', '--workspace', '--re', 'planted_uncovered_branch',
+                   '--cap-lints', 'true', '--workspace', '--file', 'crates/forge-warden-core/src/render.rs',
+                   '--re', 'planted_uncovered_branch',
                    '--output', directory, '--cargo-arg=--locked', '--cargo-arg=--offline']
         result = subprocess.run(command, capture_output=True, text=True, timeout=180)
         print(result.stdout, end='')

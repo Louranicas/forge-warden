@@ -2,11 +2,13 @@
 """Harness controls, including unrelated-red and timeout false-positive prevention."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location('plants_runner', Path(__file__).with_name('run.py'))
@@ -15,6 +17,12 @@ SPEC.loader.exec_module(RUN)
 
 
 class Runner(unittest.TestCase):
+    def test_inherited_lint_caps_are_removed(self):
+        flags = ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS')
+        with patch.dict(os.environ, {name: '--cap-lints=allow' for name in flags}):
+            actual = RUN.environment()
+        self.assertTrue(all(name not in actual for name in flags))
+
     def test_execution_profiles_keep_argv_and_refuse_silent_native_fallback(self):
         root, target = Path('/checkout'), Path('/target')
         cargo = dict(cargo=['test', '--offline'])
@@ -40,6 +48,8 @@ class Runner(unittest.TestCase):
         self.assertEqual(RUN.classify(green, dict(exit=101, error=None, text='unrelated compile error'), 'named violation'), 'ERROR_DIAGNOSTIC')
         self.assertEqual(RUN.classify(green, dict(exit=0, error=None, text='named violation'), 'named violation'), 'ESCAPED')
         self.assertEqual(RUN.classify(dict(exit=101, error=None), dict(exit=101, error=None, text='named violation'), 'named violation'), 'ERROR_BASELINE')
+        ambiguous = dict(exit=0, error=None, text='named violation already present')
+        self.assertEqual(RUN.classify(ambiguous, dict(exit=101, error=None, text='named violation'), 'named violation'), 'ERROR_DIAGNOSTIC_AMBIGUOUS')
         for failure in (dict(exit=-9, error=None, text='named violation'), dict(exit=101, error='output_limit', text='named violation')):
             self.assertEqual(RUN.classify(green, failure, 'named violation'), 'ERROR_COMMAND')
 
@@ -112,6 +122,19 @@ class Runner(unittest.TestCase):
             result = subprocess.run([*common, '--output', str(refused), '--runner', str(backend)], capture_output=True)
             self.assertEqual(result.returncode, 2)
             self.assertFalse(refused.exists())
+            self.assertEqual((source / 'fixture').read_text(), 'clean\n')
+            self.assertEqual(git('status', '--porcelain'), b'')
+            # H3: a deliberately broken restoration must be detected from the actual Git checkout.
+            program = root / 'run.py'
+            original = program.read_text()
+            self.assertEqual(original.count('path.write_bytes(before)'), 1)
+            program.write_text(original.replace('path.write_bytes(before)', 'pass  # planted missing restore'))
+            output = root / 'broken-restore'
+            result = subprocess.run([*common, '--output', str(output), '--case', 'script'], capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            report = json.loads((output / 'report.json').read_text())
+            self.assertEqual(report['results'][0]['status'], 'ERROR_RESTORE')
+            self.assertTrue(report['aborted_after_restore_error'])
             self.assertEqual((source / 'fixture').read_text(), 'clean\n')
             self.assertEqual(git('status', '--porcelain'), b'')
 
