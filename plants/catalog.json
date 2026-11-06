@@ -512,25 +512,45 @@
       "id": "untested-mutation-branch",
       "guardrail": "G-46",
       "path": "crates/forge-warden-core/src/eval.rs",
-      "diagnostic": "[1-9][0-9]* missed",
+      "diagnostic": "MISSED_SURVIVOR_REJECTED",
       "command": [
-        "env",
-        "-u",
-        "CARGO_TARGET_DIR",
-        "cargo",
-        "mutants",
-        "--no-config",
-        "--cap-lints",
-        "true",
-        "--workspace",
-        "--re",
-        "in planted_uncovered_branch",
-        "--output",
-        "target/a4-survivor",
-        "--cargo-arg=--locked",
-        "--cargo-arg=--offline"
+        "python3",
+        "-I",
+        "plants/mutation_survivor.py"
       ],
       "append": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> bool {\n    if value { true } else { false }\n}\n"
+    },
+    {
+      "id": "enum-wildcard",
+      "guardrail": "G-43",
+      "path": "crates/forge-warden-core/src/policy/kind.rs",
+      "diagnostic": "(?:clippy::|#)(?:wildcard[-_]enum[-_]match[-_]arm|match[-_]wildcard[-_]for[-_]single[-_]variants)",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "Self::MaxFiles => \"max_files\",",
+      "new": "_ => \"max_files\","
+    },
+    {
+      "id": "raw-terminal-control",
+      "guardrail": "G-26",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "hostile_text_is_neutralised.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "hostile_text_is_neutralised",
+        "--locked",
+        "--offline"
+      ],
+      "old": "let _ignored = write!(out, \"\\\\u{{{:04x}}}\", u32::from(other));",
+      "new": "out.push(other);"
     }
   ],
   "pending_guardrails": [
@@ -577,12 +597,6 @@
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
     {
-      "id": "G-26",
-      "title": "Terminal-escape or bidi injection",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-29",
       "title": "Oversized or mixed-reason module",
       "status": "PENDING",
@@ -615,12 +629,6 @@
     {
       "id": "G-41",
       "title": "Vocabulary provenance (R-09, R-16, R-17)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-43",
-      "title": "Wildcard arm on our own enum or on a string",
       "status": "PENDING",
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
