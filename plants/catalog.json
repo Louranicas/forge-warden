@@ -6,7 +6,7 @@
     "supersessions": [
       "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
       "G-15 authenticates exact producer binary, not version string.",
-      "G-04 reviewed default markers, not a blanket clippy ban.",
+      "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR."
     ]
   },
@@ -38,7 +38,7 @@
         "--locked",
         "--offline"
       ],
-      "old": "seal.get(..12).unwrap_or(seal).to_owned()",
+      "old": "seal.get(..12).or_fail_safe(seal).to_owned()",
       "new": "seal[..12].to_owned()"
     },
     {
@@ -251,19 +251,16 @@
       "id": "unreviewed-default",
       "guardrail": "G-04",
       "path": "crates/forge-warden-core/src/eval.rs",
-      "diagnostic": "defaults_say_which_way_they_fail.*FAILED",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
       "cargo": [
-        "test",
-        "-p",
-        "forge-warden-cli",
-        "--test",
-        "repo_invariants",
-        "defaults_say_which_way_they_fail",
+        "clippy",
+        "--workspace",
+        "--all-targets",
         "--locked",
         "--offline"
       ],
-      "old": "            // fails closed: an uncountable file count is treated as over every budget\n",
-      "new": ""
+      "old": "u64::try_from(count).or_fail_closed(u64::MAX)",
+      "new": "u64::try_from(count).unwrap_or(0)"
     },
     {
       "id": "effect-outside-door",
@@ -423,8 +420,8 @@
         "bash",
         "scripts/tests/ci_local.sh"
       ],
-      "old": "      --rank target/rank.json --patch target/change.patch",
-      "new": "      --rank target/rank.json --patch target/change.patch || true"
+      "old": "        --advisory --rank target/rank.json --patch target/change.patch",
+      "new": "        --advisory --rank target/rank.json --patch target/change.patch || true"
     },
     {
       "id": "hook-shell-spelling",

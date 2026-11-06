@@ -36,7 +36,7 @@ the selected plants are caught, without implying whole-register coverage.
 
 This fifth batch implements 38 named plants. The remaining 13 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
-its hash and binding corrections for duplicate paths, producer authentication, default markers and
+its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
 implemented missing-row direction; it does not claim an extra-row drift check exists.
 
@@ -85,3 +85,9 @@ intentionally MISSED mutants demonstrate a correctly rejected bad change; they a
 mutation-quality receipt for the repository. Source selection is bounded to render.rs.
 
 Batch 5 adds an external-consumer private-constructor probe, a measured normal-compiler/MSRV boundary probe, and corpus vocabulary drift. The MSRV recipe requires the preinstalled 1.88.0 toolchain; backends must expose it without downloads.
+
+B7 v3 compatibility: string-slice targets the named fail-safe helper; unreviewed-default now
+plants the fail-open raw `unwrap_or(0)` at the file-count conversion and requires the compiler's
+`disallowed_methods` diagnostic. It no longer relies on removing a comment marker. The swallowed
+judge-exit recipe targets D8's explicit advisory command. These three recipe updates preserve
+the original 38-case count and require fresh baselines, named red diagnostics and clean restoration.
