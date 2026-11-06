@@ -20,21 +20,26 @@ listed, because consumers parse them.
 
   An optional `claims` object records `--base`/`--head` with `verified: false`, and is never
   used. New verdict notes: `duplicate_paths`, `rank_incomplete`, `rank_extraneous`,
-  `status_mismatch`, `patch_unverifiable`, `rank_unverified`, `rank_mismatch`. Each one holds
-  the verdict (ADR 0005).
+  `status_mismatch`, `patch_unverifiable`, `rank_unverified`, `rank_mismatch`. A verdict with
+  any note is at least HOLD. An existing FAIL stays FAIL (ADR 0005).
 - **`check` now needs a patch, and has two modes** (ADR 0005):
   - Authority mode (`--ranker <path>`) runs a ranker whose bytes are pinned by the policy's new
     `[producer] sha256` list, through a bounded child door, then judges the ranking it produced.
     It is the only mode that can PASS.
-  - Advisory mode (`--rank`) judges a supplied ranking. It can HOLD or FAIL, never PASS.
+  - Advisory mode (`--advisory --rank <file>`) judges a supplied ranking. It can HOLD or FAIL,
+    never PASS.
+
+  One of `--ranker` or `--advisory` is required; `--rank` alone is a usage error (exit 2).
 - Patch facts come from Git through an isolated child process (ADR 0010). They can only add
   change-kind signals, never remove them (the union rule).
 - **`git format-patch` output is refused** when a commit-message line starts with a mode
   keyword. Pass `git diff --binary --no-renames` output instead.
 - The library's rule kinds are an exhaustive enum: `policy::KINDS`/`RULE_FIELD_KINDS` become
   `Kind::ALL`, `Field::ALL` and `Kind::fields`, and `Check::kind()` returns `Kind`.
-- Duplicate paths in a ranking now hold the verdict. Policy values are validated types
-  (`RepoPath`, non-empty rule lists).
+- Library: `Policy`, `RankDoc`, `RankedFile` and `Evidence` fields are private. Build them
+  through the parsers and checked constructors, and read them through getters. A `Policy` exists
+  only through `parse_policy`. Ranking paths are validated `RepoPath`s.
+- A policy with no rules is refused. Duplicate paths in a ranking hold the verdict.
 
 ### Added
 
