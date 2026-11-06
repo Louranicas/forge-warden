@@ -70,17 +70,36 @@ for file, enum in CHECKED.items():
         problems.append(f"{file}: {enum}::label not found")
         continue
     body = " ".join(block(impl, label_at.start()).split())
-    arms = dict(re.findall(r'Self::([A-Z][A-Za-z0-9]*)\s*=>\s*\{?\s*"([a-z_]+)"', body))
+    match_at = re.search(r"match self\s*\{", body)
+    if not match_at:
+        problems.append(f"{file}: {enum}::label has no `match self`")
+        continue
+    arms_text = block(body, match_at.start())
+    # Each arm's COMPLETE expression runs to the next arm head (or the end of the match). Only
+    # `"literal"`, `{ "literal" }` or, for a tuple variant, `binding.label()` is accepted; any
+    # tail (`.split_at(5).1`, `concat!`, `+`, a method call) is unsupported and fails closed.
+    heads = list(re.finditer(r"Self::([A-Z][A-Za-z0-9]*)\s*(?:\(\s*(\w+)\s*\))?\s*=>", arms_text))
+    arms = {}
+    for n, head in enumerate(heads):
+        end = heads[n + 1].start() if n + 1 < len(heads) else len(arms_text)
+        expr = arms_text[head.end():end].strip().rstrip(",").strip()
+        arms[head.group(1)] = (head.group(2), expr)
     for variant, payload in variants.items():
-        if payload:
+        binding, expr = arms.get(variant, (None, None))
+        if expr is None:
+            problems.append(f"{file}: {enum}::{variant} has no label arm")
+        elif payload:
             # Only a delegation to another checked enum's own labels is accepted.
-            delegated = re.search(rf"Self::{variant}\((\w+)\)\s*=>\s*\1\.label\(\)", body)
-            if not (payload in CHECKED.values() and delegated):
-                problems.append(f"{file}: {enum}::{variant}({payload}) has no checked label")
-        elif variant in arms:
-            labels.add(arms[variant])
+            if not (payload in CHECKED.values() and binding and expr == f"{binding}.label()"):
+                problems.append(f"{file}: {enum}::{variant}({payload}) has no checked label: {expr!r}")
         else:
-            problems.append(f"{file}: {enum}::{variant} has no parsed string label")
+            literal = re.fullmatch(r'"([a-z0-9_]+)"|\{\s*"([a-z0-9_]+)"\s*\}', expr)
+            if literal:
+                labels.add(literal.group(1) or literal.group(2))
+            else:
+                problems.append(f"{file}: {enum}::{variant} label is not a plain string literal: {expr!r}")
+    for extra in sorted(set(arms) - set(variants)):
+        problems.append(f"{file}: {enum}::label has an arm for unknown variant {extra}")
 if problems:
     print(f"check_vocab: label extraction incomplete at {commit}:", file=sys.stderr)
     for p in problems:
@@ -89,7 +108,7 @@ if problems:
 
 vocab_text = open(vocab).read()
 const = vocab_text[vocab_text.index("pub const KNOWN_SIGNALS"):]
-ours = set(re.findall(r'"([a-z_]+)"', const[: const.index("];")]))
+ours = set(re.findall(r'"([a-z0-9_]+)"', const[: const.index("];")]))
 if labels != ours:
     print(f"vocabulary drift against deep-diff-forge {commit}:", file=sys.stderr)
     for label in sorted(labels - ours):
