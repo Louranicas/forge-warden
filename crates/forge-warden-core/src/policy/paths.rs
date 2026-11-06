@@ -1,6 +1,6 @@
 //! Path globs: compiled, `/`-aware, and validated when the policy loads.
 
-use super::error::{PolicyIssue, issue};
+use super::issues::{Issues, Rejected};
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// A compiled set of globs, keeping the patterns for reporting.
@@ -44,40 +44,33 @@ pub(super) fn compile(
     location: &str,
     field: &str,
     globs: &[String],
-    issues: &mut Vec<PolicyIssue>,
-) -> Option<PathSet> {
+    issues: &mut Issues,
+) -> Result<PathSet, Rejected> {
     if globs.is_empty() {
-        issues.push(issue(location, format!("`{field}` must not be empty")));
-        return None;
+        return Err(issues.reject(location, format!("`{field}` must not be empty")));
     }
+    let start = issues.mark();
     let mut builder = GlobSetBuilder::new();
-    let mut ok = true;
     for pattern in globs {
         match build_glob(pattern) {
             Ok(glob) => {
                 builder.add(glob);
             }
             Err(message) => {
-                issues.push(issue(
+                issues.push(
                     location,
                     format!("`{field}` pattern {pattern:?}: {message}"),
-                ));
-                ok = false;
+                );
             }
         }
     }
-    if !ok {
-        return None;
-    }
+    issues.since(start)?;
     match builder.build() {
-        Ok(set) => Some(PathSet {
+        Ok(set) => Ok(PathSet {
             patterns: globs.to_vec(),
             set,
         }),
-        Err(e) => {
-            issues.push(issue(location, format!("`{field}`: {e}")));
-            None
-        }
+        Err(e) => Err(issues.reject(location, format!("`{field}`: {e}"))),
     }
 }
 

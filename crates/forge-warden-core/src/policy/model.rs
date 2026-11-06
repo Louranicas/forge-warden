@@ -1,5 +1,6 @@
 //! The validated policy model: what a loaded policy means.
 
+use super::kind::Kind;
 use super::paths::{PathSet, Scope};
 use crate::date::Date;
 use crate::exit::Outcome;
@@ -55,29 +56,29 @@ impl Severity {
     }
 }
 
-/// The check a rule performs. Each variant is one `kind`.
+/// The check a rule performs. Each variant is one [`Kind`].
 #[derive(Debug, Clone)]
 pub enum Check {
-    /// `forbid_signal`: no file in scope may carry any of `signals`.
+    /// [`Kind::ForbidSignal`]: no file in scope may carry any of `signals`.
     ForbidSignal {
         /// Signals that are not allowed.
         signals: Vec<String>,
         /// Files the rule looks at.
         scope: Scope,
     },
-    /// `require_companion`: if a file in `when` changes, some file in `require` must change too.
+    /// [`Kind::RequireCompanion`]: if a file in `when` changes, some file in `require` must change too.
     RequireCompanion {
         /// Files whose change triggers the rule.
         when: Scope,
         /// Files of which at least one must also be in the change.
         require: PathSet,
     },
-    /// `protect_paths`: any change to a file in scope is a violation.
+    /// [`Kind::ProtectPaths`]: any change to a file in scope is a violation.
     ProtectPaths {
         /// Files that are protected.
         scope: Scope,
     },
-    /// `max_score`: a risk-score budget.
+    /// [`Kind::MaxScore`]: a risk-score budget.
     MaxScore {
         /// The largest allowed score.
         limit: u32,
@@ -86,7 +87,7 @@ pub enum Check {
         /// Files the rule looks at.
         scope: Scope,
     },
-    /// `max_files`: at most `limit` files in scope may change.
+    /// [`Kind::MaxFiles`]: at most `limit` files in scope may change.
     MaxFiles {
         /// The largest allowed number of files.
         limit: u32,
@@ -96,15 +97,15 @@ pub enum Check {
 }
 
 impl Check {
-    /// The `kind` string this check is written as.
+    /// The kind of this check.
     #[must_use]
-    pub const fn kind(&self) -> &'static str {
+    pub const fn kind(&self) -> Kind {
         match self {
-            Self::ForbidSignal { .. } => "forbid_signal",
-            Self::RequireCompanion { .. } => "require_companion",
-            Self::ProtectPaths { .. } => "protect_paths",
-            Self::MaxScore { .. } => "max_score",
-            Self::MaxFiles { .. } => "max_files",
+            Self::ForbidSignal { .. } => Kind::ForbidSignal,
+            Self::RequireCompanion { .. } => Kind::RequireCompanion,
+            Self::ProtectPaths { .. } => Kind::ProtectPaths,
+            Self::MaxScore { .. } => Kind::MaxScore,
+            Self::MaxFiles { .. } => Kind::MaxFiles,
         }
     }
 }
