@@ -130,23 +130,61 @@ fn raw_defaults_are_disallowed_in_both_crates() {
     // G-04 (WP-B7): `.unwrap_or(Outcome::Pass)` decided a verdict silently. A default is now chosen
     // through forge_warden_core::defaults::NamedDefault (or_fail_closed / or_fail_safe / or_display),
     // and clippy refuses the raw methods in every target of both crates (measured: method call,
-    // UFCS, fn pointer, alias, use-as, closure).
+    // UFCS, fn pointer, alias, use-as, closure). The configs are PARSED (Touchstone B7-O3-01): only an
+    // active `disallowed-methods` entry counts, never a commented-out line that keeps the text.
     for config in ["clippy.toml", "crates/forge-warden-core/clippy.toml"] {
-        let text = read(config);
+        let active = disallowed_method_paths(&read(config));
         for method in [
-            "core::option::Option::unwrap_or\"",
-            "core::option::Option::unwrap_or_else\"",
-            "core::option::Option::unwrap_or_default\"",
-            "core::result::Result::unwrap_or\"",
-            "core::result::Result::unwrap_or_else\"",
-            "core::result::Result::unwrap_or_default\"",
+            "core::option::Option::unwrap_or",
+            "core::option::Option::unwrap_or_else",
+            "core::option::Option::unwrap_or_default",
+            "core::result::Result::unwrap_or",
+            "core::result::Result::unwrap_or_else",
+            "core::result::Result::unwrap_or_default",
         ] {
             assert!(
-                text.contains(&format!("path = \"{method}")),
-                "{config} must disallow {method}"
+                active.contains(method),
+                "{config} must actively disallow {method}"
             );
         }
     }
+}
+
+/// The `path` of every active `disallowed-methods` entry in a clippy.toml (table or string form).
+fn disallowed_method_paths(text: &str) -> std::collections::BTreeSet<String> {
+    // An unparseable config activates nothing, so every required method is then reported missing.
+    let Ok(config) = text.parse::<toml::Table>() else {
+        return std::collections::BTreeSet::new();
+    };
+    config
+        .get("disallowed-methods")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| match entry {
+            toml::Value::String(path) => Some(path.clone()),
+            toml::Value::Table(table) => table
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Array(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn only_active_config_entries_count() {
+    // B7-O3-01 regression: a commented entry keeps its text but disallows nothing.
+    let active = "disallowed-methods = [\n    { path = \"core::option::Option::unwrap_or\", reason = \"x\" },\n    \"core::result::Result::unwrap_or\",\n]\n";
+    let commented = "disallowed-methods = [\n    # { path = \"core::option::Option::unwrap_or\", reason = \"x\" },\n]\n";
+    let paths = disallowed_method_paths(active);
+    assert!(paths.contains("core::option::Option::unwrap_or"));
+    assert!(paths.contains("core::result::Result::unwrap_or"));
+    assert!(disallowed_method_paths(commented).is_empty());
 }
 
 #[test]
