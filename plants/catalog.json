@@ -277,8 +277,8 @@
         "--locked",
         "--offline"
       ],
-      "old": "fn main() -> ExitCode {",
-      "new": "fn main() -> ExitCode {\n    let _planted_effect = std::fs::read(\".\");"
+      "old": "fn main() -> doors::Status {",
+      "new": "fn main() -> doors::Status {\n    let _planted_effect = std::fs::read(\".\");"
     },
     {
       "id": "unknown-signal-pass",
