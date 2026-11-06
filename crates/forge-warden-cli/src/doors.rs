@@ -415,7 +415,6 @@ pub(crate) mod child {
     #[derive(Debug)]
     pub(crate) struct PrivateDir {
         path: std::path::PathBuf,
-        name: String,
     }
 
     impl PrivateDir {
@@ -431,10 +430,9 @@ pub(crate) mod child {
         pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
             use std::os::unix::fs::DirBuilderExt as _;
             for attempt in 0..64_u32 {
-                let name = format!("forge-warden-{}-{attempt}", std::process::id());
-                let path = base.join(&name);
+                let path = base.join(format!("forge-warden-{}-{attempt}", std::process::id()));
                 match std::fs::DirBuilder::new().mode(0o700).create(&path) {
-                    Ok(()) => return Ok(Self { path, name }),
+                    Ok(()) => return Ok(Self { path }),
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => return Err(DoorError::io("creating a private directory", &e)),
                 }
@@ -447,11 +445,6 @@ pub(crate) mod child {
 
         pub(crate) fn path(&self) -> &Path {
             &self.path
-        }
-
-        /// The directory's own name (ASCII: `forge-warden-<pid>-<n>`).
-        pub(crate) fn name(&self) -> &str {
-            &self.name
         }
     }
 
@@ -519,8 +512,15 @@ pub(crate) mod child {
         let ceiling = admit_base(base).map_err(|e| GitFactsFailure::Unavailable(e.message))?;
         let dir = PrivateDir::create_in(Path::new(&ceiling))
             .map_err(|e| GitFactsFailure::Unavailable(e.message))?;
-        // The private dir is `<admitted base>/<ASCII name>`, so its path is UTF-8 without `:` too.
-        let home = format!("{ceiling}/{}", dir.name());
+        // The private dir is `<admitted base>/<ASCII name>`, so its path is UTF-8 without `:` too;
+        // were it ever not, that is refused, never converted lossily.
+        let home = dir
+            .path()
+            .to_str()
+            .ok_or_else(|| {
+                GitFactsFailure::Unavailable("private directory path is not UTF-8".to_owned())
+            })?
+            .to_owned();
         let env = [
             ("LC_ALL", "C"),
             ("HOME", home.as_str()),
