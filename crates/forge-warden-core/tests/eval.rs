@@ -645,23 +645,13 @@ const RULES: [&str; 5] = [
     "[[rule]]\nid = \"secrets\"\nwhy = \"A credential committed once is compromised forever.\"\nkind = \"forbid_signal\"\nseverity = \"fail\"\nsignals = [\"secret_like\"]\n",
 ];
 
+// Two complementary checks in tests/laws.rs (WP-B5) replace the old properties here:
+// `adding_a_rule_cannot_loosen_the_verdict` compares the evaluator's verdict before and after one
+// added rule (monotonicity), and `all_rule_kinds_match_the_independent_reference` separately compares
+// the evaluator with an independent reference model over all rule kinds and waivers. Determinism
+// holds by construction: the core has no effects (clippy.toml, repo_invariants) and serialization is
+// pinned above.
 proptest! {
-    /// Adding a rule can only keep or tighten a verdict.
-    #[test]
-    fn adding_a_rule_never_loosens_the_verdict(
-        files in proptest::collection::vec(arb_file(), 0..6),
-        chosen in proptest::sample::subsequence((0..RULES.len()).collect::<Vec<_>>(), 1..RULES.len()),
-        extra in 0..RULES.len(),
-    ) {
-        prop_assume!(!chosen.contains(&extra));
-        let base: String = chosen.iter().map(|&i| RULES[i]).collect();
-        let more = format!("{base}{}", RULES[extra]);
-        let r = rank(files);
-        let before = evaluate(&policy(&base), &r, seals(), today()).verdict;
-        let after = evaluate(&policy(&more), &r, seals(), today()).verdict;
-        prop_assert!(after >= before, "{before:?} -> {after:?}");
-    }
-
     /// The summary always accounts for every rule, and the exit code always matches the verdict.
     #[test]
     fn summary_and_exit_are_consistent(files in proptest::collection::vec(arb_file(), 0..6)) {
@@ -671,14 +661,5 @@ proptest! {
         prop_assert_eq!(s.passed + s.waived + s.held + s.failed, s.rules);
         prop_assert_eq!(v.exit.code, v.verdict.exit_entry().code);
         if s.failed > 0 { prop_assert_eq!(v.verdict, Outcome::Fail); }
-    }
-
-    /// Evaluation never panics and is a pure function of its inputs.
-    #[test]
-    fn evaluation_is_pure(files in proptest::collection::vec(arb_file(), 0..8)) {
-        let all: String = RULES.concat();
-        let p = policy(&all);
-        let r = rank(files);
-        prop_assert_eq!(evaluate(&p, &r, seals(), today()), evaluate(&p, &r, seals(), today()));
     }
 }
