@@ -37,6 +37,12 @@ class ReviewBundle(unittest.TestCase):
             (self.candidate / name).write_text("CANDIDATE-INSTRUCTION-OR-POLICY\n")
         self.commit(self.candidate)
         self.head = self.git(self.candidate, "rev-parse", "HEAD").strip()
+        self.import_objects()
+
+    def import_objects(self):
+        # Fixture setup imports controlled objects BEFORE candidate config is poisoned. The
+        # production controller owns object acquisition; the helper never fetches from a candidate.
+        self.git(self.trusted, "fetch", "--no-tags", str(self.candidate), self.head)
 
     def git(self, where, *args):
         return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", "-C", str(where),
@@ -92,8 +98,15 @@ class ReviewBundle(unittest.TestCase):
         self.base = "2" * 40
         self.assertEqual(self.run_bundle().returncode, 2)
 
-    def test_dirty_trusted_refuses(self):
+    def test_modified_worktree_instructions_are_ignored(self):
+        original = (self.trusted / "CLAUDE.md").read_bytes()
         (self.trusted / "CLAUDE.md").write_text("dirty")
+        self.assertEqual(self.run_bundle().returncode, 0)
+        self.assertEqual((self.root / "bundle/CLAUDE.md").read_bytes(), original)
+
+    def test_modified_helper_refuses(self):
+        with (self.trusted / FILES[0]).open("a") as stream:
+            stream.write("\n# uncommitted helper change\n")
         self.assertEqual(self.run_bundle().returncode, 2)
 
     def test_output_inside_candidate_refuses(self):
@@ -110,6 +123,82 @@ class ReviewBundle(unittest.TestCase):
         result = self.run_bundle()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(marker.exists(), "candidate fsmonitor executed")
+
+    def extension_attack(self, kind):
+        (self.candidate / ".gitattributes").write_text("CLAUDE.md filter=probe diff=probe\n")
+        self.git(self.candidate, "add", ".gitattributes")
+        self.git(self.candidate, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-qm", "attributes")
+        self.head = self.git(self.candidate, "rev-parse", "HEAD").strip()
+        self.import_objects()
+        marker = self.root / (kind + "-ran")
+        hook = self.root / (kind + "-hook")
+        hook.write_text("#!/bin/sh\nprintf executed > '" + str(marker) + "'\n" +
+                        ('cat "$@"\n' if kind in ("clean", "smudge", "textconv") else "exit 0\n"))
+        hook.chmod(0o700)
+        command = ["status", "--porcelain"]
+        if kind in ("clean", "smudge"):
+            self.git(self.candidate, "config", "filter.probe." + kind, str(hook))
+            if kind == "smudge":
+                (self.candidate / "CLAUDE.md").unlink()
+                command = ["checkout", "--", "CLAUDE.md"]
+        elif kind in ("textconv", "diff-driver", "external-diff"):
+            key = {"textconv": "diff.probe.textconv", "diff-driver": "diff.probe.command",
+                   "external-diff": "diff.external"}[kind]
+            self.git(self.candidate, "config", key, str(hook))
+            command = ["diff", "--ext-diff", "--textconv", "HEAD", "--", "CLAUDE.md"]
+        elif kind == "hooksPath":
+            hooks = self.root / "hooks"
+            hooks.mkdir()
+            shutil.copyfile(hook, hooks / "post-commit")
+            (hooks / "post-commit").chmod(0o700)
+            self.git(self.candidate, "config", "core.hooksPath", str(hooks))
+            command = ["-c", "core.hooksPath=" + str(hooks), "-c", "user.name=Fixture",
+                       "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                       "commit", "--allow-empty", "-qm", "positive-control"]
+        else:
+            included = self.root / "included-config"
+            included.write_text('[core]\nfsmonitor = "' + str(hook) + '"\n')
+            key = "include.path" if kind == "include" else "includeIf.gitdir:" + str(self.candidate) + "/.path"
+            self.git(self.candidate, "config", key, str(included))
+        if kind == "clean":
+            tracked = self.candidate / "CLAUDE.md"
+            tracked.write_bytes(tracked.read_bytes())
+            os.utime(tracked, (2000000000, 2000000000))
+        elif kind != "smudge":
+            with (self.candidate / "CLAUDE.md").open("a") as stream:
+                stream.write("\nworktree is not the review subject\n")
+        result = self.run_bundle()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(marker.exists(), kind + " executed during bundle generation")
+        # Positive control: prove this candidate extension really executes on its triggering
+        # worktree command. This deliberate unsafe command exists only in the disposable fixture.
+        self.git(self.candidate, *command)
+        self.assertTrue(marker.exists(), kind + " fixture did not trigger its positive control")
+
+    def test_clean_filter(self):
+        self.extension_attack("clean")
+
+    def test_smudge_filter(self):
+        self.extension_attack("smudge")
+
+    def test_textconv(self):
+        self.extension_attack("textconv")
+
+    def test_external_diff(self):
+        self.extension_attack("external-diff")
+
+    def test_candidate_attributes_diff_driver(self):
+        self.extension_attack("diff-driver")
+
+    def test_hooks_path(self):
+        self.extension_attack("hooksPath")
+
+    def test_include_path(self):
+        self.extension_attack("include")
+
+    def test_include_if(self):
+        self.extension_attack("includeIf")
 
 
 if __name__ == "__main__":

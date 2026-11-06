@@ -8,7 +8,10 @@ candidate `warden.toml`.
 
 ## Prepare the instruction bundle
 
-From an owner-controlled controller, run the script from a clean base checkout:
+The owner-controlled controller first supplies both authenticated base/head commit objects in its
+own trusted repository. Object acquisition is outside this helper: never fetch by running
+upload-pack or worktree commands against an attacker-controlled local checkout. Then run the
+base helper from that trusted repository:
 
 ```sh
 bash /trusted-base/scripts/managed_review_bundle.sh \
@@ -16,9 +19,12 @@ bash /trusted-base/scripts/managed_review_bundle.sh \
 ```
 
 Both SHAs are full lowercase commit IDs authenticated by the controller, not taken from a PR
-message. The script checks distinct clean checkouts at those IDs, requires regular trusted policy
-and instruction blobs, and copies their **Git object bytes** into a new private directory outside
-both trees. The bundle contains the agent definition, review contract, base CLAUDE.md, base policy,
+message. The script verifies the base HEAD and head object in the trusted repository and compares its own
+bytes with the base helper blob. It requires regular trusted policy/instruction blobs and copies
+their **Git object bytes** into a new private directory outside both trees. It never runs Git in
+the candidate directory or reads its config/index; that directory is only a prohibited output
+location. Dirty worktree copies are ignored. All reviewed content must come from authenticated
+head objects/trusted evidence, not a claim that the candidate working directory is clean. The bundle contains the agent definition, review contract, base CLAUDE.md, base policy,
 and subject/digest manifest. Missing files fail; there is no bootstrap fallback to candidate files.
 For an old base, first adopt the reviewed contract under the owner's controlled process.
 
@@ -47,6 +53,7 @@ candidate execution, missing-base refusal and stale-head admission rejection on 
 Local fixture success proves bundle selection/refusal, not those hosted isolation properties.
 
 `python3 -I scripts/tests/managed_review_bundle.py` exercises real Git fixtures: candidate replaces
-instructions and policy, missing base files, symlink contract, dirty/wrong subjects, candidate-local
-bundle output and malicious fsmonitor. See ADR0008. The project-local `.claude/agents/reviewer.md`
+instructions and policy, missing base files, symlink contract, wrong subjects/modified helper, candidate-local
+bundle output, fsmonitor, clean/smudge filters, textconv, external/per-path diff, hooksPath and
+include/includeIf config. Each extension fixture also proves its marker runs on its unsafe trigger. See ADR0008. The project-local `.claude/agents/reviewer.md`
 is a convenience review inside a mutable project and is not this independent boundary.
