@@ -73,6 +73,9 @@ pub enum Unverifiable {
     RenameOrCopy,
     /// A mode other than `100644`, `100755` or `120000` (a submodule is `160000`).
     UnsupportedMode(String),
+    /// An existing symlink's target changes (`index a..b 120000`): Git's summary has no record
+    /// for it, so the change kind cannot be tied to a path (Touchstone C1b-O3-01).
+    SymlinkTargetEdit,
     /// Output this module does not recognise.
     UnreadableGitOutput(String),
 }
@@ -99,6 +102,9 @@ impl fmt::Display for Unverifiable {
                     "unsupported file mode {m} (a submodule or unknown file type)"
                 )
             }
+            Self::SymlinkTargetEdit => f.write_str(
+                "an existing symlink's target changes; that change cannot be verified per file",
+            ),
             Self::UnreadableGitOutput(what) => write!(f, "unreadable git output: {what}"),
         }
     }
@@ -145,7 +151,12 @@ fn check_header_modes(patch: &[u8]) -> Result<(), Unverifiable> {
         if let Some(rest) = line.strip_prefix("index ") {
             let parts: Vec<&str> = rest.split(' ').collect();
             if let [_, stated] = parts.as_slice() {
-                mode(stated)?;
+                // A mode on the `index` line means the mode did not change (creations, deletions
+                // and mode changes state theirs on their own header lines), so 120000 here is an
+                // edit of an existing symlink's target: a change kind no summary record carries.
+                if mode(stated)? == Mode::Symlink {
+                    return Err(Unverifiable::SymlinkTargetEdit);
+                }
             }
         }
         for prefix in PREFIXES {
@@ -462,6 +473,36 @@ mod tests {
     }
 
     #[test]
+    fn an_existing_symlink_target_edit_is_refused_not_called_covered() {
+        // Touchstone C1b-O3-01: numstat 1/1, empty summary, the mode only on the index line.
+        let patch =
+            b"diff --git a/link b/link\nindex 094df80..c907aac 120000\n--- a/link\n+++ b/link\n";
+        assert_eq!(
+            PatchFacts::from_git(b"1\t1\tlink\0", b"", patch),
+            Err(Unverifiable::SymlinkTargetEdit)
+        );
+        // Siblings stay modelled: an unchanged executable edited in place (no change-kind signal
+        // depends on it) and a mode-only change (its mode is on old/new mode lines).
+        let exec = b"diff --git a/run.sh b/run.sh\nindex 094df80..c907aac 100755\n";
+        let edited = PatchFacts::from_git(b"1\t1\trun.sh\0", b"", exec).unwrap();
+        let change = edited.files().next().unwrap();
+        assert_eq!(derived_signals(change).len(), 0);
+        let mode_only = b"diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n";
+        let changed = PatchFacts::from_git(
+            b"0\t0\trun.sh\0",
+            b" mode change 100644 => 100755 run.sh\n",
+            mode_only,
+        )
+        .unwrap();
+        assert_eq!(
+            derived_signals(changed.files().next().unwrap())
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["executable_bit"]
+        );
+    }
+
+    #[test]
     fn every_refusal_says_why() {
         let cases = [
             (
@@ -494,6 +535,10 @@ mod tests {
             (
                 Unverifiable::UnsupportedMode("160000".to_owned()),
                 "unsupported file mode 160000 (a submodule or unknown file type)",
+            ),
+            (
+                Unverifiable::SymlinkTargetEdit,
+                "an existing symlink's target changes; that change cannot be verified per file",
             ),
             (
                 Unverifiable::UnreadableGitOutput("q".to_owned()),

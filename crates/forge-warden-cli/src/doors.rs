@@ -656,7 +656,7 @@ mod child_tests {
         let index: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("cases.json")).unwrap()).unwrap();
         let cases = index["cases"].as_array().unwrap();
-        assert_eq!(cases.len(), 51);
+        assert_eq!(cases.len(), 52);
         for case in cases {
             let name = case["name"].as_str().unwrap();
             let patch = std::fs::read(root.join(format!("{name}.patch"))).unwrap();

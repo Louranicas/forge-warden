@@ -72,7 +72,7 @@ fn classify(case: &Value) -> String {
 fn every_case_in_the_coverage_corpus_classifies_as_expected() {
     let index: Value = serde_json::from_slice(&fixture("cases.json")).unwrap();
     let cases = index["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 51, "the corpus shrank");
+    assert_eq!(cases.len(), 52, "the corpus shrank");
     let wrong: Vec<String> = cases
         .iter()
         .filter_map(|case| {

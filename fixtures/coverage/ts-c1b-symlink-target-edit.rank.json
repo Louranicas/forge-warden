@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "4bda87687866c1c7736e1c396e3d19f5c4e126252101ceb250d5ca5a8e5ef96f",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "link", "status": "modified", "score": 2, "signals": []}
+  ]
+}

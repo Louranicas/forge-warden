@@ -471,6 +471,16 @@
     0
    ],
    "source": "mission4/lanes/touchstone/C0v2/new-binary-add.patch"
+  },
+  {
+   "name": "ts-c1b-symlink-target-edit",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "mission4/lanes/touchstone/C1b/symlink-modified.* (Touchstone C1b-O3-01)",
+   "why": "an existing symlink target edit (index a..b 120000, empty summary) is refused: SymlinkTargetEdit"
   }
  ],
  "classes": "rank_refused | unverifiable | covered | '+'-joined subset of status_mismatch, duplicate_paths, rank_incomplete, rank_extraneous (in that order)"
