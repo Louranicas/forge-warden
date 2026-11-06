@@ -507,6 +507,30 @@
       ],
       "old": "  trusted_git show \"$base:$file\" > \"$out/$(basename \"$file\")\"",
       "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\""
+    },
+    {
+      "id": "untested-mutation-branch",
+      "guardrail": "G-46",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "[1-9][0-9]* missed",
+      "command": [
+        "env",
+        "-u",
+        "CARGO_TARGET_DIR",
+        "cargo",
+        "mutants",
+        "--no-config",
+        "--cap-lints",
+        "true",
+        "--workspace",
+        "--re",
+        "in planted_uncovered_branch",
+        "--output",
+        "target/a4-survivor",
+        "--cargo-arg=--locked",
+        "--cargo-arg=--offline"
+      ],
+      "append": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> bool {\n    if value { true } else { false }\n}\n"
     }
   ],
   "pending_guardrails": [
@@ -603,12 +627,6 @@
     {
       "id": "G-45",
       "title": "Test that checks self-agreement",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-46",
-      "title": "Surviving mutant in a PR",
       "status": "PENDING",
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
