@@ -17,6 +17,17 @@ Shared requirements for scripts (D3) and the Rust door (ADR0005 §2.5):
   GIT_ATTR_NOSYSTEM=1, GIT_NO_REPLACE_OBJECTS=1; HOME is a non-user location. D3 uses /nonexistent;
   C1 uses its private empty directory. D3's PATH is /usr/bin:/bin for the trusted runtime; C1's
   no-PATH environment is stricter. Never discover a repository above C1's empty temporary cwd.
+- When using a private cwd/HOME and Git discovery ceiling (C1), treat the temporary base,
+  including inherited TMPDIR, as untrusted input. Before creating or launching anything, admit
+  only an absolute, canonical path whose exact representation is valid UTF-8 and contains no
+  colon (`:` is Git's ceiling-list separator), or select a fixed trusted absolute base satisfying
+  those properties. Unsupported input refuses as an environment error; never pass a relative or
+  lossy-converted path to HOME or GIT_CEILING_DIRECTORIES. Preserve exclusive 0700 creation,
+  HOME/cwd identity, a parent ceiling that Git actually recognizes, and nonrecursive cleanup.
+  Tests must cover relative, absolute-with-colon and non-UTF-8 inputs plus an ordinary absolute
+  positive control. Canonical spelling alone is insufficient if its bytes contain a separator.
+  This requirement governs the private-directory adapter; D3's controller-owned object repository
+  remains a separate, explicit trusted repository, not a candidate directory or a private-dir claim.
 - Absolute trusted Git executable, argv only, no shell interpolation of patch bytes. Where a
   repository exists, it and its config belong to the controller, never the candidate. Disable
   core.attributesFile (/dev/null), core.hooksPath (/dev/null), core.fsmonitor (false). For any
