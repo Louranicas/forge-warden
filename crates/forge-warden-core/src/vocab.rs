@@ -95,7 +95,10 @@ fn levenshtein(a: &str, b: &str) -> usize {
         }
         row = next;
     }
-    row.last().copied().unwrap_or(0)
+    // `row` always has `b.len() + 1 >= 1` entries. Were it ever empty, the distance would read as
+    // "infinitely far" (no suggestion), never as 0 (an exact match).
+    // fails safe: an impossible empty row means no suggestion, not a match
+    row.last().copied().unwrap_or(usize::MAX)
 }
 
 #[cfg(test)]

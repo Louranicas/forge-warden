@@ -13,6 +13,12 @@ allow-print-in-tests = true
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "iteration order is random; use BTreeMap so output is deterministic" },
     { path = "std::collections::HashSet", reason = "iteration order is random; use BTreeSet so output is deterministic" },
+    { path = "std::hash::RandomState", reason = "a random hasher makes output order depend on a seed; use BTree collections" },
+    { path = "std::hash::DefaultHasher", reason = "hash values are not stable across runs or versions; output must be deterministic" },
+    { path = "std::fs::OpenOptions", reason = "read files only through doors::read_file; forge-warden never writes files" },
+    { path = "std::net::TcpStream", reason = "forge-warden reaches no network" },
+    { path = "std::net::TcpListener", reason = "forge-warden reaches no network" },
+    { path = "std::net::UdpSocket", reason = "forge-warden reaches no network" },
 ]
 
 disallowed-methods = [
@@ -32,4 +38,21 @@ disallowed-methods = [
     { path = "std::time::SystemTime::now", reason = "read the clock only through doors::today" },
     { path = "std::time::Instant::now", reason = "forge-warden measures nothing" },
     { path = "std::thread::sleep", reason = "forge-warden never waits" },
+    { path = "std::thread::spawn", reason = "forge-warden is single-threaded; a door that needs concurrency is a reviewed design change" },
+    { path = "std::env::args", reason = "arguments are parsed by clap in main; nothing else reads them" },
+    { path = "std::env::args_os", reason = "arguments are parsed by clap in main; nothing else reads them" },
+    { path = "std::env::vars", reason = "forge-warden reads no environment; configuration is explicit" },
+    { path = "std::env::vars_os", reason = "forge-warden reads no environment; configuration is explicit" },
+    { path = "std::env::current_dir", reason = "paths are taken as given; forge-warden does not depend on its working directory" },
+    { path = "std::env::set_current_dir", reason = "forge-warden never changes its working directory" },
+    { path = "std::env::temp_dir", reason = "forge-warden writes no temporary files" },
+    { path = "std::fs::read_dir", reason = "forge-warden reads only the files it is given, through doors::read_file" },
+    { path = "std::fs::metadata", reason = "forge-warden reads only the files it is given, through doors::read_file" },
+    { path = "std::fs::symlink_metadata", reason = "forge-warden reads only the files it is given, through doors::read_file" },
+    { path = "std::fs::canonicalize", reason = "paths are taken as given; forge-warden does not resolve them" },
+    { path = "std::fs::read_link", reason = "forge-warden reads only the files it is given, through doors::read_file" },
+    { path = "std::fs::copy", reason = "forge-warden never writes files" },
+    { path = "std::fs::rename", reason = "forge-warden never writes files" },
+    { path = "std::fs::create_dir", reason = "forge-warden never writes files" },
+    { path = "std::fs::create_dir_all", reason = "forge-warden never writes files" },
 ]

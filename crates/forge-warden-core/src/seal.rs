@@ -7,18 +7,7 @@ use sha2::{Digest, Sha256};
 /// Lowercase hex SHA-256 of `bytes`.
 #[must_use]
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        // Both nibbles are < 16, so `get` always succeeds; `unwrap_or` keeps this panic-free
-        // without an index.
-        let hi = HEX.get(usize::from(byte >> 4)).copied().unwrap_or(b'0');
-        let lo = HEX.get(usize::from(byte & 0x0f)).copied().unwrap_or(b'0');
-        out.push(char::from(hi));
-        out.push(char::from(lo));
-    }
-    out
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// Whether `text` is a well-formed seal: exactly 64 lowercase hex digits.

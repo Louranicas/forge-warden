@@ -75,6 +75,21 @@ require = ["tests/**"]
 "#;
 
 #[test]
+fn an_empty_policy_holds_with_a_note_instead_of_passing() {
+    // R-19 / G-04: `parse_policy` refuses a policy with no rules, but a library caller can still
+    // build one. Judging nothing must hold, never pass (it used to: `.max().unwrap_or(Pass)`).
+    let empty = forge_warden_core::Policy {
+        rules: Vec::new(),
+        waivers: Vec::new(),
+    };
+    let clean = rank(vec![file("README.md", "modified", 1, &[])]);
+    let verdict = evaluate(&empty, &clean, seals(), today());
+    assert_eq!(verdict.verdict, Outcome::Hold);
+    let codes: Vec<&str> = verdict.notes.iter().map(|n| n.code).collect();
+    assert_eq!(codes, ["empty_policy"]);
+}
+
+#[test]
 fn forbid_signal_cites_evidence_and_respects_except() {
     let mut lib = file(
         "src/lib.rs",

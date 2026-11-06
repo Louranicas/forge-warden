@@ -99,6 +99,132 @@ fn only_doors_rs_opens_doors_in_production_code() {
     }
 }
 
+/// The part of a source file before its unit tests.
+fn production_part(text: &str) -> &str {
+    text.find("#[cfg(test)]")
+        .map_or(text, |end| text.get(..end).unwrap_or(text))
+}
+
+#[test]
+fn defaults_say_which_way_they_fail() {
+    // G-04: `.unwrap_or(Outcome::Pass)` decided a verdict silently. A default is a decision about
+    // which way a missing value fails, so every one in production code is marked, one marker per
+    // default, at most six lines above it.
+    const MARKERS: [&str; 3] = ["// fails closed:", "// fails safe:", "// display only:"];
+    for (path, text) in rust_sources() {
+        if path.contains("/tests/") {
+            continue;
+        }
+        let lines: Vec<&str> = production_part(&text).lines().collect();
+        let mut defaults = 0_usize;
+        let mut markers = 0_usize;
+        for (index, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if MARKERS.iter().any(|m| trimmed.starts_with(m)) {
+                markers = markers.saturating_add(1);
+                continue;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            let calls = line.matches("unwrap_or").count();
+            if calls == 0 {
+                continue;
+            }
+            defaults = defaults.saturating_add(calls);
+            let window = lines
+                .get(index.saturating_sub(6)..index)
+                .unwrap_or_default();
+            assert!(
+                window
+                    .iter()
+                    .any(|l| MARKERS.iter().any(|m| l.trim_start().starts_with(m))),
+                "{path}:{}: say which way this default fails: a `// fails closed: …`, `// fails safe: …` or `// display only: …` line just above it",
+                index.saturating_add(1)
+            );
+        }
+        assert_eq!(
+            markers, defaults,
+            "{path}: {markers} default marker(s) for {defaults} default(s); each default gets its own"
+        );
+    }
+}
+
+#[test]
+fn the_core_imports_no_effect_module() {
+    // G-05: `use std::{fs}; fs::metadata(p)` contains no `std::fs` text. Read the `use` trees.
+    const EFFECTS: [&str; 5] = ["fs", "process", "net", "env", "thread"];
+    for (path, text) in rust_sources() {
+        if !path.contains("forge-warden-core/src") {
+            continue;
+        }
+        let compact: String = production_part(&text)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for (start, _) in compact.match_indices("usestd::") {
+            let tree = compact
+                .get(start..)
+                .and_then(|rest| rest.split(';').next())
+                .unwrap_or_default();
+            for effect in EFFECTS {
+                let named = [
+                    format!("::{effect}"),
+                    format!("{{{effect},"),
+                    format!("{{{effect}}}"),
+                    format!(",{effect},"),
+                    format!(",{effect}}}"),
+                ];
+                assert!(
+                    !named.iter().any(|n| tree.contains(n.as_str())),
+                    "{path}: `{tree}` imports std::{effect}; the core does no I/O (ADR 0001)"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_core_depends_only_on_its_allow_list() {
+    // G-21: a new dependency in the core is a reviewed decision, not a line in Cargo.toml.
+    const ALLOWED: [&str; 6] = [
+        "globset",
+        "serde",
+        "serde_json",
+        "sha2",
+        "thiserror",
+        "toml",
+    ];
+    const ALLOWED_DEV: [&str; 1] = ["proptest"];
+    let manifest = read("crates/forge-warden-core/Cargo.toml");
+    let mut section = String::new();
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            section = line.to_owned();
+            assert!(
+                !section.contains("build-dependencies") && !section.starts_with("[target"),
+                "crates/forge-warden-core/Cargo.toml: `{section}` is not allowed in the core"
+            );
+            continue;
+        }
+        let Some(name) = line.split(['=', '.']).next().map(str::trim) else {
+            continue;
+        };
+        if name.is_empty() || name.starts_with('#') {
+            continue;
+        }
+        let allowed: &[&str] = match section.as_str() {
+            "[dependencies]" => &ALLOWED,
+            "[dev-dependencies]" => &ALLOWED_DEV,
+            _ => continue,
+        };
+        assert!(
+            allowed.contains(&name),
+            "crates/forge-warden-core/Cargo.toml {section}: `{name}` is not on the core's allow-list; adding one is a reviewed change to repo_invariants.rs"
+        );
+    }
+}
+
 #[test]
 fn exit_statuses_come_from_the_registry() {
     // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door in `doors.rs`
