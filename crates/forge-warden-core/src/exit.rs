@@ -1,6 +1,6 @@
 //! The exit-code registry: one table that the binary, `forge-warden explain`, the README and the
-//! verdict document all read, so they cannot disagree. `tests/readme_tracks_registry.rs` fails if
-//! the README's table drifts from this one.
+//! verdict document all read, so they cannot disagree. `readme_exit_table_tracks_the_registry` in
+//! `crates/forge-warden-cli/tests/repo_invariants.rs` fails if the README's table drifts from this one.
 //!
 //! The `action` vocabulary is deep-diff-forge's, so an agent driving both tools needs one table
 //! of next steps.

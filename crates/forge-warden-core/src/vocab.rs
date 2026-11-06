@@ -5,9 +5,11 @@
 //! that are not listed (deep-diff-forge adds vocabulary additively); those make a verdict stricter,
 //! never looser (see [`crate::eval`]).
 //!
-//! Source of truth: `crates/deep-diff-forge-graph/src/risk.rs` and `evidence.rs` in
-//! deep-diff-forge 0.7.0. `tests/vocab_tracks_ddf.rs` re-checks this list against a real binary
-//! when one is available.
+//! Source of truth: the `label` functions of `RiskSignal` (`risk.rs`) and `EvidenceSignal`
+//! (`evidence.rs`) in `crates/deep-diff-forge-graph/src`. `scripts/check_vocab.sh <commit>` compares
+//! this list with those functions at a named deep-diff-forge commit (CI job `vocabulary`), and
+//! `crates/forge-warden-cli/tests/corpus.rs` requires the signals a real deep-diff-forge binary
+//! wrote into `fixtures/corpus/` to equal it.
 
 /// Every risk signal deep-diff-forge 0.7.0 can put in a `rank.v0` file entry: path signals first,
 /// then code-evidence signals.
