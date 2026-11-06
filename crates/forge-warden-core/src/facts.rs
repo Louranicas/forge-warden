@@ -317,7 +317,7 @@ fn agrees(change: &FileChange, ranked: &RankedFile) -> bool {
         path: _,
         kind,
         old_mode,
-        new_mode,
+        new_mode: _,
         binary,
         content,
     } = change;
@@ -333,7 +333,9 @@ fn agrees(change: &FileChange, ranked: &RankedFile) -> bool {
     if !derived_signals(change).iter().all(|s| signals.contains(s)) {
         return false;
     }
-    let mode_changed = old_mode.is_some() && old_mode != new_mode;
+    // For a Modified file, `old_mode` is set only by a `mode change` record, which Git writes only
+    // when the two modes differ.
+    let mode_changed = old_mode.is_some();
     let status = match (kind, *binary, mode_changed, *content) {
         (ChangeKind::Added | ChangeKind::Deleted | ChangeKind::Modified, true, _, _) => {
             "binary_changed"
@@ -388,5 +390,118 @@ impl FileChange {
     #[must_use]
     pub const fn binary(&self) -> bool {
         self.binary
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn facts(numstat: &str, summary: &str) -> Result<PatchFacts, Unverifiable> {
+        PatchFacts::from_git(numstat.as_bytes(), summary.as_bytes(), b"")
+    }
+
+    fn one(numstat: &str, summary: &str) -> FileChange {
+        facts(numstat, summary)
+            .unwrap()
+            .files()
+            .next()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn binary_means_both_columns_are_dashes() {
+        assert!(one("-\t-\ta.bin\0", "").binary());
+        assert!(!one("-\t3\ta.txt\0", "").binary());
+        assert!(!one("3\t-\ta.txt\0", "").binary());
+        let change = one("2\t1\tsrc/a.rs\0", "");
+        assert_eq!(
+            (change.path().as_str(), change.kind()),
+            ("src/a.rs", ChangeKind::Modified)
+        );
+    }
+
+    #[test]
+    fn renames_and_copies_refuse_in_either_output() {
+        assert_eq!(facts("1\t1\t\0a\0b\0", ""), Err(Unverifiable::RenameOrCopy));
+        for line in [" rename a => b (100%)\n", " copy a => b (100%)\n"] {
+            assert_eq!(
+                facts("1\t1\ta\0", line),
+                Err(Unverifiable::RenameOrCopy),
+                "{line}"
+            );
+        }
+        assert!(matches!(
+            facts("1\t1\ta\0", " chmod a\n"),
+            Err(Unverifiable::UnreadableGitOutput(_))
+        ));
+    }
+
+    #[test]
+    fn derived_signals_follow_git() {
+        let symlink = one("1\t0\tlink\0", " create mode 120000 link\n");
+        assert_eq!(
+            derived_signals(&symlink).into_iter().collect::<Vec<_>>(),
+            ["new_file", "symlink_change"]
+        );
+        let gained = one("0\t0\trun.sh\0", " mode change 100644 => 100755 run.sh\n");
+        assert_eq!(
+            derived_signals(&gained).into_iter().collect::<Vec<_>>(),
+            ["executable_bit"]
+        );
+        let lost = one("0\t0\trun.sh\0", " mode change 100755 => 100644 run.sh\n");
+        assert_eq!(derived_signals(&lost).len(), 0);
+        let deleted_link = one("0\t1\tl\0", " delete mode 120000 l\n");
+        assert_eq!(
+            derived_signals(&deleted_link)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["deleted_file", "symlink_change"]
+        );
+    }
+
+    #[test]
+    fn every_refusal_says_why() {
+        let cases = [
+            (
+                Unverifiable::GitRefused("x".to_owned()),
+                "git refused the patch: x",
+            ),
+            (Unverifiable::Empty, "git found no file in the patch"),
+            (Unverifiable::NonUtf8Path, "a path is not UTF-8"),
+            (Unverifiable::NewlineInPath, "a path contains a newline"),
+            (
+                Unverifiable::NonCanonicalPath("./a".to_owned()),
+                "path \"./a\" is not canonical",
+            ),
+            (
+                Unverifiable::RepeatedPath("a".to_owned()),
+                "git lists \"a\" more than once",
+            ),
+            (
+                Unverifiable::SummaryPathUnknown("a".to_owned()),
+                "git's summary names \"a\", which its numstat does not",
+            ),
+            (
+                Unverifiable::TypeChange("a".to_owned()),
+                "\"a\" changes type (more than one summary record)",
+            ),
+            (
+                Unverifiable::RenameOrCopy,
+                "the patch renames or copies a file; rank `git diff --no-renames`",
+            ),
+            (
+                Unverifiable::UnsupportedMode("160000".to_owned()),
+                "unsupported file mode 160000 (a submodule or unknown file type)",
+            ),
+            (
+                Unverifiable::UnreadableGitOutput("q".to_owned()),
+                "unreadable git output: q",
+            ),
+        ];
+        for (refusal, text) in cases {
+            assert_eq!(refusal.to_string(), text);
+        }
     }
 }
