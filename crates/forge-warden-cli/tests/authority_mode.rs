@@ -318,17 +318,49 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
             sha256_hex(&std::fs::read(&script).unwrap()),
         ],
     );
-    // Each refusal has its own exact reason. The script is pinned and admitted, so it must reach exec
-    // and its interpreter must EXIT (it cannot reopen the closed descriptor); "could not be started"
-    // (e.g. ETXTBSY) is a different outcome and fails this test (Touchstone C1c v4.4 audit).
-    for (what, candidate, reason) in [
-        ("symlink", link, "Too many levels of symbolic links"),
-        ("group-writable", writable, "writable by group or others"),
-        ("script", script, "forge-warden: the ranker exited "),
-        ("missing", dir.join("missing"), "No such file or directory"),
+    // A FIFO, made by a child (`mkfifo`): never opened for a blocking read.
+    let fifo = dir.join("fifo");
+    let made = common::command("/usr/bin/mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    // Each refusal has its own exact reason and registry code (Q2-05): a ranker the door refuses
+    // to pin (a symlink, a FIFO, unsafe mode) is an input to change (4); one that cannot be read or
+    // ran and failed is an environment problem (3). The script is pinned and admitted, so it must
+    // reach exec and its interpreter must EXIT (it cannot reopen the closed descriptor); "could not
+    // be started" (e.g. ETXTBSY) is a different outcome and fails this test (Touchstone C1c v4.4).
+    for (what, candidate, code, reason) in [
+        ("symlink", link, 4, "Too many levels of symbolic links"),
+        ("fifo", fifo, 4, "not a regular file"),
+        ("group-writable", writable, 4, "writable by group or others"),
+        ("script", script, 3, "forge-warden: the ranker exited "),
+        (
+            "missing",
+            dir.join("missing"),
+            3,
+            "No such file or directory",
+        ),
     ] {
         let out = authority(&policy, &patch, &candidate, &[]);
-        assert_eq!(out.code, 3, "{what}: {}", out.stderr);
+        assert_eq!(out.code, code, "{what}: {}", out.stderr);
+        let next = if code == 4 {
+            "next: change_input (forge-warden explain 4)\n"
+        } else {
+            "next: check_environment (forge-warden explain 3)\n"
+        };
+        assert!(out.stderr.ends_with(next), "{what}: {}", out.stderr);
+        if what == "fifo" || what == "group-writable" {
+            // Q2-15: the whole stderr is the stable text an agent parses, hint included.
+            assert_eq!(
+                out.stderr,
+                format!(
+                    "forge-warden: pinning {}: {reason}\n{next}",
+                    candidate.display()
+                ),
+                "{what}"
+            );
+        }
         assert_eq!(out.stdout, "", "{what}");
         assert!(out.stderr.contains(reason), "{what}: {}", out.stderr);
         assert!(
@@ -414,6 +446,12 @@ fn a_poisoned_parent_environment_changes_nothing() {
         let out = run_with_env(&args, b"", &[("TMPDIR", tmpdir)]);
         assert_eq!(out.code, 3, "{tmpdir}: {}", out.stderr);
         assert_eq!(out.stdout, "", "{tmpdir}");
+        assert!(
+            out.stderr
+                .ends_with("next: check_environment (forge-warden explain 3)\n"),
+            "{tmpdir}: {}",
+            out.stderr
+        );
         assert!(
             out.stderr.contains("temporary directory"),
             "{tmpdir}: {}",

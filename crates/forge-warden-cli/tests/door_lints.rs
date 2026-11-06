@@ -384,3 +384,156 @@ fn raw_attribute_names_and_paths_cannot_suppress_doors() {
         assert!(!door_lint_controls(source).is_empty(), "missed: {name}");
     }
 }
+
+/// Inside doors.rs, two narrower rules than "doors live here" (Q-DOOR). Q2-02: only
+/// `open_regular` may open a named file, so it is the only function that expects
+/// `clippy::disallowed_types` (`std::fs::OpenOptions`); every other open would need it. Q2-03: no
+/// thread is joined without a deadline in production code (a zero-argument `.join()` call or a
+/// `JoinHandle::join` path); results come back through channels read with a timeout. Test-only
+/// items (`#[cfg(test)]`, `#[cfg(all(.., test))]`) are skipped.
+#[derive(Default)]
+struct DoorShape {
+    current: Vec<String>,
+    types_doors: Vec<String>,
+    joins: Vec<String>,
+}
+
+/// Whether a token stream names the `test` cfg anywhere (`test`, `all(.., test)`).
+fn names_test(tokens: TokenStream) -> bool {
+    tokens.into_iter().any(|token| match token {
+        TokenTree::Ident(ident) => ident == "test",
+        TokenTree::Group(group) => names_test(group.stream()),
+        TokenTree::Punct(_) | TokenTree::Literal(_) => false,
+    })
+}
+
+fn is_test_only(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        a.path().is_ident("cfg")
+            && a.meta
+                .require_list()
+                .is_ok_and(|list| names_test(list.tokens.clone()))
+    })
+}
+
+fn expects_disallowed_types(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        (a.path().is_ident("expect") || a.path().is_ident("allow"))
+            && a.meta.require_list().is_ok_and(|list| {
+                list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                    .is_ok_and(|metas| {
+                        metas.iter().any(|m| {
+                            let segments: Vec<String> = m
+                                .path()
+                                .segments
+                                .iter()
+                                .map(|s| s.ident.unraw().to_string())
+                                .collect();
+                            segments == ["clippy", "disallowed_types"]
+                        })
+                    })
+            })
+    })
+}
+
+impl<'ast> Visit<'ast> for DoorShape {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !is_test_only(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        if !is_test_only(&item.attrs) {
+            syn::visit::visit_item_const(self, item);
+        }
+    }
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if is_test_only(&item.attrs) {
+            return;
+        }
+        let name = item.sig.ident.unraw().to_string();
+        if expects_disallowed_types(&item.attrs) {
+            self.types_doors.push(name.clone());
+        }
+        self.current.push(name);
+        syn::visit::visit_item_fn(self, item);
+        self.current.pop();
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if is_test_only(&item.attrs) {
+            return;
+        }
+        let name = item.sig.ident.unraw().to_string();
+        if expects_disallowed_types(&item.attrs) {
+            self.types_doors.push(name.clone());
+        }
+        self.current.push(name);
+        syn::visit::visit_impl_item_fn(self, item);
+        self.current.pop();
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if call.method.unraw() == "join" && call.args.is_empty() {
+            self.joins.push(self.current.join("::"));
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+    fn visit_path(&mut self, path: &'ast Path) {
+        let segments: Vec<String> = path
+            .segments
+            .iter()
+            .map(|s| s.ident.unraw().to_string())
+            .collect();
+        if segments.ends_with(&["JoinHandle".to_owned(), "join".to_owned()]) {
+            self.joins.push(self.current.join("::"));
+        }
+        syn::visit::visit_path(self, path);
+    }
+}
+
+fn door_shape(source: &str) -> DoorShape {
+    let mut shape = DoorShape::default();
+    match syn::parse_file(source) {
+        Ok(file) => shape.visit_file(&file),
+        // An unparseable file passes neither check: it names an impossible type door.
+        Err(e) => shape.types_doors.push(format!("does not parse: {e}")),
+    }
+    shape
+}
+
+#[test]
+fn the_door_shape_scanner_sees_joins_and_type_doors_and_skips_tests() {
+    let shape = door_shape(
+        r#"
+        #[expect(clippy::disallowed_types, reason = "door: open_regular")]
+        fn open_regular() {}
+        #[expect(clippy::disallowed_methods, clippy::disallowed_types, reason = "door: other")]
+        fn other() { let h = std::thread::spawn(|| ()); let _ = h.join(); }
+        fn ufcs(h: std::thread::JoinHandle<()>) { let _ = std::thread::JoinHandle::join(h); }
+        fn paths() { let _ = std::path::Path::new("a").join("b"); let _ = ["a"].join(","); }
+        #[cfg(test)]
+        mod tests {
+            #[expect(clippy::disallowed_types, reason = "test")]
+            fn t() { let _ = std::thread::spawn(|| ()).join(); }
+        }
+        "#,
+    );
+    assert_eq!(shape.types_doors, ["open_regular", "other"]);
+    assert_eq!(shape.joins, ["other", "ufcs"]);
+}
+
+#[test]
+fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
+    let source =
+        std::fs::read_to_string(root().join("crates/forge-warden-cli/src/doors.rs")).unwrap();
+    let shape = door_shape(&source);
+    assert_eq!(
+        shape.types_doors,
+        ["open_regular"],
+        "Q2-02: only open_regular may open a named file (and expect clippy::disallowed_types)"
+    );
+    assert!(
+        shape.joins.is_empty(),
+        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {:?}",
+        shape.joins
+    );
+}
