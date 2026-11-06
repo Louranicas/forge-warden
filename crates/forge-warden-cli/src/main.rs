@@ -11,7 +11,7 @@
 mod doors;
 
 use clap::{Parser, Subcommand};
-use forge_warden_core::exit::{entry_by_code, entry_by_name};
+use forge_warden_core::exit::{Exit, entry_by_code, entry_by_name};
 use forge_warden_core::policy::{PolicyError, parse_policy};
 use forge_warden_core::rank::{RankError, parse_rank};
 use forge_warden_core::render::render_text;
@@ -19,7 +19,6 @@ use forge_warden_core::seal::sha256_hex;
 use forge_warden_core::verdict::Seals;
 use forge_warden_core::{Date, EXIT_REGISTRY, evaluate};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 
 /// The JSON Schema of `forge-warden.verdict.v0`, committed and checked against the code.
 const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v0.schema.json");
@@ -82,64 +81,70 @@ enum Command {
     Init,
 }
 
-/// A failure with its registry exit code.
+/// A failure with the registry exit it ends the process with.
 struct Failure {
-    code: u8,
+    exit: Exit,
     message: String,
 }
 
 impl Failure {
-    fn new(name: &str, message: impl Into<String>) -> Self {
-        let code = entry_by_name(name).map_or(101, |entry| entry.code);
+    fn new(exit: Exit, message: impl Into<String>) -> Self {
         Self {
-            code,
+            exit,
             message: message.into(),
         }
     }
 
     fn from_door(error: doors::DoorError) -> Self {
-        let name = if error.over_budget {
-            "invalid_input"
+        let exit = if error.over_budget {
+            Exit::InvalidInput
         } else {
-            "io"
+            Exit::Io
         };
-        Self::new(name, error.message)
+        Self::new(exit, error.message)
     }
 }
 
-fn main() -> ExitCode {
+fn main() -> doors::Status {
+    doors::Status(run_cli())
+}
+
+fn run_cli() -> Exit {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
             let text = error.render().to_string();
             return if error.use_stderr() {
                 doors::diagnose(&text);
-                ExitCode::from(2)
+                Exit::Usage
             } else {
-                finish(doors::emit(&text).map(|()| 0).map_err(Failure::from_door))
+                finish(
+                    doors::emit(&text)
+                        .map(|()| Exit::Pass)
+                        .map_err(Failure::from_door),
+                )
             };
         }
     };
     finish(run(cli.command))
 }
 
-fn finish(result: Result<u8, Failure>) -> ExitCode {
+fn finish(result: Result<Exit, Failure>) -> Exit {
     match result {
-        Ok(code) => ExitCode::from(code),
+        Ok(exit) => exit,
         Err(failure) => {
+            let entry = failure.exit.entry();
             doors::diagnose(&format!("forge-warden: {}", failure.message));
-            if let Some(entry) = entry_by_code(failure.code) {
-                doors::diagnose(&format!(
-                    "next: {} (forge-warden explain {})",
-                    entry.action, entry.code
-                ));
-            }
-            ExitCode::from(failure.code)
+            doors::diagnose(&format!(
+                "next: {} (forge-warden explain {})",
+                entry.action, entry.code
+            ));
+            failure.exit
         }
     }
 }
 
-fn run(command: Command) -> Result<u8, Failure> {
+fn run(command: Command) -> Result<Exit, Failure> {
     match command {
         Command::Check {
             policy,
@@ -155,17 +160,17 @@ fn run(command: Command) -> Result<u8, Failure> {
     }
 }
 
-fn emit(text: &str) -> Result<u8, Failure> {
+fn emit(text: &str) -> Result<Exit, Failure> {
     doors::emit(text).map_err(Failure::from_door)?;
-    Ok(0)
+    Ok(Exit::Pass)
 }
 
 fn policy_failure(error: &PolicyError) -> Failure {
-    Failure::new("invalid_input", error.to_string())
+    Failure::new(Exit::InvalidInput, error.to_string())
 }
 
 fn rank_failure(error: &RankError) -> Failure {
-    Failure::new("invalid_input", error.to_string())
+    Failure::new(Exit::InvalidInput, error.to_string())
 }
 
 fn check(
@@ -174,11 +179,11 @@ fn check(
     patch_path: Option<PathBuf>,
     today: Option<&str>,
     json: bool,
-) -> Result<u8, Failure> {
+) -> Result<Exit, Failure> {
     let today = match today {
         Some(text) => Date::parse(text).ok_or_else(|| {
             Failure::new(
-                "usage",
+                Exit::Usage,
                 format!("--today {text:?} is not a YYYY-MM-DD date"),
             )
         })?,
@@ -199,7 +204,7 @@ fn check(
             let actual = sha256_hex(&patch_bytes);
             if actual != rank.input_sha256 {
                 return Err(Failure::new(
-                    "invalid_input",
+                    Exit::InvalidInput,
                     format!(
                         "the ranking describes patch {} but {} hashes to {actual}; re-rank the patch you mean to judge",
                         rank.input_sha256,
@@ -226,10 +231,10 @@ fn check(
         render_text(&verdict)
     };
     doors::emit(&text).map_err(Failure::from_door)?;
-    Ok(verdict.exit.code)
+    Ok(verdict.verdict.exit())
 }
 
-fn lint(policy_path: &Path) -> Result<u8, Failure> {
+fn lint(policy_path: &Path) -> Result<Exit, Failure> {
     let bytes = doors::read_file(policy_path).map_err(Failure::from_door)?;
     let policy = parse_policy(&bytes).map_err(|e| policy_failure(&e))?;
     emit(&format!(
@@ -240,7 +245,7 @@ fn lint(policy_path: &Path) -> Result<u8, Failure> {
     ))
 }
 
-fn explain(code: &str) -> Result<u8, Failure> {
+fn explain(code: &str) -> Result<Exit, Failure> {
     let entry = code
         .parse::<u8>()
         .ok()
@@ -248,22 +253,23 @@ fn explain(code: &str) -> Result<u8, Failure> {
         .or_else(|| entry_by_name(code))
         .ok_or_else(|| {
             Failure::new(
-                "usage",
+                Exit::Usage,
                 format!("{code:?} is not a documented exit code or name"),
             )
         })?;
     let value = serde_json::to_string_pretty(entry)
-        .map_err(|e| Failure::new("internal", format!("serializing the registry: {e}")))?;
+        .map_err(|e| Failure::new(Exit::Internal, format!("serializing the registry: {e}")))?;
     emit(&format!("{value}\n"))
 }
 
-fn schema(what: &str) -> Result<u8, Failure> {
+fn schema(what: &str) -> Result<Exit, Failure> {
     match what {
         "verdict" => emit(VERDICT_SCHEMA_JSON),
         "policy" => emit(POLICY_SCHEMA_JSON),
         _ => {
-            let value = serde_json::to_string_pretty(&EXIT_REGISTRY)
-                .map_err(|e| Failure::new("internal", format!("serializing the registry: {e}")))?;
+            let value = serde_json::to_string_pretty(&EXIT_REGISTRY).map_err(|e| {
+                Failure::new(Exit::Internal, format!("serializing the registry: {e}"))
+            })?;
             emit(&format!("{value}\n"))
         }
     }

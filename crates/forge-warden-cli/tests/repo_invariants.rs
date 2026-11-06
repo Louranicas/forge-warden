@@ -100,6 +100,25 @@ fn only_doors_rs_opens_doors_in_production_code() {
 }
 
 #[test]
+fn exit_statuses_come_from_the_registry() {
+    // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door in `doors.rs`
+    // turns an `Exit` into a process status; everything else returns an `Exit`, so a code cannot
+    // drift from the table.
+    for (path, text) in rust_sources() {
+        if path.contains("/tests/") || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+            continue;
+        }
+        for (line, code) in code_lines(&text) {
+            assert!(
+                !code.contains("ExitCode"),
+                "{path}:{}: return an `Exit` from the registry (forge_warden_core::Exit); only doors.rs makes an `ExitCode`",
+                line.saturating_add(1)
+            );
+        }
+    }
+}
+
+#[test]
 fn the_core_crate_never_depends_on_the_cli() {
     let manifest = read("crates/forge-warden-core/Cargo.toml");
     assert!(

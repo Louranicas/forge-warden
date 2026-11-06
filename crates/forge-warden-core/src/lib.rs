@@ -34,7 +34,7 @@ pub mod vocab;
 
 pub use date::Date;
 pub use eval::evaluate;
-pub use exit::{EXIT_REGISTRY, ExitEntry, Outcome};
+pub use exit::{EXIT_REGISTRY, Exit, ExitEntry, Outcome};
 pub use policy::{Policy, PolicyError, PolicyIssue};
 pub use rank::{RankDoc, RankError};
 pub use verdict::Verdict;

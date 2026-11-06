@@ -5,7 +5,7 @@
 //! `clippy.toml` makes the same call anywhere else a compile error, and `repo_invariants.rs`
 //! fails if any other file opens a door.
 
-use forge_warden_core::{Date, MAX_INPUT_BYTES};
+use forge_warden_core::{Date, Exit, MAX_INPUT_BYTES};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 
@@ -101,6 +101,16 @@ fn write_tolerating_closed_pipe(mut out: impl std::io::Write, text: &str) -> Res
             Err(DoorError::io("writing stdout", &e))
         }
         Ok(()) | Err(_) => Ok(()),
+    }
+}
+
+/// The process status for a registry [`Exit`]: the only place a status is made (R-20). `main`
+/// returns a `Status`, so every way the binary ends goes through the exit-code registry.
+pub(crate) struct Status(pub(crate) Exit);
+
+impl std::process::Termination for Status {
+    fn report(self) -> std::process::ExitCode {
+        std::process::ExitCode::from(self.0.entry().code)
     }
 }
 

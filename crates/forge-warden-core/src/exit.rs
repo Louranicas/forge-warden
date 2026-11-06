@@ -87,15 +87,71 @@ pub enum Outcome {
     Fail,
 }
 
+/// Every documented way the process can end: one variant per registry row.
+///
+/// The binary ends with an `Exit`, and only its exit door turns one into a process status, so a
+/// status can never be a literal that drifts from the table (R-20). A misspelt exit is a compile
+/// error, not a silent `internal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    /// `pass` (0).
+    Pass,
+    /// `usage` (2).
+    Usage,
+    /// `io` (3).
+    Io,
+    /// `invalid_input` (4).
+    InvalidInput,
+    /// `policy_fail` (7).
+    PolicyFail,
+    /// `policy_hold` (8).
+    PolicyHold,
+    /// `internal` (101).
+    Internal,
+}
+
+impl Exit {
+    /// Every exit, in registry order.
+    pub const ALL: [Self; 7] = [
+        Self::Pass,
+        Self::Usage,
+        Self::Io,
+        Self::InvalidInput,
+        Self::PolicyFail,
+        Self::PolicyHold,
+        Self::Internal,
+    ];
+
+    /// The registry row for this exit.
+    #[must_use]
+    pub const fn entry(self) -> &'static ExitEntry {
+        match self {
+            Self::Pass => &EXIT_REGISTRY[0],
+            Self::Usage => &EXIT_REGISTRY[1],
+            Self::Io => &EXIT_REGISTRY[2],
+            Self::InvalidInput => &EXIT_REGISTRY[3],
+            Self::PolicyFail => &EXIT_REGISTRY[4],
+            Self::PolicyHold => &EXIT_REGISTRY[5],
+            Self::Internal => &EXIT_REGISTRY[6],
+        }
+    }
+}
+
 impl Outcome {
+    /// The exit this outcome ends the process with.
+    #[must_use]
+    pub const fn exit(self) -> Exit {
+        match self {
+            Self::Pass => Exit::Pass,
+            Self::Hold => Exit::PolicyHold,
+            Self::Fail => Exit::PolicyFail,
+        }
+    }
+
     /// The registry entry this outcome exits with.
     #[must_use]
     pub const fn exit_entry(self) -> &'static ExitEntry {
-        match self {
-            Self::Pass => &EXIT_REGISTRY[0],
-            Self::Fail => &EXIT_REGISTRY[4],
-            Self::Hold => &EXIT_REGISTRY[5],
-        }
+        self.exit().entry()
     }
 
     /// Lowercase name, as it appears in documents.
@@ -135,7 +191,30 @@ mod tests {
     }
 
     #[test]
+    fn every_exit_is_its_registry_row_in_order() {
+        let rows: Vec<&ExitEntry> = Exit::ALL.iter().map(|exit| exit.entry()).collect();
+        let registry: Vec<&ExitEntry> = EXIT_REGISTRY.iter().collect();
+        assert_eq!(rows, registry);
+        let names: Vec<&str> = Exit::ALL.iter().map(|exit| exit.entry().name).collect();
+        assert_eq!(
+            names,
+            [
+                "pass",
+                "usage",
+                "io",
+                "invalid_input",
+                "policy_fail",
+                "policy_hold",
+                "internal"
+            ]
+        );
+    }
+
+    #[test]
     fn outcomes_point_at_their_named_entries() {
+        assert_eq!(Outcome::Pass.exit(), Exit::Pass);
+        assert_eq!(Outcome::Hold.exit(), Exit::PolicyHold);
+        assert_eq!(Outcome::Fail.exit(), Exit::PolicyFail);
         assert_eq!(Outcome::Pass.exit_entry().name, "pass");
         assert_eq!(Outcome::Hold.exit_entry().name, "policy_hold");
         assert_eq!(Outcome::Fail.exit_entry().name, "policy_fail");
