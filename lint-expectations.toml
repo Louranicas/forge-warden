@@ -194,3 +194,39 @@ review_reason = "Embedded JSON policy schema is data, reviewed as JSON rather th
 file = "examples/starter.warden.toml"
 sha256 = "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731"
 review_reason = "Embedded starter policy is TOML data, reviewed as TOML rather than Rust source."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: private_dir"
+review_reason = "C1b private directory creation reads the system temp base through the named isolation door; exclusive creation and 0700 permissions remain enforced."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: git_facts (the system temp dir)"
+review_reason = "C1b git_facts reads the system temp base only before admission and isolated Git execution; no ambient candidate repository authority is accepted."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: admit_base (canonicalize)"
+review_reason = "C1b base admission canonicalizes the absolute temp path before requiring non-lossy UTF-8 and a colon-free Git ceiling; refusal prevents repository discovery escapes."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/coverage.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test helpers read committed fixtures; a panic here is a failed test"
+review_reason = "C1b coverage tests read the committed patch, ranking and Git-fact corpus through their test fixture helper; production core remains free of filesystem effects."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/coverage.rs"
+lint = "clippy::panic"
+source_reason = "test helpers read committed fixtures; a panic here is a failed test"
+review_reason = "C1b coverage fixture read failures deliberately panic with the fixture name so missing evidence fails the test instead of being skipped."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/coverage.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers read committed fixtures; a panic here is a failed test"
+review_reason = "C1b coverage test setup unwraps committed JSON fields and fixture parsing; malformed corpus evidence fails the test rather than producing a default classification."

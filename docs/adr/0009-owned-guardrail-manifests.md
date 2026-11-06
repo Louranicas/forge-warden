@@ -74,3 +74,8 @@ external procedural macros remains outside this explicit-source lexical ledger's
 The reviewed ledger integration delta on base 4637d34 covers B3's scratch-repository vocabulary
 test and C1a's descriptor/child-process doors and test fixtures. Its temporary dead-code exception
 must be removed when C1c wires those doors. It is not an automatic ledger regeneration workflow.
+
+D6 v3 integrates on main ec45925 (C1b, A4 and B3.1). Six additional reviewed rows cover
+C1b private_dir, git_facts temp-base lookup and admit_base canonicalization, plus coverage-test
+fixture I/O, explicit panic on missing fixtures and unwraps of committed corpus fields. Each row
+records its distinct intent; no source or data pin changed. The four D6 v2 commits replay unchanged.
