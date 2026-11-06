@@ -87,15 +87,29 @@ fn read_within(
     Ok(bytes)
 }
 
-/// `O_NONBLOCK` on Linux (`x86_64`, `aarch64`): opening a FIFO with no writer returns at once
-/// instead of blocking, so a non-regular file is refused by `fstat` rather than hanging the open
-/// (Bastion B-C1a-01, Q2-02). Reads of a regular file are unaffected.
-const O_NONBLOCK: i32 = 0o4_000;
+/// Whether [`open_regular`] follows a symbolic link in the final path component.
+#[derive(Clone, Copy)]
+enum Symlinks {
+    /// Follow it (input files: `--policy`, `--patch`, `--rank`).
+    Follow,
+    /// Refuse it (`O_NOFOLLOW`: the executable pin).
+    Refuse,
+}
+
+/// Open flags for input files: `O_NONBLOCK` on Linux (`x86_64`, `aarch64`), so opening a FIFO with
+/// no writer returns at once and the non-regular file is refused by `fstat` rather than hanging
+/// the open (Bastion B-C1a-01, Q2-02). Reads of a regular file are unaffected. (`O_RDONLY` is 0;
+/// std adds `O_CLOEXEC`.) Each flag set is one literal, so no operator can be mutated into an
+/// equal value; a test checks the compositions.
+const FOLLOW_FLAGS: i32 = 0o4_000;
+
+/// Open flags for the executable pin: `O_NOFOLLOW | O_NONBLOCK`.
+const PIN_FLAGS: i32 = 0o404_000;
 
 /// `ELOOP`: `O_NOFOLLOW` met a symbolic link in the final component (or a loop).
 const ELOOP: i32 = 40;
 
-/// The one place a named file is opened (Q2-02): read-only with `flags`, always non-blocking, and
+/// The one place a named file is opened (Q2-02): read-only, always non-blocking, and
 /// only a regular file is admitted (a FIFO, device, directory or procfs node is refused before
 /// any read). A symbolic link the flags do not follow is refused, not an I/O error.
 #[expect(
@@ -104,13 +118,17 @@ const ELOOP: i32 = 40;
 )]
 fn open_regular(
     path: &Path,
-    flags: i32,
+    symlinks: Symlinks,
     what: &str,
 ) -> Result<(std::fs::File, std::fs::Metadata), DoorError> {
     use std::os::unix::fs::OpenOptionsExt as _;
+    let flags = match symlinks {
+        Symlinks::Follow => FOLLOW_FLAGS,
+        Symlinks::Refuse => PIN_FLAGS,
+    };
     let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(flags | O_NONBLOCK)
+        .custom_flags(flags)
         .open(path)
         .map_err(|e| {
             if e.raw_os_error() == Some(ELOOP) {
@@ -129,7 +147,7 @@ fn open_regular(
 /// Read a whole regular file (symbolic links followed), within the byte budget.
 pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, DoorError> {
     let what = format!("reading {}", path.display());
-    let (file, _) = open_regular(path, 0, &what)?;
+    let (file, _) = open_regular(path, Symlinks::Follow, &what)?;
     read_bounded(file, &what)
 }
 
@@ -189,7 +207,7 @@ pub(crate) fn diagnose(text: &str) {
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
 pub(crate) mod child {
-    use super::{DoorError, open_regular, read_within};
+    use super::{DoorError, Symlinks, open_regular, read_within};
     use forge_warden_core::Policy;
     use forge_warden_core::authority::{Produced, Ranking};
     use forge_warden_core::defaults::NamedDefault as _;
@@ -204,11 +222,6 @@ pub(crate) mod child {
     /// `O_NOFOLLOW` on Linux (`x86_64`, `aarch64`): open refuses a symlink in the final path component.
     #[cfg(all(target_os = "linux", test))]
     pub(super) const O_NOFOLLOW: i32 = 0o400_000;
-
-    /// The flags `pin_executable` adds to [`open_regular`]'s: `O_NOFOLLOW` (`O_RDONLY` is 0; std adds
-    /// `O_CLOEXEC`; `open_regular` adds `O_NONBLOCK`). One literal; a test checks it.
-    #[cfg(target_os = "linux")]
-    pub(super) const PIN_FLAGS: i32 = 0o400_000;
 
     /// The largest executable forge-warden will pin (hash) before running it.
     pub(super) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
@@ -287,7 +300,7 @@ pub(crate) mod child {
     pub(super) fn pin_within(path: &Path, budget: usize) -> Result<PinnedExecutable, DoorError> {
         use std::os::unix::fs::MetadataExt as _;
         let what = format!("pinning {}", path.display());
-        let (mut file, meta) = open_regular(path, PIN_FLAGS, &what)?;
+        let (mut file, meta) = open_regular(path, Symlinks::Refuse, &what)?;
         let own_uid = std::fs::metadata("/proc/self")
             .map_err(|e| DoorError::io("reading /proc/self", &e))?
             .uid();
@@ -856,7 +869,10 @@ pub(crate) mod child {
             match killer.try_wait() {
                 Ok(Some(status)) if status.success() => return Ok(()),
                 Ok(Some(status)) => return Err(failed(status.to_string())),
-                Ok(None) if started.elapsed() < KILL_TIMEOUT => std::thread::sleep(POLL),
+                // Time is left while the limit minus the elapsed time is still defined.
+                Ok(None) if KILL_TIMEOUT.checked_sub(started.elapsed()).is_some() => {
+                    std::thread::sleep(POLL);
+                }
                 Ok(None) => {
                     let _killed = killer.kill();
                     let _reaped = killer.wait();
@@ -955,12 +971,13 @@ mod child_tests {
 
     #[test]
     fn every_open_is_nonblocking_and_the_pin_adds_nofollow_exactly() {
-        // Reference values from the Linux headers (x86_64, aarch64); `O_NOFOLLOW` is test-only.
-        use super::child::{O_NOFOLLOW, PIN_FLAGS};
-        assert_eq!(super::O_NONBLOCK, 0o4_000);
+        // Reference values from the Linux headers (x86_64, aarch64).
+        use super::child::O_NOFOLLOW;
+        const O_NONBLOCK: i32 = 0o4_000;
+        assert_eq!(O_NOFOLLOW & O_NONBLOCK, 0, "disjoint bits");
+        assert_eq!(super::FOLLOW_FLAGS, O_NONBLOCK);
+        assert_eq!(super::PIN_FLAGS, O_NOFOLLOW | O_NONBLOCK);
         assert_eq!(super::ELOOP, 40);
-        assert_eq!(PIN_FLAGS, O_NOFOLLOW);
-        assert_eq!(PIN_FLAGS & super::O_NONBLOCK, 0, "disjoint bits");
     }
 
     #[test]
