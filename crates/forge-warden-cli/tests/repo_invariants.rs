@@ -10,6 +10,16 @@
 mod common;
 use common::{files_under, read, root};
 
+/// Whether `path` (`crates/…`) is compiled into the production binary, by compiler evidence
+/// (B-C1c-03): a test exemption is never decided by a directory name.
+fn is_production(path: &str) -> bool {
+    static PRODUCTION: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    PRODUCTION
+        .get_or_init(common::production_sources)
+        .contains(path)
+}
+
 fn rust_sources() -> Vec<(String, String)> {
     let mut out = Vec::new();
     for dir in ["crates"] {
@@ -88,7 +98,7 @@ fn suppressions_are_expectations_with_reasons() {
 #[test]
 fn only_doors_rs_opens_doors_in_production_code() {
     for (path, text) in rust_sources() {
-        let is_test = path.contains("/tests/");
+        let is_test = !is_production(&path);
         if is_test || path.ends_with("src/doors.rs") {
             continue;
         }
@@ -112,7 +122,7 @@ fn defaults_say_which_way_they_fail() {
     // default, at most six lines above it.
     const MARKERS: [&str; 3] = ["// fails closed:", "// fails safe:", "// display only:"];
     for (path, text) in rust_sources() {
-        if path.contains("/tests/") {
+        if !is_production(&path) {
             continue;
         }
         let lines: Vec<&str> = production_part(&text).lines().collect();
@@ -323,7 +333,7 @@ fn exit_statuses_come_from_the_registry() {
     // turns an `Exit` into a process status; everything else returns an `Exit`, so a code cannot
     // drift from the table.
     for (path, text) in rust_sources() {
-        if path.contains("/tests/") || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+        if !is_production(&path) || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
             continue;
         }
         for (line, code) in code_lines(&text) {
@@ -416,7 +426,7 @@ fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
     // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in doors.rs, right after the pinned
     // ranker ran; and the binary judges only through `evaluate_authority`/`evaluate_advisory`.
     for (path, text) in rust_sources() {
-        if path.contains("/tests/") || path.ends_with("crates/forge-warden-core/src/authority.rs") {
+        if !is_production(&path) || path.ends_with("crates/forge-warden-core/src/authority.rs") {
             continue;
         }
         let attests = text.matches("attest(").count();

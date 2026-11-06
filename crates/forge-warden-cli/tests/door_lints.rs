@@ -266,13 +266,15 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
     let files = files_under("crates/forge-warden-cli", ".rs");
     assert!(files.len() >= 10, "found only {} files", files.len());
     let doors = root().join("crates/forge-warden-cli/src/doors.rs");
+    let production = common::production_sources();
     for path in files {
         if path.components().any(|c| c.as_os_str() == "target") || path == doors {
             continue;
         }
-        let shown = path.display().to_string();
+        let shown = common::relative(&path);
         let source = std::fs::read_to_string(&path).unwrap();
-        let test_code = shown.contains("/tests/");
+        // Production is what the compiler built into the binary (B-C1c-03), never a path guess.
+        let test_code = !production.contains(&shown);
         // Tests may open test doors (expect disallowed_methods / disallowed_types); nothing else.
         let found: Vec<String> = door_lint_controls(&source)
             .into_iter()
