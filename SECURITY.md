@@ -12,7 +12,7 @@ in the repository under review and is owned (CODEOWNERS, `protect_paths`).
 | Memory exhaustion | Inputs over 64 MiB are refused before parsing (`MAX_INPUT_BYTES`), using a bounded read. |
 | A verdict for one patch attached to another | `--patch` recomputes the seal and refuses a mismatch (exit 4). |
 | Fail-open on new or empty input | ADR 0003: unknown vocabulary and empty rankings hold; they never pass. |
-| A pull request weakening the gate that judges it | The dogfood job judges every pull request with the **base branch's** `warden.toml`, so a PR cannot loosen the rules applied to itself. Changes to the policy, lints, CI and hooks are `protect_paths` holds and CODEOWNERS-owned. |
+| A pull request weakening the gate that judges it | The dogfood driver builds the judge and loads policy from a separate, clean **base checkout**; the candidate is diff data only. This requires a trusted workflow/runner enforced outside the candidate PR. A mutable repository-local workflow is not an independent approval boundary. See ADR 0006 for bootstrap, isolation and deployment prerequisites. |
 | Supply chain | `cargo-deny` (sources, licences, advisories, bans), Dependabot, actions pinned by SHA, `zizmor` workflow audit. |
 | Panics as denial of service | No `unwrap`/`expect`/`panic`/indexing in production code (lint wall); a panic exits 101 and is a bug. |
 
