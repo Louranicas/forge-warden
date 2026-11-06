@@ -364,7 +364,8 @@ mod tests {
         let rank = parse_rank(text.as_bytes()).unwrap();
         assert_eq!(rank.files.len(), 1);
         assert_eq!(rank.files[0].evidence[0].line, 3);
-        assert_eq!(rank.tool_version, "0.7.0");
+        assert_eq!(rank.tool_version(), "0.7.0");
+        assert_eq!(rank.input_sha256(), SEAL);
     }
 
     #[test]

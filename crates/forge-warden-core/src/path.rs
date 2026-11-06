@@ -104,6 +104,10 @@ mod tests {
                 RepoPath::parse(text).map(|p| p.as_str().to_owned()),
                 Ok(text.to_owned())
             );
+            assert_eq!(
+                RepoPath::parse(text).map(|p| p.to_string()),
+                Ok(text.to_owned())
+            );
         }
     }
 
