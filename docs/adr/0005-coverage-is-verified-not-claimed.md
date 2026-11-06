@@ -1,9 +1,9 @@
 # ADR 0005: Coverage is verified, not claimed
 
-**Status:** proposed v2, 2026-11-06 (WP-C0). Author: Keel (O2). v1 (b962c8e) was reviewed by Bastion
-(threat model, REQUEST CHANGES, 6 items) and Touchstone (attack, REVISE, 2 counterexamples). This version answers
-each item by number (§7). Lodestar adjudicates. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v3.py`,
-`c0v3.cases.json` (43 cases), `c0v3.v3.results.json`, `MATRIX.md`, `v3-inputs/`.
+**Status:** proposed v3, 2026-11-06 (WP-C0). Author: Keel (O2). v1 (b962c8e) and v2 (2f65891) were reviewed by
+Bastion (threat model) and Touchstone (attack). v3 answers exactly the four items of Lodestar's Rulings #5 (T1, T2,
+B-A, B-B; §7) and nothing else. Lodestar adjudicates. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`,
+`c0v4.cases.json` (51 cases), `c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`.
 
 ## 1. Context
 
@@ -59,7 +59,17 @@ FileChange { path: RepoPath, kind: Added | Deleted | Modified,
   Git exits nonzero; empty numstat; a path containing `\n`; a non-canonical path (empty, `.` or `..` segment, or
   leading `/`); **the same path twice in numstat** (repeated operations; `--no-prefix` folding); a summary record whose
   path is not in numstat; **more than one summary record for a path** (type change file↔symlink); `rename`/`copy`
-  in either output; mode `160000` (submodule) or any other mode; any summary line of unknown form.
+  in either output; any summary line of unknown form; and **any mode other than `100644`, `100755` or `120000`
+  stated anywhere in the patch's header lines** (T1, below).
+- **Modes come from two places (T1).** `--summary` reports only *changes* of mode, so an unchanged gitlink (an
+  updated submodule, mode `160000` on both sides) produces no summary record at all; v3 read it as an ordinary
+  modified file (Touchstone C0v2-O3-01, MEASURED). The door therefore also reads every mode the patch states in a
+  **header line**: `index <a>..<b> <mode>`, `new file mode <mode>`, `deleted file mode <mode>`, `old mode <mode>`,
+  `new mode <mode>`. Only header lines can begin with these prefixes: every hunk line begins with ` `, `+`, `-` or
+  `\`, and base85 binary-patch lines contain no space. Any stated mode outside the three supported ones refuses the
+  whole patch (`patch_unverifiable: unsupported_mode`). This is a check on the bytes, not a second diff parser: it
+  identifies no files and decides no kinds; Git still does both. Measured (v4): Touchstone's submodule update and
+  addition and an independent nested-repository update and addition (Keel) all refuse.
 - Base/head are not Git facts. `--base`/`--head`, if given, are recorded under `claims` as caller assertions and
   marked unverified. Git `--numstat` proves the patch parses, not that it applies to any particular tree.
 
@@ -100,14 +110,25 @@ forge-warden parses, seals (`rank_sha256`) and judges.
   - a ranker failure leaves nothing to judge → exit 3 (`check_environment`), no verdict on stdout.
 - Unsupported runtime (not Linux, no `/proc/self/fd`, Git missing) → authority mode refuses with exit 3. It never
   degrades to advisory.
+- A process-group kill bounds children that stay in the group. It is **not a sandbox**: a child that calls
+  `setsid` or double-forks out of the group escapes it. Containing a hostile ranker needs OS isolation (namespaces,
+  seccomp, a separate uid), which this ADR does not provide; the ranker is a pinned, trusted binary (§2.4).
 
-### 2.6 Where authority comes from
+### 2.6 Where authority comes from (B-A)
 
-forge-warden cannot tell who wrote a file. The contract is that in authoritative CI the **policy** (including the
-producer allowlist) and the **forge-warden binary** come from the trusted base or a pinned release, never from the
-candidate change (WP-D1 enforces the invocation; Bastion owns it). The verdict seals `policy_sha256`, the producer's
-sha256 and the patch sha256, so a reviewer can check that the policy and producer were the trusted ones. WP-D2
-acknowledgements bind to the verdict digest and head sha.
+forge-warden cannot tell who wrote a file, and a workflow file in the pull request cannot be its own authority: a
+change can edit the YAML that would invoke the judge. **The authority root is external**: an owner-controlled
+required workflow or merge-admission rule outside the candidate's control decides that forge-warden runs, with which
+binary, policy and producer allowlist (R-02 deployment closure, Luke L4). Inside that root:
+
+- the policy (including `[producer] sha256`) and the forge-warden binary come from the trusted base or a pinned
+  release, never from the candidate change;
+- the transition to authority mode uses the trusted base's own authority-mode support. If the base binary lacks it,
+  the run refuses; it never falls back to the candidate's binary or the candidate's policy (WP-D1);
+- the verdict seals `policy_sha256`, the producer's sha256 and the patch sha256, so a reviewer can check them;
+  WP-D2 acknowledgements bind to the verdict digest and head sha.
+
+Nothing in this ADR claims that an in-repository workflow alone establishes authority.
 
 ### 2.7 Proof-carrying types in the core
 
@@ -121,11 +142,28 @@ acknowledgements bind to the verdict digest and head sha.
   `crates/forge-warden-cli/src/doors.rs`. A *library* caller can still call `attest`. The guarantee is the binary's,
   and the doc comment says so.
 
-### 2.8 Rules read Git's facts
+### 2.8 Rules read Git's facts; Git may only add change-kind signals (T2)
 
 `evaluate` receives the `Covered` facts and rules read a file's kind (added, deleted, modified) and `binary` from
-the Git `FileChange`, not from the ranking's `status`. Signals and scores still come from the ranking. This closes
-fact 3: a deleted binary test file is a deletion even when the producer says `binary_changed`.
+the Git `FileChange`, not from the ranking's `status`. Scores and **code-evidence** signals (`secret_like`,
+`unsafe_added`, …) come only from the ranking.
+
+For the five **change-kind** signals, a rule sees the **union** of the ranker's signals and the signals derived from
+Git's facts. Git may add these signals; it never removes one:
+
+| Derived signal | When Git's `FileChange` says | Measured case (v4) |
+|---|---|---|
+| `new_file` | `kind == Added` | `m-binadd`: binary add, ranker omits it → effective `[binary_change, new_file]` |
+| `deleted_file` | `kind == Deleted` | `new-bindel`: binary delete, ranker omits it → effective `[binary_change, deleted_file]` |
+| `binary_change` | `binary` | `m-binmod` |
+| `symlink_change` | `old_mode` or `new_mode` is Symlink | `new-symlink`, `m-symlink-del` |
+| `executable_bit` | Exec gained (added as Exec, or modified with `old_mode != Exec`, `new_mode == Exec`) | `m-exec-add`, `new-mode` |
+
+A derived signal the ranker did not report is **also** a `status_mismatch` (HOLD): the producer missed a fact.
+Consequence, measured: with deep-diff-forge 0.7.0 every binary addition and binary deletion HOLDs (producer facts
+3 and 3b), and `forbid_signal = ["deleted_file"]` or `["new_file"]` now catches them, which it did not before.
+Rung: 3 (admission; the union and the mismatch are computed before any rule runs). C1 has one test per derived
+signal, on real producer output.
 
 ### 2.9 Compatibility matrix (ranking vs Git), exhaustive
 
@@ -142,8 +180,11 @@ For each path in both, the ranking must match the measured producer behaviour (`
 | Modified, mode changed, no content | `mode_changed` | — | `new_file`, `deleted_file` |
 | Modified, content (± mode) | `modified` | — | `new_file`, `deleted_file` |
 
-The product implements this as one exhaustive `match` over `(kind, binary, mode_changed, content)`. Adding a field
-to `FileChange` breaks it at compile time.
+The product implements the matrix, the derived signals and the comparison with an **exhaustive destructure of
+`FileChange` without `..`** at every site that reads it (`let FileChange { path, kind, old_mode, new_mode, binary,
+content } = change;`), followed by a `match` on `kind`. Adding a field to `FileChange` then fails to compile at
+each of those sites (B-B). C1's plan includes that planted red: add a field, expect `E0027` at every comparison
+site. A tuple match over selected fields would not give this guarantee and is not used.
 
 ## 3. Options rejected
 
@@ -162,7 +203,9 @@ to `FileChange` breaks it at compile time.
 | A supplied ranking cannot PASS | **2, type** (`AdvisoryOutcome` has no `Pass`) | — |
 | An authoritative verdict has verified coverage | **2, type** (`Covered` private constructor) | — |
 | Only the door mints `Produced` | 4, repo invariant | the core cannot observe that a process ran |
-| A new `FileChange` axis is compared | 2, type (exhaustive match) | — |
+| A new `FileChange` axis is compared | 2, type: exhaustive struct destructure without `..` (B-B); planted new-field red in C1 | — |
+| Change-kind signals include Git's facts | 3, admission (union before rules) | Git's facts are runtime input |
+| Unsupported modes (submodules) refuse | 3, admission (header-mode check on the patch bytes) | runtime input |
 | Coverage, identity, kind agree with Git | 3, admission (notes before rules) | runtime input |
 | The executed ranker is the hashed bytes | 3, admission at the door; **measured in C1** | TOCTOU against same-uid writers is out of scope (§2.4) |
 | Children are bounded | 3, door; planted controls in C1 | runtime behaviour |
@@ -213,3 +256,8 @@ to `FileChange` breaks it at compile time.
 | Touchstone C0-O3-02: mode and binary axes | §2.9 matrix; v3 cases `ts-forged-mode`, `ts-text-as-binary` → `status_mismatch` |
 | Touchstone: `--no-prefix` must HOLD, not auto-repair | v3 refuses (`repeated_operation_on_path`) |
 | Touchstone: bounded capture, typed refusals, empty ≠ valid | §2.5; `empty_patch` refusal |
+| **v3, T1** (Touchstone C0v2-O3-01): an unchanged submodule update read as covered | §2.2 header-line modes; v4 cases `ts2-new-submodule-update`, `keel-submodule-update` (and both additions) refuse |
+| **v3, T2** (Lodestar): Git may only add change-kind signals | §2.8 union rule + table; v4 effective signals per derived signal |
+| **v3, B-A** (Bastion): external authority root; no fallback to the candidate | §2.6 |
+| **v3, B-B** (Bastion): a tuple match is not compile-breaking | §2.9 exhaustive destructure without `..`; §4; planted red in C1 |
+| **v3, standing**: process-group kill is not a sandbox | §2.5 |
