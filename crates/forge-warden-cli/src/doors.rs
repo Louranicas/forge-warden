@@ -467,7 +467,11 @@ mod child_tests {
 
     #[test]
     fn a_timeout_kills_the_whole_group() {
-        let args = sh("sleep 31.101 & sleep 31.101; wait");
+        // The marker carries this test process's id, so a concurrent run (or a mutant that leaves
+        // its own grandchildren behind) can never be mistaken for a leak from this test.
+        let marker = format!("sleep 31.{}", std::process::id());
+        let script = format!("{marker} & {marker}; wait");
+        let args = sh(&script);
         let mut s = spec(Program::Absolute(Path::new("/bin/sh")), &args, b"");
         s.timeout = Duration::from_millis(300);
         let started = Instant::now();
@@ -477,12 +481,14 @@ mod child_tests {
             "{:?}",
             started.elapsed()
         );
-        assert!(none_left("sleep 31.101"));
+        assert!(none_left(&marker));
     }
 
     #[test]
     fn a_grandchild_holding_the_pipes_is_reaped() {
-        let args = sh("sleep 31.202 & echo started");
+        let marker = format!("sleep 32.{}", std::process::id());
+        let script = format!("{marker} & echo started");
+        let args = sh(&script);
         let started = Instant::now();
         let out = run_child(&spec(Program::Absolute(Path::new("/bin/sh")), &args, b"")).unwrap();
         assert_eq!(out.stdout, b"started\n");
@@ -491,7 +497,7 @@ mod child_tests {
             "{:?}",
             started.elapsed()
         );
-        assert!(none_left("sleep 31.202"));
+        assert!(none_left(&marker));
     }
 
     #[test]
