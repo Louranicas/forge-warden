@@ -302,8 +302,8 @@ review_reason = "C1c core authority corpus tests read committed fixtures and unw
 
 [[data_input]]
 file = "schemas/verdict.v1.schema.json"
-sha256 = "6a10eed5e011c9c4b1534de9d30abfc166c48f54316b4b4e9fe399040438c5ed"
-review_reason = "C1c embedded v1 JSON schema records produced/advisory provenance and evidence seals; reviewed as schema data, not executable Rust."
+sha256 = "215e5b0cd95a0af1f2008164780af7d464f1fcc1bc159e79ffba0ef0ff6316e2"
+review_reason = "C1c embedded v1 JSON schema records provenance and seals; E3a adds only the existing duplicate_paths note to its enum. Reviewed JSON data, not executable Rust."
 
 [[data_input]]
 file = "schemas/policy.v0.schema.json"
@@ -314,3 +314,29 @@ review_reason = "C1c policy JSON schema adds the producer SHA256 allowlist; revi
 file = "examples/starter.warden.toml"
 sha256 = "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731"
 review_reason = "Embedded starter policy is TOML data, reviewed as TOML rather than Rust source."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/laws.rs"
+lint = "clippy::unwrap_used"
+source_reason = "generated finite test models and parser setup: a panic is a failed property"
+review_reason = "B5 test-only oracle setup parses generated policy/rank JSON and a fixed date, constructs nonzero limits from positive ranges, and accesses explicitly nonempty fixtures; panic fails the property instead of supplying a default outcome."
+
+[[data_input]]
+file = "fixtures/adversarial/seal-reference.json"
+sha256 = "e8c0ee87d3e64aa6ede77123cba49441ea6cf6eddc9acefbfc6c352b001a5038"
+review_reason = "E3a test-only external SHA256 reference object, parsed as JSON and compared with independently hashed committed policy, rank and patch bytes; not executable source."
+
+[[data_input]]
+file = "fixtures/demo.verdict.json"
+sha256 = "c3ea2847aba85cde1436c07abd14c43485b1fa73f698ace9f0068e6e1d73a2ba"
+review_reason = "E3a test-only existing verdict JSON anchor supplies seal fields for comparison; pinning these unchanged fixture bytes does not bless or approve the pending golden."
+
+[[data_input]]
+file = "fixtures/demo.rank.json"
+sha256 = "9a183a4197f417f49cf70999e14c6015ea12913ef59af3924204230d2e3379b5"
+review_reason = "E3a test-only full ranking JSON bytes are hashed against the external seal reference; reviewed as serialized ranking data, not executable source."
+
+[[data_input]]
+file = "fixtures/demo.patch"
+sha256 = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
+review_reason = "E3a test-only literal unified diff is hashed against the external seal reference; embedded as bytes and never executed or applied by the output-anchor test."
