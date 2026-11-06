@@ -3,10 +3,13 @@
 import importlib.util
 import json
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("checks", ROOT / "scripts/check_guardrails.py")
 checks = importlib.util.module_from_spec(spec)
@@ -40,6 +43,15 @@ class Guardrails(unittest.TestCase):
         self.change("warden.toml", '  ".github/**",', '  ".github/**",\n  "new-protected/**",')
         with self.assertRaisesRegex(ValueError, "policy protected paths drift"):
             checks.check_paths(self.root)
+
+    def test_cli_refuses_policy_drift(self):
+        (self.root / "scripts").mkdir()
+        for name in ("check_guardrails.py", "guardrail_attributes.py"):
+            shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
+        self.change("warden.toml", '  ".github/**",', '  ".github/**",\n  "new-protected/**",')
+        out = subprocess.run([sys.executable, "-I", str(self.root / "scripts/check_guardrails.py")], capture_output=True)
+        self.assertEqual(out.returncode, 1, out.stderr)
+        self.assertIn(b"policy protected paths drift", out.stderr)
 
     def test_codeowners_drift_refuses(self):
         self.change(".github/CODEOWNERS", "/Cargo.lock @Louranicas\n", "")

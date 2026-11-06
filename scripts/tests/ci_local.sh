@@ -7,7 +7,7 @@ trap 'rm -rf "$sandbox"' EXIT
 mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/target"
 cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
-printf '# fixture admission control; production checker has independent drift tests\n' > "$sandbox/repo/scripts/check_guardrails.py"
+printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"
 cat > "$sandbox/bin/git" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
@@ -66,3 +66,15 @@ for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
  done
 done
 [ "$failures" -eq 0 ]
+
+# Failure of the configuration admission checker must stop the gate before judge execution.
+export GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0 GUARDRAIL_EXIT=1
+for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
+ : > "$TEST_ROOT/calls"
+ set +e
+ bash "$entry" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ [ "$actual" -eq 1 ] && [ ! -s "$TEST_ROOT/calls" ]
+ echo "PASS guardrail admission failure propagates exit=$actual"
+done
