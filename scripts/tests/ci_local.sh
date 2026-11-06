@@ -7,6 +7,7 @@ trap 'rm -rf "$sandbox"' EXIT
 mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/target"
 cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
+printf '# fixture admission control; production checker has independent drift tests\n' > "$sandbox/repo/scripts/check_guardrails.py"
 cat > "$sandbox/bin/git" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in

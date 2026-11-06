@@ -20,6 +20,8 @@ class MutationEnvironment(unittest.TestCase):
             root = Path(directory)
             (root / "bin").mkdir()
             (root / "target").mkdir()
+            (root / "scripts").mkdir()
+            (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
             scripts = {
                 "git": '#!/bin/sh\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nmerge-base) echo base;;\ndiff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',
                 "cargo": '#!/usr/bin/env python3\nimport json,os,sys\nif sys.argv[1] == "mutants":\n with open(os.environ["RECEIPT"],"w") as f: json.dump({"target":os.environ.get("CARGO_TARGET_DIR"),"args":sys.argv[2:]},f)\n sys.exit(2)\n',

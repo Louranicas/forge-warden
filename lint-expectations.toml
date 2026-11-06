@@ -1,0 +1,115 @@
+schema = "forge-warden.lint-expectations.v1"
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: read_file"
+review_reason = "Reviewed effect boundary: door: read_file; I/O remains confined to its named door."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: read_stdin"
+review_reason = "Reviewed effect boundary: door: read_stdin; I/O remains confined to its named door."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: today"
+review_reason = "Reviewed effect boundary: door: today; I/O remains confined to its named door."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: emit"
+review_reason = "Reviewed effect boundary: door: emit; I/O remains confined to its named door."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: diagnose"
+review_reason = "Reviewed effect boundary: door: diagnose; I/O remains confined to its named door."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/adversarial.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers: failure to decode the fixture verdict fails the test"
+review_reason = "test helpers: failure to decode the fixture verdict fails the test"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/common/mod.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test door: integration tests spawn the binary and read repository files"
+review_reason = "test door: integration tests spawn the binary and read repository files"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/common/mod.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers: a panic is a failed test"
+review_reason = "test helpers: a panic is a failed test"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/common/mod.rs"
+lint = "clippy::panic"
+source_reason = "test helpers: a panic is a failed test"
+review_reason = "test helpers: a panic is a failed test"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/common/mod.rs"
+lint = "dead_code"
+source_reason = "each test crate uses a different subset of these helpers"
+review_reason = "each test crate uses a different subset of these helpers"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/corpus.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test door: reads committed fixtures"
+review_reason = "test door: reads committed fixtures"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/repo_invariants.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test code reading the repository: a panic is a failed test"
+review_reason = "test code reading the repository: a panic is a failed test"
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/schema_tracks_code.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test code: a panic is a failed test"
+review_reason = "test code: a panic is a failed test"
+
+[[expectation]]
+file = "crates/forge-warden-core/src/verdict.rs"
+lint = "clippy::struct_field_names"
+source_reason = "the document member is named `verdict`; renaming it would break the schema"
+review_reason = "the document member is named `verdict`; renaming it would break the schema"
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/adversarial.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test setup fails loudly when a parser unexpectedly refuses the fixed control"
+review_reason = "test setup fails loudly when a parser unexpectedly refuses the fixed control"
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/eval.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+review_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/eval.rs"
+lint = "clippy::panic"
+source_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+review_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/eval.rs"
+lint = "clippy::indexing_slicing"
+source_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+review_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/eval.rs"
+lint = "clippy::arithmetic_side_effects"
+source_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+review_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"

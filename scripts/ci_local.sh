@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
+step guardrails; python3 -I scripts/check_guardrails.py
 step fmt;     cargo fmt --all --check
 step clippy;  cargo clippy --workspace --all-targets --locked
 step test;    cargo test --workspace --locked
