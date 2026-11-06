@@ -645,9 +645,12 @@ const RULES: [&str; 5] = [
     "[[rule]]\nid = \"secrets\"\nwhy = \"A credential committed once is compromised forever.\"\nkind = \"forbid_signal\"\nseverity = \"fail\"\nsignals = [\"secret_like\"]\n",
 ];
 
-// Monotonicity (adding a rule never loosens a verdict) is a law in tests/laws.rs, judged against an
-// independent reference over all rule kinds and waivers (WP-B5). Determinism holds by construction:
-// the core has no effects (clippy.toml, repo_invariants) and serialization is pinned above.
+// Two complementary checks in tests/laws.rs (WP-B5) replace the old properties here:
+// `adding_a_rule_cannot_loosen_the_verdict` compares the evaluator's verdict before and after one
+// added rule (monotonicity), and `all_rule_kinds_match_the_independent_reference` separately compares
+// the evaluator with an independent reference model over all rule kinds and waivers. Determinism
+// holds by construction: the core has no effects (clippy.toml, repo_invariants) and serialization is
+// pinned above.
 proptest! {
     /// The summary always accounts for every rule, and the exit code always matches the verdict.
     #[test]

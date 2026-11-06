@@ -22,9 +22,11 @@ reports nothing wrong.
   cannot outlive their date silently.
 - A policy with no rules, or naming a signal the vocabulary lacks, is refused at load (exit 4):
   the author meant something the tool cannot enforce.
-- The overall verdict is the maximum of every contribution under `pass < hold < fail`. The
-  law `adding_a_rule_cannot_loosen_the_verdict` (`crates/forge-warden-core/tests/laws.rs`) checks
-  monotonicity over random inputs against an independent reference.
+- The overall verdict is the maximum of every contribution under `pass < hold < fail`. In
+  `crates/forge-warden-core/tests/laws.rs`, the law `adding_a_rule_cannot_loosen_the_verdict`
+  checks monotonicity over random inputs (the evaluator's verdict before and after one added
+  rule), and the separate `all_rule_kinds_match_the_independent_reference` compares the evaluator
+  with an independent reference model.
 
 ## Consequences
 
