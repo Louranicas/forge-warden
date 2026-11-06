@@ -112,6 +112,18 @@ fn a_ranking_from_another_tool_is_refused() {
 }
 
 #[test]
+fn over_budget_input_is_invalid_input_not_an_io_error() {
+    // One byte over the budget is the caller's input problem (exit 4, change_input), not the
+    // environment's (exit 3, check_environment): the action differs, so the code must too.
+    let over = vec![b' '; forge_warden_core::MAX_INPUT_BYTES.saturating_add(1)];
+    let out = run(&["check", "--policy", POLICY, "--today", TODAY], &over);
+    assert_eq!(out.code, 4, "{}", out.stderr);
+    assert!(out.stderr.contains("byte budget"), "{}", out.stderr);
+    assert!(out.stderr.contains("next: change_input"), "{}", out.stderr);
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
 fn usage_errors_exit_2_and_io_errors_exit_3() {
     assert_eq!(run(&["check"], b"").code, 2);
     assert_eq!(
