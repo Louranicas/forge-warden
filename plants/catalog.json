@@ -1,0 +1,469 @@
+{
+  "schema": "forge-warden.plants.catalog.v1",
+  "register": {
+    "name": "Mission4 guardrail register draft",
+    "sha256": "25c4520d63d0319bed5d0650c67acc35e1b6d4be6e52ef8d97ecc1db308e8dd8",
+    "supersessions": [
+      "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
+      "G-15 authenticates exact producer binary, not version string.",
+      "G-04 reviewed default markers, not a blanket clippy ban.",
+      "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR."
+    ]
+  },
+  "cases": [
+    {
+      "id": "panic-unwrap",
+      "guardrail": "G-01",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)unwrap[-_]used",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    let mut used_waivers = BTreeSet::new();",
+      "new": "    let _probe = rank.files.first().unwrap();\n    let mut used_waivers = BTreeSet::new();"
+    },
+    {
+      "id": "string-slice",
+      "guardrail": "G-02",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "(?:clippy::|#)(?:string[-_]slice|indexing[-_]slicing)",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "seal.get(..12).unwrap_or(seal).to_owned()",
+      "new": "seal[..12].to_owned()"
+    },
+    {
+      "id": "unchecked-add",
+      "guardrail": "G-03",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)arithmetic[-_]side[-_]effects",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "sum.saturating_add(u64::from(f.score))",
+      "new": "sum + u64::from(f.score)"
+    },
+    {
+      "id": "core-read",
+      "guardrail": "G-05",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    let mut used_waivers = BTreeSet::new();",
+      "new": "    let _probe = std::fs::read(\".\");\n    let mut used_waivers = BTreeSet::new();"
+    },
+    {
+      "id": "hash-order",
+      "guardrail": "G-07",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]types",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    let mut used_waivers = BTreeSet::new();",
+      "new": "    let _probe = std::collections::HashMap::<String, String>::new();\n    let mut used_waivers = BTreeSet::new();"
+    },
+    {
+      "id": "kind-variant",
+      "guardrail": "G-09",
+      "path": "crates/forge-warden-core/src/policy/kind.rs",
+      "diagnostic": "error\\[E0004\\]",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "pub enum Kind {",
+      "new": "pub enum Kind {\n    /// Deliberately unhandled guardrail plant.\n    PlantUnhandled,"
+    },
+    {
+      "id": "member-lints",
+      "guardrail": "G-19",
+      "path": "crates/forge-warden-core/Cargo.toml",
+      "diagnostic": "every_crate_inherits_the_workspace_lints.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "[lints]\nworkspace = true\n",
+      "new": ""
+    },
+    {
+      "id": "allow-attribute",
+      "guardrail": "G-20",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "suppressions_are_expectations_with_reasons.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "#[must_use]\npub fn evaluate",
+      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub fn evaluate"
+    },
+    {
+      "id": "readme-missing-row",
+      "guardrail": "G-23",
+      "path": "README.md",
+      "diagnostic": "readme_exit_table_tracks_the_registry.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "| 4 | `invalid_input` | The policy or the ranking failed to parse or validate, exceeded the byte budget, or the ranking's seal does not match the patch given with --patch. | `change_input` |",
+      "new": ""
+    },
+    {
+      "id": "golden-seal",
+      "guardrail": "G-24",
+      "path": "fixtures/demo.verdict.json",
+      "diagnostic": "golden_verdict_for_the_demo_change.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "cli",
+        "golden_verdict_for_the_demo_change",
+        "--locked",
+        "--offline"
+      ],
+      "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
+    },
+    {
+      "id": "todo-without-issue",
+      "guardrail": "G-27",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "todo_comments_name_an_issue.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "append": "\n// TODO repair the planted breach\n"
+    },
+    {
+      "id": "cfg-allow",
+      "guardrail": "G-33",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "suppressions_are_expectations_with_reasons.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "#[must_use]\npub fn evaluate",
+      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub fn evaluate"
+    },
+    {
+      "id": "misspelled-exit",
+      "guardrail": "G-42",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "error\\[E0599\\]",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "Exit::InvalidInput\n",
+      "new": "Exit::InvalidInptu\n"
+    },
+    {
+      "id": "unsafe-code",
+      "guardrail": "G-48",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "error: declaration of an `unsafe` function",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "append": "\n/// Deliberately unsafe guardrail plant.\n///\n/// # Safety\n/// Test plant; no caller.\npub unsafe fn planted_unsafe() {}\n"
+    },
+    {
+      "id": "dependency-cycle",
+      "guardrail": "G-49",
+      "path": "crates/forge-warden-core/Cargo.toml",
+      "diagnostic": "cyclic package dependency",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "[dependencies]\n",
+      "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n"
+    }
+  ],
+  "pending_guardrails": [
+    {
+      "id": "G-04",
+      "title": "Silent default that hides failure (`unwrap_or(Pass)`)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-06",
+      "title": "New effect outside `doors.rs`, or a door with no bound",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-08",
+      "title": "Unknown vocabulary loosens a verdict",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-10",
+      "title": "Non-canonical paths (R-06)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-11",
+      "title": "Duplicate rank paths; blank producer version",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-12",
+      "title": "Unvalidated construction through the library (R-19)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-13",
+      "title": "Unverified patch binding passes (R-05)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-14",
+      "title": "Ranking does not cover the patch (R-01)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-15",
+      "title": "Producer is not authenticated or version-gated (R-14)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-16",
+      "title": "Toolchain drift (R-08)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-17",
+      "title": "Script swallows a failure (R-10)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-18",
+      "title": "A skipped gate reads as a passed gate",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-21",
+      "title": "Dependency creep",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-22",
+      "title": "Schema drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-25",
+      "title": "Nondeterministic output",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-26",
+      "title": "Terminal-escape or bidi injection",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-28",
+      "title": "Dead code or dead public API",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-29",
+      "title": "Oversized or mixed-reason module",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-30",
+      "title": "Public-surface creep",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-31",
+      "title": "Agent hook bypass by shell spelling (R-04)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-32",
+      "title": "Hook fails open on malformed input (R-11)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-34",
+      "title": "Edit tool not matched by the hook",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-35",
+      "title": "The change under review controls its own judge (R-02)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-36",
+      "title": "HOLD acknowledgement replay (R-03)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-37",
+      "title": "Managed reviewer uses the candidate's policy or contract (R-13)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-38",
+      "title": "Required CI check names drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-39",
+      "title": "Protected-path lists diverge",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-40",
+      "title": "Docs and comments that name non-existent tests (R-15)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-41",
+      "title": "Vocabulary provenance (R-09, R-16, R-17)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-43",
+      "title": "Wildcard arm on our own enum or on a string",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-44",
+      "title": "Unbounded read, or over-budget input accepted",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-45",
+      "title": "Test that checks self-agreement",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-46",
+      "title": "Surviving mutant in a PR",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-47",
+      "title": "Workflow hardening drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-50",
+      "title": "Serde tolerance drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-51",
+      "title": "MSRV drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    }
+  ]
+}
