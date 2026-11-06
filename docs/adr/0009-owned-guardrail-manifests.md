@@ -42,3 +42,35 @@ admission. Types cannot express equality across TOML, JSON, CODEOWNERS and sourc
 independent policy/owner/settings/guard drift, table-form lint relaxation, inherited-lint removal,
 unlisted/stale/empty expectations and multiline conditional allow. A second set of plants disables
 one checker at a time to demonstrate that the tests detect loss of enforcement.
+
+## Compiler source admission (D6 v2)
+
+The production check runs fresh `cargo check --workspace --all-targets --locked --offline` in a
+unique temporary target directory. Cargo metadata identifies workspace artifacts; each artifact
+must have exactly one fresh rustc dep-info file. Every member must produce evidence. This executes
+the normal trusted build gate; it is not a sandbox for untrusted build scripts or procedural macros.
+First-party build scripts are unsupported. Compiler, Cargo configuration and dependencies remain
+trusted admission inputs under the external workflow, not authority inferred from candidate files.
+
+Every discovered input is checked for symlink components before canonicalization and must remain
+inside the repository. Rust inputs must be in `crates/*/src` or `crates/*/tests`; the latter and
+`fixtures/adversarial` helpers are admitted only in test artifacts. Helpers are scanned normally,
+with no filename exemption. The compiled Rust set under crates must equal the source walk: dormant
+or unsupported feature-only source fails instead of silently disappearing from ledger coverage.
+This profile covers default features/all targets on the gate platform, not arbitrary cfg expansion.
+
+Dep-info parsing consumes every rule. Paths currently accept ASCII alphanumerics and `_./+-` only;
+Make escapes, whitespace within paths, colons, dollar signs and non-UTF-8 input are refused rather
+than partially decoded. Ordinary parent-relative module paths are accepted only after component
+and canonical containment checks. Generated sources outside these roots are unsupported.
+
+`include!` can load source without a `.rs` suffix. Consequently every non-Rust compiler input needs
+a protected `[[data_input]]` ledger entry with an exact SHA256 and owner review explanation. The
+initial entries are the two embedded JSON schemas and starter TOML policy, inspected as data.
+Changed, unknown, duplicate and stale entries fail. This is reviewed data admission, not an
+extension-based assertion that arbitrary bytes cannot contain Rust. Attribute expansion from
+external procedural macros remains outside this explicit-source lexical ledger's claim.
+
+The reviewed ledger integration delta on base 4637d34 covers B3's scratch-repository vocabulary
+test and C1a's descriptor/child-process doors and test fixtures. Its temporary dead-code exception
+must be removed when C1c wires those doors. It is not an automatic ledger regeneration workflow.

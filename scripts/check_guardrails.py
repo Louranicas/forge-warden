@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("guardrail_attributes", ROOT / "scripts/guardrail_attributes.py")
 attributes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(attributes)
+spec = importlib.util.spec_from_file_location("guardrail_sources", ROOT / "scripts/guardrail_sources.py")
+sources = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sources)
 
 
 def require(condition, message):
@@ -85,9 +88,10 @@ def check_floor(root):
             require(data.get("lints", {}).get("workspace") is True, f"member lint inheritance missing: {manifest}")
 
 
-def source_expectations(root):
+def source_expectations(root, source_names):
     result = collections.Counter()
-    for source in sorted((root / "crates").rglob("*.rs")):
+    for name in source_names:
+        source = root / name
         require(not source.is_symlink(), "Rust source symlinks are unsupported by ledger")
         path = source.relative_to(root).as_posix()
         for lint, reason in attributes.expectations(source.read_text()):
@@ -95,7 +99,7 @@ def source_expectations(root):
     return result
 
 
-def check_expectations(root):
+def check_expectations(root, source_names=None):
     ledger = tomllib.loads((root / "lint-expectations.toml").read_text())
     require(ledger["schema"] == "forge-warden.lint-expectations.v1", "unsupported expectation ledger")
     expected = collections.Counter()
@@ -104,7 +108,15 @@ def check_expectations(root):
         require(all(isinstance(value, str) for value in row.values()), "ledger fields must be strings")
         require(len(row["review_reason"].strip()) >= 20, "expectation review reason must have at least 20 characters")
         expected[(row["file"], row["lint"], row["source_reason"])] += 1
-    actual = source_expectations(root)
+    if source_names is None:
+        data_inputs = {}
+        for row in ledger.get("data_input", []):
+            require(set(row) == {"file", "sha256", "review_reason"}, "invalid compiler data ledger")
+            require(len(row["review_reason"].strip()) >= 20, "short compiler data review reason")
+            require(row["file"] not in data_inputs and re.fullmatch(r"[0-9a-f]{64}", row["sha256"]), "invalid or duplicate compiler data hash")
+            data_inputs[row["file"]] = row["sha256"]
+        source_names = sources.discover(root, data_inputs)
+    actual = source_expectations(root, source_names)
     require(actual == expected, f"expectation ledger drift: unlisted={list((actual-expected).elements())}; stale={list((expected-actual).elements())}")
 
 
