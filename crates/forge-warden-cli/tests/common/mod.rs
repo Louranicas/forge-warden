@@ -237,9 +237,6 @@ pub(crate) struct Sources {
     pub(crate) production: std::collections::BTreeSet<String>,
     /// Compiled only by test, example or bench targets, or under `cfg(test)`.
     pub(crate) test_only: std::collections::BTreeSet<String>,
-    /// The exact `cargo check --message-format=json` stream these sets were classified from, so a
-    /// second classifier (D6's `guardrail_sources.py`, Rulings #9 agreement check) can judge the same build.
-    pub(crate) evidence: String,
 }
 
 /// Every non-Rust file the production build reads, pinned by the SHA-256 of its exact bytes and sorted
@@ -309,7 +306,7 @@ pub(crate) fn workspace_members() -> Members {
 
 /// The nested `cargo check --workspace --all-targets --message-format=json` stream: its own
 /// persistent discovery dir, inherited rustflags, wrappers and target dir cleared.
-fn discovery_stream() -> String {
+fn discovery_stream() -> (String, PathBuf) {
     let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("source-discovery");
     let out = Command::new(env!("CARGO"))
         .args([
@@ -336,7 +333,7 @@ fn discovery_stream() -> String {
         "source discovery failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8(out.stdout).unwrap()
+    (String::from_utf8(out.stdout).unwrap(), target)
 }
 
 /// The evidence names the anchors, every crates/*/src source was compiled (no inactive source), and
@@ -386,8 +383,15 @@ fn check_coverage(
 /// outside the repository; a source with a `tests` path component compiled into production; and
 /// any `crates/*/src` source the compiler did not compile at all (inactive source).
 pub(crate) fn sources() -> Sources {
+    sources_with_evidence().0
+}
+
+/// [`sources`] together with the exact evidence it classified: the `cargo check
+/// --message-format=json` stream and the discovery target directory holding its dep-info files, so a
+/// second classifier (D6's `guardrail_sources.py`, Rulings #9 agreement check) judges the same build.
+pub(crate) fn sources_with_evidence() -> (Sources, String, PathBuf) {
     let members = workspace_members();
-    let evidence = discovery_stream();
+    let (evidence, target) = discovery_stream();
     let mut production = std::collections::BTreeSet::new();
     let mut compiled = std::collections::BTreeSet::new();
     let mut data = std::collections::BTreeSet::new();
@@ -454,11 +458,11 @@ pub(crate) fn sources() -> Sources {
     }
     check_coverage(&members, &production, &compiled, &data);
     let test_only = compiled.difference(&production).cloned().collect();
-    Sources {
+    let classes = Sources {
         production,
         test_only,
-        evidence,
-    }
+    };
+    (classes, evidence, target)
 }
 
 /// The production sources only (see [`sources`]).
