@@ -39,7 +39,7 @@ fn check(policy: &str, input: &Value, patch: Option<&str>) -> Run {
 }
 
 #[test]
-fn matching_patch_and_known_ranking_have_a_pass_control() {
+fn matching_patch_and_known_ranking_hold_in_advisory_mode() {
     // C1c (ADR 0005 §2.1): a supplied ranking is advisory, so its best outcome is HOLD with only
     // `rank_unverified`; the authority-mode PASS control is in authority_mode.rs.
     let out = check(POLICY, &rank("src/lib.rs", "modified", &[]), Some(PATCH));

@@ -676,6 +676,10 @@ pub(crate) mod child {
     }
 
     /// [`produce_ranking`] with an explicit temporary base.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: produce_ranking mints Ranking<Produced> (the only place the binary may)"
+    )]
     pub(super) fn produce_ranking_in(
         ranker: &Path,
         policy: &Policy,
