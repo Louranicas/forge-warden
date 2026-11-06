@@ -29,3 +29,22 @@ Current check still has the baseline rank-input trust limitations until WP-C1 is
 Highest rung is architecture: authoritative code/configuration and candidate data occupy separate trees; only the former is built. Runtime admission rejects wrong/dirty base and invalid commit IDs. Types cannot eliminate filesystem/process identity failures in a shell driver.
 
 scripts/tests/dogfood.sh constructs real Git base/candidate commits. Candidate changes driver, build marker and policy; fake compiler asserts it is invoked in the base with the base marker. Exact patch must contain candidate changes, copied policy must equal base. PASS/FAIL/HOLD, rank/build errors and wrong/dirty base are checked with controlled subprocesses and no network. These are orchestration fixtures, not live CI or producer qualification. Planted mutants must demonstrate sensitivity to candidate compilation, policy replacement and swallowed judge failure. Hosted trust-root enforcement needs a separate owner acceptance test; static YAML review cannot prove it.
+
+## Verdict v1 CLI migration (WP-D8)
+
+The trusted driver copies its own policy unchanged. A `[producer]` section selects authority
+mode: the judge alone pins, admits and runs the built ranker with `--ranker`. A source revision
+pin is not a binary SHA-256 enrollment; the driver never inserts the freshly built hash into the
+policy. An empty, malformed or mismatched producer allowlist remains an authority refusal,
+never an automatic downgrade.
+
+Without a producer section the driver explicitly uses `--advisory --rank`, reports that it
+cannot PASS, and preserves HOLD/FAIL. Advisory HOLD cannot enter the signed-acknowledgement path.
+Evidence records the selected mode; rank.json exists only for advisory runs. Authority evidence
+records the actual producer digest in the verdict and hashes the binary in provenance.txt.
+Base/head are passed as unverified claims; the separate signed receipt still binds the external
+subject and exact verdict digest.
+
+ci_local uses the same explicit selection against its working policy; it is a local development
+check, not the independently trusted policy/driver authority described above. Both entrypoints
+propagate ranker/admission failures; neither retries a refusal in a weaker mode.
