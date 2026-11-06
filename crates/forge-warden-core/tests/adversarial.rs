@@ -5,7 +5,7 @@
 )]
 
 use forge_warden_core::policy::parse_policy;
-use forge_warden_core::rank::parse_rank;
+use forge_warden_core::rank::{RankError, parse_rank};
 use forge_warden_core::seal::sha256_hex;
 use forge_warden_core::verdict::Seals;
 use forge_warden_core::{Date, Outcome, evaluate};
@@ -97,21 +97,21 @@ fn a_failure_is_not_downgraded_by_an_unknown() {
 #[test]
 fn malformed_rank_members_are_refused_as_a_whole() {
     let base = document(vec![file("src/lib.rs", "modified", &[])]);
+    assert!(parse_rank(&serde_json::to_vec(&base).unwrap()).is_ok());
     for (field, value) in [
-        ("path", json!("")),
-        ("path", json!("x\0y")),
-        ("status", json!("")),
         ("score", json!(-1)),
         ("score", json!(4_294_967_296_u64)),
         ("score", json!(null)),
         ("signals", json!(null)),
-        ("signals", json!([""])),
         ("signals", json!("secret_like")),
     ] {
         let mut rank = base.clone();
         rank["ranked"][0][field] = value;
         assert!(
-            parse_rank(&serde_json::to_vec(&rank).unwrap()).is_err(),
+            matches!(
+                parse_rank(&serde_json::to_vec(&rank).unwrap()),
+                Err(RankError::Malformed(_))
+            ),
             "{rank}"
         );
     }
@@ -119,12 +119,37 @@ fn malformed_rank_members_are_refused_as_a_whole() {
         let mut rank = base.clone();
         rank["ranked"][0].as_object_mut().unwrap().remove(field);
         assert!(
-            parse_rank(&serde_json::to_vec(&rank).unwrap()).is_err(),
+            matches!(
+                parse_rank(&serde_json::to_vec(&rank).unwrap()),
+                Err(RankError::Malformed(_))
+            ),
             "missing {field}"
         );
     }
     for input in [b"".as_slice(), b"{", b"[]", b"null", b"\xff"] {
-        assert!(parse_rank(input).is_err());
+        assert!(matches!(parse_rank(input), Err(RankError::Malformed(_))));
+    }
+}
+
+#[test]
+fn invalid_rank_meaning_is_distinct_from_malformed_shape() {
+    let base = document(vec![file("src/lib.rs", "modified", &[])]);
+    assert!(parse_rank(&serde_json::to_vec(&base).unwrap()).is_ok());
+    for (field, value) in [
+        ("path", json!("")),
+        ("path", json!("x\0y")),
+        ("status", json!("")),
+        ("signals", json!([""])),
+    ] {
+        let mut rank = base.clone();
+        rank["ranked"][0][field] = value;
+        assert!(
+            matches!(
+                parse_rank(&serde_json::to_vec(&rank).unwrap()),
+                Err(RankError::Invalid(_))
+            ),
+            "{rank}"
+        );
     }
     for (field, value) in [
         ("schema", json!("future.v1")),
@@ -132,12 +157,18 @@ fn malformed_rank_members_are_refused_as_a_whole() {
     ] {
         let mut rank = base.clone();
         rank[field] = value;
-        assert!(parse_rank(&serde_json::to_vec(&rank).unwrap()).is_err());
+        assert!(matches!(
+            parse_rank(&serde_json::to_vec(&rank).unwrap()),
+            Err(RankError::Invalid(_))
+        ));
     }
     for (field, value) in [("name", "foreign"), ("version", "")] {
         let mut rank = base.clone();
         rank["tool"][field] = json!(value);
-        assert!(parse_rank(&serde_json::to_vec(&rank).unwrap()).is_err());
+        assert!(matches!(
+            parse_rank(&serde_json::to_vec(&rank).unwrap()),
+            Err(RankError::Invalid(_))
+        ));
     }
 }
 
@@ -318,14 +349,22 @@ fn noncanonical_paths_are_refused_not_silently_out_of_scope() {
 }
 
 #[test]
-#[ignore = "R-19 open: WP-B2 duplicate path and producer admission"]
-fn duplicate_ranked_paths_are_refused() {
-    let f = file("src/lib.rs", "modified", &[]);
-    assert!(parse_rank(&serde_json::to_vec(&document(vec![f.clone(), f])).unwrap()).is_err());
+#[ignore = "Residual duplicate rank paths open: WP-B2"]
+fn duplicate_ranked_paths_hold() {
+    let f = file("README.md", "modified", &[]);
+    let verdict = judge(SECRET, &document(vec![f.clone(), f]), "2026-11-06");
+    assert_eq!(verdict.verdict, Outcome::Hold);
+    assert_eq!(verdict.exit.code, 8);
+    assert!(
+        verdict
+            .notes
+            .iter()
+            .any(|note| note.code == "duplicate_paths")
+    );
 }
 
 #[test]
-#[ignore = "R-19 open: WP-B2 nonempty producer version admission"]
+#[ignore = "Residual producer identity open: WP-B2"]
 fn whitespace_producer_version_is_refused() {
     let mut rank = document(vec![file("README.md", "modified", &[])]);
     rank["tool"]["version"] = json!(" \t\n");
