@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy && rustup default 1.99.1
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - run: bash scripts/tests/ci_local.sh
       - run: cargo fmt --all --check
@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install 1.88.0 --profile minimal && rustup default 1.88.0
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo +1.88.0 check --workspace --all-targets --locked
         env:
           # The MSRV toolchain may not know newer lints; the gate job runs the full wall.
           RUSTFLAGS: ""
@@ -88,7 +88,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
@@ -116,7 +116,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - name: Install deep-diff-forge at the pinned commit
         run: cargo install --git https://github.com/Louranicas/deep-diff-forge --rev "${DDF_REV}" deep-diff-forge-cli --locked
