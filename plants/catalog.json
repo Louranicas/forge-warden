@@ -1,0 +1,655 @@
+{
+  "schema": "forge-warden.plants.catalog.v1",
+  "register": {
+    "name": "Mission4 guardrail register draft",
+    "sha256": "25c4520d63d0319bed5d0650c67acc35e1b6d4be6e52ef8d97ecc1db308e8dd8",
+    "supersessions": [
+      "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
+      "G-15 authenticates exact producer binary, not version string.",
+      "G-04 reviewed default markers, not a blanket clippy ban.",
+      "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR."
+    ]
+  },
+  "cases": [
+    {
+      "id": "panic-unwrap",
+      "guardrail": "G-01",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)unwrap[-_]used",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    let mut used_waivers = BTreeSet::new();",
+      "new": "    let _probe = rank.files().first().unwrap();\n    let mut used_waivers = BTreeSet::new();"
+    },
+    {
+      "id": "string-slice",
+      "guardrail": "G-02",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "(?:clippy::|#)(?:string[-_]slice|indexing[-_]slicing)",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "seal.get(..12).unwrap_or(seal).to_owned()",
+      "new": "seal[..12].to_owned()"
+    },
+    {
+      "id": "unchecked-add",
+      "guardrail": "G-03",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)arithmetic[-_]side[-_]effects",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "sum.saturating_add(u64::from(f.score()))",
+      "new": "sum + u64::from(f.score())"
+    },
+    {
+      "id": "core-read",
+      "guardrail": "G-05",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    let mut used_waivers = BTreeSet::new();",
+      "new": "    let _probe = std::fs::read(\".\");\n    let mut used_waivers = BTreeSet::new();"
+    },
+    {
+      "id": "hash-order",
+      "guardrail": "G-07",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]types",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    let mut used_waivers = BTreeSet::new();",
+      "new": "    let _probe = std::collections::HashMap::<String, String>::new();\n    let mut used_waivers = BTreeSet::new();"
+    },
+    {
+      "id": "kind-variant",
+      "guardrail": "G-09",
+      "path": "crates/forge-warden-core/src/policy/kind.rs",
+      "diagnostic": "error\\[E0004\\]",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "pub enum Kind {",
+      "new": "pub enum Kind {\n    /// Deliberately unhandled guardrail plant.\n    PlantUnhandled,"
+    },
+    {
+      "id": "member-lints",
+      "guardrail": "G-19",
+      "path": "crates/forge-warden-core/Cargo.toml",
+      "diagnostic": "every_crate_inherits_the_workspace_lints.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "[lints]\nworkspace = true\n",
+      "new": ""
+    },
+    {
+      "id": "allow-attribute",
+      "guardrail": "G-20",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "suppressions_are_expectations_with_reasons.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "#[must_use]\npub fn evaluate",
+      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub fn evaluate"
+    },
+    {
+      "id": "readme-missing-row",
+      "guardrail": "G-23",
+      "path": "README.md",
+      "diagnostic": "readme_exit_table_tracks_the_registry.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "| 4 | `invalid_input` | The policy or the ranking failed to parse or validate, exceeded the byte budget, or the ranking's seal does not match the patch given with --patch. | `change_input` |",
+      "new": ""
+    },
+    {
+      "id": "golden-seal",
+      "guardrail": "G-24",
+      "path": "fixtures/demo.verdict.json",
+      "diagnostic": "golden_verdict_for_the_demo_change.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "cli",
+        "golden_verdict_for_the_demo_change",
+        "--locked",
+        "--offline"
+      ],
+      "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
+    },
+    {
+      "id": "todo-without-issue",
+      "guardrail": "G-27",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "todo_comments_name_an_issue.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "append": "\n// TODO repair the planted breach\n"
+    },
+    {
+      "id": "cfg-allow",
+      "guardrail": "G-33",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "suppressions_are_expectations_with_reasons.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "--locked",
+        "--offline"
+      ],
+      "old": "#[must_use]\npub fn evaluate",
+      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub fn evaluate"
+    },
+    {
+      "id": "misspelled-exit",
+      "guardrail": "G-42",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "error\\[E0599\\]",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "Exit::InvalidInput\n",
+      "new": "Exit::InvalidInptu\n"
+    },
+    {
+      "id": "unsafe-code",
+      "guardrail": "G-48",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "error: declaration of an `unsafe` function",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "append": "\n/// Deliberately unsafe guardrail plant.\n///\n/// # Safety\n/// Test plant; no caller.\npub unsafe fn planted_unsafe() {}\n"
+    },
+    {
+      "id": "dependency-cycle",
+      "guardrail": "G-49",
+      "path": "crates/forge-warden-core/Cargo.toml",
+      "diagnostic": "cyclic package dependency",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "[dependencies]\n",
+      "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n"
+    },
+    {
+      "id": "unreviewed-default",
+      "guardrail": "G-04",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "defaults_say_which_way_they_fail.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "defaults_say_which_way_they_fail",
+        "--locked",
+        "--offline"
+      ],
+      "old": "            // fails closed: an uncountable file count is treated as over every budget\n",
+      "new": ""
+    },
+    {
+      "id": "effect-outside-door",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "fn main() -> doors::Status {",
+      "new": "fn main() -> doors::Status {\n    let _planted_effect = std::fs::read(\".\");"
+    },
+    {
+      "id": "unknown-signal-pass",
+      "guardrail": "G-08",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "unknowns_cannot_pass_an_otherwise_passing_scope.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "adversarial",
+        "unknowns_cannot_pass_an_otherwise_passing_scope",
+        "--locked",
+        "--offline"
+      ],
+      "old": "file.signals().iter().filter(|s| !is_known_signal(s))",
+      "new": "file.signals().iter().filter(|s| !is_known_signal(s) && s.is_empty())"
+    },
+    {
+      "id": "noncanonical-dotdot",
+      "guardrail": "G-10",
+      "path": "crates/forge-warden-core/src/path.rs",
+      "diagnostic": "every_non_canonical_spelling_is_refused_with_its_reason.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "every_non_canonical_spelling_is_refused_with_its_reason",
+        "--locked",
+        "--offline"
+      ],
+      "old": "segment == \"..\"",
+      "new": "segment == \"...\""
+    },
+    {
+      "id": "duplicate-path-pass",
+      "guardrail": "G-11",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "duplicate_ranked_paths_hold.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "adversarial",
+        "duplicate_ranked_paths_hold",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    for path in duplicated {",
+      "new": "    for path in duplicated.into_iter().take(0) {"
+    },
+    {
+      "id": "expanded-core-dependency",
+      "guardrail": "G-21",
+      "path": "crates/forge-warden-core/Cargo.toml",
+      "diagnostic": "the_core_depends_only_on_its_allow_list.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "the_core_depends_only_on_its_allow_list",
+        "--offline"
+      ],
+      "append": "\n[dependencies.memchr]\nversion = \"2\"\n"
+    },
+    {
+      "id": "rank-schema-drift",
+      "guardrail": "G-22",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "reads_a_real_shape_and_ignores_additive_members.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "reads_a_real_shape_and_ignores_additive_members",
+        "--locked",
+        "--offline"
+      ],
+      "old": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v0\";",
+      "new": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v1\";"
+    },
+    {
+      "id": "dead-private-function",
+      "guardrail": "G-28",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "function `planted_dead_code` is never used",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "append": "\nfn planted_dead_code() {}\n"
+    },
+    {
+      "id": "rank-budget-off-by-one",
+      "guardrail": "G-44",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "the_budget_is_64_mib_and_one_byte_more_is_refused_unparsed.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "the_budget_is_64_mib_and_one_byte_more_is_refused_unparsed",
+        "--locked",
+        "--offline"
+      ],
+      "old": "if bytes.len() > crate::MAX_INPUT_BYTES {",
+      "new": "if bytes.len() > crate::MAX_INPUT_BYTES.saturating_add(1) {"
+    },
+    {
+      "id": "serde-additive-refusal",
+      "guardrail": "G-50",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "reads_a_real_shape_and_ignores_additive_members.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "reads_a_real_shape_and_ignores_additive_members",
+        "--locked",
+        "--offline"
+      ],
+      "old": "#[derive(Deserialize)]\nstruct RawFile {",
+      "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {"
+    },
+    {
+      "id": "swallowed-judge-exit",
+      "guardrail": "G-17",
+      "path": "scripts/ci_local.sh",
+      "diagnostic": "FAIL ci_local.sh fail: expected 7, got 0",
+      "command": [
+        "bash",
+        "scripts/tests/ci_local.sh"
+      ],
+      "old": "      --rank target/rank.json --patch target/change.patch",
+      "new": "      --rank target/rank.json --patch target/change.patch || true"
+    },
+    {
+      "id": "hook-shell-spelling",
+      "guardrail": "G-31",
+      "path": ".claude/hooks/guard.py",
+      "diagnostic": "FAIL: test_shell_tokenization_and_rust_writes \\(",
+      "command": [
+        "python3",
+        "-I",
+        ".claude/hooks/test_guard.py",
+        "Guard.test_shell_tokenization_and_rust_writes"
+      ],
+      "old": "tokens = list(lexer)  # Concatenated quotes and absolute paths are checked after tokenization.",
+      "new": "tokens = command.split()  # Deliberately discard shell quote concatenation."
+    },
+    {
+      "id": "hook-malformed-open",
+      "guardrail": "G-32",
+      "path": ".claude/hooks/guard.py",
+      "diagnostic": "FAIL: test_malformed_events_fail_closed \\(",
+      "command": [
+        "python3",
+        "-I",
+        ".claude/hooks/test_guard.py",
+        "Guard.test_malformed_events_fail_closed"
+      ],
+      "old": "        refuse(f\"malformed event or unavailable check: {error}\")",
+      "new": "        return  # Deliberately turn malformed input into success."
+    },
+    {
+      "id": "hook-unsupported-tool-open",
+      "guardrail": "G-34",
+      "path": ".claude/hooks/guard.py",
+      "diagnostic": "FAIL: test_alternative_edit_tools_refuse \\(",
+      "command": [
+        "python3",
+        "-I",
+        ".claude/hooks/test_guard.py",
+        "Guard.test_alternative_edit_tools_refuse"
+      ],
+      "old": "        refuse(f\"unsupported tool {tool!r}: no checked mutation adapter (including multi-edit/patch tools)\")",
+      "new": "        return  # Deliberately permit unsupported mutation adapters."
+    },
+    {
+      "id": "candidate-judge-build",
+      "guardrail": "G-35",
+      "path": "scripts/dogfood.sh",
+      "diagnostic": "FAIL pass: expected 0 got 93",
+      "command": [
+        "bash",
+        "scripts/tests/dogfood.sh"
+      ],
+      "old": "cd \"$trusted\"",
+      "new": "cd \"$candidate\""
+    },
+    {
+      "id": "ack-head-replay",
+      "guardrail": "G-36",
+      "path": "scripts/hold_ack.py",
+      "diagnostic": "FAIL: test_valid_receipt_and_new_push \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/hold_ack.py",
+        "BoundAck.test_valid_receipt_and_new_push"
+      ],
+      "old": "require(receipt == wanted, \"acknowledgement does not match current subject and verdict\")",
+      "new": "require({k: v for k, v in receipt.items() if k != \"head\"} == {k: v for k, v in wanted.items() if k != \"head\"}, \"acknowledgement does not match current subject and verdict\")"
+    },
+    {
+      "id": "candidate-review-policy",
+      "guardrail": "G-37",
+      "path": "scripts/managed_review_bundle.sh",
+      "diagnostic": "FAIL: test_candidate_cannot_supply_instructions_or_policy \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/managed_review_bundle.py",
+        "ReviewBundle.test_candidate_cannot_supply_instructions_or_policy"
+      ],
+      "old": "  trusted_git show \"$base:$file\" > \"$out/$(basename \"$file\")\"",
+      "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\""
+    },
+    {
+      "id": "untested-mutation-branch",
+      "guardrail": "G-46",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "MISSED_SURVIVOR_REJECTED",
+      "command": [
+        "python3",
+        "-I",
+        "plants/mutation_survivor.py"
+      ],
+      "old": "#[cfg(test)]\nmod tests {",
+      "new": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n\n#[cfg(test)]\nmod tests {"
+    },
+    {
+      "id": "enum-wildcard",
+      "guardrail": "G-43",
+      "path": "crates/forge-warden-core/src/policy/kind.rs",
+      "diagnostic": "(?:clippy::|#)(?:wildcard[-_]enum[-_]match[-_]arm|match[-_]wildcard[-_]for[-_]single[-_]variants)",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "Self::MaxFiles => \"max_files\",",
+      "new": "_ => \"max_files\","
+    },
+    {
+      "id": "raw-terminal-control",
+      "guardrail": "G-26",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "hostile_text_is_neutralised.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "hostile_text_is_neutralised",
+        "--locked",
+        "--offline"
+      ],
+      "old": "let _ignored = write!(out, \"\\\\u{{{:04x}}}\", u32::from(other));",
+      "new": "out.push(other);"
+    }
+  ],
+  "pending_guardrails": [
+    {
+      "id": "G-12",
+      "title": "Unvalidated construction through the library (R-19)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-13",
+      "title": "Unverified patch binding passes (R-05)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-14",
+      "title": "Ranking does not cover the patch (R-01)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-15",
+      "title": "Producer is not authenticated or version-gated (R-14)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-16",
+      "title": "Toolchain drift (R-08)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-18",
+      "title": "A skipped gate reads as a passed gate",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-25",
+      "title": "Nondeterministic output",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-29",
+      "title": "Oversized or mixed-reason module",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-30",
+      "title": "Public-surface creep",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-38",
+      "title": "Required CI check names drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-39",
+      "title": "Protected-path lists diverge",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-40",
+      "title": "Docs and comments that name non-existent tests (R-15)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-41",
+      "title": "Vocabulary provenance (R-09, R-16, R-17)",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-45",
+      "title": "Test that checks self-agreement",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-47",
+      "title": "Workflow hardening drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    },
+    {
+      "id": "G-51",
+      "title": "MSRV drift",
+      "status": "PENDING",
+      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+    }
+  ]
+}
