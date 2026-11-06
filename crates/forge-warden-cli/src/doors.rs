@@ -415,6 +415,7 @@ pub(crate) mod child {
     #[derive(Debug)]
     pub(crate) struct PrivateDir {
         path: std::path::PathBuf,
+        name: String,
     }
 
     impl PrivateDir {
@@ -430,9 +431,10 @@ pub(crate) mod child {
         pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
             use std::os::unix::fs::DirBuilderExt as _;
             for attempt in 0..64_u32 {
-                let path = base.join(format!("forge-warden-{}-{attempt}", std::process::id()));
+                let name = format!("forge-warden-{}-{attempt}", std::process::id());
+                let path = base.join(&name);
                 match std::fs::DirBuilder::new().mode(0o700).create(&path) {
-                    Ok(()) => return Ok(Self { path }),
+                    Ok(()) => return Ok(Self { path, name }),
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => return Err(DoorError::io("creating a private directory", &e)),
                 }
@@ -445,6 +447,11 @@ pub(crate) mod child {
 
         pub(crate) fn path(&self) -> &Path {
             &self.path
+        }
+
+        /// The directory's own name (ASCII: `forge-warden-<pid>-<n>`).
+        pub(crate) fn name(&self) -> &str {
+            &self.name
         }
     }
 
@@ -468,16 +475,52 @@ pub(crate) mod child {
     /// `git apply --numstat -z` and `git apply --summary` on the same patch bytes, isolated per
     /// ADR 0010: an absolute Git, argv only, a cleared environment with exactly the contract's
     /// controls (no `PATH`), a private empty cwd and `HOME`, and the candidate-free config overrides.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: git_facts (the system temp dir)"
+    )]
     pub(crate) fn git_facts(
         git: &Path,
         patch: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
-        let dir = PrivateDir::create().map_err(|e| GitFactsFailure::Unavailable(e.message))?;
-        let home = dir.path().to_string_lossy().into_owned();
-        let ceiling = dir
-            .path()
-            .parent()
-            .map_or_else(|| home.clone(), |p| p.to_string_lossy().into_owned());
+        git_facts_in(git, patch, &std::env::temp_dir())
+    }
+
+    /// The private directory's base, admitted only if it is safe for all three of its uses: a cwd,
+    /// `HOME`, and Git's `:`-separated absolute `GIT_CEILING_DIRECTORIES` (Bastion B-C1b-01). It must
+    /// be absolute; it is canonicalized (symlinks resolved); and the result must be UTF-8 without
+    /// `:`. Anything else is refused: a relative or `:`-split ceiling is ignored by Git, which would
+    /// then discover and read the candidate's repository.
+    #[expect(clippy::disallowed_methods, reason = "door: admit_base (canonicalize)")]
+    pub(super) fn admit_base(raw: &Path) -> Result<String, DoorError> {
+        let refuse = |why: &str| DoorError {
+            message: format!("temporary directory {}: {why}", raw.display()),
+            over_budget: false,
+        };
+        if !raw.is_absolute() {
+            return Err(refuse("not absolute"));
+        }
+        let real = std::fs::canonicalize(raw)
+            .map_err(|e| DoorError::io("canonicalizing the temporary directory", &e))?;
+        let text = real.to_str().ok_or_else(|| refuse("not UTF-8"))?;
+        if text.contains(':') {
+            return Err(refuse("contains ':', which splits Git's ceiling list"));
+        }
+        Ok(text.to_owned())
+    }
+
+    /// [`git_facts`] with an explicit temporary base (tests use this; `git_facts` passes the
+    /// system temp dir).
+    pub(super) fn git_facts_in(
+        git: &Path,
+        patch: &[u8],
+        base: &Path,
+    ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
+        let ceiling = admit_base(base).map_err(|e| GitFactsFailure::Unavailable(e.message))?;
+        let dir = PrivateDir::create_in(Path::new(&ceiling))
+            .map_err(|e| GitFactsFailure::Unavailable(e.message))?;
+        // The private dir is `<admitted base>/<ASCII name>`, so its path is UTF-8 without `:` too.
+        let home = format!("{ceiling}/{}", dir.name());
         let env = [
             ("LC_ALL", "C"),
             ("HOME", home.as_str()),
@@ -723,6 +766,88 @@ mod child_tests {
         );
         let _cleaned = std::fs::remove_dir_all(&base);
         assert_eq!(GIT_STDERR_CAP, 65_536);
+    }
+
+    #[test]
+    fn the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling() {
+        use super::child::admit_base;
+        use std::os::unix::ffi::OsStrExt as _;
+        let root = scratch("admit");
+        let refused = |base: &Path| admit_base(base).unwrap_err().message;
+        assert!(refused(Path::new("relative/dir")).ends_with("not absolute"));
+        let colon = root.join("colon:base");
+        std::fs::create_dir_all(&colon).unwrap();
+        assert!(
+            refused(&colon).contains("contains ':'"),
+            "{}",
+            refused(&colon)
+        );
+        let not_utf8 = root.join(std::ffi::OsStr::from_bytes(b"bad\xffname"));
+        std::fs::create_dir_all(&not_utf8).unwrap();
+        assert!(
+            refused(&not_utf8).ends_with("not UTF-8"),
+            "{}",
+            refused(&not_utf8)
+        );
+        let real = root.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("link")).unwrap();
+        let canonical = std::fs::canonicalize(&real).unwrap();
+        assert_eq!(
+            admit_base(&root.join("link")).unwrap(),
+            canonical.to_str().unwrap()
+        );
+        assert_eq!(admit_base(&real).unwrap(), canonical.to_str().unwrap());
+        let _cleaned = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_candidate_repository_around_the_private_dir_is_never_consulted() {
+        use super::child::git_facts_in;
+        // Bastion B-C1b-01: a candidate repository whose own config breaks `git apply`.
+        let candidate = scratch("candidate");
+        let git = |args: &[&str], cwd: &Path| {
+            std::process::Command::new("/usr/bin/git")
+                .args(args)
+                .current_dir(cwd)
+                .env_remove("GIT_DIR")
+                .output()
+                .unwrap()
+        };
+        assert!(git(&["init", "-q"], &candidate).status.success());
+        assert!(
+            git(
+                &["config", "apply.ignoreWhitespace", "definitely-invalid"],
+                &candidate
+            )
+            .status
+            .success()
+        );
+        let inner = candidate.join("sub");
+        std::fs::create_dir_all(&inner).unwrap();
+        let patch = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
+        // The trap is live: Git started inside the candidate, with no ceiling, reads its config.
+        let trapped = std::process::Command::new("/usr/bin/git")
+            .args(["apply", "--numstat", "-"])
+            .current_dir(&inner)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write as _;
+                child.stdin.take().unwrap().write_all(patch)?;
+                child.wait()
+            })
+            .unwrap();
+        assert!(
+            !trapped.success(),
+            "the candidate config must break an unguarded git apply"
+        );
+        // Through the door, with the private base inside the candidate, the ceiling holds.
+        let (numstat, _summary) = git_facts_in(Path::new("/usr/bin/git"), patch, &inner).unwrap();
+        assert_eq!(numstat, b"1\t1\tx\0");
+        let _cleaned = std::fs::remove_dir_all(&candidate);
     }
 
     #[test]
