@@ -23,3 +23,22 @@ connections and writes no files.
 
 Please report vulnerabilities privately through GitHub's "Report a vulnerability" on this
 repository rather than in a public issue.
+
+## Agent hooks are convenience checks (WP-D4)
+
+The PreToolUse hook matches all tools, validates event shapes, and refuses unsupported mutation
+tools (including MultiEdit, NotebookEdit, patch tools and delegation without a checked adapter).
+Supported Edit/Write operations simulate the complete proposed text; manifest lint checks parse
+TOML. Shell tokenization catches known literal-path spellings, including concatenated quotes and
+absolute paths, but does not interpret arbitrary shell programs, scripts, aliases or interpreters.
+Rust text checks are conservative heuristics, not a Rust parser. A hook is not a sandbox: bypassing
+the host, changing hook configuration or running an opaque script can avoid it.
+
+Compiler/clippy and CI repo invariants are the enforcing checks for unsafe code, suppressions and
+member lint inheritance; D6 adds configuration equality, lint floors and an expectation ledger.
+The host should mount protected files read-only for ordinary agent work and use a separate
+owner-controlled change path. No read-only mount or provider setting is configured by this hook.
+The configured project directory and supplied session_id are routing/accounting inputs, not
+authenticated session identity. Stop retries are a usability counter, never approval authority.
+Hook failure now refuses with exit2; a successful hook check is not proof a change is safe.
+Python3.11+ is required for structural TOML parsing.
