@@ -26,10 +26,18 @@ if command -v deep-diff-forge >/dev/null; then
   base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
   git diff --binary --no-renames "$base" > target/change.patch
   if [ -s target/change.patch ]; then
-    # Ranking must finish successfully before its output is admitted to the judge.
-    deep-diff-forge --stdin-patch --rank --json < target/change.patch > target/rank.json
-    cargo run --quiet --bin forge-warden -- check --policy warden.toml \
-      --rank target/rank.json --patch target/change.patch
+    mode="$(python3 -I scripts/judge_mode.py warden.toml)"
+    if [ "$mode" = authority ]; then
+      ranker="$(command -v deep-diff-forge)"
+      # The judge checks the binary's hash against the existing policy; never auto-enroll it.
+      cargo run --quiet --bin forge-warden -- check --policy warden.toml \
+        --ranker "$ranker" --patch target/change.patch
+    else
+      echo 'ci_local: explicit advisory mode (no producer pin); this result cannot PASS' >&2
+      deep-diff-forge --stdin-patch --rank --json < target/change.patch > target/rank.json
+      cargo run --quiet --bin forge-warden -- check --policy warden.toml \
+        --advisory --rank target/rank.json --patch target/change.patch
+    fi
   fi
 fi
 printf '\nci_local: all available gates passed\n'
