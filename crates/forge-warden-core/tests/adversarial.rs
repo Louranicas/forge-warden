@@ -350,9 +350,17 @@ fn noncanonical_paths_are_refused_not_silently_out_of_scope() {
 
 #[test]
 #[ignore = "Residual duplicate rank paths open: WP-B2"]
-fn duplicate_ranked_paths_are_refused() {
-    let f = file("src/lib.rs", "modified", &[]);
-    assert!(parse_rank(&serde_json::to_vec(&document(vec![f.clone(), f])).unwrap()).is_err());
+fn duplicate_ranked_paths_hold() {
+    let f = file("README.md", "modified", &[]);
+    let verdict = judge(SECRET, &document(vec![f.clone(), f]), "2026-11-06");
+    assert_eq!(verdict.verdict, Outcome::Hold);
+    assert_eq!(verdict.exit.code, 8);
+    assert!(
+        verdict
+            .notes
+            .iter()
+            .any(|note| note.code == "duplicate_paths")
+    );
 }
 
 #[test]
