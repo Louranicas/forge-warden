@@ -1,4 +1,4 @@
-# Named guardrail plants (WP-A4, fourth batch)
+# Named guardrail plants (WP-A4, fifth batch)
 
 Run from a neutral directory. The runner creates one disposable `git clone --no-local`, checks out
 an exact commit, and applies each plant only there. It never writes the source repository or hub.
@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This fourth batch implements 35 named plants. The remaining 16 register rows are explicitly PENDING
+This fifth batch implements 38 named plants. The remaining 13 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, default markers and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -83,3 +83,5 @@ mutants of that exact function, no timeout and no unviable outcome emits MISSED_
 The helper prints the real outcome totals and mutant names into the retained case log. These
 intentionally MISSED mutants demonstrate a correctly rejected bad change; they are not a green
 mutation-quality receipt for the repository. Source selection is bounded to render.rs.
+
+Batch 5 adds an external-consumer private-constructor probe, a measured normal-compiler/MSRV boundary probe, and corpus vocabulary drift. The MSRV recipe requires the preinstalled 1.88.0 toolchain; backends must expose it without downloads.
