@@ -1,9 +1,10 @@
 # ADR 0005: Coverage is verified, not claimed
 
-**Status:** proposed v3, 2026-11-06 (WP-C0). Author: Keel (O2). v1 (b962c8e) and v2 (2f65891) were reviewed by
-Bastion (threat model) and Touchstone (attack). v3 answers exactly the four items of Lodestar's Rulings #5 (T1, T2,
-B-A, B-B; §7) and nothing else. Lodestar adjudicates. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`,
-`c0v4.cases.json` (51 cases), `c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`.
+**Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
+attack); record `mission4/lanes/lodestar/C0-ACCEPT.md`. Author: Keel (O2). Text unchanged from v3 (59b89ac) except
+this line. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`, `c0v4.cases.json` (51 cases),
+`c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`. Implementation: WP-C1 (C1a doors and bounds, C1b
+facts and comparison, C1c verdict v1 and provenance); nothing here is accepted as fact until C1 measures it.
 
 ## 1. Context
 
