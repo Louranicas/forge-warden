@@ -55,13 +55,7 @@ fn citations_follow_explicit_address_side_line_order() {
             "signals":["secret_like"],"evidence":evidence,"evidence_truncated":true}]});
     let rank = parse_rank(&serde_json::to_vec(&rank).unwrap()).unwrap();
     let policy=parse_policy(b"schema=\"forge-warden.policy.v0\"\n[[rule]]\nid=\"secrets\"\nwhy=\"No credentials in source.\"\nkind=\"forbid_signal\"\nseverity=\"fail\"\nsignals=[\"secret_like\"]\n").unwrap();
-    let seals = Seals {
-        policy_sha256: a.clone(),
-        rank_sha256: a.clone(),
-        patch_sha256: a.clone(),
-        patch_verified: true,
-        ranked_by: "0.7.0".to_owned(),
-    };
+    let seals = Seals::new(a.clone(), a.clone(), a.clone(), "0.7.0".to_owned());
     let verdict = evaluate(&policy, &rank, seals, Date::parse("2026-11-06").unwrap());
     let violation = verdict
         .rules

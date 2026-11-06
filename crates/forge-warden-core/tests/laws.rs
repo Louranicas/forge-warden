@@ -74,13 +74,12 @@ fn actual(case: &Case) -> (u8, Vec<ResultSpec>) {
         "tool":{"name":"deep-diff-forge","version":"0.7.0"},"ranked":ranked});
     let rank = parse_rank(&serde_json::to_vec(&rank).unwrap()).unwrap();
     let policy = parse_policy(&policy(case)).unwrap();
-    let seals = Seals {
-        policy_sha256: HASH.to_owned(),
-        rank_sha256: HASH.to_owned(),
-        patch_sha256: HASH.to_owned(),
-        patch_verified: true,
-        ranked_by: "0.7.0".to_owned(),
-    };
+    let seals = Seals::new(
+        HASH.to_owned(),
+        HASH.to_owned(),
+        HASH.to_owned(),
+        "0.7.0".to_owned(),
+    );
     let verdict = evaluate(&policy, &rank, seals, Date::parse("2026-11-06").unwrap());
     assert_eq!(verdict.summary.rules, case.rules.len());
     (
