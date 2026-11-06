@@ -1,15 +1,18 @@
-//! The verdict document, `forge-warden.verdict.v0`.
+//! The verdict document, `forge-warden.verdict.v1`.
 //!
 //! Field order is the serialization order, and every list is in a defined order (rules in policy
 //! order, violations in deep-diff-forge's risk order), so the same inputs always serialize to the
 //! same bytes. `forge-warden schema verdict` prints the JSON Schema, which is committed at
-//! `schemas/verdict.v0.schema.json` and checked against the code by a test.
+//! `schemas/verdict.v1.schema.json` and checked against the code by a test.
+//!
+//! v1 (ADR 0005 §5) seals where the ranking came from (`provenance`, `ranked_by.sha256`), what Git
+//! saw in the patch (`patch_facts_sha256`, `git`), and any unverified `claims` about the change.
 
 use crate::exit::Outcome;
 use serde::Serialize;
 
 /// The schema name every verdict carries.
-pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v0";
+pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v1";
 
 /// A sealed, deterministic verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -56,15 +59,116 @@ pub struct Tool {
 pub struct Seals {
     /// SHA-256 of the policy bytes.
     pub policy_sha256: String,
-    /// SHA-256 of the ranking document bytes.
+    /// SHA-256 of the ranking document bytes (the produced ranking, in authority mode).
     pub rank_sha256: String,
-    /// deep-diff-forge's seal: SHA-256 of the patch the ranking describes.
+    /// SHA-256 of the patch. forge-warden hashed the patch itself and found the ranking's own seal
+    /// equal to it.
     pub patch_sha256: String,
-    /// Whether forge-warden hashed the patch itself (`--patch`) and found it equal to
-    /// `patch_sha256`. `false` means the ranking's claim was taken as given.
-    pub patch_verified: bool,
-    /// The deep-diff-forge version that ranked the patch.
-    pub ranked_by: String,
+    /// SHA-256 of Git's facts about the patch: `git apply --numstat -z` output, one 0x00 byte, then
+    /// `git apply --summary` output. `null` when Git refused the patch.
+    pub patch_facts_sha256: Option<String>,
+    /// Whether forge-warden produced the ranking itself (`produced`, authority mode) or was given it
+    /// (`supplied`, advisory mode; such a verdict is never a pass).
+    pub provenance: Provenance,
+    /// The ranker.
+    pub ranked_by: RankedBy,
+    /// The Git that read the patch, when one did.
+    pub git: Option<GitOracle>,
+    /// What the caller said about the change (`--base`, `--head`). Present only when given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claims: Option<Claims>,
+}
+
+impl Seals {
+    /// Seals for a supplied ranking with no Git facts and no claims; the `with_*` methods add the
+    /// rest. The authority evaluators set `provenance` and `ranked_by` from the ranking itself.
+    #[must_use]
+    pub const fn new(
+        policy_sha256: String,
+        rank_sha256: String,
+        patch_sha256: String,
+        ranked_by_version: String,
+    ) -> Self {
+        Self {
+            policy_sha256,
+            rank_sha256,
+            patch_sha256,
+            patch_facts_sha256: None,
+            provenance: Provenance::Supplied,
+            ranked_by: RankedBy {
+                version: ranked_by_version,
+                sha256: None,
+            },
+            git: None,
+            claims: None,
+        }
+    }
+
+    /// These seals with Git's facts digest and the Git that produced them.
+    #[must_use]
+    pub fn with_git(mut self, facts_sha256: Option<String>, git: GitOracle) -> Self {
+        self.patch_facts_sha256 = facts_sha256;
+        self.git = Some(git);
+        self
+    }
+
+    /// These seals with the caller's claims about the change.
+    #[must_use]
+    pub fn with_claims(mut self, claims: Claims) -> Self {
+        self.claims = Some(claims);
+        self
+    }
+}
+
+/// Where a ranking came from (ADR 0005 §2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    /// forge-warden ran the pinned ranker on the patch it holds.
+    Produced,
+    /// The ranking arrived as a file.
+    Supplied,
+}
+
+/// The ranker that wrote the ranking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RankedBy {
+    /// The version the ranking reports.
+    pub version: String,
+    /// SHA-256 of the ranker binary forge-warden ran; `null` for a supplied ranking.
+    pub sha256: Option<String>,
+}
+
+/// The Git whose facts the verdict used. Recorded for audit, not attested (ADR 0005 §2.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GitOracle {
+    /// The absolute path that was run.
+    pub path: String,
+    /// What `git --version` printed, trimmed.
+    pub version: String,
+}
+
+/// What the caller claimed about the change. Recorded, never checked, never used.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Claims {
+    /// The claimed base commit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// The claimed head commit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    /// Always `false`: forge-warden did not verify the claims.
+    pub verified: Unverified,
+}
+
+/// A value that serializes as `false` and has no other state: claims are never verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unverified;
+
+impl Serialize for Unverified {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(false)
+    }
 }
 
 /// The exit status and next action.
@@ -188,13 +292,77 @@ pub struct WaiverNote {
 /// Something the policy cannot judge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Note {
-    /// `empty_ranking`, `unknown_signal`, `unknown_status` or `source_path_unknown`.
-    pub code: &'static str,
+    /// Why the verdict holds; see [`NoteCode`].
+    pub code: NoteCode,
     /// The file involved, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// What and why.
     pub detail: String,
+}
+
+/// Declares [`NoteCode`] from one list, so its variants, [`NoteCode::name`] and [`NoteCode::ALL`]
+/// cannot disagree: a code exists in all three or in none.
+macro_rules! note_codes {
+    ($($doc:literal $variant:ident => $name:literal,)*) => {
+        /// Why a verdict holds when the policy alone cannot decide. Every note holds the verdict at
+        /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and
+        /// the schema's enum lists exactly these names (tests check both).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum NoteCode {
+            $(#[doc = $doc] $variant,)*
+        }
+
+        impl NoteCode {
+            /// Every code, in declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
+
+            /// The name the verdict writes.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+note_codes! {
+    "The ranking lists no file: there is nothing to judge."
+    EmptyRanking => "empty_ranking",
+    "A signal this forge-warden does not know."
+    UnknownSignal => "unknown_signal",
+    "A status this forge-warden does not know (including deep-diff-forge's `unknown`)."
+    UnknownStatus => "unknown_status",
+    "A rename or copy: rank.v0 does not report the source path."
+    SourcePathUnknown => "source_path_unknown",
+    "One path is listed more than once (deep-diff-forge does this for a type change)."
+    DuplicatePaths => "duplicate_paths",
+    "Git sees a file in the patch that the ranking does not list."
+    RankIncomplete => "rank_incomplete",
+    "The ranking lists a file the patch does not change."
+    RankExtraneous => "rank_extraneous",
+    "The ranking's status or change-kind signals contradict Git."
+    StatusMismatch => "status_mismatch",
+    "Git refused the patch, or its facts cannot be read; coverage cannot be verified."
+    PatchUnverifiable => "patch_unverifiable",
+    "The ranking was supplied, not produced (advisory mode)."
+    RankUnverified => "rank_unverified",
+    "The ranking supplied with `--rank` differs from the one forge-warden produced."
+    RankMismatch => "rank_mismatch",
+}
+
+impl Serialize for NoteCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+impl PartialEq<&str> for NoteCode {
+    fn eq(&self, other: &&str) -> bool {
+        self.name() == *other
+    }
 }
 
 impl Verdict {
@@ -212,5 +380,24 @@ impl Verdict {
         });
         text.push('\n');
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NoteCode;
+
+    #[test]
+    fn a_note_code_equals_its_own_name_and_no_other() {
+        for code in NoteCode::ALL {
+            for other in NoteCode::ALL {
+                assert_eq!(
+                    *code == other.name(),
+                    code == other,
+                    "{code:?} vs {other:?}"
+                );
+            }
+            assert!(*code != "", "{code:?}");
+        }
     }
 }

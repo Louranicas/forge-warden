@@ -10,23 +10,39 @@
 mod common;
 use common::{files_under, read, root};
 
+/// Whether `path` (`crates/…`) is compiled into the production binary, by compiler evidence
+/// (B-C1c-03): a test exemption is never decided by a directory name.
+fn is_production(path: &str) -> bool {
+    static PRODUCTION: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    PRODUCTION
+        .get_or_init(common::production_sources)
+        .contains(path)
+}
+
 fn rust_sources() -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for dir in ["crates"] {
+    // Every Rust file under crates/, under every workspace member wherever it lives, and every source
+    // compiled into production (Touchstone C1c-O3-04, B-C1c-04): nothing first-party is out of view.
+    let mut names = std::collections::BTreeSet::new();
+    let mut dirs = vec!["crates".to_owned()];
+    dirs.extend(common::workspace_members().dirs);
+    for dir in &dirs {
         for path in files_under(dir, ".rs") {
-            let rel = path
-                .strip_prefix(root())
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace("/crates/../..", "");
-            // This file names the markers and attributes it searches for, so it cannot scan itself.
-            if rel.ends_with("tests/repo_invariants.rs") {
-                continue;
+            if !path.components().any(|c| c.as_os_str() == "target") {
+                names.insert(common::relative(&path));
             }
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
-            out.push((rel, text));
         }
     }
+    names.extend(common::production_sources());
+    let out: Vec<(String, String)> = names
+        .into_iter()
+        // This file names the markers and attributes it searches for, so it cannot scan itself.
+        .filter(|rel| !rel.ends_with("tests/repo_invariants.rs"))
+        .map(|rel| {
+            let text = std::fs::read_to_string(root().join(&rel)).unwrap_or_default();
+            (rel, text)
+        })
+        .collect();
     assert!(
         out.len() >= 10,
         "found only {} Rust files; is the walk broken?",
@@ -37,7 +53,11 @@ fn rust_sources() -> Vec<(String, String)> {
 
 #[test]
 fn every_crate_inherits_the_workspace_lints() {
-    for manifest in files_under("crates", "Cargo.toml") {
+    let mut manifests = files_under("crates", "Cargo.toml");
+    for dir in common::workspace_members().dirs {
+        manifests.push(root().join(dir).join("Cargo.toml"));
+    }
+    for manifest in manifests {
         let text = std::fs::read_to_string(&manifest).unwrap();
         assert!(
             text.contains("[lints]\nworkspace = true"),
@@ -88,7 +108,7 @@ fn suppressions_are_expectations_with_reasons() {
 #[test]
 fn only_doors_rs_opens_doors_in_production_code() {
     for (path, text) in rust_sources() {
-        let is_test = path.contains("/tests/");
+        let is_test = !is_production(&path);
         if is_test || path.ends_with("src/doors.rs") {
             continue;
         }
@@ -112,7 +132,7 @@ fn defaults_say_which_way_they_fail() {
     // default, at most six lines above it.
     const MARKERS: [&str; 3] = ["// fails closed:", "// fails safe:", "// display only:"];
     for (path, text) in rust_sources() {
-        if path.contains("/tests/") {
+        if !is_production(&path) {
             continue;
         }
         let lines: Vec<&str> = production_part(&text).lines().collect();
@@ -323,7 +343,7 @@ fn exit_statuses_come_from_the_registry() {
     // turns an `Exit` into a process status; everything else returns an `Exit`, so a code cannot
     // drift from the table.
     for (path, text) in rust_sources() {
-        if path.contains("/tests/") || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+        if !is_production(&path) || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
             continue;
         }
         for (line, code) in code_lines(&text) {
@@ -408,5 +428,47 @@ fn readme_exit_table_tracks_the_registry() {
             readme.contains(&row),
             "README.md is missing or has drifted from this row:\n{row}"
         );
+    }
+}
+
+#[test]
+fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
+    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in doors.rs, right after the pinned
+    // ranker ran; and the binary judges only through `evaluate_authority`/`evaluate_advisory`.
+    for (path, text) in rust_sources() {
+        if !is_production(&path) || path.ends_with("crates/forge-warden-core/src/authority.rs") {
+            continue;
+        }
+        let attests = text.matches("attest(").count();
+        if path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+            assert_eq!(
+                attests, 1,
+                "{path}: exactly one attest call, in produce_ranking"
+            );
+        } else {
+            assert_eq!(attests, 0, "{path}: only doors.rs may call Ranking::attest");
+        }
+    }
+    let main = read("crates/forge-warden-cli/src/main.rs");
+    for (index, line) in main.lines().enumerate() {
+        let raw = line
+            .match_indices("evaluate(")
+            .any(|(at, _)| !line.get(..at).is_some_and(|before| before.ends_with('_')));
+        assert!(
+            !raw,
+            "crates/forge-warden-cli/src/main.rs:{}: judge through evaluate_authority or evaluate_advisory, never raw evaluate",
+            index.saturating_add(1)
+        );
+    }
+}
+
+#[test]
+fn the_clippy_config_disallows_minting_and_raw_judging() {
+    let config = read("clippy.toml");
+    for path in [
+        "path = \"forge_warden_core::authority::Ranking::attest\"",
+        "path = \"forge_warden_core::eval::evaluate\"",
+    ] {
+        assert!(config.contains(path), "clippy.toml lost {path}");
     }
 }

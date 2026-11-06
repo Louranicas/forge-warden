@@ -54,13 +54,12 @@ fn judge(body: &str, input: &Value, day: &str) -> forge_warden_core::Verdict {
     let rank_bytes = serde_json::to_vec(input).unwrap();
     let policy = parse_policy(&policy_bytes).unwrap();
     let rank = parse_rank(&rank_bytes).unwrap();
-    let seals = Seals {
-        policy_sha256: sha256_hex(&policy_bytes),
-        rank_sha256: sha256_hex(&rank_bytes),
-        patch_sha256: HASH.to_owned(),
-        patch_verified: true,
-        ranked_by: "0.7.0".to_owned(),
-    };
+    let seals = Seals::new(
+        sha256_hex(&policy_bytes),
+        sha256_hex(&rank_bytes),
+        HASH.to_owned(),
+        "0.7.0".to_owned(),
+    );
     evaluate(&policy, &rank, seals, Date::parse(day).unwrap())
 }
 

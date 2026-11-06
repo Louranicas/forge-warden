@@ -60,11 +60,29 @@ fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (PathBuf, String
     (repo, commit)
 }
 
+/// Run the script from a copy of the two files it needs, staged outside any Git repository (as in a
+/// mutation run's scratch tree or a release tarball), so it must find its tree without Git.
 fn check(repo: &Path, rev: &str) -> (i32, String) {
+    let tree = std::env::temp_dir().join(format!(
+        "fw-vocab-tree-{}-{}",
+        std::process::id(),
+        rev.get(..12).unwrap()
+    ));
+    let _gone = std::fs::remove_dir_all(&tree);
+    for file in [
+        "scripts/check_vocab.sh",
+        "crates/forge-warden-core/src/vocab.rs",
+    ] {
+        let to = tree.join(file);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(root().join(file), &to).unwrap();
+    }
     let out = Command::new("bash")
-        .arg(root().join("scripts/check_vocab.sh"))
+        .arg(tree.join("scripts/check_vocab.sh"))
         .args([rev, repo.to_str().unwrap()])
-        .current_dir(root())
+        .current_dir(&tree)
+        // Git may not discover any repository around the staged tree.
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
         .output()
         .unwrap();
     let text = format!(

@@ -552,104 +552,130 @@
       ],
       "old": "let _ignored = write!(out, \"\\\\u{{{:04x}}}\", u32::from(other));",
       "new": "out.push(other);"
+    },
+    {
+      "id": "unchecked-rank-literal",
+      "guardrail": "G-12",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "PRIVATE_CONSTRUCTION_ESCAPED",
+      "command": [
+        "python3",
+        "-I",
+        "plants/private_constructor.py"
+      ],
+      "old": "pub struct RankDoc {\n    input_sha256: String,\n    tool_version: String,\n    files: Vec<RankedFile>,\n}",
+      "new": "pub struct RankDoc {\n    /// Deliberately exposed unchecked seal.\n    pub input_sha256: String,\n    /// Deliberately exposed unchecked version.\n    pub tool_version: String,\n    /// Deliberately exposed unchecked records.\n    pub files: Vec<RankedFile>,\n}"
+    },
+    {
+      "id": "post-msrv-string-api",
+      "guardrail": "G-51",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "MSRV_BOUNDARY_REJECTED",
+      "command": [
+        "python3",
+        "-I",
+        "plants/msrv_boundary.py"
+      ],
+      "old": "#[cfg(test)]\nmod tests {",
+      "new": "/// Deliberate API specimen for the pinned MSRV check.\n#[must_use]\npub fn planted_new_api(text: &str, index: usize) -> usize {\n    text.floor_char_boundary(index)\n}\n\n#[cfg(test)]\nmod tests {"
+    },
+    {
+      "id": "vocabulary-corpus-drift",
+      "guardrail": "G-41",
+      "path": "crates/forge-warden-core/src/vocab.rs",
+      "diagnostic": "every_real_ranking_parses_with_known_vocabulary.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "corpus",
+        "every_real_ranking_parses_with_known_vocabulary",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    \"many_hunks\",",
+      "new": "    \"o3_unpublished_signal\","
     }
   ],
   "pending_guardrails": [
     {
-      "id": "G-12",
-      "title": "Unvalidated construction through the library (R-19)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-13",
       "title": "Unverified patch binding passes (R-05)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-14",
       "title": "Ranking does not cover the patch (R-01)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-15",
       "title": "Producer is not authenticated or version-gated (R-14)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-16",
       "title": "Toolchain drift (R-08)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-18",
       "title": "A skipped gate reads as a passed gate",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-25",
       "title": "Nondeterministic output",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-29",
       "title": "Oversized or mixed-reason module",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-30",
       "title": "Public-surface creep",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-38",
       "title": "Required CI check names drift",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-39",
       "title": "Protected-path lists diverge",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-40",
       "title": "Docs and comments that name non-existent tests (R-15)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-41",
-      "title": "Vocabulary provenance (R-09, R-16, R-17)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-45",
       "title": "Test that checks self-agreement",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     },
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-51",
-      "title": "MSRV drift",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No runnable recipe in this revision; see the live workboard and binding rulings. Not counted as caught."
     }
   ]
 }

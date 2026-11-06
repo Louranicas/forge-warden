@@ -263,3 +263,49 @@ fn non_utf8_is_malformed() {
         Err(PolicyError::Malformed(_))
     ));
 }
+
+#[test]
+fn the_producer_allowlist_is_read_and_checked_entry_by_entry() {
+    let a = "a".repeat(64);
+    let b = "0123456789abcdef".repeat(4);
+    let policy =
+        parse_policy(format!("{}[producer]\nsha256 = [\"{a}\", \"{b}\"]\n", rule(GOOD)).as_bytes())
+            .unwrap();
+    assert_eq!(policy.producers(), [a.clone(), b.clone()]);
+    assert!(policy.admits_producer(&a) && policy.admits_producer(&b));
+    assert!(!policy.admits_producer(&"f".repeat(64)));
+
+    let none = parse_policy(rule(GOOD).as_bytes()).unwrap();
+    assert_eq!(none.producers(), Vec::<String>::new());
+    assert!(!none.admits_producer(&a));
+
+    let issues = issues_of(&format!(
+        "{}[producer]\nsha256 = [\"{}\", \"{a}\", \"{a}\", \"{}\"]\n",
+        rule(GOOD),
+        "A".repeat(64),
+        "a".repeat(63)
+    ));
+    assert_eq!(
+        issues,
+        [
+            format!(
+                "producer: sha256[0] {:?} is not 64 lowercase hex digits",
+                "A".repeat(64)
+            ),
+            format!("producer: sha256[2] {a:?} is repeated"),
+            format!(
+                "producer: sha256[3] {:?} is not 64 lowercase hex digits",
+                "a".repeat(63)
+            ),
+        ]
+    );
+    let empty = issues_of(&format!("{}[producer]\nsha256 = []\n", rule(GOOD)));
+    assert_eq!(
+        empty,
+        ["producer: `sha256` lists no ranker; remove [producer] for advisory-only use"]
+    );
+    assert!(matches!(
+        parse_policy(format!("{}[producer]\nsha256 = [\"{a}\"]\nbinary = \"x\"\n", rule(GOOD)).as_bytes()),
+        Err(PolicyError::Malformed(m)) if m.contains("binary")
+    ));
+}

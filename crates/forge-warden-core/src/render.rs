@@ -35,17 +35,16 @@ pub fn render_text(verdict: &Verdict) -> String {
         "forge-warden {}: {label} (exit {} {}, next: {})",
         verdict.tool.version, verdict.exit.code, verdict.exit.name, verdict.exit.action
     );
+    let ranker = match &verdict.seals.ranked_by.sha256 {
+        Some(sha256) => format!("produced by ranker {}", terminal_safe(&short(sha256))),
+        None => "supplied, unverified".to_owned(),
+    };
     let _ = writeln!(
         out,
-        "  patch {} ({}), policy {}, ranked by deep-diff-forge {}, on {}",
+        "  patch {}, policy {}, ranked by deep-diff-forge {} ({ranker}), on {}",
         short(&verdict.seals.patch_sha256),
-        if verdict.seals.patch_verified {
-            "verified"
-        } else {
-            "as claimed"
-        },
         short(&verdict.seals.policy_sha256),
-        terminal_safe(&verdict.seals.ranked_by),
+        terminal_safe(&verdict.seals.ranked_by.version),
         verdict.evaluated_on,
     );
     let s = &verdict.summary;
@@ -134,7 +133,7 @@ fn render_notes(out: &mut String, notes: &[Note]) {
         let _ = writeln!(
             out,
             "  [NOTE] {}{path} {}",
-            n.code,
+            n.code.name(),
             terminal_safe(&n.detail)
         );
     }

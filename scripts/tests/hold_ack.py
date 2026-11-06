@@ -24,6 +24,10 @@ class BoundAck(unittest.TestCase):
         shutil.copyfile(ROOT / "scripts/hold_ack.py", self.helper)
         self.base, self.head = "a" * 40, "b" * 40
         self.verdict = json.loads((ROOT / "fixtures/demo.verdict.json").read_bytes())
+        # The golden is advisory (supplied ranking); an acknowledgeable HOLD is authority mode.
+        self.verdict["seals"]["provenance"] = "produced"
+        self.verdict["seals"]["ranked_by"]["sha256"] = "c" * 64
+        self.verdict["notes"] = []
         self.verdict["verdict"] = "hold"
         self.verdict["exit"] = {"code": 8, "name": "policy_hold", "action": "review_evidence"}
         self.verdict["summary"]["failed"] = 0
@@ -141,15 +145,18 @@ class BoundAck(unittest.TestCase):
 
     def test_fail_pass_unknown_schema_and_unverified_refuse(self):
         original = json.dumps(self.verdict)
-        for label in ("fail", "pass", "schema", "unverified", "expired"):
+        for label in ("fail", "pass", "schema", "unverified", "no-producer", "expired"):
             with self.subTest(label=label):
                 self.verdict = json.loads(original)
                 if label in ("fail", "pass"):
                     self.verdict["verdict"] = label
                 elif label == "schema":
-                    self.verdict["schema"] = "forge-warden.verdict.v1"
+                    self.verdict["schema"] = "forge-warden.verdict.v0"
                 elif label == "unverified":
-                    self.verdict["seals"]["patch_verified"] = False
+                    self.verdict["seals"]["provenance"] = "supplied"
+                    self.verdict["seals"]["ranked_by"]["sha256"] = None
+                elif label == "no-producer":
+                    self.verdict["seals"]["ranked_by"]["sha256"] = "not-a-digest"
                 else:
                     self.verdict["expired_waivers"] = ["expired"]
                 self.write_verdict()
