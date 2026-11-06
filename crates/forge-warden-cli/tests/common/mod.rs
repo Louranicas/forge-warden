@@ -278,8 +278,14 @@ pub(crate) fn sources() -> Sources {
             .iter()
             .map(|k| k.as_str().unwrap())
             .collect();
-        let ships = (kinds == ["lib"] || kinds == ["bin"])
-            && message["profile"]["test"] == serde_json::Value::Bool(false);
+        // Rulings #9 (one rule for C1c and D6): production = any artifact of a shipping kind built
+        // without test; test, example and bench targets never ship.
+        let ships = kinds.iter().any(|kind| {
+            matches!(
+                *kind,
+                "lib" | "rlib" | "bin" | "proc-macro" | "dylib" | "cdylib" | "staticlib"
+            )
+        }) && message["profile"]["test"] == serde_json::Value::Bool(false);
         for input in dep_info_inputs(&artifact_dep_info(&message, &kinds)) {
             if std::path::Path::new(&input)
                 .extension()
