@@ -145,7 +145,7 @@ fn the_same_ranking_supplied_cannot_pass() {
     let (dir, policy, ranker) = setup("advisory");
     let bytes = docs_patch(&["more notes"]);
     let patch = write(&dir, "change.patch", &bytes);
-    let produced = std::process::Command::new(&ranker)
+    let produced = common::command(&ranker)
         .args(["--stdin-patch", "--rank", "--json"])
         .stdin(std::fs::File::open(&patch).unwrap())
         .output()

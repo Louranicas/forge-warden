@@ -4,9 +4,12 @@ set -euo pipefail
 source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/bin" "$sandbox/repo/scripts"
+mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/plants"
 cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
 cp "$source_root/scripts/judge_mode.py" "$sandbox/repo/scripts/judge_mode.py"
+printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tool_versions.py"
+printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/plants/test_runner.py"
+printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_plants.py"
 printf 'schema = "forge-warden.policy.v0"\n' > "$sandbox/repo/warden.toml"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"

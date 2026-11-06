@@ -16,7 +16,7 @@ fn rust_and_python_classify_the_same_build_identically() {
         "test_only": classes.test_only,
     });
     let expected_path = common::write(&dir, "rust-sets.json", expected.to_string().as_bytes());
-    let output = std::process::Command::new("python3")
+    let output = common::command("python3")
         .arg("-I")
         .arg(common::root().join("scripts/classifier_agreement.py"))
         .arg(evidence_path)

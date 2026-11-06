@@ -50,7 +50,7 @@ cp -- warden.toml "$out/policy.toml"
 export CARGO_TARGET_DIR="$out/target"
 cargo build --release --locked --bin forge-warden
 # The producer pin is part of this trusted script, not a PR environment variable.
-ddf_rev=587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54
+ddf_rev="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_rev)"
 cargo install --git https://github.com/Louranicas/deep-diff-forge --rev "$ddf_rev" \
   deep-diff-forge-cli --locked --root "$out/ranker"
 mode="$(python3 -I "$trusted/scripts/judge_mode.py" "$out/policy.toml")"

@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Read canonical inputs; reject drift in the workflow's declarative copies."""
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def versions(root):
+    values = tomllib.loads((root / "scripts/tool-versions.toml").read_text())
+    values["rust"] = tomllib.loads((root / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    values["msrv"] = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["rust-version"]
+    if not re.fullmatch(r"[0-9a-f]{40}", values["ddf_rev"]):
+        raise ValueError("invalid pinned DDF revision")
+    for name in ("rust", "zizmor", "cargo_mutants", "cargo_deny"):
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values[name]):
+            raise ValueError("invalid exact tool version: " + name)
+    return values
+
+
+def check(root):
+    values = versions(root)
+    workflow = (root / ".github/workflows/ci.yml").read_text()
+    pins = re.findall(r"tool: (zizmor|cargo-mutants|cargo-deny)@([^\s]+)", workflow)
+    expected = {(name.replace("_", "-"), values[name]) for name in ("zizmor", "cargo_mutants", "cargo_deny")}
+    if len(pins) != 3 or set(pins) != expected:
+        raise ValueError("CI tool pins drift from scripts/tool-versions.toml")
+    allowed = {values["rust"], values["msrv"] if values["msrv"].count(".") == 2 else values["msrv"] + ".0"}
+    compilers = re.findall(r"(?:toolchain install |rustup default |cargo \+|RUSTUP_TOOLCHAIN: )([0-9.]+)", workflow)
+    if not compilers or set(compilers) != allowed:
+        raise ValueError("CI Rust pins drift from rust-toolchain.toml/Cargo.toml")
+    revisions = re.findall(r"DDF_REV: ([0-9a-f]+)", workflow)
+    if revisions != [values["ddf_rev"]]:
+        raise ValueError("CI DDF revision drift")
+    return values
+
+
+if __name__ == "__main__":
+    try:
+        if sys.argv[1:] == ["--check"]:
+            check(ROOT)
+        elif len(sys.argv) == 2:
+            print(versions(ROOT)[sys.argv[1]])
+        else:
+            raise ValueError("usage: tool_versions.py KEY | --check")
+    except (ValueError, KeyError, OSError) as error:
+        sys.exit("tool versions: " + str(error))

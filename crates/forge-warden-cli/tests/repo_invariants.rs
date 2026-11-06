@@ -472,3 +472,77 @@ fn the_clippy_config_disallows_minting_and_raw_judging() {
         assert!(config.contains(path), "clippy.toml lost {path}");
     }
 }
+
+/// Inspect parsed attributes, including conditional attributes; comments and strings are inert.
+fn unexplained_ignores(text: &str) -> usize {
+    struct Ignores(usize);
+    impl Ignores {
+        fn inspect(&mut self, meta: &syn::Meta) {
+            if meta.path().is_ident("ignore") {
+                let explained = match meta {
+                    syn::Meta::NameValue(value) => matches!(&value.value,
+                        syn::Expr::Lit(expr) if matches!(&expr.lit,
+                            syn::Lit::Str(reason) if !reason.value().trim().is_empty())),
+                    _ => false,
+                };
+                if !explained {
+                    self.0 += 1;
+                }
+            } else if meta.path().is_ident("cfg_attr") {
+                if let syn::Meta::List(list) = meta {
+                    let nested = list.parse_args_with(
+                        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                    ).expect("cfg_attr must parse completely");
+                    for attr in nested.iter().skip(1) {
+                        self.inspect(attr);
+                    }
+                }
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Ignores {
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            self.inspect(&attr.meta);
+            syn::visit::visit_attribute(self, attr);
+        }
+    }
+    let parsed = syn::parse_file(text).expect("all admitted source must parse");
+    let mut visitor = Ignores(0);
+    syn::visit::Visit::visit_file(&mut visitor, &parsed);
+    visitor.0
+}
+
+#[test]
+fn ignored_tests_require_an_explicit_reason() {
+    let mut names = common::sources().test_only;
+    names.extend(common::production_sources());
+    names.extend(rust_sources().into_iter().map(|(path, _)| path));
+    for path in names {
+        assert_eq!(
+            unexplained_ignores(&read(&path)),
+            0,
+            "{path}: ignored tests require a nonempty #[ignore = \"reason\"]"
+        );
+    }
+}
+
+#[test]
+fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
+    for bad in [
+        "#[ignore]",
+        "#[ignore = \" \"]",
+        "#[cfg_attr(test, ignore)]",
+        "#[cfg_attr(test, cfg_attr(unix, ignore))]",
+    ] {
+        assert_eq!(
+            unexplained_ignores(&format!("{bad} fn probe() {{}}")),
+            1,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        unexplained_ignores("#[ignore = \"requires external hardware\"] fn probe() {}"),
+        0
+    );
+    assert_eq!(unexplained_ignores("// #[ignore]\nfn probe() {}"), 0);
+}

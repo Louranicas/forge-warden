@@ -9,6 +9,9 @@ mkdir -p "$HOME" "$sandbox/trusted/scripts" "$sandbox/bin"
 trusted="$sandbox/trusted"
 cp "$source_root/scripts/dogfood.sh" "$trusted/scripts/dogfood.sh"
 cp "$source_root/scripts/judge_mode.py" "$trusted/scripts/judge_mode.py"
+cp "$source_root/scripts/tool_versions.py" "$source_root/scripts/tool-versions.toml" "$trusted/scripts/"
+cp "$source_root/rust-toolchain.toml" "$source_root/Cargo.toml" "$trusted/"
+export EXPECTED_DDF_REV="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_rev)"
 cat > "$trusted/scripts/hold_ack.py" <<'ACK'
 import os, sys
 assert sys.argv[1:4] == ["verify", "--base", os.environ["ACK_BASE"]]
@@ -20,15 +23,15 @@ printf 'schema = "forge-warden.policy.v0"\n[producer]\nsha256 = ["00000000000000
 printf 'trusted-build\n' > "$trusted/build.rs"
 git -C "$trusted" init -q
 # Do not inherit signing, hooks or identities from the reviewer's environment.
-git -C "$trusted" add -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py warden.toml build.rs
-git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py warden.toml build.rs
+git -C "$trusted" add -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
 base="$(git -C "$trusted" rev-parse HEAD)"
 git clone -q --no-local "$trusted" "$sandbox/candidate"
 candidate="$sandbox/candidate"
 printf 'exit 0 # candidate-controlled driver\n' > "$candidate/scripts/dogfood.sh"
 printf 'allow-all\n' > "$candidate/warden.toml"
 printf 'malicious-build\n' > "$candidate/build.rs"
-git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py warden.toml build.rs
+git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
 head="$(git -C "$candidate" rev-parse HEAD)"
 cat > "$sandbox/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
@@ -51,7 +54,7 @@ exit "$JUDGE_EXIT"
 JUDGE
   chmod +x "$CARGO_TARGET_DIR/release/forge-warden" ;;
  install)
-  [[ "$*" == *'--rev 587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54 '* ]] || exit 95
+  [[ "$*" == *"--rev $EXPECTED_DDF_REV "* ]] || exit 95
   while [ "$1" != --root ]; do shift; done
   mkdir -p "$2/bin"
   cat > "$2/bin/deep-diff-forge" <<'RANK'
@@ -66,7 +69,7 @@ esac
 STUB
 chmod +x "$sandbox/bin/cargo"
 export PATH="$sandbox/bin:$PATH" EXPECTED_TRUSTED="$trusted"
-# Attempt an environment override; trusted script must retain its literal producer pin.
+# Attempt an environment override; trusted script must retain its file-owned producer pin.
 export DDF_REV=untrusted-override
 for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'build-error 6 0 0 6'; do
  read -r name BUILD_EXIT RANK_EXIT JUDGE_EXIT expected <<< "$row"

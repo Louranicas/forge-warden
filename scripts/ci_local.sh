@@ -6,6 +6,8 @@ cd "$(git rev-parse --show-toplevel)"
 mkdir -p target
 export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
+step tool-versions; python3 -I scripts/tool_versions.py --check
+step plant-runner; python3 -I plants/test_runner.py
 step guardrails; python3 -I scripts/check_guardrails.py
 step fmt;     cargo fmt --all --check
 step clippy;  cargo clippy --workspace --all-targets --locked
@@ -40,4 +42,5 @@ if command -v deep-diff-forge >/dev/null; then
     fi
   fi
 fi
+step plants; python3 -I scripts/check_plants.py
 printf '\nci_local: all available gates passed\n'
