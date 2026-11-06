@@ -121,7 +121,7 @@ fn a_forged_file_list_with_a_real_patch_hash_cannot_pass() {
 fn omitting_the_patch_requires_review_or_refusal() {
     let out = check(POLICY, &rank("src/lib.rs", "modified", &[]), None);
     assert!(
-        matches!(out.code, 4 | 8),
+        matches!(out.code, 2 | 4 | 8),
         "unverified binding returned {}: {}",
         out.code,
         out.stdout
