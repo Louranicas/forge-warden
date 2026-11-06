@@ -101,7 +101,7 @@ jobs:
           git diff "${BASE_SHA}...HEAD" -- 'crates/*/src/**.rs' > pr.diff
           if [ ! -s pr.diff ]; then echo "no Rust source changed"; exit 0; fi
           # --no-config: a pull request cannot shrink its own mutation scope via .cargo/mutants.toml.
-          cargo mutants --no-config --cap-lints true --in-diff pr.diff --workspace --no-shuffle -vV
+          env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff pr.diff --workspace --no-shuffle -vV
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
