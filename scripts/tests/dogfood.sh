@@ -65,7 +65,7 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 9' 'bu
  set -e
  if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL $name: expected $expected got $actual"; exit 1; fi
  if [ "$name" = pass ]; then
-  cmp "$out/policy.toml" "$trusted/warden.toml"
+  test "$(sha256sum < "$out/policy.toml")" = "$(sha256sum < "$trusted/warden.toml")"
   grep -q malicious-build "$out/change.patch"
   grep -q "head=$head" "$out/provenance.txt"
  fi
