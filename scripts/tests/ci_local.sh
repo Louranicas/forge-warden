@@ -4,13 +4,14 @@ set -euo pipefail
 source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/plants"
+mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/plants" "$sandbox/repo/scripts/tests"
 cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
 cp "$source_root/scripts/judge_mode.py" "$sandbox/repo/scripts/judge_mode.py"
 printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tool_versions.py"
 printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/plants/test_runner.py"
 printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_plants.py"
 printf 'schema = "forge-warden.policy.v0"\n' > "$sandbox/repo/warden.toml"
+printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/perimeter.py"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"
 cat > "$sandbox/bin/git" <<'STUB'
@@ -115,4 +116,16 @@ for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
  set -e
  [ "$actual" -eq 1 ] && [ ! -s "$TEST_ROOT/calls" ]
  echo "PASS guardrail admission failure propagates exit=$actual"
+done
+
+# The planted-regression gate is mandatory and preserves its actual failure code.
+printf '[producer]\nsha256 = ["%064d"]\n' 0 > "$TEST_ROOT/warden.toml"
+export GUARDRAIL_EXIT=0 PLANTS_EXIT=23 GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
+for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
+ set +e
+ bash "$entry" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ [ "$actual" -eq 23 ] || { cat "$sandbox/output"; exit 1; }
+ echo "PASS plant failure propagates exit=$actual"
 done

@@ -112,3 +112,21 @@ prove script exit propagation; they do not qualify a live ranker or hosted admis
 The five pending rows have individual reasons in the catalog: unavailable local enforcement for
 CI toolchain/name drift or documentation references, the unimplemented strict skip contract, and
 a missing offline zizmor backend. Missing tools and missing checks are never counted as caught.
+
+## Required gate execution (Q-PERIMETER)
+
+CI and `scripts/ci_local.sh` run `plants/test_runner.py` and
+`scripts/check_plants.py`. The latter requires a clean committed subject, selects
+**every runnable catalog ID**, and checks the complete receipt against that exact
+HEAD. It fails on an escaped plant, any ERROR, duplicate/missing case or subject
+mismatch. Evidence lives under `target/plants-*/evidence`; CI uploads it even on
+failure. A successful runnable-set check does not close the catalog's explicitly
+PENDING guardrails: those remain printed and present in the receipt.
+
+Dependencies must already be fetched (`cargo fetch --locked`); the harness remains
+offline and uses a disposable clone/target. Local uncommitted changes must be
+committed before this exact-subject check can qualify them. Neither this gate nor
+the candidate workflow authenticates its own hosted merge-admission identity.
+Tool versions are owned by `scripts/tool-versions.toml`, Rust by
+`rust-toolchain.toml`, and MSRV by `Cargo.toml`; `scripts/tool_versions.py --check`
+checks the workflow's declarative copies. Updates require normal review.

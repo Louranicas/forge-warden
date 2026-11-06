@@ -1,8 +1,4 @@
 //! Rulings #9: two independent classifiers must agree on the same compiler evidence.
-#![expect(
-    clippy::disallowed_methods,
-    reason = "test door: exports compiler evidence and runs the independent Python classifier"
-)]
 
 mod common;
 

@@ -223,12 +223,6 @@ source_reason = "test door: builds scratch rankers and policies; a panic is a fa
 review_reason = "C1c authority integration tests create native ranker and policy fixtures and fail loudly on malformed setup; these operations remain test-only."
 
 [[expectation]]
-file = "crates/forge-warden-cli/tests/classifier_agreement.rs"
-lint = "clippy::disallowed_methods"
-source_reason = "test door: exports compiler evidence and runs the independent Python classifier"
-review_reason = "D6 agreement test writes the Rust-consumed Cargo evidence and invokes Python on those same dep-info files; disagreement or invocation failure fails the test."
-
-[[expectation]]
 file = "crates/forge-warden-cli/tests/door_lints.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test door: reads the CLI crate's source files"
@@ -340,3 +334,9 @@ review_reason = "E3a test-only full ranking JSON bytes are hashed against the ex
 file = "fixtures/demo.patch"
 sha256 = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
 review_reason = "E3a test-only literal unified diff is hashed against the external seal reference; embedded as bytes and never executed or applied by the output-anchor test."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/support/process_env.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test environment door: reads only explicit tool locations before clearing child environments"
+review_reason = "Q-PERIMETER test-only shared helper reads PATH and Cargo/rustup locations; all Git variables and ambient child configuration are discarded. Production has no dependency on this cfg(test) helper."

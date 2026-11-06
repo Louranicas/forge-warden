@@ -2,11 +2,14 @@
 # Everything CI runs that can run offline, in CI's order. `just ci` calls this.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+# Hook-exported Git state must not redirect scratch-repository commands.
+while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 # Gate artifacts stay local even when cargo builds in an external target directory.
 mkdir -p target
 export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
 step tool-versions; python3 -I scripts/tool_versions.py --check
+step perimeter; python3 -I scripts/tests/perimeter.py
 step plant-runner; python3 -I plants/test_runner.py
 step guardrails; python3 -I scripts/check_guardrails.py
 step fmt;     cargo fmt --all --check

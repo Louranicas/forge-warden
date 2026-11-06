@@ -748,6 +748,10 @@ pub(crate) mod child {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/process_env.rs"]
+mod test_environment;
+
+#[cfg(test)]
 #[expect(
     clippy::disallowed_methods,
     clippy::disallowed_types,
@@ -772,6 +776,14 @@ mod child_tests {
             stdout_cap: 8 * 1024 * 1024,
             stderr_cap: 64 * 1024,
         }
+    }
+
+    fn command(program: &str) -> std::process::Command {
+        static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        let home = HOME.get_or_init(|| scratch("process-home"));
+        let mut cmd = std::process::Command::new(program);
+        super::test_environment::configure(&mut cmd, home);
+        cmd
     }
 
     fn sh(script: &str) -> Vec<&str> {
@@ -800,7 +812,7 @@ mod child_tests {
     /// inherits it until that child's exec, and executing the file fails with ETXTBSY (MEASURED: 4 in
     /// 2000 runs of `a_pinned_executable_runs_the_hashed_bytes_after_its_path_is_swapped` on 9d57295).
     fn copy_out_of_process(from: &str, to: &Path) {
-        let status = std::process::Command::new("/usr/bin/cp")
+        let status = command("/usr/bin/cp")
             .arg("--")
             .arg(from)
             .arg(to)
@@ -827,10 +839,7 @@ mod child_tests {
     fn a_fifo_is_refused_at_once_not_waited_on() {
         let dir = scratch("fifo");
         let fifo = dir.join("ranker");
-        let made = std::process::Command::new("/usr/bin/mkfifo")
-            .arg(&fifo)
-            .status()
-            .unwrap();
+        let made = command("/usr/bin/mkfifo").arg(&fifo).status().unwrap();
         assert!(made.success());
         let (tx, rx) = std::sync::mpsc::channel();
         let target = fifo.clone();
@@ -996,7 +1005,7 @@ mod child_tests {
         // Bastion B-C1b-01: a candidate repository whose own config breaks `git apply`.
         let candidate = scratch("candidate");
         let git = |args: &[&str], cwd: &Path| {
-            std::process::Command::new("/usr/bin/git")
+            command("/usr/bin/git")
                 .args(args)
                 .current_dir(cwd)
                 .env_remove("GIT_DIR")
@@ -1016,7 +1025,7 @@ mod child_tests {
         std::fs::create_dir_all(&inner).unwrap();
         let patch = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
         // The trap is live: Git started inside the candidate, with no ceiling, reads its config.
-        let trapped = std::process::Command::new("/usr/bin/git")
+        let trapped = command("/usr/bin/git")
             .args(["apply", "--numstat", "-"])
             .current_dir(&inner)
             .stdin(std::process::Stdio::piped())

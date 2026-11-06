@@ -500,19 +500,22 @@ fn unexplained_ignores(text: &str) -> usize {
                     syn::Meta::NameValue(value) => matches!(&value.value,
                         syn::Expr::Lit(expr) if matches!(&expr.lit,
                             syn::Lit::Str(reason) if !reason.value().trim().is_empty())),
-                    _ => false,
+                    syn::Meta::Path(_) | syn::Meta::List(_) => false,
                 };
                 if !explained {
-                    self.0 += 1;
+                    self.0 = self.0.saturating_add(1);
                 }
-            } else if meta.path().is_ident("cfg_attr") {
-                if let syn::Meta::List(list) = meta {
-                    let nested = list.parse_args_with(
-                        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
-                    ).expect("cfg_attr must parse completely");
-                    for attr in nested.iter().skip(1) {
-                        self.inspect(attr);
-                    }
+            } else if meta.path().is_ident("cfg_attr")
+                && let syn::Meta::List(list) = meta
+            {
+                let Ok(nested) = list.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                ) else {
+                    self.0 = usize::MAX;
+                    return;
+                };
+                for attr in nested.iter().skip(1) {
+                    self.inspect(attr);
                 }
             }
         }
@@ -523,7 +526,9 @@ fn unexplained_ignores(text: &str) -> usize {
             syn::visit::visit_attribute(self, attr);
         }
     }
-    let parsed = syn::parse_file(text).expect("all admitted source must parse");
+    let Ok(parsed) = syn::parse_file(text) else {
+        return usize::MAX;
+    };
     let mut visitor = Ignores(0);
     syn::visit::Visit::visit_file(&mut visitor, &parsed);
     visitor.0
