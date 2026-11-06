@@ -50,18 +50,21 @@ def admitted_path(root, spelling):
     return canonical.relative_to(root).as_posix()
 
 
-def admit(root, records, data_inputs):
+def classify(root, records, data_inputs):
     sources = set()
+    production = set()
     seen_data = set()
-    for spelling, test in records:
+    for spelling, ships in records:
         name = admitted_path(root, spelling)
         if name.endswith(".rs"):
             parts = Path(name).parts
-            ordinary = len(parts) >= 4 and parts[0] == "crates" and parts[2] in ("src", "tests")
-            helper = name.startswith("fixtures/adversarial/") and test
+            ordinary = len(parts) >= 4 and parts[0] == "crates" and parts[2] in ("src", "tests", "examples", "benches")
+            helper = name.startswith("fixtures/adversarial/") and not ships
             require(ordinary or helper, "source outside admitted Rust roots: " + name)
-            require(not (ordinary and parts[2] == "tests" and not test),
+            require(not (ships and "tests" in parts),
                     "test source compiled in production: " + name)
+            if ships:
+                production.add(name)
             sources.add(name)
         else:
             # include! need not use .rs. Non-Rust inputs therefore need exact
@@ -73,14 +76,55 @@ def admit(root, records, data_inputs):
     require(seen_data == set(data_inputs), "stale compiler data ledger")
     walked = set()
     for member in (root / "crates").iterdir():
-        for directory in (member / "src", member / "tests"):
+        for directory in (member / "src", member / "tests", member / "examples", member / "benches"):
             if directory.exists():
                 for path in directory.rglob("*.rs"):
                     walked.add(admitted_path(root, str(path)))
     require(walked == {name for name in sources if name.startswith("crates/")},
             "compiler/source walk disagreement (inactive or uncompiled Rust source)")
     require(sources, "no first-party compiled sources")
-    return sorted(sources)
+    return {"production": sorted(production), "test_only": sorted(sources - production)}
+
+
+def admit(root, records, data_inputs):
+    classes = classify(root, records, data_inputs)
+    return sorted(classes["production"] + classes["test_only"])
+
+
+def production_artifact(message):
+    kinds = message["target"]["kind"]
+    profile = message["profile"]["test"]
+    shipping = {"lib", "rlib", "bin", "proc-macro", "dylib", "cdylib", "staticlib"}
+    require(type(profile) is bool and isinstance(kinds, list) and kinds, "invalid artifact context")
+    require(all(kind in shipping | {"test", "example", "bench"} for kind in kinds),
+            "unsupported artifact kind")
+    return not profile and bool(shipping.intersection(kinds))
+
+
+def records_from_messages(messages, members, target, require_fresh=True):
+    records = set()
+    observed = set()
+    for line in messages.splitlines():
+        message = json.loads(line)
+        if message.get("reason") != "compiler-artifact" or message["package_id"] not in members:
+            continue
+        require(not require_fresh or not message["fresh"], "cached first-party artifact in fresh discovery")
+        ships = production_artifact(message)
+        observed.add(message["package_id"])
+        candidates = set()
+        for filename in message["filenames"]:
+            artifact = Path(filename)
+            stem = artifact.stem
+            for candidate in (artifact.with_suffix(".d"), artifact.with_name(stem.removeprefix("lib") + ".d")):
+                if candidate.is_file():
+                    candidates.add(candidate)
+        require(len(candidates) == 1, "ambiguous or missing first-party dep-info")
+        depfile = candidates.pop()
+        require(depfile.resolve().is_relative_to(Path(target).resolve()), "dep-info outside fresh target")
+        for name in dependencies(depfile.read_text()):
+            records.add((name, ships))
+    require(observed == members, "workspace member missing compiler evidence")
+    return records
 
 
 def discover(root, data_inputs):
@@ -88,7 +132,7 @@ def discover(root, data_inputs):
     env = os.environ.copy()
     # Fresh artifacts, with no inherited wrapper or dependency path rewriting.
     for key in ("CARGO_TARGET_DIR", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
-                "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"):
+                "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS"):
         env.pop(key, None)
     def cargo(args):
         run = subprocess.run(["cargo", *args], cwd=root, env=env, text=True,
@@ -100,26 +144,5 @@ def discover(root, data_inputs):
     with tempfile.TemporaryDirectory(prefix="fw-dep-info-") as target:
         messages = cargo(["check", "--workspace", "--all-targets", "--locked", "--offline",
                           "--message-format=json", "--target-dir", target])
-        records = set()
-        observed = set()
-        for line in messages.splitlines():
-            message = json.loads(line)
-            if message.get("reason") != "compiler-artifact" or message["package_id"] not in members:
-                continue
-            require(not message["fresh"], "cached first-party artifact in fresh discovery")
-            require("custom-build" not in message["target"]["kind"], "first-party build scripts unsupported")
-            observed.add(message["package_id"])
-            candidates = set()
-            for filename in message["filenames"]:
-                artifact = Path(filename)
-                stem = artifact.stem
-                for candidate in (artifact.with_suffix(".d"), artifact.with_name(stem.removeprefix("lib") + ".d")):
-                    if candidate.is_file():
-                        candidates.add(candidate)
-            require(len(candidates) == 1, "ambiguous or missing first-party dep-info")
-            depfile = candidates.pop()
-            require(depfile.resolve().is_relative_to(Path(target).resolve()), "dep-info outside fresh target")
-            for name in dependencies(depfile.read_text()):
-                records.add((name, message["profile"]["test"]))
-        require(observed == members, "workspace member missing compiler evidence")
+        records = records_from_messages(messages, members, target)
         return admit(root, records, data_inputs)
