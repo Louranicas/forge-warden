@@ -141,13 +141,19 @@ pub(crate) mod child {
 
     /// `O_NOFOLLOW` on Linux (`x86_64`, `aarch64`): open refuses a symlink in the final path component.
     #[cfg(target_os = "linux")]
-    const O_NOFOLLOW: i32 = 0o400_000;
+    pub(super) const O_NOFOLLOW: i32 = 0o400_000;
 
     /// `O_NONBLOCK` on Linux (`x86_64`, `aarch64`): opening a FIFO with no writer returns at once
     /// instead of blocking, so a non-regular file is refused by `fstat` rather than hanging the
     /// open (Bastion B-C1a-01). Reads of a regular file are unaffected.
     #[cfg(target_os = "linux")]
-    const O_NONBLOCK: i32 = 0o4_000;
+    pub(super) const O_NONBLOCK: i32 = 0o4_000;
+
+    /// The flags `pin_executable` opens with: `O_NOFOLLOW | O_NONBLOCK` (`O_RDONLY` is 0; std adds
+    /// `O_CLOEXEC`). One literal, so the composition cannot be mutated into an equal value (the two
+    /// bits are disjoint); a test checks it equals the composition.
+    #[cfg(target_os = "linux")]
+    pub(super) const PIN_FLAGS: i32 = 0o404_000;
 
     /// The largest executable forge-warden will pin (hash) before running it.
     pub(super) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
@@ -232,7 +238,7 @@ pub(crate) mod child {
         let what = format!("pinning {}", path.display());
         let mut file = std::fs::OpenOptions::new()
             .read(true)
-            .custom_flags(O_NOFOLLOW | O_NONBLOCK)
+            .custom_flags(PIN_FLAGS)
             .open(path)
             .map_err(|e| DoorError::io(&what, &e))?;
         let meta = file.metadata().map_err(|e| DoorError::io(&what, &e))?;
@@ -471,6 +477,13 @@ mod child_tests {
         let _gone = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_pin_flags_are_nofollow_and_nonblock_exactly() {
+        use super::child::{O_NOFOLLOW, O_NONBLOCK, PIN_FLAGS};
+        assert_eq!(O_NOFOLLOW & O_NONBLOCK, 0, "disjoint bits");
+        assert_eq!(PIN_FLAGS, O_NOFOLLOW | O_NONBLOCK);
     }
 
     #[test]
