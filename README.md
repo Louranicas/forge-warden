@@ -173,7 +173,8 @@ the ranking reports, never remove them. Pass `git diff --binary --no-renames` ou
 
   Renames produce `source_path_unknown`, so rank with `git diff --no-renames`.
 
-The same policy bytes, ranking bytes and date always give byte-identical output. Results go to
+The same inputs always give byte-identical output: the policy, patch, ranking (or admitted
+ranker), Git, date, and any `--base`/`--head` claims. Results go to
 **stdout**, diagnostics to **stderr**, and on error stdout is empty. Paths in the human output
 are printed with every character outside printable ASCII escaped, so a hostile file name cannot
 inject terminal escapes or reorder text with bidi controls.
@@ -225,7 +226,7 @@ contract.
 | Layer | What it stops | Where |
 | --- | --- | --- |
 | **Lint wall** | `unsafe`, panics (`unwrap`, `expect`, `panic!`, indexing, unchecked arithmetic, `as` casts), missing docs, wildcard matches, `print!`, `#[allow]`; every warning is an error | `Cargo.toml` `[workspace.lints]`, [ADR 0002](docs/adr/0002-the-lint-wall.md) |
-| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (the pinned ranker and Git are its only children); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors.rs`](crates/forge-warden-cli/src/doors.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
+| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git and `/usr/bin/kill` for cleanup); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors.rs`](crates/forge-warden-cli/src/doors.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
 | **A pure core** | I/O, clocks and threads in the engine: they are compile errors in `forge-warden-core` | [`crates/forge-warden-core/clippy.toml`](crates/forge-warden-core/clippy.toml) |
 | **Contracts as tests** | schema, README, registry and vocabulary drift; non-determinism; unsafe output | `crates/forge-warden-cli/tests/` |
 | **Properties** | whole classes of bugs: adding a rule never loosens a verdict; dates round-trip; rendered output is always printable ASCII | `proptest` in both crates |
@@ -257,8 +258,10 @@ Run the whole gate locally with `just ci` (or `scripts/ci_local.sh`).
 
 forge-warden reads one deep-diff-forge document, `deep-diff-forge.rank.v0`. In authority mode it
 runs the admitted deep-diff-forge binary to produce that document; in advisory mode it is given
-one. It hashes the patch to check the ranking's seal. It does not parse the patch itself: an
-isolated Git reads the patch's facts ([ADR 0010](docs/adr/0010-isolated-git-data-contract.md)).
+one. It hashes the patch to check the ranking's seal. An isolated Git reads the patch's facts
+(`git apply --numstat` and `--summary`, [ADR 0010](docs/adr/0010-isolated-git-data-contract.md)).
+forge-warden itself reads only the patch's mode-bearing header lines, with a total grammar, to
+cross-check those facts. It does not interpret hunks.
 Its vocabulary tracks
 deep-diff-forge 0.7.0 (`crates/forge-warden-core/src/vocab.rs`); a newer deep-diff-forge that
 adds a signal makes verdicts hold, not pass, until forge-warden learns it. Its exit codes reuse
