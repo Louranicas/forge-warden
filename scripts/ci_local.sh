@@ -23,8 +23,10 @@ if command -v deep-diff-forge >/dev/null; then
   base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
   git diff --binary --no-renames "$base" > target/change.patch
   if [ -s target/change.patch ]; then
-    deep-diff-forge --stdin-patch --rank --json < target/change.patch \
-      | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch || true
+    # Ranking must finish successfully before its output is admitted to the judge.
+    deep-diff-forge --stdin-patch --rank --json < target/change.patch > target/rank.json
+    cargo run --quiet --bin forge-warden -- check --policy warden.toml \
+      --rank target/rank.json --patch target/change.patch
   fi
 fi
 printf '\nci_local: all available gates passed\n'
