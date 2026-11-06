@@ -415,14 +415,6 @@ pub(crate) mod child {
     }
 
     impl PrivateDir {
-        /// Create one under the system temp directory, exclusively (a name that already exists is
-        /// never reused). Tests only: production goes through [`Isolation`], which admits the base.
-        #[cfg(test)]
-        #[expect(clippy::disallowed_methods, reason = "door: private_dir")]
-        pub(crate) fn create() -> Result<Self, DoorError> {
-            Self::create_in(&std::env::temp_dir())
-        }
-
         /// A private directory under `base`, created exclusively: a name that already exists is
         /// never reused, and any other error is reported at once, not retried.
         pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
@@ -883,7 +875,10 @@ mod child_tests {
     fn a_private_dir_is_empty_0700_and_removed_on_drop_and_a_missing_git_is_unavailable() {
         use super::child::{GitFactsFailure, PrivateDir, git_facts};
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = PrivateDir::create().unwrap();
+        // An exclusive base: in the shared temp dir another test's private dir may legitimately
+        // reuse this process-scoped name after the drop (Bastion, C1c v4.2 receipt).
+        let base = scratch("private-dir");
+        let dir = PrivateDir::create_in(&base).unwrap();
         let path = dir.path().to_owned();
         let meta = std::fs::metadata(&path).unwrap();
         assert!(meta.is_dir());
@@ -897,6 +892,23 @@ mod child_tests {
             git_facts(Path::new("/nonexistent/git"), tiny_patch),
             Err(GitFactsFailure::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn a_freed_private_dir_name_is_reused_so_absence_needs_an_exclusive_base() {
+        // The C1c v4.2 race, measured: names are `forge-warden-<pid>-<attempt>` and attempts start
+        // at 0, so after a drop the next private dir in the same base takes the freed name. Creation
+        // stays exclusive (a live name is never reused), but a test asserting a dropped path is gone
+        // must own its base; in the shared temp dir a concurrent test may legitimately recreate it.
+        use super::child::PrivateDir;
+        let base = scratch("name-reuse");
+        let first = PrivateDir::create_in(&base).unwrap();
+        let name = first.path().to_owned();
+        drop(first);
+        let second = PrivateDir::create_in(&base).unwrap();
+        assert_eq!(second.path(), name);
+        let live = PrivateDir::create_in(&base).unwrap();
+        assert_ne!(live.path(), second.path(), "a live name is never reused");
     }
 
     #[test]
