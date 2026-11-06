@@ -1,0 +1,8 @@
+{
+  "schema": "deep-diff-forge.rank.v0",
+  "input_sha256": "807c1950c6f88a61110738a2bf2678e9bc01d5885c3601ea9f5ef9755521c1a7",
+  "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+  "ranked": [
+    {"path": "src/table.rs", "status": "modified", "score": 4, "signals": ["many_hunks"]}
+  ]
+}

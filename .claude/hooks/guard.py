@@ -28,22 +28,29 @@ from pathlib import Path
 
 MAX_STOP_BLOCKS = 3
 
-# Files that decide what "good" means. Changing them is the owner's call (warden.toml rule
-# `quality-config-is-owned`, CODEOWNERS). Cargo.toml is handled separately: its dependencies may
-# change, its lint wall may only tighten.
-PROTECTED = (
-    re.compile(r"^clippy\.toml$"),
-    re.compile(r"^crates/[^/]+/clippy\.toml$"),
-    re.compile(r"^deny\.toml$"),
-    re.compile(r"^rustfmt\.toml$"),
-    re.compile(r"^warden\.toml$"),
-    re.compile(r"^\.github/"),
-    re.compile(r"^\.githooks/"),
-    re.compile(r"^\.claude/settings\.json$"),
-    re.compile(r"^\.claude/hooks/"),
-    re.compile(r"^crates/forge-warden-cli/tests/repo_invariants\.rs$"),
-    re.compile(r"^crates/forge-warden-cli/src/doors\.rs$"),
-)
+def load_protected(root: Path) -> list[str]:
+    paths = [line.strip() for line in (root / "protected-paths.txt").read_text().splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    if not paths or paths != sorted(set(paths)):
+        raise ValueError("protected-path manifest must be nonempty, sorted and unique")
+    for path in paths:
+        parts = path.split("/")
+        if any(part in ("", ".", "..") or not re.fullmatch(r"[A-Za-z0-9_.-]+|\*|\*\*", part)
+               for part in parts) or "**" in parts[:-1]:
+            raise ValueError("unsupported protected path pattern")
+    return paths
+
+
+def is_protected(rel: str, root: Path) -> bool:
+    for pattern in load_protected(root):
+        if pattern.endswith("/**") and rel == pattern[:-3]:
+            return True
+        expression = "/".join(".*" if part == "**" else "[^/]+" if part == "*" else re.escape(part)
+                              for part in pattern.split("/"))
+        if re.fullmatch(expression, rel):
+            return True
+    return False
+
 
 # Shell constructs that can change a file. A command that names a protected path and contains one
 # of these is refused; reading a protected file (cat, grep, git diff) is fine.
@@ -143,7 +150,7 @@ def shell(command: str) -> None:
         if not token or any(char.isspace() for char in token):
             continue
         rel = relative(token)
-        if any(pattern.search(rel) for pattern in PROTECTED) or rel.endswith((".rs", "Cargo.toml")):
+        if is_protected(rel, project_dir()) or rel.endswith((".rs", "Cargo.toml")):
             refuse(f"shell mutation may change protected or Rust source path {rel}; use structured edits")
 
 
@@ -163,7 +170,7 @@ def pre(event: dict) -> None:
     if tool not in ("Edit", "Write"):
         refuse(f"unsupported tool {tool!r}: no checked mutation adapter (including multi-edit/patch tools)")
     rel = relative(required_text(data, "file_path", True))
-    if any(pattern.search(rel) for pattern in PROTECTED):
+    if is_protected(rel, project_dir()):
         refuse(f"{rel} is protected quality configuration; use the owner-controlled change path")
     path = project_dir() / rel
     current = path.read_text() if path.exists() else ""

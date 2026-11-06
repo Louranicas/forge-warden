@@ -1,12 +1,23 @@
-# The quality configuration is owned: changing what "good" means needs the owner's review.
-*                                   @Louranicas
-/.github/                           @Louranicas
-/.claude/                           @Louranicas
-/.githooks/                         @Louranicas
-/Cargo.toml                         @Louranicas
-/clippy.toml                        @Louranicas
-/crates/*/clippy.toml               @Louranicas
-/deny.toml                          @Louranicas
-/warden.toml                        @Louranicas
-/schemas/                           @Louranicas
+# Generated from protected-paths.txt; equality is checked in CI.
+* @Louranicas
+/.claude/** @Louranicas
+/.githooks/** @Louranicas
+/.github/** @Louranicas
+/Cargo.lock @Louranicas
+/Cargo.toml @Louranicas
+/agents/** @Louranicas
+/clippy.toml @Louranicas
+/crates/*/Cargo.toml @Louranicas
+/crates/*/clippy.toml @Louranicas
 /crates/forge-warden-cli/src/doors.rs @Louranicas
+/crates/forge-warden-cli/tests/repo_invariants.rs @Louranicas
+/deny.toml @Louranicas
+/justfile @Louranicas
+/lint-expectations.toml @Louranicas
+/lint-floor.toml @Louranicas
+/protected-paths.txt @Louranicas
+/rust-toolchain.toml @Louranicas
+/rustfmt.toml @Louranicas
+/schemas/** @Louranicas
+/scripts/** @Louranicas
+/warden.toml @Louranicas
