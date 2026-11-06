@@ -28,7 +28,8 @@ class Runner(unittest.TestCase):
         self.assertEqual(RUN.command_for(script, root, target), script['command'])
         with self.assertRaises(ValueError):
             RUN.command_for(script, root, target, cargo_runner='/cargo-only')
-        for invalid in ({}, dict(cargo=[], command=[]), dict(command=[]),
+        for invalid in ({}, dict(cargo=[], command=[]), dict(command=[]), dict(cargo=[]),
+                        dict(cargo=None), dict(cargo='test'), dict(command='python3'),
                         dict(command=['']), dict(command=['python3', None]), dict(command=['x\0y'])):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 RUN.command_for(invalid, root, target)

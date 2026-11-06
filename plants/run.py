@@ -95,9 +95,10 @@ def command_for(case, root, target, cargo_runner=None, exec_runner=None):
     if ('cargo' in case) == ('command' in case):
         raise ValueError('recipe must have exactly one cargo or command argv')
     generic = 'command' in case
-    argv = case['command'] if generic else ['cargo', *case['cargo']]
-    if not isinstance(argv, list) or not argv or not argv[0] or any(not isinstance(a, str) or '\0' in a for a in argv):
+    payload = case['command'] if generic else case['cargo']
+    if not isinstance(payload, list) or not payload or not payload[0] or any(not isinstance(a, str) or '\0' in a for a in payload):
         raise ValueError('recipe argv must be a nonempty string array')
+    argv = payload if generic else ['cargo', *payload]
     if exec_runner:
         return [exec_runner, str(root), *argv]
     if generic:

@@ -1,4 +1,4 @@
-# Named guardrail plants (WP-A4, second batch)
+# Named guardrail plants (WP-A4, third batch)
 
 Run from a neutral directory. The runner creates one disposable `git clone --no-local`, checks out
 an exact commit, and applies each plant only there. It never writes the source repository or hub.
@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This second batch implements 25 named plants. The remaining 26 register rows are explicitly PENDING
+This third batch implements 32 named plants. The remaining 19 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, default markers and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -55,7 +55,7 @@ The expanded-dependency recipe deliberately omits --locked so Cargo can update i
 lock for an already cached transitive dependency; the manifest and lock bytes are both restored.
 The normal gate still uses --locked. Two existing recipes now use B2's validated getters.
 
-Third batch in progress: --exec-runner /absolute/trusted/backend runs BACKEND CHECKOUT PROGRAM
+Third-batch execution profile: --exec-runner /absolute/trusted/backend runs BACKEND CHECKOUT PROGRAM
 ARGUMENTS for both Cargo and script recipes, without shell evaluation. It is mutually exclusive
 with --runner (Cargo only). Selecting a script recipe with a Cargo-only backend refuses before
 creating evidence or executing anything; it never falls back to native execution. Native script
@@ -63,4 +63,7 @@ execution is explicit by omitting both backends. Generic commands are trusted ca
 untrusted command text. The receipt records the execution profile and exact command argv. The
 backend remains responsible for network/process/filesystem isolation and compiler pins. Eight
 runner controls now include actual script argv/cwd checks and refusal of backend downgrade. Seven
-new script/hook recipes are awaiting their measured batch run (32 runnable,19 pending recipes).
+new script/hook plants cover swallowed judge exits, lost shell tokenization, malformed hook input,
+unsupported tools, candidate judge builds, stale-head acknowledgement replay, and candidate-supplied
+review policy/contracts. These fixtures prove local controls; they do not establish a hosted
+required-workflow identity, real signer enrollment or managed-provider isolation.
