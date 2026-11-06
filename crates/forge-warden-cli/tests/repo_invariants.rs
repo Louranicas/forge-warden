@@ -520,7 +520,33 @@ fn unexplained_ignores(text: &str) -> usize {
             }
         }
     }
+    impl Ignores {
+        fn tokens(&mut self, tokens: proc_macro2::TokenStream) {
+            let mut tokens = tokens.into_iter().peekable();
+            while let Some(token) = tokens.next() {
+                match token {
+                    proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
+                        if let Some(proc_macro2::TokenTree::Group(group)) = tokens.peek()
+                            && group.delimiter() == proc_macro2::Delimiter::Bracket
+                            && let Ok(meta) = syn::parse2::<syn::Meta>(group.stream())
+                        {
+                            self.inspect(&meta);
+                        }
+                    }
+                    proc_macro2::TokenTree::Group(group) => self.tokens(group.stream()),
+                    proc_macro2::TokenTree::Ident(_)
+                    | proc_macro2::TokenTree::Literal(_)
+                    | proc_macro2::TokenTree::Punct(_) => {}
+                }
+            }
+        }
+    }
     impl<'ast> syn::visit::Visit<'ast> for Ignores {
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.tokens(mac.tokens.clone());
+            syn::visit::visit_macro(self, mac);
+        }
+
         fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
             self.inspect(&attr.meta);
             syn::visit::visit_attribute(self, attr);
@@ -567,4 +593,8 @@ fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
         0
     );
     assert_eq!(unexplained_ignores("// #[ignore]\nfn probe() {}"), 0);
+    assert_eq!(
+        unexplained_ignores("macro_rules! probe { () => { #[ignore] fn probe() {} } }"),
+        1
+    );
 }

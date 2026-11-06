@@ -130,3 +130,8 @@ the candidate workflow authenticates its own hosted merge-admission identity.
 Tool versions are owned by `scripts/tool-versions.toml`, Rust by
 `rust-toolchain.toml`, and MSRV by `Cargo.toml`; `scripts/tool_versions.py --check`
 checks the workflow's declarative copies. Updates require normal review.
+
+The gate preflights the declared MSRV toolchain (already installed; no automatic
+installation) and the complete offline locked dependency set. Native Cargo options
+are inserted before the `--` test-argument separator, so exact named-test recipes
+use the isolated target rather than accidentally forwarding Cargo flags to libtest.

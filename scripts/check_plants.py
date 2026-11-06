@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,6 +29,13 @@ def run():
     if git("status", "--porcelain", "--untracked-files=all"):
         raise ValueError("plants gate requires a clean committed subject")
     revision = git("rev-parse", "HEAD")
+    # Explicit prerequisites: never rely on a previous gate having warmed these.
+    msrv = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["rust-version"]
+    if msrv.count(".") == 1:
+        msrv += ".0"
+    env["RUSTUP_AUTO_INSTALL"] = "0"
+    subprocess.run(["rustup", "run", msrv, "rustc", "--version"], cwd=ROOT, env=env, check=True)
+    subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT, env=env, check=True)
     cases = json.loads((ROOT / "plants/catalog.json").read_text())["cases"]
     ids = [case["id"] for case in cases]
     if not ids or len(ids) != len(set(ids)):

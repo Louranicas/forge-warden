@@ -122,7 +122,9 @@ def command_for(case, root, target, cargo_runner=None, exec_runner=None):
         return argv
     if cargo_runner:
         return [cargo_runner, str(root), *case['cargo']]
-    return [*argv, '--target-dir', str(target)]
+    # Cargo options must precede `--`, which begins the test binary's arguments.
+    split = argv.index('--') if '--' in argv else len(argv)
+    return [*argv[:split], '--target-dir', str(target), *argv[split:]]
 
 
 def main():

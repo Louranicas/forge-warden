@@ -20,7 +20,10 @@ class MutationEnvironment(unittest.TestCase):
             root = Path(directory)
             (root / "bin").mkdir()
             (root / "target").mkdir()
-            (root / "scripts").mkdir()
+            (root / "scripts/tests").mkdir(parents=True)
+            (root / "plants").mkdir()
+            for name in ("scripts/tool_versions.py", "scripts/tests/perimeter.py", "plants/test_runner.py"):
+                (root / name).write_text("# explicit unrelated-gate fixture stub\n")
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
             scripts = {
                 "git": '#!/bin/sh\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nmerge-base) echo base;;\ndiff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',

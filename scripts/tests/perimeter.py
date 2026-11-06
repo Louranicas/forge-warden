@@ -35,7 +35,10 @@ class Contracts(unittest.TestCase):
                 shutil.copyfile(ROOT / file, root / file)
             workflow = root / ".github/workflows/ci.yml"
             original = workflow.read_text()
-            for pin in ("zizmor@1.30.1", "cargo-mutants@27.1.0", "cargo-deny@0.20.2", "1.99.1", "587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54"):
+            versions = TOOLS.versions(ROOT)
+            pins = [name.replace("_", "-") + "@" + versions[name]
+                    for name in ("zizmor", "cargo_mutants", "cargo_deny")]
+            for pin in [*pins, versions["rust"], versions["ddf_rev"]]:
                 with self.subTest(pin=pin):
                     self.assertIn(pin, original)
                     workflow.write_text(original.replace(pin, "9.9.9"))

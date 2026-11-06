@@ -35,6 +35,8 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy && rustup default 1.99.1
+      - name: Prepare MSRV for the planted regression gate
+        run: rustup toolchain install 1.88.0 --profile minimal
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - name: Prepare locked dependencies for offline script fixtures
         run: cargo fetch --locked

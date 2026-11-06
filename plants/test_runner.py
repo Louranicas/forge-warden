@@ -138,6 +138,12 @@ class Runner(unittest.TestCase):
             self.assertEqual((source / 'fixture').read_text(), 'clean\n')
             self.assertEqual(git('status', '--porcelain'), b'')
 
+    def test_native_cargo_target_precedes_test_arguments(self):
+        case = {'cargo': ['test', '-p', 'forge-warden-cli', '--', 'a_test', '--exact']}
+        argv = RUN.command_for(case, Path('/checkout'), Path('/isolated-target'))
+        self.assertEqual(argv, ['cargo', 'test', '-p', 'forge-warden-cli',
+                                '--target-dir', '/isolated-target', '--', 'a_test', '--exact'])
+
     def test_missing_executable_is_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
