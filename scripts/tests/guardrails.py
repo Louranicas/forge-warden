@@ -159,6 +159,39 @@ class CompiledSources(unittest.TestCase):
     def test_ordinary_compiled_source(self):
         self.assertEqual(self.discover(), ["crates/probe/src/lib.rs"])
 
+    def test_shipping_kind_matrix(self):
+        for kind in ("lib", "rlib", "bin", "proc-macro", "dylib", "cdylib", "staticlib", "example", "bench", "test"):
+            for test in (False, True):
+                with self.subTest(kind=kind, test=test):
+                    actual = checks.sources.production_artifact({"target": {"kind": [kind]}, "profile": {"test": test}})
+                    self.assertEqual(actual, not test and kind not in ("example", "bench", "test"))
+        for kind in ("custom-build", "unknown"):
+            with self.assertRaisesRegex(ValueError, "unsupported artifact kind"):
+                checks.sources.production_artifact({"target": {"kind": [kind]}, "profile": {"test": False}})
+
+    def test_examples_and_benches_are_scanned_as_nonproduction(self):
+        manifest = self.root / "crates/probe/Cargo.toml"
+        with manifest.open("a") as stream:
+            stream.write('\n[[example]]\nname="helper"\npath="tests/support/example.rs"\ntest=false\n')
+            stream.write('\n[[bench]]\nname="probe"\nharness=false\n')
+        self.write("crates/probe/tests/support/example.rs", 'fn main() {}')
+        self.write("crates/probe/examples/ordinary.rs", 'fn main() {}')
+        self.write("crates/probe/benches/probe.rs", 'fn main() {}')
+        names = self.discover()
+        for name in ("tests/support/example.rs", "examples/ordinary.rs", "benches/probe.rs"):
+            self.assertIn("crates/probe/" + name, names)
+
+    def test_tests_component_in_production_is_refused(self):
+        self.write("crates/probe/src/tests/helper.rs", "pub fn helper() {}")
+        self.write("crates/probe/src/lib.rs", '#[path="tests/helper.rs"] mod helper;')
+        with self.assertRaisesRegex(ValueError, "test source compiled in production"):
+            self.discover()
+
+    def test_production_observation_wins_over_nonproduction(self):
+        classes = checks.sources.classify(self.root, {("crates/probe/src/lib.rs", True),
+                                                      ("crates/probe/src/lib.rs", False)}, {})
+        self.assertEqual(classes, {"production": ["crates/probe/src/lib.rs"], "test_only": []})
+
     def test_test_helper_is_discovered_and_scanned(self):
         self.write("fixtures/adversarial/helper.rs", '#[expect(dead_code, reason="compiled test helper")] fn hidden() {}')
         self.write("crates/probe/tests/helper.rs", '#[path="../../../fixtures/adversarial/helper.rs"] mod helper;')
@@ -224,6 +257,62 @@ class CompiledSources(unittest.TestCase):
         for text in ("a: escaped\\ space.rs", "a: colon:name.rs", "a: cash$.rs", "a: a.rs\nmalformed", "a: x\t.rs"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 checks.sources.dependencies(text)
+
+
+class AgreementFixtures(unittest.TestCase):
+    """Real workspace integration: shared-build sets and paired refusal controls."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="source-contract-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "tree"
+        shutil.copytree(ROOT, self.root, ignore=shutil.ignore_patterns(".git", "target", "__pycache__"))
+
+    def run_cargo(self, *args):
+        return subprocess.run(["cargo", *args, "--target-dir", str(self.root / "target")],
+                              cwd=self.root, capture_output=True, text=True)
+
+    def agreement(self):
+        return self.run_cargo("test", "-p", "forge-warden-cli", "--test", "classifier_agreement",
+                              "--locked", "--offline")
+
+    def test_extra_workspace_member_agrees(self):
+        manifest = self.root / "Cargo.toml"
+        text = manifest.read_text()
+        marker = 'members = ["crates/forge-warden-core", "crates/forge-warden-cli"]'
+        self.assertIn(marker, text)
+        manifest.write_text(text.replace(marker, marker[:-1] + ', "crates/boundary-extra"]', 1))
+        member = self.root / "crates/boundary-extra"
+        (member / "src").mkdir(parents=True)
+        (member / "Cargo.toml").write_text(
+            '[package]\nname="boundary-extra"\nversion="0.1.0"\nedition="2024"\n'
+            'description="Compiler context agreement fixture"\nlicense="MIT"\n'
+            '[lints]\nworkspace=true\n')
+        (member / "src/lib.rs").write_text('//! Compiled workspace identity control.\n/// A public control.\npub fn control() {}\n')
+        lock = subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=self.root,
+                              capture_output=True, text=True)
+        self.assertEqual(lock.returncode, 0, lock.stderr)
+        result = self.agreement()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_non_rs_include_refused_by_both(self):
+        main = self.root / "crates/forge-warden-cli/src/main.rs"
+        main.write_text(main.read_text() + '\ninclude!("boundary_input.inc");\n')
+        (main.parent / "boundary_input.inc").write_text(
+            '#[expect(dead_code, reason = "compiled source admission fixture")]\nfn boundary_input() {}\n')
+        compiled = self.run_cargo("check", "--workspace", "--all-targets", "--locked", "--offline")
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        rust = self.agreement()
+        self.assertNotEqual(rust.returncode, 0, rust.stdout + rust.stderr)
+        self.assertIn("boundary_input.inc", rust.stdout + rust.stderr)
+        # A refusal only from the Python comparison is not evidence that Rust
+        # admitted the input correctly: require the Rust consumer's own panic.
+        self.assertIn("tests/common/mod.rs:", rust.stdout + rust.stderr)
+        python = subprocess.run([sys.executable, "-I", "scripts/check_guardrails.py"], cwd=self.root,
+                                capture_output=True, text=True)
+        self.assertEqual(python.returncode, 1, python.stdout + python.stderr)
+        self.assertIn("unreviewed non-Rust compiler input", python.stderr)
+        self.assertIn("boundary_input.inc", python.stderr)
 
 
 if __name__ == "__main__":

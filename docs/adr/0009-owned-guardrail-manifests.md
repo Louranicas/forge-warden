@@ -79,3 +79,29 @@ D6 v3 integrates on main ec45925 (C1b, A4 and B3.1). Six additional reviewed row
 C1b private_dir, git_facts temp-base lookup and admit_base canonicalization, plus coverage-test
 fixture I/O, explicit panic on missing fixtures and unwraps of committed corpus fields. Each row
 records its distinct intent; no source or data pin changed. The four D6 v2 commits replay unchanged.
+
+## Rulings #9: compilation-context agreement (D6 v4)
+
+This supersedes the earlier profile.test-only description. Production means a source appears in
+an artifact of kind lib, rlib, bin, proc-macro, dylib, cdylib or staticlib with profile.test=false.
+An observation from any such artifact wins over all non-production observations. Test, example
+and bench artifacts and test-profile builds are non-production. Unknown artifact kinds refuse.
+Any production source containing a `tests` path component is refused as an ambiguous layout.
+Admitted source roots include crates/*/{src,tests,examples,benches}; examples and benches remain
+subject to the same explicit expectation ledger. The compiled/walked equality covers these roots.
+The fixture-ranker example under tests/support is non-production even with profile.test=false.
+
+Keel's Rust classifier API sources_with_evidence exports its classification and the
+exact Cargo JSON stream and target directory it consumed. The classifier_agreement Rust test
+passes those to Python: no second cargo check occurs. Python independently resolves workspace
+membership using metadata, locates the same dep-info files, applies its admission and compares
+both complete sorted sets. Cached artifact evidence from the Rust consumer is accepted for this
+comparison only; the production Python discovery still requires its own fresh target. This is
+same-build agreement, not a claim that two implementations independently returning the same wrong
+answer prove correctness. The kind matrix, compiled layout cases and planted example-as-production
+divergence independently exercise the rule. A divergence or either side's refusal fails agreement.
+
+The C1c stack's ledger delta removes staged dead_code, adds the reviewed production door and
+integration-test expectations, replaces the embedded verdict schema v0 pin with reviewed v1 JSON,
+and updates the producer-policy schema pin. Starter policy bytes are unchanged. The agreement
+test adds one test I/O exception. None of these changes bless a golden or waive C1c boundary findings.
