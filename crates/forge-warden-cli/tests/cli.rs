@@ -124,6 +124,35 @@ fn over_budget_input_is_invalid_input_not_an_io_error() {
 }
 
 #[test]
+fn text_output_lists_every_note() {
+    // A HOLD caused only by notes must say why in the human summary too, not just in --json.
+    let rank = serde_json::json!({
+        "schema": "deep-diff-forge.rank.v0",
+        "input_sha256": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+        "tool": {"name": "deep-diff-forge", "version": "0.7.0"},
+        "ranked": [
+            {"path": "docs/a.md", "status": "unknown", "score": 0, "signals": []},
+            {"path": "docs/b.md", "status": "modified", "score": 0, "signals": ["future_signal"]}
+        ]
+    });
+    let out = run(
+        &["check", "--policy", POLICY, "--today", TODAY],
+        &serde_json::to_vec(&rank).unwrap(),
+    );
+    assert_eq!(out.code, 8, "{}", out.stderr);
+    assert!(
+        out.stdout.contains("[NOTE] unknown_status docs/a.md:"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("[NOTE] unknown_signal docs/b.md:"),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn usage_errors_exit_2_and_io_errors_exit_3() {
     assert_eq!(run(&["check"], b"").code, 2);
     assert_eq!(

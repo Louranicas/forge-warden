@@ -5,7 +5,7 @@
 //! terminal-escape injection and Trojan-Source bidi reordering impossible by construction, at the
 //! cost of escaping legitimate non-ASCII paths (the JSON output keeps them exact).
 
-use crate::verdict::{RuleOutcome, Verdict};
+use crate::verdict::{Note, RuleOutcome, Verdict};
 use std::fmt::Write as _;
 
 /// `text` with every character outside printable ASCII (0x20..=0x7e) escaped as `\u{XXXX}`, and
@@ -35,7 +35,6 @@ pub fn render_text(verdict: &Verdict) -> String {
         "forge-warden {}: {label} (exit {} {}, next: {})",
         verdict.tool.version, verdict.exit.code, verdict.exit.name, verdict.exit.action
     );
-    let short = |seal: &str| seal.get(..12).unwrap_or(seal).to_owned();
     let _ = writeln!(
         out,
         "  patch {} ({}), policy {}, ranked by deep-diff-forge {}, on {}",
@@ -75,6 +74,7 @@ pub fn render_text(verdict: &Verdict) -> String {
                 .path
                 .as_deref()
                 .map_or_else(|| "(whole change)".to_owned(), terminal_safe);
+            // display only: an unwaived violation carries no waiver annotation
             let waived = v
                 .waived_by
                 .map(|i| format!(" [waived by waiver[{i}]]"))
@@ -113,7 +113,19 @@ pub fn render_text(verdict: &Verdict) -> String {
             terminal_safe(&w.rule)
         );
     }
-    for n in &verdict.notes {
+    render_notes(&mut out, &verdict.notes);
+    out
+}
+
+/// The first 12 characters of a seal, for a one-line summary.
+fn short(seal: &str) -> String {
+    // fails safe: a seal shorter than 12 characters is shown whole, never hidden
+    seal.get(..12).unwrap_or(seal).to_owned()
+}
+
+fn render_notes(out: &mut String, notes: &[Note]) {
+    for n in notes {
+        // display only: a change-wide note has no path to show
         let path = n
             .path
             .as_deref()
@@ -126,7 +138,6 @@ pub fn render_text(verdict: &Verdict) -> String {
             terminal_safe(&n.detail)
         );
     }
-    out
 }
 
 #[cfg(test)]

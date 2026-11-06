@@ -165,6 +165,7 @@ fn build_check(
             let signals = required(location, "signals", raw.signals.as_ref(), issues)?;
             for signal in signals {
                 if !is_known_signal(signal) {
+                    // display only: no hint when nothing is close; the signal is refused either way
                     let hint = suggest_signal(signal)
                         .map(|s| format!(" (did you mean {s:?}?)"))
                         .unwrap_or_default();

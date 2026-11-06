@@ -99,6 +99,224 @@ fn only_doors_rs_opens_doors_in_production_code() {
     }
 }
 
+/// The part of a source file before its unit tests.
+fn production_part(text: &str) -> &str {
+    text.find("#[cfg(test)]")
+        .map_or(text, |end| text.get(..end).unwrap_or(text))
+}
+
+#[test]
+fn defaults_say_which_way_they_fail() {
+    // G-04: `.unwrap_or(Outcome::Pass)` decided a verdict silently. A default is a decision about
+    // which way a missing value fails, so every one in production code is marked, one marker per
+    // default, at most six lines above it.
+    const MARKERS: [&str; 3] = ["// fails closed:", "// fails safe:", "// display only:"];
+    for (path, text) in rust_sources() {
+        if path.contains("/tests/") {
+            continue;
+        }
+        let lines: Vec<&str> = production_part(&text).lines().collect();
+        let mut defaults = 0_usize;
+        let mut markers = 0_usize;
+        for (index, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if MARKERS.iter().any(|m| trimmed.starts_with(m)) {
+                markers = markers.saturating_add(1);
+                continue;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            let calls = line.matches("unwrap_or").count();
+            if calls == 0 {
+                continue;
+            }
+            defaults = defaults.saturating_add(calls);
+            let window = lines
+                .get(index.saturating_sub(6)..index)
+                .unwrap_or_default();
+            assert!(
+                window
+                    .iter()
+                    .any(|l| MARKERS.iter().any(|m| l.trim_start().starts_with(m))),
+                "{path}:{}: say which way this default fails: a `// fails closed: …`, `// fails safe: …` or `// display only: …` line just above it",
+                index.saturating_add(1)
+            );
+        }
+        assert_eq!(
+            markers, defaults,
+            "{path}: {markers} default marker(s) for {defaults} default(s); each default gets its own"
+        );
+    }
+}
+
+#[test]
+fn the_core_imports_no_effect_module() {
+    // G-05: `use std::{fs}; fs::metadata(p)` contains no `std::fs` text. Read the `use` trees.
+    const EFFECTS: [&str; 5] = ["fs", "process", "net", "env", "thread"];
+    for (path, text) in rust_sources() {
+        if !path.contains("forge-warden-core/src") {
+            continue;
+        }
+        let compact: String = production_part(&text)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for (start, _) in compact.match_indices("usestd::") {
+            let tree = compact
+                .get(start..)
+                .and_then(|rest| rest.split(';').next())
+                .unwrap_or_default();
+            for effect in EFFECTS {
+                let named = [
+                    format!("::{effect}"),
+                    format!("{{{effect},"),
+                    format!("{{{effect}}}"),
+                    format!(",{effect},"),
+                    format!(",{effect}}}"),
+                ];
+                assert!(
+                    !named.iter().any(|n| tree.contains(n.as_str())),
+                    "{path}: `{tree}` imports std::{effect}; the core does no I/O (ADR 0001)"
+                );
+            }
+        }
+    }
+}
+
+/// Every dependency a manifest declares, as `(table, crate)`, in every form Cargo accepts: the
+/// `[dependencies]` table and its `[dependencies.<name>]` sub-tables (one TOML table either way),
+/// dev and build dependencies (and their `_` spellings), `[target.<cfg>.*]` tables, and renames
+/// (`alias = { package = "<crate>" }` is the crate `<crate>`).
+fn declared_dependencies(manifest: &str) -> Result<Vec<(String, String)>, String> {
+    const KINDS: [&str; 5] = [
+        "dependencies",
+        "dev-dependencies",
+        "dev_dependencies",
+        "build-dependencies",
+        "build_dependencies",
+    ];
+    fn collect(out: &mut Vec<(String, String)>, table: &str, deps: &toml::Value) {
+        for (key, spec) in deps.as_table().into_iter().flatten() {
+            let package = spec.get("package").and_then(toml::Value::as_str);
+            out.push((table.to_owned(), package.unwrap_or(key).to_owned()));
+        }
+    }
+    let doc: toml::Table = toml::from_str(manifest).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for kind in KINDS {
+        if let Some(deps) = doc.get(kind) {
+            collect(&mut out, kind, deps);
+        }
+    }
+    let targets = doc.get("target").and_then(toml::Value::as_table);
+    for (cfg, target) in targets.into_iter().flatten() {
+        for kind in KINDS {
+            if let Some(deps) = target.get(kind) {
+                collect(&mut out, &format!("target.{cfg}.{kind}"), deps);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The dependencies of a core manifest that are not on the core's allow-list. A manifest that is
+/// not valid TOML is itself a violation (fails closed).
+fn core_dependency_violations(manifest: &str) -> Vec<String> {
+    const ALLOWED: [&str; 6] = [
+        "globset",
+        "serde",
+        "serde_json",
+        "sha2",
+        "thiserror",
+        "toml",
+    ];
+    const ALLOWED_DEV: [&str; 1] = ["proptest"];
+    let declared = match declared_dependencies(manifest) {
+        Ok(declared) => declared,
+        Err(error) => return vec![format!("the manifest is not valid TOML: {error}")],
+    };
+    declared
+        .into_iter()
+        .filter(|(table, name)| match table.as_str() {
+            "dependencies" => !ALLOWED.contains(&name.as_str()),
+            "dev-dependencies" => !ALLOWED_DEV.contains(&name.as_str()),
+            _ => true,
+        })
+        .map(|(table, name)| format!("{table}: {name}"))
+        .collect()
+}
+
+#[test]
+fn the_core_depends_only_on_its_allow_list() {
+    // G-21: a new dependency in the core is a reviewed decision, not a line in Cargo.toml.
+    let manifest = read("crates/forge-warden-core/Cargo.toml");
+    assert_eq!(
+        core_dependency_violations(&manifest),
+        Vec::<String>::new(),
+        "crates/forge-warden-core/Cargo.toml: not on the core's allow-list (adding one is a reviewed change to repo_invariants.rs)"
+    );
+}
+
+#[test]
+fn the_dependency_scan_reads_every_cargo_form() {
+    // Touchstone B6-VERDICT 7192058f: `[dependencies.memchr]` passed a scan that read only the
+    // `[dependencies]` header. Each form below adds memchr; each must be reported.
+    let base = "[package]\nname = \"x\"\n\n[dependencies]\nserde.workspace = true\n\n[dev-dependencies]\nproptest.workspace = true\n";
+    assert_eq!(core_dependency_violations(base), Vec::<String>::new());
+    let forms = [
+        (
+            "[dependencies.memchr] table",
+            "\n[dependencies.memchr]\nversion = \"2\"\n",
+        ),
+        (
+            "target cfg",
+            "\n[target.'cfg(unix)'.dependencies]\nmemchr = \"2\"\n",
+        ),
+        ("build", "\n[build-dependencies]\nmemchr = \"2\"\n"),
+        (
+            "underscore build",
+            "\n[build_dependencies]\nmemchr = \"2\"\n",
+        ),
+        (
+            "[dev-dependencies.memchr] table",
+            "\n[dev-dependencies.memchr]\nversion = \"2\"\n",
+        ),
+        (
+            "target triple dev",
+            "\n[target.x86_64-unknown-linux-gnu.dev-dependencies]\nmemchr = \"2\"\n",
+        ),
+    ];
+    for (form, extra) in forms {
+        let found = core_dependency_violations(&format!("{base}{extra}"));
+        assert!(
+            found.iter().any(|v| v.ends_with(": memchr")),
+            "{form}: {found:?}"
+        );
+    }
+    let renamed = base.replace(
+        "serde.workspace = true",
+        "serde = { package = \"memchr\", version = \"2\" }",
+    );
+    assert_eq!(
+        core_dependency_violations(&renamed),
+        ["dependencies: memchr"]
+    );
+    let one_line = base.replace(
+        "[dependencies]\nserde.workspace = true",
+        "[dependencies]\nserde.workspace = true\nmemchr = \"2\"",
+    );
+    assert_eq!(
+        core_dependency_violations(&one_line),
+        ["dependencies: memchr"]
+    );
+    assert_eq!(
+        core_dependency_violations("not = [toml").len(),
+        1,
+        "unparseable is refused"
+    );
+}
+
 #[test]
 fn exit_statuses_come_from_the_registry() {
     // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door in `doors.rs`

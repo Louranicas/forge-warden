@@ -202,6 +202,7 @@ impl Verdict {
     /// cannot fail, so this does not return a `Result`.
     #[must_use]
     pub fn to_json(&self) -> String {
+        // fails closed: the fallback document has no `verdict` member, so no consumer can read it as a pass
         let mut text = serde_json::to_string_pretty(self).unwrap_or_else(|e| {
             // Unreachable in practice: every field is a string, number, bool or list of them.
             format!(

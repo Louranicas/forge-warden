@@ -39,7 +39,8 @@ fn read_within(
     what: &str,
     budget: usize,
 ) -> Result<Vec<u8>, DoorError> {
-    let limit = u64::try_from(budget).unwrap_or(u64::MAX).saturating_add(1);
+    // fails closed: a budget that does not fit in u64 reads at most one byte, so any input is refused
+    let limit = u64::try_from(budget).unwrap_or(0).saturating_add(1);
     let mut bytes = Vec::new();
     reader
         .by_ref()

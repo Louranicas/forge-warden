@@ -32,15 +32,18 @@ pub fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> V
         .collect();
 
     let (expired, unused) = classify_waivers(&policy.waivers, today, &used_waivers);
-    let notes = notes_for(rank);
+    let notes = notes_for(policy, rank);
 
     let verdict = rules
         .iter()
         .map(|r| r.outcome.overall())
         .chain(notes.iter().map(|_| Outcome::Hold))
         .chain(expired.iter().map(|_| Outcome::Fail))
-        .max()
-        .unwrap_or(Outcome::Pass);
+        .max();
+    // Every policy that parses has a rule, so `max` has a value; a library caller that builds an
+    // empty `Policy` gets the `empty_policy` note above, so this default is never what decides.
+    // fails closed: with nothing to judge the verdict holds, never passes (ADR 0003)
+    let verdict = verdict.unwrap_or(Outcome::Hold);
     let entry = verdict.exit_entry();
     let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
     let summary = Summary {
@@ -165,6 +168,7 @@ fn find_violations(check: &Check, files: &[RankedFile]) -> Vec<Violation> {
         }
         Check::MaxFiles { limit, scope } => {
             let count = files.iter().filter(|f| scope.contains(&f.path)).count();
+            // fails closed: an uncountable file count is treated as over every budget
             let count = u64::try_from(count).unwrap_or(u64::MAX);
             over_budget(count, *limit, |count| {
                 format!("{count} files in scope changed; the limit is {limit}")
@@ -270,8 +274,16 @@ fn classify_waivers(
     (expired, unused)
 }
 
-fn notes_for(rank: &RankDoc) -> Vec<Note> {
+fn notes_for(policy: &Policy, rank: &RankDoc) -> Vec<Note> {
     let mut notes = Vec::new();
+    if policy.rules.is_empty() {
+        notes.push(Note {
+            code: "empty_policy",
+            path: None,
+            detail: "the policy has no rules; nothing was judged, so nothing passes by default"
+                .to_owned(),
+        });
+    }
     if rank.files.is_empty() {
         notes.push(Note {
             code: "empty_ranking",

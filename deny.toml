@@ -29,6 +29,11 @@ deny = [
   { name = "tokio" },
   { name = "reqwest" },
   { name = "openssl" },
+  # Seeded or non-portable hashers make output order depend on the run (G-07). hashbrown and
+  # foldhash are present inside indexmap (insertion-ordered); they are not reachable as a hasher.
+  { name = "ahash" },
+  { name = "fxhash" },
+  { name = "rustc-hash" },
 ]
 
 [sources]
