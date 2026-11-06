@@ -28,6 +28,13 @@ def main():
         missed = Path(directory) / 'mutants.out/missed.txt'
         if missed.exists():
             print('MISSED_NAMES:', missed.read_text(), end='')
+        caught = Path(directory) / 'mutants.out/caught.txt'
+        if caught.exists():
+            print('CAUGHT_NAMES:', caught.read_text(), end='')
+        if counts['total_mutants'] and not counts['missed']:
+            for log in sorted((Path(directory) / 'mutants.out/log').glob('*.log')):
+                print('UNEXPECTED_CAUGHT_LOG:', log.name)
+                print(log.read_text(errors='replace')[-5000:])
         if result.returncode == 0 and not any(counts[k] for k in ('missed', 'unviable', 'timeout')):
             return 0
         if result.returncode == 2 and counts['missed'] > 0 and counts['unviable'] == counts['timeout'] == 0:
