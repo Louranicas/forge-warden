@@ -24,7 +24,7 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = rank.files.first().unwrap();\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = rank.files().first().unwrap();\n    let mut used_waivers = BTreeSet::new();"
     },
     {
       "id": "string-slice",
@@ -53,8 +53,8 @@
         "--locked",
         "--offline"
       ],
-      "old": "sum.saturating_add(u64::from(f.score))",
-      "new": "sum + u64::from(f.score)"
+      "old": "sum.saturating_add(u64::from(f.score()))",
+      "new": "sum + u64::from(f.score())"
     },
     {
       "id": "core-read",
@@ -246,39 +246,176 @@
       ],
       "old": "[dependencies]\n",
       "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n"
+    },
+    {
+      "id": "unreviewed-default",
+      "guardrail": "G-04",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "defaults_say_which_way_they_fail.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "defaults_say_which_way_they_fail",
+        "--locked",
+        "--offline"
+      ],
+      "old": "            // fails closed: an uncountable file count is treated as over every budget\n",
+      "new": ""
+    },
+    {
+      "id": "effect-outside-door",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "fn main() -> ExitCode {",
+      "new": "fn main() -> ExitCode {\n    let _planted_effect = std::fs::read(\".\");"
+    },
+    {
+      "id": "unknown-signal-pass",
+      "guardrail": "G-08",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "unknowns_cannot_pass_an_otherwise_passing_scope.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "adversarial",
+        "unknowns_cannot_pass_an_otherwise_passing_scope",
+        "--locked",
+        "--offline"
+      ],
+      "old": "file.signals().iter().filter(|s| !is_known_signal(s))",
+      "new": "file.signals().iter().filter(|s| !is_known_signal(s) && s.is_empty())"
+    },
+    {
+      "id": "noncanonical-dotdot",
+      "guardrail": "G-10",
+      "path": "crates/forge-warden-core/src/path.rs",
+      "diagnostic": "every_non_canonical_spelling_is_refused_with_its_reason.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "every_non_canonical_spelling_is_refused_with_its_reason",
+        "--locked",
+        "--offline"
+      ],
+      "old": "segment == \"..\"",
+      "new": "segment == \"...\""
+    },
+    {
+      "id": "duplicate-path-pass",
+      "guardrail": "G-11",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "duplicate_ranked_paths_hold.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "adversarial",
+        "duplicate_ranked_paths_hold",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    for path in duplicated {",
+      "new": "    for path in duplicated.into_iter().take(0) {"
+    },
+    {
+      "id": "expanded-core-dependency",
+      "guardrail": "G-21",
+      "path": "crates/forge-warden-core/Cargo.toml",
+      "diagnostic": "the_core_depends_only_on_its_allow_list.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "the_core_depends_only_on_its_allow_list",
+        "--offline"
+      ],
+      "append": "\n[dependencies.memchr]\nversion = \"2\"\n"
+    },
+    {
+      "id": "rank-schema-drift",
+      "guardrail": "G-22",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "reads_a_real_shape_and_ignores_additive_members.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "reads_a_real_shape_and_ignores_additive_members",
+        "--locked",
+        "--offline"
+      ],
+      "old": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v0\";",
+      "new": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v1\";"
+    },
+    {
+      "id": "dead-private-function",
+      "guardrail": "G-28",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "function `planted_dead_code` is never used",
+      "cargo": [
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "append": "\nfn planted_dead_code() {}\n"
+    },
+    {
+      "id": "rank-budget-off-by-one",
+      "guardrail": "G-44",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "the_budget_is_64_mib_and_one_byte_more_is_refused_unparsed.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "the_budget_is_64_mib_and_one_byte_more_is_refused_unparsed",
+        "--locked",
+        "--offline"
+      ],
+      "old": "if bytes.len() > crate::MAX_INPUT_BYTES {",
+      "new": "if bytes.len() > crate::MAX_INPUT_BYTES.saturating_add(1) {"
+    },
+    {
+      "id": "serde-additive-refusal",
+      "guardrail": "G-50",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "reads_a_real_shape_and_ignores_additive_members.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "reads_a_real_shape_and_ignores_additive_members",
+        "--locked",
+        "--offline"
+      ],
+      "old": "#[derive(Deserialize)]\nstruct RawFile {",
+      "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {"
     }
   ],
   "pending_guardrails": [
-    {
-      "id": "G-04",
-      "title": "Silent default that hides failure (`unwrap_or(Pass)`)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-06",
-      "title": "New effect outside `doors.rs`, or a door with no bound",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-08",
-      "title": "Unknown vocabulary loosens a verdict",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-10",
-      "title": "Non-canonical paths (R-06)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-11",
-      "title": "Duplicate rank paths; blank producer version",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
     {
       "id": "G-12",
       "title": "Unvalidated construction through the library (R-19)",
@@ -322,18 +459,6 @@
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
     {
-      "id": "G-21",
-      "title": "Dependency creep",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-22",
-      "title": "Schema drift",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-25",
       "title": "Nondeterministic output",
       "status": "PENDING",
@@ -342,12 +467,6 @@
     {
       "id": "G-26",
       "title": "Terminal-escape or bidi injection",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-28",
-      "title": "Dead code or dead public API",
       "status": "PENDING",
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
@@ -430,12 +549,6 @@
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },
     {
-      "id": "G-44",
-      "title": "Unbounded read, or over-budget input accepted",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-45",
       "title": "Test that checks self-agreement",
       "status": "PENDING",
@@ -450,12 +563,6 @@
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-50",
-      "title": "Serde tolerance drift",
       "status": "PENDING",
       "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
     },

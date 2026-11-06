@@ -1,4 +1,4 @@
-# Named guardrail plants (WP-A4, first batch)
+# Named guardrail plants (WP-A4, second batch)
 
 Run from a neutral directory. The runner creates one disposable `git clone --no-local`, checks out
 an exact commit, and applies each plant only there. It never writes the source repository or hub.
@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This first batch implements 15 named plants. The remaining 36 register rows are explicitly PENDING
+This second batch implements 25 named plants. The remaining 26 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, default markers and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -43,6 +43,14 @@ implemented missing-row direction; it does not claim an extra-row drift check ex
 The named lint diagnostics may use underscores in Clippy help anchors or hyphens in compiler
 command-line notes. Regexes admit both spellings while still requiring the named lint. The direct
 Rust plants test current enforcement, not future stronger controls proposed in the register.
-No mutation-quality count is produced by this first batch. Every future mutation recipe must use
+No mutation-quality count is produced by this harness. Every future mutation recipe must use
 `env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true` with actual gate workspace scope
 (no `--test-workspace`), and retain the exact source diff and outcome totals.
+
+Second-batch additions cover reviewed default markers, effects outside the door, unknown-signal
+fail-closed behavior, canonical path admission, the duplicate-path HOLD floor, expanded Cargo
+dependency tables, ranking schema drift, private dead code, the rank input byte boundary and
+Serde additive-member tolerance. These are named counterexamples, not exhaustive guardrail proofs.
+The expanded-dependency recipe deliberately omits --locked so Cargo can update its private clone's
+lock for an already cached transitive dependency; the manifest and lock bytes are both restored.
+The normal gate still uses --locked. Two existing recipes now use B2's validated getters.
