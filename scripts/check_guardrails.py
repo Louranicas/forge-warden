@@ -102,7 +102,7 @@ def check_expectations(root):
     for row in ledger["expectation"]:
         require(set(row) == {"file", "lint", "source_reason", "review_reason"}, "unknown expectation ledger field")
         require(all(isinstance(value, str) for value in row.values()), "ledger fields must be strings")
-        require(len(row["review_reason"].strip()) >= 20, "expectation review reason must have at least20 characters")
+        require(len(row["review_reason"].strip()) >= 20, "expectation review reason must have at least 20 characters")
         expected[(row["file"], row["lint"], row["source_reason"])] += 1
     actual = source_expectations(root)
     require(actual == expected, f"expectation ledger drift: unlisted={list((actual-expected).elements())}; stale={list((expected-actual).elements())}")

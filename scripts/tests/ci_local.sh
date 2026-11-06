@@ -4,7 +4,7 @@ set -euo pipefail
 source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/target"
+mkdir -p "$sandbox/bin" "$sandbox/repo/scripts"
 cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"
@@ -41,9 +41,11 @@ for tool in cargo-deny cargo-mutants zizmor; do
  printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/$tool"
 done
 chmod +x "$sandbox/bin/"* "$sandbox/repo/scripts/ci_local.sh"
-export PATH="$sandbox/bin:$PATH" TEST_ROOT="$sandbox/repo"
+export PATH="$sandbox/bin:$PATH" TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target"
 failures=0
 for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
+ # Each entrypoint starts with no local artifact directory and an external Cargo target.
+ if [ -d "$TEST_ROOT/target" ]; then mv "$TEST_ROOT/target" "$sandbox/previous-artifacts"; fi
  for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 9' 'gate-error 6 0 0 6'; do
   read -r name GATE_EXIT RANK_EXIT JUDGE_EXIT expected <<< "$row"
   export GATE_EXIT RANK_EXIT JUDGE_EXIT

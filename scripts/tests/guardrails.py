@@ -123,7 +123,7 @@ class Guardrails(unittest.TestCase):
         start = text.index('review_reason = ')
         end = text.index('\n', start)
         path.write_text(text[:start] + 'review_reason = "ok"' + text[end:])
-        with self.assertRaisesRegex(ValueError, "at least20"):
+        with self.assertRaisesRegex(ValueError, "at least 20"):
             checks.check_expectations(self.root)
 
     def test_lexer_ignores_comments_and_strings(self):

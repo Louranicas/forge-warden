@@ -16,18 +16,18 @@ comparison rejects missing/weaker entries or changed priorities, and rejects new
 exceptions outside that reviewed floor. Existing named allow exceptions remain explicit in the
 floor. Every member manifest must inherit workspace lints. The floor is itself protected: changing
 the floor together with Cargo.toml is an owner-reviewed policy change, not an automatic proof that
-a weakening is safe. CI must run the trusted enforcement path under ADR0006's external authority.
+a weakening is safe. CI must run the trusted enforcement path under ADR 0006's external authority.
 
 `lint-expectations.toml` lists every (file, lint, exact source_reason) with multiplicity, plus a
-review_reason of at least20 non-whitespace-trimmed characters. An attribute-aware scanner skips
+review_reason of at least 20 non-whitespace-trimmed characters. An attribute-aware scanner skips
 nested comments, quoted/raw strings and character literals, tracks balanced attribute brackets,
 and inspects multiline and conditional expect/allow forms. Unknown expectation syntax, empty
 reasons, any allow attribute, unlisted expectations and stale ledger entries fail. It is a lexical
 admission scanner, not a Rust parser or proof of lint semantics; compiler/clippy remain required.
 
-Some existing named-door source reasons are shorter than20 characters (for example `door: emit`).
+Some existing named-door source reasons are shorter than 20 characters (for example `door: emit`).
 Their exact bytes remain pinned, with longer review explanations in this ledger, avoiding concurrent
-changes to C1-owned doors.rs. This does **not** claim that every source comment itself meets20 chars.
+changes to C1-owned doors.rs. This does **not** claim that every source comment itself meets 20 chars.
 A newly added short expectation still fails unless explicitly added to the protected ledger with a
 review explanation. Review of such a ledger change remains the owner's responsibility.
 
@@ -37,7 +37,7 @@ manifest and affected representations in one reviewed diff; update the expectati
 for reviewed source changes. Candidate-controlled simultaneous edits to checker and floor cannot
 establish authority; external trusted checks and ownership remain necessary.
 
-Rung4 CI invariants carry equality/floor/ledger obligations; runtime glob and attribute parsing are
+Rung 4 CI invariants carry equality/floor/ledger obligations; runtime glob and attribute parsing are
 admission. Types cannot express equality across TOML, JSON, CODEOWNERS and source files. Tests plant
 independent policy/owner/settings/guard drift, table-form lint relaxation, inherited-lint removal,
 unlisted/stale/empty expectations and multiline conditional allow. A second set of plants disables

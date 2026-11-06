@@ -83,7 +83,7 @@ class Guard(unittest.TestCase):
         self.run_guard(self.tool("Write", file_path="Cargo.toml", content='[workspace.lints.clippy.unwrap_used]\nlevel = "deny"\n'))
         self.run_guard(self.tool("Write", file_path="crates/core/Cargo.toml", content='[package]\nname="core"\n'))
 
-    def test_existing_named_lint_exceptions_can_remain(self):
+    def test_owner_protected_manifest_refuses_even_unchanged_content(self):
         content = '[workspace.lints.clippy]\nmultiple_crate_versions = "allow"\nunwrap_used = "deny"\n'
         (self.root / "Cargo.toml").write_text(content)
         self.run_guard(self.tool("Write", file_path="Cargo.toml", content=content))

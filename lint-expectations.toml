@@ -113,3 +113,9 @@ file = "crates/forge-warden-core/tests/eval.rs"
 lint = "clippy::arithmetic_side_effects"
 source_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
 review_reason = "test helpers outside #[test] fns: a panic here is a failed test, which is the point"
+
+[[expectation]]
+file = "crates/forge-warden-core/src/nonempty.rs"
+lint = "clippy::len_without_is_empty"
+source_reason = "a NonEmpty is never empty; an is_empty that always says false would be noise"
+review_reason = "B2's private NonEmpty guarantees at least one value, so an is_empty query conveys no additional state."
