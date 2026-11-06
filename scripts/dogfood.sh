@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # forge-warden trusted-dogfood-driver v1
 # Run from a clean trusted base checkout. The candidate is Git data, never executable code.
-# Usage: dogfood.sh <base-sha> <head-sha> <candidate-checkout> <new-evidence-directory>
+# Usage: dogfood.sh <base-sha> <head-sha> <candidate-checkout> <new-evidence-directory> [ack.json ack.sig]
 set -euo pipefail
+if [ "$#" -ne 4 ] && [ "$#" -ne 6 ]; then
+  echo "dogfood: expected four arguments, optionally followed by signed acknowledgement and signature" >&2
+  exit 2
+fi
 base="${1:?base sha}"
 head="${2:?head sha}"
 candidate="${3:?candidate checkout}"
@@ -53,10 +57,19 @@ cargo install --git https://github.com/Louranicas/deep-diff-forge --rev "$ddf_re
 printf 'base=%s\nhead=%s\nddf_rev=%s\n' "$base" "$head" "$ddf_rev" > "$out/provenance.txt"
 sha256sum "$out/target/release/forge-warden" "$out/ranker/bin/deep-diff-forge" \
   "$out/change.patch" "$out/policy.toml" "$out/rank.json" >> "$out/provenance.txt"
-# No bare label can discharge a HOLD. WP-D2 may introduce a subject-bound attestation.
+# Preserve the raw verdict; a signed acknowledgement is a separate admission decision.
 set +e
 "$out/target/release/forge-warden" check --policy "$out/policy.toml" \
   --rank "$out/rank.json" --patch "$out/change.patch" --json > "$out/verdict.json"
 code=$?
 set -e
+if [ "$code" -eq 8 ] && [ "$#" -eq 6 ]; then
+  # Key lookup is inside this trusted checkout; receipt data never chooses a key path.
+  if python3 -I "$trusted/scripts/hold_ack.py" verify --base "$base" --head "$head" \
+      --verdict "$out/verdict.json" --ack "$5" --signature "$6" > "$out/acknowledgement.json"; then
+    echo 'dogfood: signed HOLD acknowledgement accepted; raw verdict remains HOLD'
+    exit 0
+  fi
+  echo 'dogfood: HOLD acknowledgement refused' >&2
+fi
 exit "$code"
