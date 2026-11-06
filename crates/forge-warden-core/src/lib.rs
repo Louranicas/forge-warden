@@ -22,6 +22,7 @@
 //!
 //! [deep-diff-forge]: https://github.com/Louranicas/deep-diff-forge
 
+pub mod authority;
 pub mod date;
 pub mod eval;
 pub mod exit;
