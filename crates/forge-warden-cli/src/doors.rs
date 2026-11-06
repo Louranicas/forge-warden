@@ -144,7 +144,7 @@ pub(crate) mod child {
     const O_NOFOLLOW: i32 = 0o400_000;
 
     /// The largest executable forge-warden will pin (hash) before running it.
-    const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
+    pub(super) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
 
     /// How often the parent checks a running child for exit, overflow or timeout.
     const POLL: std::time::Duration = std::time::Duration::from_millis(5);
@@ -210,12 +210,18 @@ pub(crate) mod child {
     /// by this process's user and writable by neither group nor others, and hash its bytes through
     /// that descriptor. Linux only: elsewhere authority mode is refused, never weakened.
     #[cfg(target_os = "linux")]
+    pub(crate) fn pin_executable(path: &Path) -> Result<PinnedExecutable, DoorError> {
+        pin_within(path, MAX_EXECUTABLE_BYTES)
+    }
+
+    /// [`pin_executable`] with an explicit byte budget.
+    #[cfg(target_os = "linux")]
     #[expect(
         clippy::disallowed_methods,
         clippy::disallowed_types,
         reason = "door: pin_executable"
     )]
-    pub(crate) fn pin_executable(path: &Path) -> Result<PinnedExecutable, DoorError> {
+    pub(super) fn pin_within(path: &Path, budget: usize) -> Result<PinnedExecutable, DoorError> {
         use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
         let what = format!("pinning {}", path.display());
         let mut file = std::fs::OpenOptions::new()
@@ -240,7 +246,7 @@ pub(crate) mod child {
         if meta.mode() & 0o022 != 0 {
             return Err(refuse("writable by group or others"));
         }
-        let bytes = read_within(&mut file, &what, MAX_EXECUTABLE_BYTES)?;
+        let bytes = read_within(&mut file, &what, budget)?;
         Ok(PinnedExecutable {
             file,
             sha256: forge_warden_core::seal::sha256_hex(&bytes),
@@ -287,6 +293,7 @@ pub(crate) mod child {
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
             kill_group(group);
+            let _killed = child.kill();
             let _reaped = child.wait();
             return Err(ChildFailure::Io("a child pipe was not created".to_owned()));
         };
@@ -314,6 +321,8 @@ pub(crate) mod child {
         let ended = wait_bounded(&mut child, &out_over, &err_over, started, spec.timeout);
         // Whatever happened, nothing in the child's group outlives this call.
         kill_group(group);
+        // If the group kill failed, the direct child still dies here, so `wait` cannot hang.
+        let _killed = child.kill();
         let _reaped = child.wait();
         let remaining = spec
             .timeout
@@ -409,7 +418,10 @@ pub(crate) mod child {
     reason = "tests build fixtures and inspect processes; a panic is a failed test"
 )]
 mod child_tests {
-    use super::child::{ChildFailure, ChildSpec, Program, pin_executable, run_child};
+    use super::child::{
+        ChildFailure, ChildSpec, MAX_EXECUTABLE_BYTES, Program, pin_executable, pin_within,
+        run_child,
+    };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -536,6 +548,23 @@ mod child_tests {
             run_child(&spec(Program::Absolute(Path::new("sh")), &[], b"")),
             Err(ChildFailure::Spawn(_))
         ));
+    }
+
+    #[test]
+    fn the_pin_budget_is_512_mib_and_an_executable_over_it_is_refused_as_input() {
+        assert_eq!(MAX_EXECUTABLE_BYTES, 536_870_912);
+        let refused = pin_within(Path::new("/usr/bin/true"), 16).unwrap_err();
+        assert!(refused.over_budget, "{}", refused.message);
+        assert!(pin_within(Path::new("/usr/bin/true"), MAX_EXECUTABLE_BYTES).is_ok());
+    }
+
+    #[test]
+    fn a_root_owned_system_binary_can_be_pinned_and_run() {
+        let pinned = pin_executable(Path::new("/usr/bin/true")).unwrap();
+        assert_eq!(
+            run_child(&spec(Program::Pinned(&pinned), &[], b"")).map(|o| o.stdout),
+            Ok(Vec::new())
+        );
     }
 
     #[test]
