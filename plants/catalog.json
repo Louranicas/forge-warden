@@ -518,7 +518,8 @@
         "-I",
         "plants/mutation_survivor.py"
       ],
-      "append": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n"
+      "old": "#[cfg(test)]\nmod tests {",
+      "new": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n\n#[cfg(test)]\nmod tests {"
     },
     {
       "id": "enum-wildcard",
