@@ -88,6 +88,12 @@ fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() 
             "clippy::disallowed_methods",
         ])
         .current_dir(&dir)
+        // Hermetic: an inherited `--cap-lints` (cargo-mutants sets RUSTFLAGS=--cap-lints=allow)
+        // silences every lint, which is the boundary this rule does not claim; the regression
+        // measures clippy and clippy.toml, not the caller's flags.
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("CARGO_BUILD_RUSTFLAGS")
         .env("CLIPPY_CONF_DIR", root())
         .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
