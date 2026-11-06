@@ -90,6 +90,34 @@ fn an_empty_policy_holds_with_a_note_instead_of_passing() {
 }
 
 #[test]
+fn the_text_summary_shows_outcome_seals_evidence_and_notes() {
+    // The core owns the human summary; these facts are pinned here, not only by CLI tests (the
+    // repo's mutation gate judges a core mutant by core tests alone).
+    let mut lib = file("src/lib.rs", "modified", 9, &["unsafe_added"]);
+    lib.evidence.push(Evidence {
+        signal: "unsafe_added".to_owned(),
+        address: SEAL.to_owned(),
+        side: "old".to_owned(),
+        line: 3,
+    });
+    let odd = file("docs/x.md", "unknown", 0, &[]);
+    let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib, odd]), seals(), today());
+    let text = forge_warden_core::render::render_text(&verdict);
+    let short = SEAL.get(..12).unwrap();
+    assert!(text.starts_with("forge-warden "), "{text}");
+    assert!(text.contains(": FAIL (exit 7 policy_fail"), "{text}");
+    assert!(
+        text.contains(&format!("patch {short} (as claimed)")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("at old line 3 (hunk {short})")),
+        "{text}"
+    );
+    assert!(text.contains("[NOTE] unknown_status docs/x.md:"), "{text}");
+}
+
+#[test]
 fn forbid_signal_cites_evidence_and_respects_except() {
     let mut lib = file(
         "src/lib.rs",
