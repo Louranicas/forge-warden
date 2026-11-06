@@ -412,16 +412,23 @@ pub(crate) mod child {
     /// A private, empty, 0700 directory under the system temp directory, removed on drop. Git runs
     /// with it as both `HOME` and cwd, and with its parent as `GIT_CEILING_DIRECTORIES`, so no
     /// repository above it is ever discovered (ADR 0010).
+    #[derive(Debug)]
     pub(crate) struct PrivateDir {
         path: std::path::PathBuf,
     }
 
     impl PrivateDir {
-        /// Create one, exclusively (a name that already exists is never reused).
+        /// Create one under the system temp directory, exclusively (a name that already exists is
+        /// never reused).
         #[expect(clippy::disallowed_methods, reason = "door: private_dir")]
         pub(crate) fn create() -> Result<Self, DoorError> {
+            Self::create_in(&std::env::temp_dir())
+        }
+
+        /// [`PrivateDir::create`] under `base`. Any error other than "already exists" is reported
+        /// at once, not retried.
+        pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
             use std::os::unix::fs::DirBuilderExt as _;
-            let base = std::env::temp_dir();
             for attempt in 0..64_u32 {
                 let path = base.join(format!("forge-warden-{}-{attempt}", std::process::id()));
                 match std::fs::DirBuilder::new().mode(0o700).create(&path) {
@@ -532,7 +539,7 @@ pub(crate) mod child {
     /// Wall-clock limit for one Git call.
     const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     /// Git's stderr is diagnostic only.
-    const GIT_STDERR_CAP: usize = 64 * 1024;
+    pub(super) const GIT_STDERR_CAP: usize = 64 * 1024;
 
     /// Kill every process in `group` with SIGKILL (`/usr/bin/kill -KILL -- -<group>`); no `unsafe`
     /// and no new dependency. Failure to kill is ignored here: the caller has already decided the
@@ -693,6 +700,29 @@ mod child_tests {
             git_facts(Path::new("/nonexistent/git"), tiny_patch),
             Err(GitFactsFailure::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn a_private_dir_skips_taken_names_and_reports_other_errors_at_once() {
+        use super::child::{GIT_STDERR_CAP, PrivateDir};
+        let base = std::env::temp_dir().join(format!("fw-pdbase-{}", std::process::id()));
+        let _gone = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(format!("forge-warden-{}-0", std::process::id())))
+            .unwrap();
+        let dir = PrivateDir::create_in(&base).unwrap();
+        assert!(
+            dir.path()
+                .ends_with(format!("forge-warden-{}-1", std::process::id()))
+        );
+        drop(dir);
+        let missing = PrivateDir::create_in(&base.join("no-such-dir")).unwrap_err();
+        assert!(
+            missing.message.starts_with("creating a private directory"),
+            "{}",
+            missing.message
+        );
+        let _cleaned = std::fs::remove_dir_all(&base);
+        assert_eq!(GIT_STDERR_CAP, 65_536);
     }
 
     #[test]
