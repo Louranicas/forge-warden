@@ -141,6 +141,11 @@ fn require_companion_is_satisfied_by_a_live_companion_only() {
         Outcome::Fail,
         "deleting tests is not a companion change"
     );
+    // The violation tells the author which companion the rule wanted (PathSet::patterns).
+    assert_eq!(
+        verdict.rules[0].violations[0].message,
+        "changed without a companion change matching [tests/**]"
+    );
 
     let deleting_source = rank(vec![file("src/a.rs", "deleted", 4, &["deleted_file"])]);
     assert_eq!(
