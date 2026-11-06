@@ -5,6 +5,7 @@
 //! terminal-escape injection and Trojan-Source bidi reordering impossible by construction, at the
 //! cost of escaping legitimate non-ASCII paths (the JSON output keeps them exact).
 
+use crate::defaults::NamedDefault as _;
 use crate::verdict::{Note, RuleOutcome, Verdict};
 use std::fmt::Write as _;
 
@@ -73,11 +74,11 @@ pub fn render_text(verdict: &Verdict) -> String {
                 .path
                 .as_deref()
                 .map_or_else(|| "(whole change)".to_owned(), terminal_safe);
-            // display only: an unwaived violation carries no waiver annotation
+            // An unwaived violation carries no waiver annotation.
             let waived = v
                 .waived_by
                 .map(|i| format!(" [waived by waiver[{i}]]"))
-                .unwrap_or_default();
+                .or_display(String::new());
             let _ = writeln!(
                 out,
                 "           - {path}: {}{waived}",
@@ -118,18 +119,18 @@ pub fn render_text(verdict: &Verdict) -> String {
 
 /// The first 12 characters of a seal, for a one-line summary.
 fn short(seal: &str) -> String {
-    // fails safe: a seal shorter than 12 characters is shown whole, never hidden
-    seal.get(..12).unwrap_or(seal).to_owned()
+    // A seal shorter than 12 characters is shown whole, never hidden.
+    seal.get(..12).or_fail_safe(seal).to_owned()
 }
 
 fn render_notes(out: &mut String, notes: &[Note]) {
     for n in notes {
-        // display only: a change-wide note has no path to show
+        // A change-wide note has no path to show.
         let path = n
             .path
             .as_deref()
             .map(|p| format!(" {}:", terminal_safe(p)))
-            .unwrap_or_default();
+            .or_display(String::new());
         let _ = writeln!(
             out,
             "  [NOTE] {}{path} {}",

@@ -63,7 +63,10 @@ fn today() -> Date {
 
 fn policy(rules: &str) -> forge_warden_core::Policy {
     let text = format!("schema = \"forge-warden.policy.v0\"\n{rules}");
-    parse_policy(text.as_bytes()).unwrap_or_else(|e| panic!("{e}"))
+    match parse_policy(text.as_bytes()) {
+        Ok(policy) => policy,
+        Err(e) => panic!("{e}"),
+    }
 }
 
 const NO_UNSAFE: &str = r#"
