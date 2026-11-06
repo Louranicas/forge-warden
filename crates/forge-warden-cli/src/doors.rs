@@ -793,6 +793,20 @@ mod child_tests {
             .all(|cmdline| !cmdline.contains(marker))
     }
 
+    /// Create `to` as a copy of `from` by a child process, so this test process never holds a write
+    /// descriptor on a file it later executes. With one open, another test thread's concurrent fork
+    /// inherits it until that child's exec, and executing the file fails with ETXTBSY (MEASURED: 4 in
+    /// 2000 runs of `a_pinned_executable_runs_the_hashed_bytes_after_its_path_is_swapped` on 9d57295).
+    fn copy_out_of_process(from: &str, to: &Path) {
+        let status = std::process::Command::new("/usr/bin/cp")
+            .arg("--")
+            .arg(from)
+            .arg(to)
+            .status()
+            .unwrap();
+        assert!(status.success(), "cp {from} {}", to.display());
+    }
+
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("fw-child-{}-{name}", std::process::id()));
         let _gone = std::fs::remove_dir_all(&dir);
@@ -1145,8 +1159,8 @@ mod child_tests {
     fn a_pinned_executable_runs_the_hashed_bytes_after_its_path_is_swapped() {
         let dir = scratch("swap");
         let path = dir.join("ranker");
-        std::fs::copy("/usr/bin/true", &path).unwrap();
-        std::fs::copy("/usr/bin/false", dir.join("other")).unwrap();
+        copy_out_of_process("/usr/bin/true", &path);
+        copy_out_of_process("/usr/bin/false", &dir.join("other"));
         let pinned = pin_executable(&path).unwrap();
         let expected =
             forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/true").unwrap());
@@ -1164,7 +1178,7 @@ mod child_tests {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = scratch("refuse");
         let real = dir.join("real");
-        std::fs::copy("/usr/bin/true", &real).unwrap();
+        copy_out_of_process("/usr/bin/true", &real);
         std::os::unix::fs::symlink(&real, dir.join("link")).unwrap();
         assert!(pin_executable(&dir.join("link")).is_err(), "symlink");
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o775)).unwrap();
@@ -1175,18 +1189,14 @@ mod child_tests {
             writable.message
         );
         let script = dir.join("script");
-        std::fs::write(&script, "#!/bin/sh\necho ran\n").unwrap();
+        let source = dir.join("script.src");
+        std::fs::write(&source, "#!/bin/sh\necho ran\n").unwrap();
+        copy_out_of_process(source.to_str().unwrap(), &script);
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let pinned = pin_executable(&script).unwrap();
         // The interpreter starts but cannot reopen the closed descriptor: the script never runs.
         let out = run_child(&spec(Program::Pinned(&pinned), &[], b""));
-        // The interpreter exits nonzero; if another test thread's fork still holds the script's
-        // write descriptor, exec fails with ETXTBSY instead. Either way the script never ran.
-        assert!(
-            matches!(&out, Err(ChildFailure::Exit(_)))
-                || matches!(&out, Err(ChildFailure::Spawn(why)) if why.contains("Text file busy")),
-            "{out:?}"
-        );
+        assert!(matches!(&out, Err(ChildFailure::Exit(_))), "{out:?}");
     }
 }
 
