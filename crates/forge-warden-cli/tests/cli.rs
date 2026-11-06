@@ -37,12 +37,10 @@ fn advisory(policy: &str, patch: &str, rank: &str, stdin: &[u8]) -> common::Run 
     )
 }
 
-/// The golden form of a verdict: what depends on the build or the machine (the fixture ranker's
-/// hash, so the policy that admits it, and the Git version) is replaced by a placeholder.
+/// The golden form of a verdict: the Git version, which depends on the machine, is a placeholder.
+/// Every input seal stays real, so it can be checked with `sha256sum` (B5's seal anchors).
 fn golden_form(stdout: &str) -> String {
     let mut v: Value = serde_json::from_str(stdout).unwrap();
-    v["seals"]["policy_sha256"] = "<policy admitting the fixture ranker>".into();
-    v["seals"]["ranked_by"]["sha256"] = "<fixture ranker>".into();
     v["seals"]["git"]["version"] = "<git --version>".into();
     let mut out = serde_json::to_string_pretty(&v).unwrap();
     out.push('\n');
@@ -51,26 +49,8 @@ fn golden_form(stdout: &str) -> String {
 
 #[test]
 fn golden_verdict_for_the_demo_change() {
-    // Authority mode: the fixture ranker replays deep-diff-forge 0.7.0's recorded ranking of the
-    // demo patch byte for byte, so this is the verdict on what the real producer said.
-    let dir = scratch("golden");
-    let policy = policy_admitting(&dir, POLICY, &[fixture_ranker_sha256()]);
-    let ranker = fixture_ranker();
-    let out = run(
-        &[
-            "check",
-            "--policy",
-            text(&policy),
-            "--patch",
-            PATCH,
-            "--ranker",
-            text(&ranker),
-            "--today",
-            TODAY,
-            "--json",
-        ],
-        b"",
-    );
+    // Advisory mode on deep-diff-forge 0.7.0's recorded ranking of the demo patch.
+    let out = advisory(POLICY, PATCH, RANK, b"");
     assert!(
         out.stderr.is_empty(),
         "a verdict is not an error: {}",
@@ -89,11 +69,51 @@ fn golden_verdict_for_the_demo_change() {
         out.code, 7,
         "the starter policy fails the demo on ci_privilege"
     );
-    let v: Value = serde_json::from_str(&out.stdout).unwrap();
-    assert_eq!(v["seals"]["provenance"], "produced");
-    assert_eq!(v["seals"]["ranked_by"]["sha256"], fixture_ranker_sha256());
+}
+
+#[test]
+fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
+    // The fixture ranker replays the same recorded ranking, so authority mode must judge the demo
+    // exactly as the golden does; only who produced the ranking (and the policy that admits the
+    // producer) differ, and nothing is left unverified.
+    let dir = scratch("golden-authority");
+    let policy = policy_admitting(&dir, POLICY, &[fixture_ranker_sha256()]);
+    let ranker = fixture_ranker();
+    let out = run(
+        &[
+            "check",
+            "--policy",
+            text(&policy),
+            "--patch",
+            PATCH,
+            "--ranker",
+            text(&ranker),
+            "--today",
+            TODAY,
+            "--json",
+        ],
+        b"",
+    );
+    assert_eq!(out.code, 7, "{}", out.stderr);
+    let mut produced: Value = serde_json::from_str(&golden_form(&out.stdout)).unwrap();
+    let golden: Value = serde_json::from_str(&read("fixtures/demo.verdict.json")).unwrap();
+    assert_eq!(produced["seals"]["provenance"], "produced");
     assert_eq!(
-        v["seals"]["rank_sha256"],
+        produced["seals"]["ranked_by"]["sha256"],
+        fixture_ranker_sha256()
+    );
+    assert_eq!(produced["notes"], serde_json::json!([]));
+    assert_eq!(
+        golden["notes"],
+        serde_json::json!([{"code": "rank_unverified", "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve"}])
+    );
+    produced["seals"]["policy_sha256"] = golden["seals"]["policy_sha256"].clone();
+    produced["seals"]["provenance"] = "supplied".into();
+    produced["seals"]["ranked_by"]["sha256"] = Value::Null;
+    produced["notes"] = golden["notes"].clone();
+    assert_eq!(produced, golden);
+    assert_eq!(
+        golden["seals"]["rank_sha256"],
         forge_warden_core::seal::sha256_hex(&read_bytes(RANK)),
         "the produced ranking is the recorded one"
     );

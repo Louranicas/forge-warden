@@ -6,14 +6,14 @@
   },
   "evaluated_on": "2026-11-05",
   "seals": {
-    "policy_sha256": "<policy admitting the fixture ranker>",
+    "policy_sha256": "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731",
     "rank_sha256": "9a183a4197f417f49cf70999e14c6015ea12913ef59af3924204230d2e3379b5",
     "patch_sha256": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
     "patch_facts_sha256": "c20420b7dac6c82e4f8a7758bb50422b046833514047fd647bd06465f81e8075",
-    "provenance": "produced",
+    "provenance": "supplied",
     "ranked_by": {
       "version": "0.7.0",
-      "sha256": "<fixture ranker>"
+      "sha256": null
     },
     "git": {
       "path": "/usr/bin/git",
@@ -172,5 +172,10 @@
   ],
   "expired_waivers": [],
   "unused_waivers": [],
-  "notes": []
+  "notes": [
+    {
+      "code": "rank_unverified",
+      "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
+    }
+  ]
 }
