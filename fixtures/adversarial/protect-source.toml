@@ -1,0 +1,7 @@
+schema = "forge-warden.policy.v0"
+[[rule]]
+id = "protect-source"
+why = "Source changes require explicit review."
+kind = "protect_paths"
+severity = "fail"
+paths = ["src/**"]
