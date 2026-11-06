@@ -32,8 +32,11 @@ listed, because consumers parse them.
   One of `--ranker` or `--advisory` is required; `--rank` alone is a usage error (exit 2).
 - Patch facts come from Git through an isolated child process (ADR 0010). They can only add
   change-kind signals, never remove them (the union rule).
-- **`git format-patch` output is refused** when a commit-message line starts with a mode
-  keyword. Pass `git diff --binary --no-renames` output instead.
+- **A mode-like line that is not an exact header makes the patch unverifiable.** This includes
+  a `git format-patch` commit-message line that starts with `index`, `new`, `deleted` or `old`
+  but has no exact header shape (`unreadable mode header`), which produces the
+  `patch_unverifiable` note. Well-formed mode lines are read as headers. Prefer
+  `git diff --binary --no-renames` output, which has no message.
 - The library's rule kinds are an exhaustive enum: `policy::KINDS`/`RULE_FIELD_KINDS` become
   `Kind::ALL`, `Field::ALL` and `Kind::fields`, and `Check::kind()` returns `Kind`.
 - Library: `Policy`, `RankDoc`, `RankedFile` and `Evidence` fields are private. Build them
