@@ -24,7 +24,9 @@ forge-warden-core.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+proc-macro2.workspace = true
 serde_json.workspace = true
+syn.workspace = true
 toml.workspace = true
 
 # A stand-in ranker for authority-mode tests (tests/support/fixture_ranker.rs). `cargo test` builds

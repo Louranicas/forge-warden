@@ -6,6 +6,7 @@
 //! and the two controls (the door's `#[expect]`, and an allowed function) not to be.
 #![expect(
     clippy::disallowed_methods,
+    clippy::unwrap_used,
     reason = "test door: writes a scratch crate and runs cargo clippy on it; a panic is a failed test"
 )]
 
@@ -62,7 +63,28 @@ fn door(doc: RankDoc) -> usize {
 
 #[test]
 fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("mint-lint");
+    check_plants("mint-lint", &[]);
+}
+
+#[test]
+fn an_outer_cap_lints_cannot_silence_the_regression() {
+    // Touchstone C1c-O3-03: cargo-mutants runs tests with --cap-lints allow (in RUSTFLAGS or
+    // CARGO_ENCODED_RUSTFLAGS); inherited, it silenced the nested clippy and turned the mutation
+    // baseline red. The same hostile environment is applied here before the nested command clears it.
+    check_plants(
+        "mint-lint-capped",
+        &[
+            ("RUSTFLAGS", "--cap-lints=allow"),
+            ("CARGO_ENCODED_RUSTFLAGS", "--cap-lints\u{1f}allow"),
+            ("CARGO_BUILD_RUSTFLAGS", "--cap-lints=allow"),
+        ],
+    );
+}
+
+/// Run clippy on the plants in a scratch crate under `name`, with `hostile` environment variables
+/// set first (the nested command must clear them), and check every form and control.
+fn check_plants(name: &str, hostile: &[(&str, &str)]) {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let core = root().join("crates/forge-warden-core");
     std::fs::write(
@@ -88,6 +110,7 @@ fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() 
             "clippy::disallowed_methods",
         ])
         .current_dir(&dir)
+        .envs(hostile.iter().copied())
         // Hermetic: an inherited `--cap-lints` (cargo-mutants sets RUSTFLAGS=--cap-lints=allow)
         // silences every lint, which is the boundary this rule does not claim; the regression
         // measures clippy and clippy.toml, not the caller's flags.
@@ -109,11 +132,11 @@ fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() 
         .filter_map(|l| l.strip_prefix("src/lib.rs:"))
         .filter_map(|l| l.split(':').next()?.parse().ok())
         .collect();
-    let mut forms = 0;
+    let mut forms = 0_usize;
     for (index, line) in PLANTS.lines().enumerate() {
         let number = index.saturating_add(1);
         if let Some((_, form)) = line.split_once("// FORM: ") {
-            forms += 1;
+            forms = forms.saturating_add(1);
             assert!(
                 reported.contains(&number),
                 "clippy missed: {form} (line {number})\n{stderr}"
