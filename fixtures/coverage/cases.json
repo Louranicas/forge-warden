@@ -521,6 +521,16 @@
    ],
    "source": "fixtures/coverage/m3-demo-real.patch with one index header respaced",
    "why": "positive control: a supported mode in any Git spelling is admitted"
+  },
+  {
+   "name": "keel-c1b-v4-mode-line-tab",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "fixtures/coverage/keel-submodule-add.patch with `new file mode<TAB>160000`",
+   "why": "mode-line negative control (Lodestar #294): a Git-accepted spelling of a 160000 mode line is refused"
   }
  ],
  "classes": "rank_refused | unverifiable | covered | '+'-joined subset of status_mismatch, duplicate_paths, rank_incomplete, rank_extraneous (in that order)"
