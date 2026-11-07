@@ -35,9 +35,13 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy && rustup default 1.99.1
+      - name: Prepare MSRV for the planted regression gate
+        run: rustup toolchain install 1.88.0 --profile minimal
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - name: Prepare locked dependencies for offline script fixtures
         run: cargo fetch --locked
+      - run: python3 -I scripts/tool_versions.py --check
+      - run: python3 -I scripts/tests/perimeter.py
       - run: bash scripts/tests/ci_local.sh
       - run: python3 -I scripts/tests/mutation_env.py
       - run: bash scripts/tests/dogfood.sh
@@ -50,6 +54,13 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
       - run: cargo doc --workspace --no-deps --locked
+      - run: python3 -I plants/test_runner.py
+      - run: python3 -I scripts/check_plants.py
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guardrail-plants
+          path: target/plants-*
 
   msrv:
     name: declared Rust 1.88 compatibility
@@ -72,9 +83,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          command: check
+          tool: cargo-deny@0.20.2
+      - run: cargo deny check
 
   workflow-audit:
     name: workflow audit (zizmor)
@@ -85,12 +97,12 @@ jobs:
           persist-credentials: false
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          tool: zizmor
+          tool: zizmor@1.30.1
       - run: zizmor --persona=pedantic .github/workflows
 
   mutation:
     name: diff mutation (cargo-mutants)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,10 +113,10 @@ jobs:
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
-          tool: cargo-mutants
+          tool: cargo-mutants@27.1.0
       - name: Mutate only the lines this pull request changes
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
           git diff "${BASE_SHA}...HEAD" -- 'crates/*/src/**.rs' > pr.diff
           if [ ! -s pr.diff ]; then echo "no Rust source changed"; exit 0; fi
@@ -119,25 +131,25 @@ jobs:
   # Repository-local workflow alone cannot enforce its own immutability: see ADR 0006.
   dogfood:
     name: dogfood (trusted base judges candidate data)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           path: trusted
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           path: candidate
           persist-credentials: false
           fetch-depth: 0
       - run: rustup toolchain install 1.99.1 --profile minimal
       - name: Judge using only the base driver, source and policy
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           RUSTUP_TOOLCHAIN: 1.99.1
         run: |
           grep -qx '# forge-warden trusted-dogfood-driver v1' trusted/scripts/dogfood.sh

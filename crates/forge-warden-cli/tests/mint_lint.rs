@@ -18,7 +18,6 @@
 mod common;
 use common::root;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Each line carrying `// FORM:` must be reported as a disallowed method; `// CONTROL:` lines must not.
 const PLANTS: &str = r#"
@@ -197,7 +196,7 @@ fn check_plants(
     .unwrap();
     std::fs::write(dir.join("src/lib.rs"), plants).unwrap();
     std::fs::copy(root().join("Cargo.lock"), dir.join("Cargo.lock")).unwrap();
-    let out = Command::new(env!("CARGO"))
+    let out = common::command(env!("CARGO"))
         .args([
             "clippy",
             "--offline",

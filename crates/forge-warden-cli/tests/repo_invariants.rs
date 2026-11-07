@@ -9,6 +9,7 @@
 
 mod common;
 use common::{files_under, read, root};
+use syn::ext::IdentExt as _;
 
 /// Whether `path` (`crates/…`) is compiled into the production binary, by compiler evidence
 /// (B-C1c-03): a test exemption is never decided by a directory name.
@@ -496,4 +497,134 @@ fn the_clippy_config_disallows_minting_and_raw_judging() {
     ] {
         assert!(config.contains(path), "clippy.toml lost {path}");
     }
+}
+
+/// Inspect parsed attributes, including conditional attributes; comments and strings are inert.
+fn unexplained_ignores(text: &str) -> usize {
+    struct Ignores(usize);
+    impl Ignores {
+        fn inspect(&mut self, meta: &syn::Meta) {
+            if meta
+                .path()
+                .get_ident()
+                .is_some_and(|name| name.unraw() == "ignore")
+            {
+                let explained = match meta {
+                    syn::Meta::NameValue(value) => matches!(&value.value,
+                        syn::Expr::Lit(expr) if matches!(&expr.lit,
+                            syn::Lit::Str(reason) if !reason.value().trim().is_empty())),
+                    syn::Meta::Path(_) | syn::Meta::List(_) => false,
+                };
+                if !explained {
+                    self.0 = self.0.saturating_add(1);
+                }
+            } else if meta
+                .path()
+                .get_ident()
+                .is_some_and(|name| name.unraw() == "cfg_attr")
+                && let syn::Meta::List(list) = meta
+            {
+                let Ok(nested) = list.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                ) else {
+                    self.0 = usize::MAX;
+                    return;
+                };
+                for attr in nested.iter().skip(1) {
+                    self.inspect(attr);
+                }
+            }
+        }
+    }
+    impl Ignores {
+        fn tokens(&mut self, tokens: proc_macro2::TokenStream) {
+            let mut tokens = tokens.into_iter().peekable();
+            while let Some(token) = tokens.next() {
+                match token {
+                    proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
+                        if let Some(proc_macro2::TokenTree::Group(group)) = tokens.peek()
+                            && group.delimiter() == proc_macro2::Delimiter::Bracket
+                            && let Ok(meta) = syn::parse2::<syn::Meta>(group.stream())
+                        {
+                            self.inspect(&meta);
+                        }
+                    }
+                    proc_macro2::TokenTree::Group(group) => self.tokens(group.stream()),
+                    proc_macro2::TokenTree::Ident(_)
+                    | proc_macro2::TokenTree::Literal(_)
+                    | proc_macro2::TokenTree::Punct(_) => {}
+                }
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Ignores {
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.tokens(mac.tokens.clone());
+            syn::visit::visit_macro(self, mac);
+        }
+
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            self.inspect(&attr.meta);
+            syn::visit::visit_attribute(self, attr);
+        }
+    }
+    let Ok(parsed) = syn::parse_file(text) else {
+        return usize::MAX;
+    };
+    let mut visitor = Ignores(0);
+    syn::visit::Visit::visit_file(&mut visitor, &parsed);
+    visitor.0
+}
+
+#[test]
+fn ignored_tests_require_an_explicit_reason() {
+    let mut names = common::sources().test_only;
+    names.extend(common::production_sources());
+    names.extend(rust_sources().into_iter().map(|(path, _)| path));
+    // Unlike the legacy text scans, parsed attributes cannot confuse fixture strings with code.
+    // Include this file explicitly even if compiler source discovery changes.
+    names.insert("crates/forge-warden-cli/tests/repo_invariants.rs".to_owned());
+    for path in names {
+        assert_eq!(
+            unexplained_ignores(&read(&path)),
+            0,
+            "{path}: ignored tests require a nonempty #[ignore = \"reason\"]"
+        );
+    }
+}
+
+#[test]
+fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
+    for bad in [
+        "#[r#ignore]",
+        "#[r#cfg_attr(test, r#ignore)]",
+        "#[cfg_attr(test, r#cfg_attr(unix, r#ignore))]",
+        "#[ignore]",
+        "#[ignore = \" \"]",
+        "#[cfg_attr(test, ignore)]",
+        "#[cfg_attr(test, cfg_attr(unix, ignore))]",
+    ] {
+        assert_eq!(
+            unexplained_ignores(&format!("{bad} fn probe() {{}}")),
+            1,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        unexplained_ignores("#[ignore = \"requires external hardware\"] fn probe() {}"),
+        0
+    );
+    assert_eq!(unexplained_ignores("// #[ignore]\nfn probe() {}"), 0);
+    assert_eq!(
+        unexplained_ignores("#[r#ignore = \"hardware\"] fn probe() {}"),
+        0
+    );
+    assert_eq!(
+        unexplained_ignores("macro_rules! probe { () => { #[r#ignore] fn probe() {} } }"),
+        1
+    );
+    assert_eq!(
+        unexplained_ignores("macro_rules! probe { () => { #[ignore] fn probe() {} } }"),
+        1
+    );
 }

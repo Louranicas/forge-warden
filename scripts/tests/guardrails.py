@@ -36,6 +36,16 @@ class Guardrails(unittest.TestCase):
         self.assertIn(before, original)
         path.write_text(original.replace(before, after, 1))
 
+    def test_raw_attribute_names_and_paths_match_ordinary_spelling(self):
+        for attr in ("#[r#allow(dead_code)]", "#[r#cfg_attr(test, r#allow(dead_code))]",
+                     "#[r#expect(dead_code)]"):
+            with self.subTest(attr=attr), self.assertRaises(ValueError):
+                checks.attributes.expectations(attr)
+        ordinary = '#[expect(clippy::unwrap_used, reason = "test")]'
+        raw = '#[r#expect(r#clippy::r#unwrap_used, r#reason = "test")]'
+        self.assertEqual(checks.attributes.expectations(raw),
+                         checks.attributes.expectations(ordinary))
+
     def test_baseline_agrees(self):
         checks.check_paths(self.root)
         checks.check_floor(self.root)

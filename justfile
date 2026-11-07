@@ -28,7 +28,8 @@ mutants:
     env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace
 
 # Check the signal vocabulary against a deep-diff-forge checkout or commit.
-vocab rev="587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54":
+ddf_rev := `python3 -I scripts/tool_versions.py ddf_rev`
+vocab rev=ddf_rev:
     scripts/check_vocab.sh {{rev}}
 
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).

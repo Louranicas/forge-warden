@@ -19,6 +19,24 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[path = "../support/process_env.rs"]
+mod process_env;
+
+/// Clear ambient process configuration; admit only tool locations and an isolated HOME.
+/// Tests needing hostile variables must add them explicitly after this boundary.
+pub(crate) fn hermetic(command: &mut Command) -> &mut Command {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let home = HOME.get_or_init(|| scratch("process-home"));
+    process_env::configure(command, home)
+}
+
+/// A test command with the shared explicit environment contract.
+pub(crate) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    hermetic(&mut command);
+    command
+}
+
 /// What a run of the binary produced.
 pub(crate) struct Run {
     pub(crate) code: i32,
@@ -66,9 +84,9 @@ pub(crate) fn run(args: &[&str], stdin: &[u8]) -> Run {
     run_with_env(args, stdin, &[])
 }
 
-/// [`run`] with extra environment variables (the rest is inherited).
+/// [`run`] with explicit extra environment variables after clearing the ambient environment.
 pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) -> Run {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_forge-warden"))
+    let mut child = command(env!("CARGO_BIN_EXE_forge-warden"))
         .args(args)
         .envs(env.iter().copied())
         .current_dir(root())
@@ -268,7 +286,7 @@ pub(crate) struct Members {
 
 /// The workspace members, by exact ID (Touchstone C1c-O3-04: never by name substring).
 pub(crate) fn workspace_members() -> Members {
-    let out = Command::new(env!("CARGO"))
+    let out = command(env!("CARGO"))
         .args([
             "metadata",
             "--no-deps",
@@ -308,7 +326,7 @@ pub(crate) fn workspace_members() -> Members {
 /// persistent discovery dir, inherited rustflags, wrappers and target dir cleared.
 fn discovery_stream() -> (String, PathBuf) {
     let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("source-discovery");
-    let out = Command::new(env!("CARGO"))
+    let out = command(env!("CARGO"))
         .args([
             "check",
             "--workspace",
@@ -477,7 +495,7 @@ pub(crate) fn production_sources() -> std::collections::BTreeSet<String> {
 pub(crate) fn write_executable(dir: &std::path::Path, name: &str, bytes: &[u8]) -> PathBuf {
     let source = write(dir, &format!("{name}.src"), bytes);
     let path = dir.join(name);
-    let status = Command::new("/usr/bin/cp")
+    let status = command("/usr/bin/cp")
         .arg("--")
         .arg(&source)
         .arg(&path)

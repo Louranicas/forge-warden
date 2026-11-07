@@ -1,5 +1,6 @@
-# Generated from protected-paths.txt; equality is checked in CI.
+# Mirrors protected-paths.txt; checked by scripts/check_guardrails.py.
 * @Louranicas
+/.cargo/** @Louranicas
 /.claude/** @Louranicas
 /.githooks/** @Louranicas
 /.github/** @Louranicas
@@ -9,12 +10,15 @@
 /clippy.toml @Louranicas
 /crates/*/Cargo.toml @Louranicas
 /crates/*/clippy.toml @Louranicas
+/crates/*/tests/** @Louranicas
 /crates/forge-warden-cli/src/doors.rs @Louranicas
 /crates/forge-warden-cli/tests/repo_invariants.rs @Louranicas
 /deny.toml @Louranicas
+/fixtures/** @Louranicas
 /justfile @Louranicas
 /lint-expectations.toml @Louranicas
 /lint-floor.toml @Louranicas
+/plants/** @Louranicas
 /protected-paths.txt @Louranicas
 /rust-toolchain.toml @Louranicas
 /rustfmt.toml @Louranicas

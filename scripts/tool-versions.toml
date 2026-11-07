@@ -1,0 +1,5 @@
+# Canonical tool inputs. Rust is owned by rust-toolchain.toml; MSRV by Cargo.toml.
+ddf_rev = "587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54"
+zizmor = "1.30.1"
+cargo_mutants = "27.1.0"
+cargo_deny = "0.20.2"

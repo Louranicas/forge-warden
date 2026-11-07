@@ -2,6 +2,8 @@
 # The fast gate: what the pre-commit hook and the Claude Code Stop hook run. Seconds, not minutes.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+# Hook-exported Git state must not redirect scratch-repository commands.
+while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 bash scripts/tests/ci_local.sh
 python3 -I scripts/tests/mutation_env.py
 bash scripts/tests/dogfood.sh
