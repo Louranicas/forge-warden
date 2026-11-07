@@ -536,6 +536,52 @@ fn no_normal_dependency_opens_the_unattested_evaluate_door() {
         opened.is_empty(),
         "a normal or build dependency enables unattested-evaluate: {opened:?}"
     );
+
+    // The declarations, too, so a dependency or feature that is off by default (an optional or
+    // target-specific dependency, a renamed key, a member feature forwarding to it) is refused
+    // before anyone turns it on (Bastion B-QTYPES-02): every member, every dependency kind but
+    // dev, every [features] value.
+    let meta = common::command(env!("CARGO"))
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(meta.status.success(), "cargo metadata did not run");
+    let meta: serde_json::Value = serde_json::from_slice(&meta.stdout).unwrap();
+    let feature = "unattested-evaluate";
+    let mut declared = Vec::new();
+    for package in meta["packages"].as_array().unwrap() {
+        let name = package["name"].as_str().unwrap();
+        for dep in package["dependencies"].as_array().unwrap() {
+            let enables = dep["name"] == "forge-warden-core"
+                && dep["kind"].as_str() != Some("dev")
+                && dep["features"]
+                    .as_array()
+                    .is_some_and(|f| f.iter().any(|v| v == feature));
+            if enables {
+                declared.push(format!("{name}: dependency {dep}"));
+            }
+        }
+        for (key, values) in package["features"].as_object().unwrap() {
+            for value in values.as_array().unwrap() {
+                let text = value.as_str().unwrap();
+                if text.ends_with("/unattested-evaluate") {
+                    declared.push(format!("{name}: feature {key} = {text}"));
+                }
+            }
+        }
+    }
+    assert!(
+        declared.is_empty(),
+        "unattested-evaluate is declared outside [dev-dependencies]: {declared:#?}"
+    );
 }
 
 /// Inspect parsed attributes, including conditional attributes; comments and strings are inert.

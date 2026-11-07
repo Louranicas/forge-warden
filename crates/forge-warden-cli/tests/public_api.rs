@@ -56,15 +56,17 @@ fn is_test_only(attrs: &[Attribute]) -> bool {
     })
 }
 
-/// The API-relevant attributes, verbatim: `cfg(..)`, `derive(..)`, `non_exhaustive`.
+/// Every attribute but doc comments, verbatim: `cfg`, `cfg_attr`, `derive`, `non_exhaustive`,
+/// `must_use`, `serde(..)`, lint levels, anything (Bastion: `cfg_attr(all(), non_exhaustive)` was
+/// invisible when only three names were kept). Doc text is prose, not API.
 fn markers(source: &str, attrs: &[Attribute]) -> String {
     let mut out = Vec::new();
     for a in attrs {
-        let relevant = a.path().get_ident().is_some_and(|ident| {
-            let name = ident.unraw().to_string();
-            name == "cfg" || name == "derive" || name == "non_exhaustive"
-        });
-        if relevant {
+        let doc = a
+            .path()
+            .get_ident()
+            .is_some_and(|ident| ident.unraw() == "doc");
+        if !doc {
             out.push(through(
                 source,
                 a.pound_token.span,
@@ -101,18 +103,41 @@ fn through(source: &str, from: Span, to: Span) -> String {
     slice(source, from.byte_range().start, to.byte_range().end)
 }
 
-/// The whole source line holding `span`, trimmed.
-fn line_of(source: &str, span: Span) -> String {
+/// The member that starts on the line holding `span` (after indentation), through its terminator:
+/// the first of `stops` at bracket depth 0 (`()`, `[]`, `{}`, `<>`; `->` and `=>` are not brackets),
+/// so a multi-line variant, field or trait method is read whole.
+fn member_text(source: &str, span: Span, stops: &[char]) -> String {
     let at = span.byte_range().start;
-    let begin = match source.get(..at).and_then(|s| s.rfind('\n')) {
+    let line_start = match source.get(..at).and_then(|s| s.rfind('\n')) {
         Some(newline) => newline.saturating_add(1),
         None => 0,
     };
-    let end = match source.get(at..).and_then(|s| s.find('\n')) {
-        Some(offset) => at.saturating_add(offset),
-        None => source.len(),
+    let Some(rest) = source.get(line_start..) else {
+        return format!("<unreadable member at {at}>");
     };
-    slice(source, begin, end)
+    let mut depth = 0_usize;
+    let mut previous = ' ';
+    let mut end = rest.len();
+    for (offset, c) in rest.char_indices() {
+        if depth == 0 && stops.contains(&c) {
+            end = offset.saturating_add(c.len_utf8());
+            break;
+        }
+        match c {
+            '(' | '[' | '{' | '<' => depth = depth.saturating_add(1),
+            '>' if previous == '-' || previous == '=' => {}
+            ')' | ']' | '}' | '>' => {
+                if depth == 0 {
+                    end = offset;
+                    break;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        previous = c;
+    }
+    slice(source, line_start, line_start.saturating_add(end))
 }
 
 fn public(vis: &Visibility) -> Option<Span> {
@@ -152,7 +177,12 @@ fn struct_lines(source: &str, module: &str, s: &syn::ItemStruct, out: &mut Vec<S
     ));
     for field in &s.fields {
         if let Some(span) = public(&field.vis) {
-            out.push(format!("{module} {}.{}", s.ident, line_of(source, span)));
+            out.push(format!(
+                "{module} {}.{}{}",
+                s.ident,
+                markers(source, &field.attrs),
+                member_text(source, span, &[','])
+            ));
         }
     }
 }
@@ -164,10 +194,51 @@ fn enum_lines(source: &str, module: &str, e: &syn::ItemEnum, out: &mut Vec<Strin
     out.push(format!("{module} {}{header}", markers(source, &e.attrs)));
     for variant in &e.variants {
         out.push(format!(
-            "{module} {}::{}",
+            "{module} {}::{}{}",
             e.ident,
-            line_of(source, variant.ident.span())
+            markers(source, &variant.attrs),
+            member_text(source, variant.ident.span(), &[','])
         ));
+    }
+}
+
+/// A public trait's header and every item in it (all trait items are public with the trait).
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "syn::TraitItem is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
+)]
+fn trait_lines(source: &str, module: &str, tr: &syn::ItemTrait, out: &mut Vec<String>) {
+    let Some(start) = public(&tr.vis) else { return };
+    let header = between(source, start, tr.brace_token.span.open());
+    out.push(format!("{module} {}{header}", markers(source, &tr.attrs)));
+    let name = tr.ident.unraw();
+    for item in &tr.items {
+        let line = match item {
+            syn::TraitItem::Fn(f) if !is_test_only(&f.attrs) => format!(
+                "{}{}",
+                markers(source, &f.attrs),
+                member_text(source, f.sig.ident.span(), &[';', '{'])
+            ),
+            syn::TraitItem::Const(c) if !is_test_only(&c.attrs) => format!(
+                "{}{}",
+                markers(source, &c.attrs),
+                member_text(source, c.ident.span(), &[';'])
+            ),
+            syn::TraitItem::Type(ty) if !is_test_only(&ty.attrs) => format!(
+                "{}{}",
+                markers(source, &ty.attrs),
+                member_text(source, ty.ident.span(), &[';'])
+            ),
+            syn::TraitItem::Macro(m) if !is_test_only(&m.attrs) => {
+                format!("macro {}", macro_line(source, &m.mac))
+            }
+            syn::TraitItem::Fn(_)
+            | syn::TraitItem::Const(_)
+            | syn::TraitItem::Type(_)
+            | syn::TraitItem::Macro(_) => continue,
+            _ => "UNKNOWN TRAIT ITEM KIND: review the public API by hand".to_owned(),
+        };
+        out.push(format!("{module} {name}::{line}"));
     }
 }
 
@@ -188,12 +259,12 @@ fn macro_line(source: &str, mac: &syn::Macro) -> String {
 
 /// A trait impl's header, and every public method or constant of any impl.
 fn impl_lines(source: &str, module: &str, i: &syn::ItemImpl, out: &mut Vec<String>) {
-    if i.trait_.is_some() {
-        out.push(format!(
-            "{module} {}",
-            between(source, i.impl_token.span, i.brace_token.span.open())
-        ));
-    }
+    // Every impl header (inherent too: its generics and where clause bound the methods).
+    out.push(format!(
+        "{module} {}{}",
+        markers(source, &i.attrs),
+        between(source, i.impl_token.span, i.brace_token.span.open())
+    ));
     let owner = type_name(&i.self_ty);
     for member in &i.items {
         if let ImplItem::Fn(f) = member
@@ -220,6 +291,23 @@ fn impl_lines(source: &str, module: &str, i: &syn::ItemImpl, out: &mut Vec<Strin
             out.push(format!(
                 "{module} {owner}::macro {}",
                 macro_line(source, &m.mac)
+            ));
+        }
+        if let ImplItem::Type(ty) = member
+            && !is_test_only(&ty.attrs)
+        {
+            // An associated type is public with its trait impl, whatever its visibility token.
+            out.push(format!(
+                "{module} {owner}::{}",
+                member_text(source, ty.ident.span(), &[';'])
+            ));
+        }
+        if !matches!(
+            member,
+            ImplItem::Fn(_) | ImplItem::Const(_) | ImplItem::Type(_) | ImplItem::Macro(_)
+        ) {
+            out.push(format!(
+                "{module} {owner}::UNKNOWN IMPL ITEM KIND: review the public API by hand"
             ));
         }
     }
@@ -259,12 +347,7 @@ fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
             }
             Item::Struct(s) if !is_test_only(&s.attrs) => struct_lines(source, module, s, out),
             Item::Enum(e) if !is_test_only(&e.attrs) => enum_lines(source, module, e, out),
-            Item::Trait(tr) if !is_test_only(&tr.attrs) => {
-                if let Some(start) = public(&tr.vis) {
-                    let header = between(source, start, tr.brace_token.span.open());
-                    out.push(format!("{module} {}{header}", markers(source, &tr.attrs)));
-                }
-            }
+            Item::Trait(tr) if !is_test_only(&tr.attrs) => trait_lines(source, module, tr, out),
             Item::Const(c) if !is_test_only(&c.attrs) => {
                 whole(source, module, &c.attrs, &c.vis, c.semi_token.span, out);
             }
@@ -316,7 +399,11 @@ fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
                     out.push(format!("{module} {}{header}", markers(source, &u.attrs)));
                     for field in &u.fields.named {
                         if let Some(span) = public(&field.vis) {
-                            out.push(format!("{module} {}.{}", u.ident, line_of(source, span)));
+                            out.push(format!(
+                                "{module} {}.{}",
+                                u.ident,
+                                member_text(source, span, &[','])
+                            ));
                         }
                     }
                 }
@@ -403,9 +490,8 @@ fn the_core_public_api_matches_its_committed_snapshot() {
     }
 }
 
-#[test]
-fn the_snapshot_reader_sees_every_kind_of_public_item_and_skips_tests() {
-    let source = r#"
+/// Parser controls: one of every public item kind, Bastion's probes, and test-only items.
+const CONTROL: &str = r#"
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct S {
@@ -457,32 +543,72 @@ extern "C" {}
 macro_rules! test_only_macro {
     () => {};
 }
+pub trait Pick<T> {
+    /// prose is not API
+    fn pick(self, d: T) -> T;
+    fn twice(self) -> u8 {
+        2
+    }
+}
+#[cfg_attr(all(), non_exhaustive)]
+pub enum Wide {
+    Struct {
+        a: u8,
+        b: Vec<(u8, u8)>,
+    },
+}
+pub struct Long {
+    pub f: std::collections::BTreeMap<
+        String,
+        Vec<u8>,
+    >,
+}
+impl Iterator for Long {
+    type Item = u8;
+    fn next(&mut self) -> Option<u8> {
+        None
+    }
+}
 "#;
+
+/// What the reader must record for [`CONTROL`].
+const CONTROL_LINES: &[&str] = &[
+    "m #[derive(Debug, Clone)] #[non_exhaustive] pub struct S",
+    "m S.pub a: u8,",
+    "m pub enum E",
+    "m E::One,",
+    "m E::Two(u8),",
+    "m pub fn f(x: u8) -> u8",
+    "m pub const C: u8 = 1;",
+    "m pub use std::fmt::Debug;",
+    "m impl S",
+    "m S::pub fn new() -> Self",
+    "m impl std::fmt::Display for S",
+    "m #[cfg(feature = \"door\")] pub mod door",
+    "m::door pub fn open()",
+    "m #[cfg(any(test, unix))] pub fn production_on_unix()",
+    "m macro macro_rules! make { ($name:ident) => { #[derive(PartialOrd, Ord)] pub enum $name { A } }; }",
+    "m macro make!(Generated)",
+    "m pub extern crate std as stdx;",
+    "m pub union U",
+    "m U.pub a: u8,",
+    "m UNKNOWN ITEM KIND: review the public API by hand",
+    "m pub trait Pick<T>",
+    "m Pick::fn pick(self, d: T) -> T;",
+    "m Pick::fn twice(self) -> u8 {",
+    "m #[cfg_attr(all(), non_exhaustive)] pub enum Wide",
+    "m Wide::Struct { a: u8, b: Vec<(u8, u8)>, },",
+    "m pub struct Long",
+    "m Long.pub f: std::collections::BTreeMap< String, Vec<u8>, >,",
+    "m impl Iterator for Long",
+    "m Long::type Item = u8;",
+];
+
+#[test]
+fn the_snapshot_reader_sees_every_kind_of_public_item_and_skips_tests() {
+    let source = CONTROL;
     let file = syn::parse_file(source).unwrap();
     let mut out = Vec::new();
     items(source, "m", &file.items, &mut out);
-    assert_eq!(
-        out,
-        [
-            "m #[derive(Debug, Clone)] #[non_exhaustive] pub struct S",
-            "m S.pub a: u8,",
-            "m pub enum E",
-            "m E::One,",
-            "m E::Two(u8),",
-            "m pub fn f(x: u8) -> u8",
-            "m pub const C: u8 = 1;",
-            "m pub use std::fmt::Debug;",
-            "m S::pub fn new() -> Self",
-            "m impl std::fmt::Display for S",
-            "m #[cfg(feature = \"door\")] pub mod door",
-            "m::door pub fn open()",
-            "m #[cfg(any(test, unix))] pub fn production_on_unix()",
-            "m macro macro_rules! make { ($name:ident) => { #[derive(PartialOrd, Ord)] pub enum $name { A } }; }",
-            "m macro make!(Generated)",
-            "m pub extern crate std as stdx;",
-            "m pub union U",
-            "m U.pub a: u8,",
-            "m UNKNOWN ITEM KIND: review the public API by hand",
-        ]
-    );
+    assert_eq!(out, CONTROL_LINES);
 }
