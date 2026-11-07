@@ -3,12 +3,6 @@ schema = "forge-warden.lint-expectations.v1"
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors.rs"
 lint = "clippy::disallowed_methods"
-source_reason = "door: read_file"
-review_reason = "Reviewed effect boundary: door: read_file; I/O remains confined to its named door."
-
-[[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
-lint = "clippy::disallowed_methods"
 source_reason = "door: read_stdin"
 review_reason = "Reviewed effect boundary: door: read_stdin; I/O remains confined to its named door."
 
@@ -136,13 +130,7 @@ review_reason = "B3 test-only scratch Git repositories exercise vocabulary prove
 file = "crates/forge-warden-cli/src/doors.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: pin_executable"
-review_reason = "C1a descriptor admission needs OpenOptions and metadata to refuse links and pin exact executable bytes."
-
-[[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
-lint = "clippy::disallowed_types"
-source_reason = "door: pin_executable"
-review_reason = "C1a descriptor admission needs OpenOptions and metadata to refuse links and pin exact executable bytes."
+review_reason = "Q-DOOR: pin_within reads /proc/self metadata for the current UID; opening and descriptor metadata admission are delegated to open_regular before byte hashing."
 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors.rs"
@@ -153,14 +141,14 @@ review_reason = "C1a bounded child execution is the reviewed sole process spawn 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors.rs"
 lint = "clippy::disallowed_methods"
-source_reason = "door: run_child (poll sleep)"
-review_reason = "C1a bounded polling sleeps only inside the child deadline enforcement door."
+source_reason = "door: run_child (poll sleep, /proc/<pid>/stat)"
+review_reason = "Q-DOOR: reads only the spawned child PID status to observe exit without reaping before group cleanup; polling sleeps remain inside the child deadline."
 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors.rs"
 lint = "clippy::disallowed_methods"
-source_reason = "door: kill_group"
-review_reason = "C1a timeout cleanup signals only the isolated process group owned by the child door."
+source_reason = "door: kill_group (spawn, poll sleep)"
+review_reason = "Q-DOOR: starts the explicit group-kill helper with a cleared environment and null streams; polls against a two-second helper deadline before killing and reaping it; reports failure."
 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors.rs"
@@ -340,3 +328,9 @@ file = "crates/forge-warden-cli/tests/support/process_env.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test environment door: reads only explicit tool locations before clearing child environments"
 review_reason = "Q-PERIMETER test-only shared helper reads PATH and Cargo/rustup locations; all Git variables and ambient child configuration are discarded. Production has no dependency on this cfg(test) helper."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_types"
+source_reason = "door: open_regular (every named-file open)"
+review_reason = "Q-DOOR: central read-only OpenOptions open uses O_NONBLOCK and requires descriptor metadata is_file before reads; executable pins additionally use O_NOFOLLOW. This check does not exclude procfs files reporting regular-file metadata."
