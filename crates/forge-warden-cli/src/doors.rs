@@ -110,8 +110,9 @@ const PIN_FLAGS: i32 = 0o404_000;
 const ELOOP: i32 = 40;
 
 /// The one place a named file is opened (Q2-02): read-only, always non-blocking, and
-/// only a regular file is admitted (a FIFO, device, directory or procfs node is refused before
-/// any read). A symbolic link the flags do not follow is refused, not an I/O error.
+/// only a regular file is admitted (a FIFO, socket, device or directory is refused before any
+/// read). A procfs or sysfs file reports itself as regular and is read within the byte budget like
+/// any other file; this door does not claim to refuse it. A symbolic link the flags do not follow is refused, not an I/O error.
 #[expect(
     clippy::disallowed_types,
     reason = "door: open_regular (every named-file open)"
