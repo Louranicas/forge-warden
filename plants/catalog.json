@@ -215,8 +215,8 @@
         "--locked",
         "--offline"
       ],
-      "old": "Exit::InvalidInput\n",
-      "new": "Exit::InvalidInptu\n"
+      "old": "DoorErrorKind::Refused => Exit::InvalidInput,",
+      "new": "DoorErrorKind::Refused => Exit::InvalidInptu,"
     },
     {
       "id": "unsafe-code",
