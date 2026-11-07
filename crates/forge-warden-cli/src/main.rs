@@ -29,7 +29,7 @@ use forge_warden_core::policy::{PolicyError, parse_policy};
 use forge_warden_core::rank::{RankError, parse_rank};
 use forge_warden_core::render::render_text;
 use forge_warden_core::seal::sha256_hex;
-use forge_warden_core::verdict::{Claims, GitOracle, Seals, Unverified, Verdict};
+use forge_warden_core::verdict::{Claims, GitOracle, Seals, Verdict};
 use forge_warden_core::{Date, EXIT_REGISTRY};
 use std::path::{Path, PathBuf};
 
@@ -256,10 +256,10 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
     let supplied = args.rank.as_deref().map(read_rank).transpose()?;
 
     let (facts, facts_sha256) = git_facts(&args.git, &patch)?;
-    let git = GitOracle {
-        path: git_path,
-        version: doors::child::git_version(&args.git).map_err(Failure::from_door)?,
-    };
+    let git = GitOracle::new(
+        git_path,
+        doors::child::git_version(&args.git).map_err(Failure::from_door)?,
+    );
 
     let verdict = if let Some(ranker) = &args.ranker {
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
@@ -270,7 +270,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             },
         )?;
         let copy = SuppliedCopy::compare(supplied.as_deref(), &bytes);
-        let checked = check_coverage(ranking.doc(), facts);
+        let checked = check_coverage(&ranking, facts);
         let seals = seals(
             &policy_bytes,
             &bytes,
@@ -280,7 +280,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             git,
             claims,
         );
-        evaluate_authority(&policy, &ranking, &checked, copy, seals, today)
+        evaluate_authority(&policy, &checked, copy, seals, today)
     } else {
         // clap admits advisory mode only with `--rank`.
         let bytes = supplied.ok_or_else(|| Failure::new(Exit::Usage, "--advisory needs --rank"))?;
@@ -296,7 +296,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             ));
         }
         let ranking = Ranking::supplied(doc);
-        let checked = check_coverage(ranking.doc(), facts);
+        let checked = check_coverage(&ranking, facts);
         let seals = seals(
             &policy_bytes,
             &bytes,
@@ -306,7 +306,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             git,
             claims,
         );
-        evaluate_advisory(&policy, &ranking, &checked, seals, today)
+        evaluate_advisory(&policy, &checked, seals, today)
             .verdict()
             .clone()
     };
@@ -389,11 +389,7 @@ fn claims(base: Option<&str>, head: Option<&str>) -> Result<Option<Claims>, Fail
     };
     let base = admit("--base", base)?;
     let head = admit("--head", head)?;
-    Ok((base.is_some() || head.is_some()).then_some(Claims {
-        base,
-        head,
-        verified: Unverified,
-    }))
+    Ok((base.is_some() || head.is_some()).then(|| Claims::new(base, head)))
 }
 
 /// The seals for a verdict. `provenance` and `ranked_by` are set again by the evaluator from the

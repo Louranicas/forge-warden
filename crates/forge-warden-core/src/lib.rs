@@ -38,11 +38,25 @@ pub mod verdict;
 pub mod vocab;
 
 pub use date::Date;
-pub use eval::evaluate;
 pub use exit::{EXIT_REGISTRY, Exit, ExitEntry, Outcome};
 pub use policy::{Policy, PolicyError, PolicyIssue};
 pub use rank::{RankDoc, RankError};
 pub use verdict::Verdict;
+
+/// Test-support door: the raw rule engine for engine tests. Feature `unattested-evaluate`, OFF by
+/// default; it is enabled only by this workspace's `[dev-dependencies]` (a repository invariant
+/// refuses it in any normal dependency). It judges a ranking with no provenance and no coverage
+/// check, so its verdict CAN pass: never enable it in a dependency of a shipped binary.
+#[cfg(feature = "unattested-evaluate")]
+pub mod testing {
+    use crate::{Date, Policy, RankDoc, Verdict, verdict::Seals};
+
+    /// The raw rule engine ([`crate::eval`]): evaluate `policy` over `rank` as of `today`.
+    #[must_use]
+    pub fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict {
+        crate::eval::evaluate(policy, rank, seals, today)
+    }
+}
 
 /// The name every forge-warden document carries in its `tool` member.
 pub const TOOL_NAME: &str = "forge-warden";

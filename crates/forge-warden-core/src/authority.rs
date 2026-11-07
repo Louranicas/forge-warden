@@ -3,22 +3,25 @@
 //!
 //! - A ranking is either **produced** (forge-warden ran the pinned ranker on the patch it holds) or
 //!   **supplied** (it arrived as a file). The two are different types: [`Ranking<Produced>`] is made
-//!   only by [`Ranking::attest`], which the binary calls only from its doors (a repository invariant
-//!   checks this; a library caller can still call it, and that is stated, not hidden).
-//! - [`check`] compares a ranking with Git's facts about the patch. Every disagreement or refusal
-//!   becomes a note, and a note holds the verdict.
+//!   only by [`Ranking::attest`], which takes an [`AdmittedProducer`] that only
+//!   [`Policy::admit_producer`] makes, so every produced ranking names a ranker some policy's
+//!   allowlist admits (Q-TYPES-1). That a door actually ran it is the binary's guarantee (the
+//!   CLI's clippy.toml lets only `doors.rs` call `attest`); the core cannot observe a process.
+//! - [`check`] compares a ranking with Git's facts about the patch and keeps a borrow of that exact
+//!   ranking: a [`Checked`] is the only thing the judges accept, so a coverage proof cannot be
+//!   paired with another ranking (Zen B1). Every disagreement or refusal becomes a note, and a note
+//!   holds the verdict.
 //! - Rules judge an *effective* ranking: each file's signals plus the change-kind signals Git's facts
 //!   imply (T2: Git only adds). So a binary deletion is a deletion even when the producer says
 //!   only `binary_change`.
 //! - [`evaluate_advisory`] returns an [`AdvisoryVerdict`], whose outcome type has no pass.
 
 use crate::date::Date;
-use crate::defaults::NamedDefault as _;
 use crate::eval::evaluate;
 use crate::exit::Outcome;
 use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_signals};
-use crate::policy::Policy;
-use crate::rank::{RankDoc, RankedFile};
+use crate::policy::{AdmittedProducer, Policy};
+use crate::rank::RankDoc;
 use crate::verdict::{ExitInfo, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -33,6 +36,7 @@ pub enum Supplied {}
 
 /// A ranking and where it came from.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Ranking<P> {
     doc: RankDoc,
     producer_sha256: Option<String>,
@@ -52,13 +56,14 @@ impl Ranking<Supplied> {
 }
 
 impl Ranking<Produced> {
-    /// A ranking forge-warden produced by running the ranker whose bytes hash to
-    /// `producer_sha256`. The binary calls this only from `doors.rs`, right after the run.
+    /// A ranking forge-warden produced by running the ranker `producer`, which a policy's
+    /// `[producer] sha256` allowlist admitted ([`Policy::admit_producer`]). The binary calls this
+    /// only from `doors.rs`, right after the run.
     #[must_use]
-    pub const fn attest(doc: RankDoc, producer_sha256: String) -> Self {
+    pub fn attest(doc: RankDoc, producer: AdmittedProducer) -> Self {
         Self {
             doc,
-            producer_sha256: Some(producer_sha256),
+            producer_sha256: Some(producer.into_sha256()),
             provenance: PhantomData,
         }
     }
@@ -78,27 +83,37 @@ impl<P> Ranking<P> {
     }
 }
 
-/// A ranking checked against Git's facts about the patch.
+/// A ranking checked against Git's facts about the patch. It borrows the exact ranking it checked,
+/// and the judges take only this, so a proof cannot be paired with another ranking (Zen B1).
 #[derive(Debug)]
-pub struct Checked {
+#[non_exhaustive]
+pub struct Checked<'r, P> {
+    ranking: &'r Ranking<P>,
     facts: Result<PatchFacts, Unverifiable>,
     disagreements: Vec<Disagreement>,
 }
 
-/// Compare `rank` with Git's view of the patch (or the reason Git's view is unavailable).
+/// Compare `ranking` with Git's view of the patch (or the reason Git's view is unavailable).
 #[must_use]
-pub fn check(rank: &RankDoc, facts: Result<PatchFacts, Unverifiable>) -> Checked {
+pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P> {
     let disagreements = match &facts {
-        Ok(facts) => compare(rank, facts),
+        Ok(facts) => compare(&ranking.doc, facts),
         Err(_) => Vec::new(),
     };
     Checked {
+        ranking,
         facts,
         disagreements,
     }
 }
 
-impl Checked {
+impl<P> Checked<'_, P> {
+    /// The ranking this proof is about.
+    #[must_use]
+    pub const fn ranking(&self) -> &Ranking<P> {
+        self.ranking
+    }
+
     /// Whether the ranking covers the patch exactly and agrees with Git on every file.
     #[must_use]
     pub const fn is_covered(&self) -> bool {
@@ -142,8 +157,12 @@ impl Checked {
         }
     }
 
-    /// The ranking with each file's signals widened by Git's change-kind facts (T2: Git only adds).
-    fn effective(&self, rank: &RankDoc) -> RankDoc {
+    /// The checked ranking with each file's signals widened by Git's change-kind facts (T2: Git
+    /// only adds). Infallible (Zen B4): `RankDoc::map_files` and `RankedFile::with_added_signals`
+    /// keep every constructor invariant by construction, so there is no fallback that could judge
+    /// an unwidened ranking.
+    fn effective(&self) -> RankDoc {
+        let rank = &self.ranking.doc;
         let Ok(facts) = &self.facts else {
             return rank.clone();
         };
@@ -151,56 +170,24 @@ impl Checked {
             .files()
             .map(|change| (change.path(), derived_signals(change)))
             .collect();
-        let files: Vec<RankedFile> = rank
-            .files()
-            .iter()
-            .map(|file| {
-                let mut signals = file.signals().to_vec();
-                for signal in derived.get(file.path()).into_iter().flatten() {
-                    if !signals.iter().any(|s| s == signal) {
-                        signals.push((*signal).to_owned());
-                    }
-                }
-                widened(file, signals)
-            })
-            .collect();
-        let widened = RankDoc::new(
-            rank.input_sha256().to_owned(),
-            rank.tool_version().to_owned(),
-            files,
-        );
-        // The seal and version were already valid, so this cannot be refused; were it ever, the
-        // unwidened ranking is judged and Git's facts still hold it via status_mismatch.
-        widened.or_fail_safe(rank.clone())
+        rank.map_files(|file| {
+            file.with_added_signals(derived.get(file.path()).into_iter().flatten())
+        })
     }
-}
-
-/// `file` with `signals`. Adding signals keeps every constructor check true (status, non-empty
-/// signals, evidence citing a carried signal), so this cannot be refused; if it ever were, the
-/// original file is kept, which can only miss an added signal, and Git's facts still hold the
-/// verdict through `status_mismatch`.
-fn widened(file: &RankedFile, signals: Vec<String>) -> RankedFile {
-    let wide = RankedFile::new(
-        file.path().clone(),
-        file.status().to_owned(),
-        file.score(),
-        signals,
-        file.evidence().to_vec(),
-        file.evidence_truncated(),
-    );
-    // See above: the unwidened file can only miss an added signal.
-    wide.or_fail_safe(file.clone())
 }
 
 /// A verdict on a supplied ranking. Its outcome type has no pass: a supplied ranking can at best
 /// hold a change for a person.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct AdvisoryVerdict {
     verdict: Verdict,
 }
 
 /// The outcomes a supplied ranking can produce.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Exhaustive on purpose: a supplied ranking can only hold or fail (ADR 0005 §2.7); a pass variant must never appear. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum AdvisoryOutcome {
     /// A person must decide.
     Hold,
@@ -230,6 +217,8 @@ impl AdvisoryVerdict {
 /// A ranking the caller also supplied in authority mode (`--rank`), compared byte for byte with
 /// the produced one (ADR 0005 §2.1). The produced ranking is always the one judged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Exhaustive on purpose: a supplied copy is absent, identical or different. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum SuppliedCopy {
     /// No ranking was supplied.
     Absent,
@@ -251,13 +240,13 @@ impl SuppliedCopy {
     }
 }
 
-/// Judge a ranking forge-warden produced itself. Only this can pass. `provenance` and `ranked_by`
-/// in `seals` are set from `ranking`, whatever the caller put there.
+/// Judge the ranking a [`Checked`] proof is about, produced by forge-warden itself. Only this can
+/// pass. `provenance` and `ranked_by` in `seals` are set from that ranking, whatever the caller put
+/// there.
 #[must_use]
 pub fn evaluate_authority(
     policy: &Policy,
-    ranking: &Ranking<Produced>,
-    checked: &Checked,
+    checked: &Checked<'_, Produced>,
     supplied: SuppliedCopy,
     seals: Seals,
     today: Date,
@@ -273,8 +262,8 @@ pub fn evaluate_authority(
                     .to_owned(),
         }],
     };
-    let seals = provenance(seals, ranking, Provenance::Produced);
-    judge(policy, &ranking.doc, checked, extra, seals, today)
+    let seals = provenance(seals, checked.ranking, Provenance::Produced);
+    judge(policy, checked, extra, seals, today)
 }
 
 /// `seals` with `provenance` and `ranked_by` taken from the ranking itself.
@@ -287,13 +276,12 @@ fn provenance<P>(mut seals: Seals, ranking: &Ranking<P>, kind: Provenance) -> Se
     seals
 }
 
-/// Judge a ranking the caller supplied. It is held at least, never passed. `provenance` and
-/// `ranked_by` in `seals` are set from `ranking`.
+/// Judge the supplied ranking a [`Checked`] proof is about. It is held at least, never passed.
+/// `provenance` and `ranked_by` in `seals` are set from that ranking.
 #[must_use]
 pub fn evaluate_advisory(
     policy: &Policy,
-    ranking: &Ranking<Supplied>,
-    checked: &Checked,
+    checked: &Checked<'_, Supplied>,
     seals: Seals,
     today: Date,
 ) -> AdvisoryVerdict {
@@ -304,28 +292,20 @@ pub fn evaluate_advisory(
             "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
                 .to_owned(),
     };
-    let seals = provenance(seals, ranking, Provenance::Supplied);
-    let mut verdict = judge(
-        policy,
-        &ranking.doc,
-        checked,
-        vec![unverified],
-        seals,
-        today,
-    );
+    let seals = provenance(seals, checked.ranking, Provenance::Supplied);
+    let mut verdict = judge(policy, checked, vec![unverified], seals, today);
     hold_at_least(&mut verdict);
     AdvisoryVerdict { verdict }
 }
 
-fn judge(
+fn judge<P>(
     policy: &Policy,
-    rank: &RankDoc,
-    checked: &Checked,
+    checked: &Checked<'_, P>,
     mut extra: Vec<Note>,
     seals: Seals,
     today: Date,
 ) -> Verdict {
-    let mut verdict = evaluate(policy, &checked.effective(rank), seals, today);
+    let mut verdict = evaluate(policy, &checked.effective(), seals, today);
     extra.extend(checked.notes());
     if !extra.is_empty() {
         verdict.notes.extend(extra);

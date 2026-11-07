@@ -864,13 +864,15 @@ pub(crate) mod child {
             ));
         }
         let pinned = pin_executable(ranker).map_err(RankerFailure::Door)?;
-        if !policy.admits_producer(&pinned.sha256) {
+        // The policy's allowlist mints the token `attest` requires (Q-TYPES-1): no token, no
+        // produced ranking, by type.
+        let Some(admitted) = policy.admit_producer(&pinned.sha256) else {
             return Err(RankerFailure::NotAdmitted(format!(
                 "ranker {} has sha256 {}, which the policy's [producer] sha256 does not list",
                 ranker.display(),
                 pinned.sha256
             )));
-        }
+        };
         let isolation = Isolation::create_in(base).map_err(RankerFailure::Door)?;
         let env = isolation.env();
         let out = run_child(&ChildSpec {
@@ -894,7 +896,7 @@ pub(crate) mod child {
                 doc.input_sha256()
             )));
         }
-        Ok((Ranking::attest(doc, pinned.sha256), out.stdout))
+        Ok((Ranking::attest(doc, admitted), out.stdout))
     }
 
     /// Wall-clock limit for one Git call.

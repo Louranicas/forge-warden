@@ -5,6 +5,7 @@ use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// A compiled set of globs, keeping the patterns for reporting.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PathSet {
     patterns: Vec<String>,
     set: GlobSet,
@@ -26,6 +27,7 @@ impl PathSet {
 
 /// Files a rule looks at: in `paths` and not in `except`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Scope {
     pub(super) paths: PathSet,
     pub(super) except: Option<PathSet>,

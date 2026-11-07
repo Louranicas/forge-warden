@@ -9,8 +9,9 @@
 )]
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::{RuleOutcome, Seals};
-use forge_warden_core::{Date, Outcome, evaluate};
+use forge_warden_core::{Date, Outcome};
 use proptest::prelude::*;
 use serde_json::json;
 

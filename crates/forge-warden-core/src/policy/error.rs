@@ -4,6 +4,7 @@ use std::fmt;
 
 /// A policy that could not be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum PolicyError {
     /// More than [`crate::MAX_INPUT_BYTES`].
     #[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)]
@@ -18,6 +19,7 @@ pub enum PolicyError {
 
 /// One problem in a policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PolicyIssue {
     /// Where: `rule[2] "no-secrets"`, `waiver[0]`, or `policy`.
     pub location: String,

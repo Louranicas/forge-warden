@@ -10,13 +10,14 @@
 mod corpus_manifest;
 
 use forge_warden_core::authority::{
-    AdvisoryOutcome, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
+    AdvisoryOutcome, Produced, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
 };
 use forge_warden_core::facts::PatchFacts;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankDoc, parse_rank};
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::{Provenance, RankedBy, Seals};
-use forge_warden_core::{Date, Outcome, Policy, evaluate};
+use forge_warden_core::{Date, Outcome, Policy};
 use std::path::PathBuf;
 
 const HASH: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
@@ -63,6 +64,13 @@ fn produced_seals() -> Seals {
     seals
 }
 
+/// `doc` attested as produced by `HASH`, admitted by a policy whose allowlist lists it: the only
+/// way to obtain the token (Q-TYPES-1).
+fn produced(doc: RankDoc) -> Ranking<Produced> {
+    let admitting = policy(&format!("[producer]\nsha256 = [\"{HASH}\"]\n{PERMISSIVE}"));
+    Ranking::attest(doc, admitting.admit_producer(HASH).unwrap())
+}
+
 fn today() -> Date {
     Date::parse("2026-11-06").unwrap()
 }
@@ -98,8 +106,8 @@ fn a_supplied_ranking_never_passes_anywhere_in_the_corpus() {
     for case in index["cases"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let Some(doc) = rank(name) else { continue };
-        let checked = check(&doc, facts(name));
-        let advisory = evaluate_advisory(&p, &Ranking::supplied(doc), &checked, seals(), today());
+        let supplied = Ranking::supplied(doc);
+        let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), seals(), today());
         assert_ne!(advisory.verdict().verdict, Outcome::Pass, "{name}");
         assert!(matches!(
             advisory.outcome(),
@@ -125,16 +133,10 @@ fn a_forged_ranking_with_the_real_patch_holds_instead_of_passing() {
         Outcome::Pass,
         "the parent passed it"
     );
-    let checked = check(&doc, facts(name));
+    let ranking = produced(doc);
+    let checked = check(&ranking, facts(name));
     assert!(!checked.is_covered());
-    let verdict = evaluate_authority(
-        &p,
-        &Ranking::attest(doc, HASH.to_owned()),
-        &checked,
-        SuppliedCopy::Absent,
-        seals(),
-        today(),
-    );
+    let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
     assert_eq!(verdict.verdict, Outcome::Hold);
     assert_eq!(verdict.exit.code, 8);
     assert!(codes(&verdict.notes).contains(&"rank_incomplete"));
@@ -151,15 +153,9 @@ fn git_adds_the_deletion_the_producer_omitted() {
         Outcome::Pass,
         "the parent missed it"
     );
-    let checked = check(&doc, facts(name));
-    let verdict = evaluate_authority(
-        &p,
-        &Ranking::attest(doc, HASH.to_owned()),
-        &checked,
-        SuppliedCopy::Absent,
-        seals(),
-        today(),
-    );
+    let ranking = produced(doc);
+    let checked = check(&ranking, facts(name));
+    let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
     assert_eq!(verdict.verdict, Outcome::Fail);
     assert_eq!(verdict.rules[0].violations.len(), 1);
     assert!(codes(&verdict.notes).contains(&"status_mismatch"));
@@ -175,16 +171,10 @@ fn a_covered_ranking_is_judged_exactly_as_before() {
         let doc = rank(name).unwrap();
         let p = policy(PERMISSIVE);
         let before = evaluate(&p, &doc, produced_seals(), today());
-        let checked = check(&doc, facts(name));
+        let ranking = produced(doc);
+        let checked = check(&ranking, facts(name));
         assert!(checked.is_covered(), "{name}");
-        let after = evaluate_authority(
-            &p,
-            &Ranking::attest(doc, HASH.to_owned()),
-            &checked,
-            SuppliedCopy::Absent,
-            seals(),
-            today(),
-        );
+        let after = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
         assert_eq!(after, before, "{name}");
     }
 }
@@ -193,10 +183,10 @@ fn a_covered_ranking_is_judged_exactly_as_before() {
 fn an_unverifiable_patch_holds_with_the_reason() {
     let name = "keel-submodule-update";
     let doc = rank(name).unwrap();
-    let checked = check(&doc, facts(name));
+    let ranking = produced(doc);
+    let checked = check(&ranking, facts(name));
     let verdict = evaluate_authority(
         &policy(PERMISSIVE),
-        &Ranking::attest(doc, HASH.to_owned()),
         &checked,
         SuppliedCopy::Absent,
         seals(),
@@ -219,9 +209,9 @@ fn an_unverifiable_patch_holds_with_the_reason() {
 fn only_a_produced_ranking_names_its_producer() {
     let doc = rank("new-mode").unwrap();
     assert_eq!(Ranking::supplied(doc.clone()).producer_sha256(), None);
-    let produced = Ranking::attest(doc.clone(), HASH.to_owned());
-    assert_eq!(produced.producer_sha256(), Some(HASH));
-    assert_eq!(produced.doc(), &doc);
+    let ranking = produced(doc.clone());
+    assert_eq!(ranking.producer_sha256(), Some(HASH));
+    assert_eq!(ranking.doc(), &doc);
 }
 
 #[test]
@@ -243,17 +233,9 @@ fn a_differing_supplied_copy_holds_and_an_identical_one_changes_nothing() {
     let name = "new-mode";
     let doc = rank(name).unwrap();
     let p = policy(PERMISSIVE);
-    let checked = check(&doc, facts(name));
-    let judge = |copy| {
-        evaluate_authority(
-            &p,
-            &Ranking::attest(doc.clone(), HASH.to_owned()),
-            &checked,
-            copy,
-            seals(),
-            today(),
-        )
-    };
+    let ranking = produced(doc);
+    let checked = check(&ranking, facts(name));
+    let judge = |copy| evaluate_authority(&p, &checked, copy, seals(), today());
     let absent = judge(SuppliedCopy::Absent);
     assert_eq!(absent.verdict, Outcome::Pass);
     assert_eq!(judge(SuppliedCopy::Identical), absent);
@@ -272,17 +254,14 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
     let name = "new-mode";
     let doc = rank(name).unwrap();
     let p = policy(PERMISSIVE);
-    let checked = check(&doc, facts(name));
+    let ranking = produced(doc.clone());
+    let supplied = Ranking::supplied(doc.clone());
     let mut lying = seals();
     lying.provenance = Provenance::Produced;
-    lying.ranked_by = RankedBy {
-        version: "9.9.9".to_owned(),
-        sha256: Some("f".repeat(64)),
-    };
+    lying.ranked_by = RankedBy::new("9.9.9".to_owned(), Some("f".repeat(64)));
     let authority = evaluate_authority(
         &p,
-        &Ranking::attest(doc.clone(), HASH.to_owned()),
-        &checked,
+        &check(&ranking, facts(name)),
         SuppliedCopy::Absent,
         lying.clone(),
         today(),
@@ -290,24 +269,12 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
     assert_eq!(authority.seals.provenance, Provenance::Produced);
     assert_eq!(
         authority.seals.ranked_by,
-        RankedBy {
-            version: doc.tool_version().to_owned(),
-            sha256: Some(HASH.to_owned()),
-        }
+        RankedBy::new(doc.tool_version().to_owned(), Some(HASH.to_owned()))
     );
-    let advisory = evaluate_advisory(
-        &p,
-        &Ranking::supplied(doc.clone()),
-        &checked,
-        lying,
-        today(),
-    );
+    let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), lying, today());
     assert_eq!(advisory.verdict().seals.provenance, Provenance::Supplied);
     assert_eq!(
         advisory.verdict().seals.ranked_by,
-        RankedBy {
-            version: doc.tool_version().to_owned(),
-            sha256: None,
-        }
+        RankedBy::new(doc.tool_version().to_owned(), None)
     );
 }

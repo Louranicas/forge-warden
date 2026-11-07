@@ -7,6 +7,7 @@ use std::fmt;
 
 /// A calendar date between 1970-01-01 and 9999-12-31.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub struct Date {
     year: u16,
     month: u8,

@@ -14,6 +14,7 @@ pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
 
 /// A validated ranking. Only [`parse_rank`] and [`RankDoc::new`] make one, and both validate.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RankDoc {
     input_sha256: String,
     tool_version: String,
@@ -22,6 +23,7 @@ pub struct RankDoc {
 
 /// One ranked file. Only [`RankedFile::new`] makes one, and it validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RankedFile {
     path: RepoPath,
     status: String,
@@ -33,6 +35,7 @@ pub struct RankedFile {
 
 /// One piece of code evidence: a signal anchored to a hunk and a line. Only [`Evidence::new`] makes one.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub struct Evidence {
     signal: String,
     address: String,
@@ -90,7 +93,22 @@ impl RankDoc {
     pub fn files(&self) -> &[RankedFile] {
         &self.files
     }
+
+    /// This ranking with each file replaced by `widen(file)`, keeping the seal and the version.
+    /// Infallible: the seal and version were validated when this document was built, and `widen`
+    /// returns files, which are valid by construction (Zen B4).
+    pub(crate) fn map_files(&self, widen: impl FnMut(&RankedFile) -> RankedFile) -> Self {
+        Self {
+            input_sha256: self.input_sha256.clone(),
+            tool_version: self.tool_version.clone(),
+            files: self.files.iter().map(widen).collect(),
+        }
+    }
 }
+
+/// A change-kind signal Git's facts imply (`new_file`, `deleted_file`, `binary_change`,
+/// `symlink_change`, `mode_change`, …): a `&'static str` from the core's own vocabulary, never empty.
+pub(crate) type DerivedSignal = &'static str;
 
 impl RankedFile {
     /// A ranked file, if its status and signals are non-empty and every piece of evidence cites a
@@ -131,6 +149,30 @@ impl RankedFile {
             evidence,
             evidence_truncated,
         })
+    }
+
+    /// This file with every signal in `added` it does not already carry appended, in order, and
+    /// nothing removed. Infallible by construction (Zen B4): the status and evidence are unchanged,
+    /// evidence still cites signals the file carries (none is removed), and an added signal is a
+    /// non-empty core constant (checked by `every_derived_signal_is_a_non_empty_constant`).
+    pub(crate) fn with_added_signals<'a>(
+        &self,
+        added: impl IntoIterator<Item = &'a DerivedSignal>,
+    ) -> Self {
+        let mut signals = self.signals.clone();
+        for signal in added {
+            if !signals.iter().any(|s| s == signal) {
+                signals.push((*signal).to_owned());
+            }
+        }
+        Self {
+            path: self.path.clone(),
+            status: self.status.clone(),
+            score: self.score,
+            signals,
+            evidence: self.evidence.clone(),
+            evidence_truncated: self.evidence_truncated,
+        }
     }
 
     /// The path (patch-author controlled: data, never instruction).
@@ -232,6 +274,7 @@ impl Evidence {
 
 /// Why a ranking was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum RankError {
     /// More than [`crate::MAX_INPUT_BYTES`].
     #[error("ranking is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)]
@@ -353,6 +396,47 @@ mod tests {
         format!(
             r#"{{"schema":"deep-diff-forge.rank.v0","input_sha256":"{SEAL}","tool":{{"name":"deep-diff-forge","version":"0.7.0"}},"ranked":[{ranked}]}}"#
         )
+    }
+
+    #[test]
+    fn added_signals_are_appended_once_in_order_and_nothing_is_lost() {
+        // Zen B4: widening keeps every original signal, evidence item and field, adds only the
+        // missing signals in the order given, and never duplicates one.
+        let text = doc(&format!(
+            r#"{{"path":"src/lib.rs","status":"modified","score":9,"signals":["unsafe_added","binary_change"],
+               "evidence":[{{"signal":"unsafe_added","address":"{SEAL}","side":"new","line":3,"basis":"lexical"}}],"evidence_truncated":true}}"#
+        ));
+        let rank = parse_rank(text.as_bytes()).unwrap();
+        let file = &rank.files[0];
+        let wide = file.with_added_signals(&["binary_change", "deleted_file", "mode_change"]);
+        assert_eq!(
+            wide.signals,
+            [
+                "unsafe_added",
+                "binary_change",
+                "deleted_file",
+                "mode_change"
+            ]
+        );
+        assert_eq!(wide.evidence, file.evidence);
+        assert_eq!(wide.path, file.path);
+        assert_eq!(wide.status, file.status);
+        assert_eq!(wide.score, file.score);
+        assert!(wide.evidence_truncated);
+        assert_eq!(
+            &file.with_added_signals(&[]),
+            file,
+            "adding nothing changes nothing"
+        );
+
+        let mapped = rank.map_files(|f| f.with_added_signals(&["new_file"]));
+        assert_eq!(mapped.input_sha256(), rank.input_sha256());
+        assert_eq!(mapped.tool_version(), rank.tool_version());
+        assert_eq!(mapped.files.len(), 1);
+        assert_eq!(
+            mapped.files[0].signals,
+            ["unsafe_added", "binary_change", "new_file"]
+        );
     }
 
     #[test]

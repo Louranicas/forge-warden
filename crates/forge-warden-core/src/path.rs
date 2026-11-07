@@ -9,6 +9,7 @@ use std::fmt;
 
 /// A canonical, root-relative repository path: `/`-separated, no empty, `.` or `..` segment.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub struct RepoPath(String);
 
 /// Why a path is not a canonical repository path.

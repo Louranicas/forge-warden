@@ -264,7 +264,10 @@ fn core_dependency_violations(manifest: &str) -> Vec<String> {
         "thiserror",
         "toml",
     ];
-    const ALLOWED_DEV: [&str; 1] = ["proptest"];
+    // `forge-warden-core` itself: the engine tests' self dev-dependency that enables the
+    // `unattested-evaluate` test door (Q-TYPES-1); a normal dependency may never enable it
+    // (`no_normal_dependency_opens_the_unattested_evaluate_door`).
+    const ALLOWED_DEV: [&str; 2] = ["forge-warden-core", "proptest"];
     let declared = match declared_dependencies(manifest) {
         Ok(declared) => declared,
         Err(error) => return vec![format!("the manifest is not valid TOML: {error}")],
@@ -480,9 +483,47 @@ fn the_clippy_config_disallows_minting_and_raw_judging() {
     let config = read("clippy.toml");
     for path in [
         "path = \"forge_warden_core::authority::Ranking::attest\"",
-        "path = \"forge_warden_core::eval::evaluate\"",
+        "path = \"forge_warden_core::testing::evaluate\"",
     ] {
         assert!(config.contains(path), "clippy.toml lost {path}");
+    }
+}
+
+#[test]
+fn no_normal_dependency_opens_the_unattested_evaluate_door() {
+    // Q-TYPES-1: the raw engine (`forge_warden_core::testing::evaluate`, which can pass with no
+    // provenance) exists only with the `unattested-evaluate` feature. Only [dev-dependencies] may
+    // enable it, and nothing enables it by default: parsed, not searched.
+    let feature = "unattested-evaluate";
+    let core: toml::Table = toml::from_str(&read("crates/forge-warden-core/Cargo.toml")).unwrap();
+    let defaults = core
+        .get("features")
+        .and_then(|f| f.get("default"))
+        .and_then(toml::Value::as_array)
+        .map(Vec::len);
+    assert!(
+        matches!(defaults, None | Some(0)),
+        "forge-warden-core has default features: {defaults:?}"
+    );
+    for manifest in [
+        "Cargo.toml",
+        "crates/forge-warden-core/Cargo.toml",
+        "crates/forge-warden-cli/Cargo.toml",
+    ] {
+        let doc: toml::Table = toml::from_str(&read(manifest)).unwrap();
+        let tables = [
+            doc.get("dependencies"),
+            doc.get("build-dependencies"),
+            doc.get("workspace").and_then(|w| w.get("dependencies")),
+        ];
+        for table in tables.into_iter().flatten() {
+            let opens = table
+                .get("forge-warden-core")
+                .and_then(|d| d.get("features"))
+                .and_then(toml::Value::as_array)
+                .is_some_and(|f| f.iter().any(|v| v.as_str() == Some(feature)));
+            assert!(!opens, "{manifest}: a normal dependency enables {feature}");
+        }
     }
 }
 

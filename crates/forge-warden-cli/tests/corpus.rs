@@ -11,12 +11,13 @@ mod common;
 #[path = "../../forge-warden-core/tests/support/corpus_manifest.rs"]
 mod corpus_manifest;
 use common::files_under;
+use forge_warden_core::Date;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
 use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::Seals;
 use forge_warden_core::vocab::is_known_signal;
-use forge_warden_core::{Date, evaluate};
 
 #[test]
 fn every_real_ranking_parses_with_known_vocabulary() {
