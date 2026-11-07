@@ -87,7 +87,7 @@ fn check_meta(meta: &Meta, found: &mut Vec<String>) {
 /// and goes through the full parse and lint check (Touchstone E3a v4 boundary matrix).
 fn is_plain_doc(tokens: &TokenStream) -> bool {
     let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    let doc_eq = matches!(trees.first(), Some(TokenTree::Ident(i)) if i == "doc")
+    let doc_eq = matches!(trees.first(), Some(TokenTree::Ident(i)) if i.unraw() == "doc")
         && matches!(trees.get(1), Some(TokenTree::Punct(p)) if p.as_char() == '=');
     match trees.as_slice() {
         [_, _, TokenTree::Literal(_)] => doc_eq,
@@ -349,5 +349,38 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
             Vec::<String>::new(),
             "{name} could switch off the door lints (production: {shipped})"
         );
+    }
+}
+
+#[test]
+fn raw_doc_name_has_the_same_literal_admission() {
+    let normal: TokenStream = "doc = \"prose\"".parse().unwrap();
+    let raw: TokenStream = "r#doc = \"prose\"".parse().unwrap();
+    assert!(is_plain_doc(&normal));
+    assert!(is_plain_doc(&raw));
+}
+
+#[test]
+fn raw_attribute_names_and_paths_cannot_suppress_doors() {
+    for (name, source) in [
+        (
+            "raw expect",
+            "#[r#expect(clippy::all, reason = \"x\")] fn f() {}",
+        ),
+        ("raw allow", "#[r#allow(clippy::all)] fn f() {}"),
+        ("raw warn", "#[r#warn(clippy::all)] fn f() {}"),
+        (
+            "raw path",
+            "#[expect(r#clippy::r#disallowed_methods, reason = \"x\")] fn f() {}",
+        ),
+        (
+            "raw conditional",
+            concat!(
+                "#[r#cfg_attr(all(), ",
+                "r#allow(r#clippy::r#all))] fn f() {}"
+            ),
+        ),
+    ] {
+        assert!(!door_lint_controls(source).is_empty(), "missed: {name}");
     }
 }

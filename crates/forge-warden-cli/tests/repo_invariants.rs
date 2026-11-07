@@ -9,6 +9,7 @@
 
 mod common;
 use common::{files_under, read, root};
+use syn::ext::IdentExt as _;
 
 /// Whether `path` (`crates/…`) is compiled into the production binary, by compiler evidence
 /// (B-C1c-03): a test exemption is never decided by a directory name.
@@ -495,7 +496,11 @@ fn unexplained_ignores(text: &str) -> usize {
     struct Ignores(usize);
     impl Ignores {
         fn inspect(&mut self, meta: &syn::Meta) {
-            if meta.path().is_ident("ignore") {
+            if meta
+                .path()
+                .get_ident()
+                .is_some_and(|name| name.unraw() == "ignore")
+            {
                 let explained = match meta {
                     syn::Meta::NameValue(value) => matches!(&value.value,
                         syn::Expr::Lit(expr) if matches!(&expr.lit,
@@ -505,7 +510,10 @@ fn unexplained_ignores(text: &str) -> usize {
                 if !explained {
                     self.0 = self.0.saturating_add(1);
                 }
-            } else if meta.path().is_ident("cfg_attr")
+            } else if meta
+                .path()
+                .get_ident()
+                .is_some_and(|name| name.unraw() == "cfg_attr")
                 && let syn::Meta::List(list) = meta
             {
                 let Ok(nested) = list.parse_args_with(
@@ -565,6 +573,9 @@ fn ignored_tests_require_an_explicit_reason() {
     let mut names = common::sources().test_only;
     names.extend(common::production_sources());
     names.extend(rust_sources().into_iter().map(|(path, _)| path));
+    // Unlike the legacy text scans, parsed attributes cannot confuse fixture strings with code.
+    // Include this file explicitly even if compiler source discovery changes.
+    names.insert("crates/forge-warden-cli/tests/repo_invariants.rs".to_owned());
     for path in names {
         assert_eq!(
             unexplained_ignores(&read(&path)),
@@ -577,6 +588,9 @@ fn ignored_tests_require_an_explicit_reason() {
 #[test]
 fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
     for bad in [
+        "#[r#ignore]",
+        "#[r#cfg_attr(test, r#ignore)]",
+        "#[cfg_attr(test, r#cfg_attr(unix, r#ignore))]",
         "#[ignore]",
         "#[ignore = \" \"]",
         "#[cfg_attr(test, ignore)]",
@@ -593,6 +607,14 @@ fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
         0
     );
     assert_eq!(unexplained_ignores("// #[ignore]\nfn probe() {}"), 0);
+    assert_eq!(
+        unexplained_ignores("#[r#ignore = \"hardware\"] fn probe() {}"),
+        0
+    );
+    assert_eq!(
+        unexplained_ignores("macro_rules! probe { () => { #[r#ignore] fn probe() {} } }"),
+        1
+    );
     assert_eq!(
         unexplained_ignores("macro_rules! probe { () => { #[ignore] fn probe() {} } }"),
         1
