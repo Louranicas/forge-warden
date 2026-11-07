@@ -30,7 +30,7 @@ class Contracts(unittest.TestCase):
     def test_each_tool_or_compiler_drift_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for file in ("scripts/tool-versions.toml", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml"):
+            for file in ("scripts/tool-versions.toml", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
                 (root / file).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / file, root / file)
             workflow = root / ".github/workflows/ci.yml"
@@ -45,6 +45,14 @@ class Contracts(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         TOOLS.check(root)
             workflow.write_text(original)
+            baseline = root / ".github/workflows/mutation-baseline.yml"
+            baseline_original = baseline.read_text()
+            for pin in ("cargo-mutants@" + versions["cargo_mutants"], versions["rust"]):
+                with self.subTest(baseline_pin=pin):
+                    baseline.write_text(baseline_original.replace(pin, "9.9.9"))
+                    with self.assertRaises(ValueError):
+                        TOOLS.check(root)
+            baseline.write_text(baseline_original)
 
     def test_receipt_requires_exact_subject_complete_unique_cases_and_caught(self):
         good = {"revision": "subject", "results": [{"id": "one", "status": "CAUGHT"}, {"id": "two", "status": "CAUGHT"}], "pending_guardrails": [{"id": "G-99", "status": "PENDING"}]}

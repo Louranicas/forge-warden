@@ -16,6 +16,10 @@ class MutationEnvironment(unittest.TestCase):
         commands = [line.strip() for line in workflow.splitlines()
                     if "cargo mutants --" in line and not line.lstrip().startswith("#")]
         self.assertEqual(len(commands), 1, "identify exactly one workflow mutation command")
+        baseline = (ROOT / ".github/workflows/mutation-baseline.yml").read_text()
+        baseline_commands = [line.strip().removeprefix("run: ") for line in baseline.splitlines()
+                             if "run: env -u CARGO_TARGET_DIR cargo mutants --" in line]
+        self.assertEqual(len(baseline_commands), 1)
         with tempfile.TemporaryDirectory(prefix="mutation-env-") as directory:
             root = Path(directory)
             (root / "bin").mkdir()
@@ -35,7 +39,7 @@ class MutationEnvironment(unittest.TestCase):
                 path = root / "bin" / name
                 path.write_text(text)
                 path.chmod(0o700)
-            for entry in ("ci_local", "workflow"):
+            for entry in ("ci_local", "workflow", "baseline"):
                 for inherited in (False, True):
                     with self.subTest(entry=entry, inherited=inherited):
                         receipt = root / "receipt.json"
@@ -47,10 +51,15 @@ class MutationEnvironment(unittest.TestCase):
                         if inherited:
                             env["CARGO_TARGET_DIR"] = "/sentinel/must-not-reach-mutants"
                         command = (["bash", str(ROOT / "scripts/ci_local.sh")] if entry == "ci_local"
-                                   else ["bash", "-c", commands[0]])
+                                   else ["bash", "-c", baseline_commands[0] if entry == "baseline" else commands[0]])
                         result = subprocess.run(command, cwd=root, env=env, capture_output=True)
                         self.assertEqual(result.returncode, 2, result.stderr)
                         actual = json.loads(receipt.read_text())
+                        if entry == "baseline":
+                            self.assertIn("--workspace", actual["args"])
+                            self.assertIn("--no-config", actual["args"])
+                            self.assertNotIn("--in-diff", actual["args"])
+                            self.assertNotIn("--test-workspace", actual["args"])
                         self.assertIsNone(actual["target"], "shared target leaked into mutation child")
                         index = actual["args"].index("--cap-lints")
                         self.assertEqual(actual["args"][index + 1], "true")

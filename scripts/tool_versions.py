@@ -27,6 +27,12 @@ def check(root):
     expected = {(name.replace("_", "-"), values[name]) for name in ("zizmor", "cargo_mutants", "cargo_deny")}
     if len(pins) != 3 or set(pins) != expected:
         raise ValueError("CI tool pins drift from scripts/tool-versions.toml")
+    baseline = (root / ".github/workflows/mutation-baseline.yml").read_text()
+    if re.findall(r"tool: (cargo-mutants)@([^\s]+)", baseline) != [("cargo-mutants", values["cargo_mutants"])]:
+        raise ValueError("baseline mutation tool pin drifts from scripts/tool-versions.toml")
+    baseline_compilers = re.findall(r"(?:toolchain install |rustup default )([0-9.]+)", baseline)
+    if baseline_compilers != [values["rust"], values["rust"]]:
+        raise ValueError("baseline Rust pin drifts from rust-toolchain.toml")
     allowed = {values["rust"], values["msrv"] if values["msrv"].count(".") == 2 else values["msrv"] + ".0"}
     compilers = re.findall(r"(?:toolchain install |rustup default |cargo \+|RUSTUP_TOOLCHAIN: )([0-9.]+)", workflow)
     if not compilers or set(compilers) != allowed:

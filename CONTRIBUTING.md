@@ -37,6 +37,19 @@ A `hold` is accepted only with an OpenSSH-signed acknowledgement from a reviewer
 Until reviewer keys are enrolled and an external trust root enforces the check (ADR 0006), CI
 fails closed on every hold.
 
+## Periodic full mutation baseline
+
+`mutation-baseline.yml` runs each Monday at 04:23 UTC and can be started with
+`workflow_dispatch`. It is deliberately not a required pull-request check. Unlike diff mutation,
+it selects the full workspace with no diff filter or repository mutation config. It keeps
+`--cap-lints true`, clears inherited `CARGO_TARGET_DIR`, and uses the canonical tool pins checked
+by `scripts/tool_versions.py`. Tests run for each mutated package (no `--test-workspace`).
+
+Any MISSED mutant makes the job fail; there is no survivor budget or automatic waiver. The
+always-uploaded artifact contains `mutants.out` and exact-subject/tool provenance, including failed
+runs. Review caught, missed, unviable and timeout counts separately. An interrupted run is partial
+evidence, not a completed baseline. The weekly job does not replace diff mutation on pull requests.
+
 ## Decisions
 
 Architecture decisions are in [`docs/adr/`](docs/adr). A change that contradicts one starts with
