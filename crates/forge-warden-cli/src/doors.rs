@@ -10,20 +10,50 @@ use forge_warden_core::{Date, Exit, MAX_INPUT_BYTES};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 
+/// Why a door could not be passed. It decides the registry exit, in one exhaustive `match`
+/// (`Failure::from_door` in main.rs), so a new kind cannot ship unmapped (Q2-05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DoorErrorKind {
+    /// Reading or writing failed (exit 3, `check_environment`).
+    Io,
+    /// The host is not set up as the door requires: an unsafe temporary directory, an unusable
+    /// clock (exit 3, `check_environment`).
+    Environment,
+    /// The input is over its byte budget (exit 4, `change_input`).
+    OverBudget,
+    /// The door refuses the input itself: not a regular file, a symbolic link it does not follow,
+    /// unsafe ownership or mode (exit 4, `change_input`).
+    Refused,
+}
+
 /// A door that could not be passed.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct DoorError {
     /// What failed, for stderr.
     pub(crate) message: String,
-    /// Whether the input was over budget (an input problem, not an environment problem).
-    pub(crate) over_budget: bool,
+    /// Why, which decides the exit.
+    pub(crate) kind: DoorErrorKind,
 }
 
 impl DoorError {
     fn io(what: &str, error: &std::io::Error) -> Self {
         Self {
             message: format!("{what}: {error}"),
-            over_budget: false,
+            kind: DoorErrorKind::Io,
+        }
+    }
+
+    fn refused(what: &str, why: &str) -> Self {
+        Self {
+            message: format!("{what}: {why}"),
+            kind: DoorErrorKind::Refused,
+        }
+    }
+
+    fn environment(message: String) -> Self {
+        Self {
+            message,
+            kind: DoorErrorKind::Environment,
         }
     }
 }
@@ -51,17 +81,74 @@ fn read_within(
     if bytes.len() > budget {
         return Err(DoorError {
             message: format!("{what}: over the {budget} byte budget"),
-            over_budget: true,
+            kind: DoorErrorKind::OverBudget,
         });
     }
     Ok(bytes)
 }
 
-/// Read a whole file, within the byte budget.
-#[expect(clippy::disallowed_methods, reason = "door: read_file")]
+/// Whether [`open_regular`] follows a symbolic link in the final path component.
+#[derive(Clone, Copy)]
+enum Symlinks {
+    /// Follow it (input files: `--policy`, `--patch`, `--rank`).
+    Follow,
+    /// Refuse it (`O_NOFOLLOW`: the executable pin).
+    Refuse,
+}
+
+/// Open flags for input files: `O_NONBLOCK` on Linux (`x86_64`, `aarch64`), so opening a FIFO with
+/// no writer returns at once and the non-regular file is refused by `fstat` rather than hanging
+/// the open (Bastion B-C1a-01, Q2-02). Reads of a regular file are unaffected. (`O_RDONLY` is 0;
+/// std adds `O_CLOEXEC`.) Each flag set is one literal, so no operator can be mutated into an
+/// equal value; a test checks the compositions.
+const FOLLOW_FLAGS: i32 = 0o4_000;
+
+/// Open flags for the executable pin: `O_NOFOLLOW | O_NONBLOCK`.
+const PIN_FLAGS: i32 = 0o404_000;
+
+/// `ELOOP`: `O_NOFOLLOW` met a symbolic link in the final component (or a loop).
+const ELOOP: i32 = 40;
+
+/// The one place a named file is opened (Q2-02): read-only, always non-blocking, and
+/// only a regular file is admitted (a FIFO, socket, device or directory is refused before any
+/// read). A procfs or sysfs file reports itself as regular and is read within the byte budget like
+/// any other file; this door does not claim to refuse it. A symbolic link the flags do not follow is refused, not an I/O error.
+#[expect(
+    clippy::disallowed_types,
+    reason = "door: open_regular (every named-file open)"
+)]
+fn open_regular(
+    path: &Path,
+    symlinks: Symlinks,
+    what: &str,
+) -> Result<(std::fs::File, std::fs::Metadata), DoorError> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let flags = match symlinks {
+        Symlinks::Follow => FOLLOW_FLAGS,
+        Symlinks::Refuse => PIN_FLAGS,
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags)
+        .open(path)
+        .map_err(|e| {
+            if e.raw_os_error() == Some(ELOOP) {
+                DoorError::refused(what, &e.to_string())
+            } else {
+                DoorError::io(what, &e)
+            }
+        })?;
+    let meta = file.metadata().map_err(|e| DoorError::io(what, &e))?;
+    if !meta.is_file() {
+        return Err(DoorError::refused(what, "not a regular file"));
+    }
+    Ok((file, meta))
+}
+
+/// Read a whole regular file (symbolic links followed), within the byte budget.
 pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, DoorError> {
     let what = format!("reading {}", path.display());
-    let file = std::fs::File::open(path).map_err(|e| DoorError::io(&what, &e))?;
+    let (file, _) = open_regular(path, Symlinks::Follow, &what)?;
     read_bounded(file, &what)
 }
 
@@ -76,19 +163,14 @@ pub(crate) fn read_stdin() -> Result<Vec<u8>, DoorError> {
 pub(crate) fn today() -> Result<Date, DoorError> {
     let since_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| DoorError {
-            message: format!("system clock is before 1970: {e}"),
-            over_budget: false,
-        })?;
+        .map_err(|e| DoorError::environment(format!("system clock is before 1970: {e}")))?;
     date_of_unix_seconds(since_epoch.as_secs())
 }
 
 /// The UTC calendar date of a Unix timestamp.
 fn date_of_unix_seconds(seconds: u64) -> Result<Date, DoorError> {
-    Date::from_unix_days(seconds / 86_400).ok_or_else(|| DoorError {
-        message: "system clock is outside 1970..=9999".to_owned(),
-        over_budget: false,
-    })
+    Date::from_unix_days(seconds / 86_400)
+        .ok_or_else(|| DoorError::environment("system clock is outside 1970..=9999".to_owned()))
 }
 
 /// Write `text` to stdout. A closed pipe (`forge-warden … | head`) is not an error.
@@ -126,7 +208,7 @@ pub(crate) fn diagnose(text: &str) {
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
 pub(crate) mod child {
-    use super::{DoorError, read_within};
+    use super::{DoorError, Symlinks, open_regular, read_within};
     use forge_warden_core::Policy;
     use forge_warden_core::authority::{Produced, Ranking};
     use forge_warden_core::defaults::NamedDefault as _;
@@ -141,18 +223,6 @@ pub(crate) mod child {
     /// `O_NOFOLLOW` on Linux (`x86_64`, `aarch64`): open refuses a symlink in the final path component.
     #[cfg(all(target_os = "linux", test))]
     pub(super) const O_NOFOLLOW: i32 = 0o400_000;
-
-    /// `O_NONBLOCK` on Linux (`x86_64`, `aarch64`): opening a FIFO with no writer returns at once
-    /// instead of blocking, so a non-regular file is refused by `fstat` rather than hanging the
-    /// open (Bastion B-C1a-01). Reads of a regular file are unaffected.
-    #[cfg(all(target_os = "linux", test))]
-    pub(super) const O_NONBLOCK: i32 = 0o4_000;
-
-    /// The flags `pin_executable` opens with: `O_NOFOLLOW | O_NONBLOCK` (`O_RDONLY` is 0; std adds
-    /// `O_CLOEXEC`). One literal, so the composition cannot be mutated into an equal value (the two
-    /// bits are disjoint); a test checks it equals the composition.
-    #[cfg(target_os = "linux")]
-    pub(super) const PIN_FLAGS: i32 = 0o404_000;
 
     /// The largest executable forge-warden will pin (hash) before running it.
     pub(super) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
@@ -227,35 +297,22 @@ pub(crate) mod child {
 
     /// [`pin_executable`] with an explicit byte budget.
     #[cfg(target_os = "linux")]
-    #[expect(
-        clippy::disallowed_methods,
-        clippy::disallowed_types,
-        reason = "door: pin_executable"
-    )]
+    #[expect(clippy::disallowed_methods, reason = "door: pin_executable")]
     pub(super) fn pin_within(path: &Path, budget: usize) -> Result<PinnedExecutable, DoorError> {
-        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        use std::os::unix::fs::MetadataExt as _;
         let what = format!("pinning {}", path.display());
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(PIN_FLAGS)
-            .open(path)
-            .map_err(|e| DoorError::io(&what, &e))?;
-        let meta = file.metadata().map_err(|e| DoorError::io(&what, &e))?;
+        let (mut file, meta) = open_regular(path, Symlinks::Refuse, &what)?;
         let own_uid = std::fs::metadata("/proc/self")
             .map_err(|e| DoorError::io("reading /proc/self", &e))?
             .uid();
-        let refuse = |why: &str| DoorError {
-            message: format!("{what}: {why}"),
-            over_budget: false,
-        };
-        if !meta.is_file() {
-            return Err(refuse("not a regular file"));
-        }
         if meta.uid() != 0 && meta.uid() != own_uid {
-            return Err(refuse("owned by neither root nor this user"));
+            return Err(DoorError::refused(
+                &what,
+                "owned by neither root nor this user",
+            ));
         }
         if meta.mode() & 0o022 != 0 {
-            return Err(refuse("writable by group or others"));
+            return Err(DoorError::refused(&what, "writable by group or others"));
         }
         let bytes = read_within(&mut file, &what, budget)?;
         Ok(PinnedExecutable {
@@ -268,8 +325,19 @@ pub(crate) mod child {
     /// (exit, timeout, overflow, error) the whole group is killed and reaped, so a grandchild that
     /// holds the pipes cannot outlive the call. This bounds children that stay in the group: it is
     /// **not** a sandbox (a child that calls `setsid` escapes; ADR 0005 §2.5).
-    #[expect(clippy::disallowed_methods, reason = "door: run_child")]
     pub(crate) fn run_child(spec: &ChildSpec<'_>) -> Result<ChildOutput, ChildFailure> {
+        run_child_killing_with(spec, Path::new(KILL))
+    }
+
+    /// The program that kills a child's process group.
+    const KILL: &str = "/usr/bin/kill";
+
+    /// [`run_child`] with an explicit group-kill program (a test seam for a missing or failing kill).
+    #[expect(clippy::disallowed_methods, reason = "door: run_child")]
+    pub(super) fn run_child_killing_with(
+        spec: &ChildSpec<'_>,
+        kill: &Path,
+    ) -> Result<ChildOutput, ChildFailure> {
         use std::os::fd::AsRawFd as _;
         use std::os::unix::process::CommandExt as _;
         use std::process::{Command, Stdio};
@@ -303,13 +371,19 @@ pub(crate) mod child {
         let (Some(mut stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
-            kill_group(group);
+            let _group = kill_group(kill, group);
             let _killed = child.kill();
             let _reaped = child.wait();
             return Err(ChildFailure::Io("a child pipe was not created".to_owned()));
         };
         let input = spec.stdin.to_vec();
-        let writer = std::thread::spawn(move || stdin.write_all(&input));
+        // The writer reports through a channel read against the deadline, never joined (Q2-03): a
+        // descendant that left the group can hold stdin open without reading, and a join would
+        // then wait for it. A writer still blocked at the deadline is left behind (a one-shot CLI).
+        let (wrote_tx, wrote_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _sent = wrote_tx.send(stdin.write_all(&input));
+        });
         let drain = |pipe: Box<dyn std::io::Read + Send>, cap: usize| {
             let over = Arc::new(AtomicBool::new(false));
             let flag = Arc::clone(&over);
@@ -329,21 +403,29 @@ pub(crate) mod child {
         let (out_over, out_rx) = drain(Box::new(stdout), spec.stdout_cap);
         let (err_over, err_rx) = drain(Box::new(stderr), spec.stderr_cap);
 
-        let ended = wait_bounded(&mut child, &out_over, &err_over, started, spec.timeout);
-        // Whatever happened, nothing in the child's group outlives this call.
-        kill_group(group);
+        let ended = wait_bounded(child.id(), &out_over, &err_over, started, spec.timeout);
+        // Whatever happened, nothing in the child's group outlives this call. The leader is not
+        // reaped yet (exited means a zombie), so the group still exists and its id cannot have been
+        // reused: the kill must succeed, and a failure is reported (Q2-04).
+        let killed = kill_group(kill, group);
         // If the group kill failed, the direct child still dies here, so `wait` cannot hang.
         let _killed = child.kill();
-        let _reaped = child.wait();
+        let reaped = child.wait();
         let remaining = spec
             .timeout
             .saturating_sub(started.elapsed())
             .saturating_add(POLL);
         let out_bytes = out_rx.recv_timeout(remaining);
         let err_bytes = err_rx.recv_timeout(POLL.saturating_mul(20));
-        let wrote = writer.join();
+        let wrote = wrote_rx.recv_timeout(
+            spec.timeout
+                .saturating_sub(started.elapsed())
+                .saturating_add(POLL),
+        );
 
-        let status = ended?;
+        killed.map_err(ChildFailure::Io)?;
+        ended?;
+        let status = reaped.map_err(|e| ChildFailure::Io(e.to_string()))?;
         if out_over.load(Ordering::SeqCst) {
             return Err(ChildFailure::StdoutOverflow);
         }
@@ -355,7 +437,11 @@ pub(crate) mod child {
             Ok(Ok(())) => {}
             // A child that exits 0 without reading all of stdin did not judge the whole input.
             Ok(Err(e)) => return Err(ChildFailure::Io(format!("writing the child's stdin: {e}"))),
-            Err(_) => return Err(ChildFailure::Io("the stdin writer panicked".to_owned())),
+            // Still blocked at the deadline: something outside the group holds stdin unread.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Err(ChildFailure::Timeout),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(ChildFailure::Io("the stdin writer panicked".to_owned()));
+            }
         }
         let take = |got: Result<std::io::Result<Vec<u8>>, std::sync::mpsc::RecvTimeoutError>| {
             got.map_err(|_| ChildFailure::Timeout)?
@@ -367,15 +453,21 @@ pub(crate) mod child {
         })
     }
 
-    /// Wait for the child to exit, stopping early on an overflow or the wall-clock limit.
-    #[expect(clippy::disallowed_methods, reason = "door: run_child (poll sleep)")]
+    /// Wait for the child `pid` to exit, stopping early on an overflow or the wall-clock limit. Exit
+    /// is read from `/proc/<pid>/stat` WITHOUT reaping (`try_wait` would reap), so the caller can
+    /// still kill the group by the leader's id before the kernel may reuse it (Q2-04).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: run_child (poll sleep, /proc/<pid>/stat)"
+    )]
     fn wait_bounded(
-        child: &mut std::process::Child,
+        pid: u32,
         out_over: &AtomicBool,
         err_over: &AtomicBool,
         started: std::time::Instant,
         timeout: std::time::Duration,
-    ) -> Result<ExitStatus, ChildFailure> {
+    ) -> Result<(), ChildFailure> {
+        let stat_path = format!("/proc/{pid}/stat");
         loop {
             if out_over.load(Ordering::SeqCst) {
                 return Err(ChildFailure::StdoutOverflow);
@@ -383,16 +475,31 @@ pub(crate) mod child {
             if err_over.load(Ordering::SeqCst) {
                 return Err(ChildFailure::StderrOverflow);
             }
-            match child.try_wait() {
-                Ok(Some(status)) => return Ok(status),
-                Ok(None) => {}
-                Err(e) => return Err(ChildFailure::Io(e.to_string())),
+            let stat = std::fs::read(&stat_path)
+                .map_err(|e| ChildFailure::Io(format!("reading {stat_path}: {e}")))?;
+            match has_exited(&stat) {
+                Some(true) => return Ok(()),
+                Some(false) => {}
+                None => {
+                    return Err(ChildFailure::Io(format!(
+                        "{stat_path} is not a process status"
+                    )));
+                }
             }
             if started.elapsed() >= timeout {
                 return Err(ChildFailure::Timeout);
             }
             std::thread::sleep(POLL);
         }
+    }
+
+    /// Whether a `/proc/<pid>/stat` line shows an exited, unreaped process (state `Z` or `X`). The
+    /// state follows the last `)`, because the command name in parentheses may hold anything.
+    pub(super) fn has_exited(stat: &[u8]) -> Option<bool> {
+        let close = stat.iter().rposition(|&b| b == b')')?;
+        let rest = stat.get(close.checked_add(1)?..)?;
+        let state = rest.iter().find(|b| !b.is_ascii_whitespace())?;
+        Some(matches!(state, b'Z' | b'X'))
     }
 
     /// `Ok` only for a normal exit with status 0.
@@ -429,10 +536,9 @@ pub(crate) mod child {
                     Err(e) => return Err(DoorError::io("creating a private directory", &e)),
                 }
             }
-            Err(DoorError {
-                message: "no free private directory name after 64 attempts".to_owned(),
-                over_budget: false,
-            })
+            Err(DoorError::environment(
+                "no free private directory name after 64 attempts".to_owned(),
+            ))
         }
 
         pub(crate) fn path(&self) -> &Path {
@@ -478,9 +584,8 @@ pub(crate) mod child {
     /// then discover and read the candidate's repository.
     #[expect(clippy::disallowed_methods, reason = "door: admit_base (canonicalize)")]
     pub(super) fn admit_base(raw: &Path) -> Result<String, DoorError> {
-        let refuse = |why: &str| DoorError {
-            message: format!("temporary directory {}: {why}", raw.display()),
-            over_budget: false,
+        let refuse = |why: &str| {
+            DoorError::environment(format!("temporary directory {}: {why}", raw.display()))
         };
         if !raw.is_absolute() {
             return Err(refuse("not absolute"));
@@ -512,9 +617,8 @@ pub(crate) mod child {
             let home = dir
                 .path()
                 .to_str()
-                .ok_or_else(|| DoorError {
-                    message: "private directory path is not UTF-8".to_owned(),
-                    over_budget: false,
+                .ok_or_else(|| {
+                    DoorError::environment("private directory path is not UTF-8".to_owned())
                 })?
                 .to_owned();
             Ok(Self { dir, home, ceiling })
@@ -605,7 +709,7 @@ pub(crate) mod child {
         let env = isolation.env();
         let refuse = |why: String| DoorError {
             message: format!("{} --version {why}", git.display()),
-            over_budget: false,
+            kind: super::DoorErrorKind::Io,
         };
         let out = run_child(&ChildSpec {
             program: Program::Absolute(git),
@@ -641,7 +745,10 @@ pub(crate) mod child {
     pub(crate) enum RankerFailure {
         /// The policy does not admit this ranker (exit 4: change the policy or the ranker).
         NotAdmitted(String),
-        /// The ranker could not be pinned or run, or wrote no ranking of this patch (exit 3).
+        /// A door refused or failed before the ranker ran (pinning it, isolating it); its kind
+        /// decides the exit (Q2-05).
+        Door(DoorError),
+        /// The ranker ran and failed, or wrote no ranking of this patch (exit 3).
         Failed(String),
     }
 
@@ -693,7 +800,7 @@ pub(crate) mod child {
                     .to_owned(),
             ));
         }
-        let pinned = pin_executable(ranker).map_err(|e| RankerFailure::Failed(e.message))?;
+        let pinned = pin_executable(ranker).map_err(RankerFailure::Door)?;
         if !policy.admits_producer(&pinned.sha256) {
             return Err(RankerFailure::NotAdmitted(format!(
                 "ranker {} has sha256 {}, which the policy's [producer] sha256 does not list",
@@ -701,7 +808,7 @@ pub(crate) mod child {
                 pinned.sha256
             )));
         }
-        let isolation = Isolation::create_in(base).map_err(|e| RankerFailure::Failed(e.message))?;
+        let isolation = Isolation::create_in(base).map_err(RankerFailure::Door)?;
         let env = isolation.env();
         let out = run_child(&ChildSpec {
             program: Program::Pinned(&pinned),
@@ -732,18 +839,53 @@ pub(crate) mod child {
     /// Git's stderr is diagnostic only.
     pub(super) const GIT_STDERR_CAP: usize = 64 * 1024;
 
-    /// Kill every process in `group` with SIGKILL (`/usr/bin/kill -KILL -- -<group>`); no `unsafe`
-    /// and no new dependency. Failure to kill is ignored here: the caller has already decided the
-    /// outcome, and a group that is already gone is the common case.
-    #[expect(clippy::disallowed_methods, reason = "door: kill_group")]
-    fn kill_group(group: u32) {
-        let _status = std::process::Command::new("/usr/bin/kill")
+    /// The group kill's own wall-clock limit: it sends one signal and exits at once.
+    const KILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// Kill every process in `group` with SIGKILL (`<kill> -KILL -- -<group>`); no `unsafe` and no
+    /// new dependency. Called while the group's leader is unreaped, so the group exists: a kill
+    /// that cannot start, exits nonzero, or does not finish within [`KILL_TIMEOUT`] (it is a child
+    /// too, Bastion E3c-O4-01) is an error the caller reports (Q2-04).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: kill_group (spawn, poll sleep)"
+    )]
+    fn kill_group(kill: &Path, group: u32) -> Result<(), String> {
+        let failed = |why: String| {
+            format!(
+                "killing the child's process group: {} {why}",
+                kill.display()
+            )
+        };
+        let mut killer = std::process::Command::new(kill)
             .args(["-KILL", "--", &format!("-{group}")])
             .env_clear()
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status();
+            .spawn()
+            .map_err(|e| failed(format!("could not be started: {e}")))?;
+        let started = std::time::Instant::now();
+        loop {
+            match killer.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(status)) => return Err(failed(status.to_string())),
+                // Time is left while the limit minus the elapsed time is still defined.
+                Ok(None) if KILL_TIMEOUT.checked_sub(started.elapsed()).is_some() => {
+                    std::thread::sleep(POLL);
+                }
+                Ok(None) => {
+                    let _killed = killer.kill();
+                    let _reaped = killer.wait();
+                    return Err(failed(format!("did not finish within {KILL_TIMEOUT:?}")));
+                }
+                Err(e) => {
+                    let _killed = killer.kill();
+                    let _reaped = killer.wait();
+                    return Err(failed(format!("could not be waited on: {e}")));
+                }
+            }
+        }
     }
 }
 
@@ -829,38 +971,148 @@ mod child_tests {
     }
 
     #[test]
-    fn the_pin_flags_are_nofollow_and_nonblock_exactly() {
-        use super::child::{O_NOFOLLOW, O_NONBLOCK, PIN_FLAGS};
+    fn every_open_is_nonblocking_and_the_pin_adds_nofollow_exactly() {
+        // Reference values from the Linux headers (x86_64, aarch64).
+        use super::child::O_NOFOLLOW;
+        const O_NONBLOCK: i32 = 0o4_000;
         assert_eq!(O_NOFOLLOW & O_NONBLOCK, 0, "disjoint bits");
-        assert_eq!(PIN_FLAGS, O_NOFOLLOW | O_NONBLOCK);
+        assert_eq!(super::FOLLOW_FLAGS, O_NONBLOCK);
+        assert_eq!(super::PIN_FLAGS, O_NOFOLLOW | O_NONBLOCK);
+        assert_eq!(super::ELOOP, 40);
     }
 
     #[test]
-    fn a_fifo_is_refused_at_once_not_waited_on() {
-        let dir = scratch("fifo");
-        let fifo = dir.join("ranker");
-        let made = command("/usr/bin/mkfifo").arg(&fifo).status().unwrap();
-        assert!(made.success());
-        let (tx, rx) = std::sync::mpsc::channel();
-        let target = fifo.clone();
-        let pinning = std::thread::spawn(move || {
-            let _sent = tx.send(pin_executable(&target).map(|p| p.sha256));
-        });
-        let outcome = rx.recv_timeout(Duration::from_millis(900));
-        if outcome.is_err() {
-            // Release a blocked open so this test fails instead of hanging the suite.
-            let _writer = std::fs::OpenOptions::new().write(true).open(&fifo);
+    fn every_file_door_refuses_a_fifo_at_once_not_waited_on() {
+        // Q2-02: `--policy`, `--patch` and `--rank` pointed at a FIFO with no writer must be refused,
+        // not block forever. Every door that opens a named file is in this table.
+        type Door = fn(&Path) -> Result<(), String>;
+        let doors: [(&str, Door); 2] = [
+            ("read_file", |p| {
+                super::read_file(p).map(drop).map_err(|e| e.message)
+            }),
+            ("pin_executable", |p| {
+                pin_executable(p).map(drop).map_err(|e| e.message)
+            }),
+        ];
+        for (name, door) in doors {
+            let dir = scratch(&format!("fifo-{name}"));
+            let fifo = dir.join("input");
+            let made = command("/usr/bin/mkfifo").arg(&fifo).status().unwrap();
+            assert!(made.success());
+            let (tx, rx) = std::sync::mpsc::channel();
+            let target = fifo.clone();
+            let opening = std::thread::spawn(move || {
+                let _sent = tx.send(door(&target));
+            });
+            let outcome = rx.recv_timeout(Duration::from_millis(900));
+            if outcome.is_err() {
+                // Release a blocked open (the writer closes at once, so a blocked read sees EOF)
+                // so this test fails instead of hanging the suite.
+                let _writer = std::fs::OpenOptions::new().write(true).open(&fifo);
+            }
+            let _joined = opening.join();
+            let Ok(result) = outcome else {
+                panic!("{name} blocked on a FIFO for 900 ms");
+            };
+            let refused = result.unwrap_err();
+            assert!(refused.ends_with("not a regular file"), "{name}: {refused}");
+            let _cleaned = std::fs::remove_dir_all(&dir);
         }
-        let _joined = pinning.join();
-        let refused = outcome
-            .expect("pin_executable blocked on a FIFO for 900 ms")
-            .unwrap_err();
-        assert!(
-            refused.message.ends_with("not a regular file"),
-            "{}",
-            refused.message
+    }
+
+    #[test]
+    fn an_escaped_descendant_holding_stdin_cannot_stretch_the_deadline() {
+        // Q2-03: the child starts a `setsid` descendant (it leaves the group, so the group kill
+        // misses it) that keeps stdin open and never reads, then exits 0. With more input than a
+        // pipe holds, the stdin writer blocks; the call must still end at its deadline.
+        // The descendant touches a marker only after `setsid`, and the child waits for it before
+        // exiting, so the group kill can never catch the descendant still in the group (measured:
+        // without the wait, 1 run in ~100 killed it first and the writer saw EPIPE instead).
+        let dir = scratch("escaped");
+        let marker = dir.join("left-the-group");
+        let script = format!(
+            "/usr/bin/setsid /bin/sh -c '/usr/bin/touch \"$1\"; exec /usr/bin/sleep 6' x '{}' \
+             <&0 >/dev/null 2>&1 & while [ ! -e '{}' ]; do :; done; exit 0",
+            marker.display(),
+            marker.display()
         );
+        let input = vec![b'x'; 1024 * 1024];
+        let args = sh(&script);
+        let mut held = spec(Program::Absolute(Path::new("/bin/sh")), &args, &input);
+        held.timeout = Duration::from_secs(1);
+        let started = Instant::now();
+        let got = run_child(&held);
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_secs(4),
+            "run_child took {took:?}: the stdin writer outlived the deadline"
+        );
+        assert!(
+            marker.exists(),
+            "the descendant never left the group, so this did not test the escaped case"
+        );
+        assert_eq!(got, Err(ChildFailure::Timeout));
         let _cleaned = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_group_kill_that_hangs_is_bounded_and_reported() {
+        // Bastion E3c-O4-01 / Q2-04 (3): the kill is a third child; it has its own deadline. A
+        // stand-in that never exits must not hold the call, and is reported, not ignored.
+        use super::child::run_child_killing_with;
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("hung-kill");
+        let source = dir.join("source");
+        std::fs::write(&source, "#!/bin/sh\nexec /usr/bin/sleep 30\n").unwrap();
+        let kill = dir.join("kill");
+        copy_out_of_process(source.to_str().unwrap(), &kill);
+        std::fs::set_permissions(&kill, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let args = sh("exit 0");
+        let quick = spec(Program::Absolute(Path::new("/bin/sh")), &args, b"");
+        let started = Instant::now();
+        let got = run_child_killing_with(&quick, &kill);
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_secs(5),
+            "the hung kill held the call for {took:?}"
+        );
+        match got {
+            Err(ChildFailure::Io(why)) => assert!(why.contains("did not finish"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cleaned = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exit_is_read_from_the_state_after_the_last_parenthesis() {
+        use super::child::has_exited;
+        assert_eq!(has_exited(b"42 (sh) Z 1 42 42"), Some(true));
+        assert_eq!(has_exited(b"42 (sh) X 1 42 42"), Some(true));
+        assert_eq!(has_exited(b"42 (sh) S 1 42 42"), Some(false));
+        assert_eq!(has_exited(b"42 (sh) R 1 42 42"), Some(false));
+        // A command name may hold `)`, spaces and a fake state; only the last `)` counts.
+        assert_eq!(has_exited(b"42 (a) Z (b) S 1 42 42"), Some(false));
+        assert_eq!(has_exited(b"42 (a) S (b) Z 1 42 42"), Some(true));
+        assert_eq!(has_exited(b"42 (sh)"), None);
+        assert_eq!(has_exited(b"no parenthesis"), None);
+    }
+
+    #[test]
+    fn a_group_kill_that_cannot_run_or_fails_is_reported() {
+        // Q2-04: a kill that could not be started, or that failed, leaves grandchildren holding the
+        // pipes; it is a failure of the call, never silence.
+        use super::child::run_child_killing_with;
+        let args = sh("exit 0");
+        let quick = spec(Program::Absolute(Path::new("/bin/sh")), &args, b"");
+        for kill in ["/nonexistent/kill", "/usr/bin/false"] {
+            match run_child_killing_with(&quick, Path::new(kill)) {
+                Err(ChildFailure::Io(why)) => assert!(
+                    why.starts_with("killing the child's process group"),
+                    "{kill}: {why}"
+                ),
+                other => panic!("{kill}: {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -1153,7 +1405,12 @@ mod child_tests {
     fn the_pin_budget_is_512_mib_and_an_executable_over_it_is_refused_as_input() {
         assert_eq!(MAX_EXECUTABLE_BYTES, 536_870_912);
         let refused = pin_within(Path::new("/usr/bin/true"), 16).unwrap_err();
-        assert!(refused.over_budget, "{}", refused.message);
+        assert_eq!(
+            refused.kind,
+            super::DoorErrorKind::OverBudget,
+            "{}",
+            refused.message
+        );
         assert!(pin_within(Path::new("/usr/bin/true"), MAX_EXECUTABLE_BYTES).is_ok());
     }
 
@@ -1220,7 +1477,7 @@ mod tests {
     fn the_budget_is_inclusive_and_one_byte_more_is_refused() {
         assert_eq!(read_within(Cursor::new(b"abcd"), "t", 4).unwrap(), b"abcd");
         let over = read_within(Cursor::new(b"abcde"), "t", 4).unwrap_err();
-        assert!(over.over_budget);
+        assert_eq!(over.kind, DoorErrorKind::OverBudget);
         assert_eq!(read_within(Cursor::new(b"abc"), "t", 4).unwrap(), b"abc");
     }
 

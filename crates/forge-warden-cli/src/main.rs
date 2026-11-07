@@ -15,6 +15,7 @@
 mod doors;
 
 use clap::{ArgGroup, Parser, Subcommand};
+use doors::DoorErrorKind;
 use doors::child::{GitFactsFailure, RankerFailure};
 use forge_warden_core::authority::{
     Ranking, SuppliedCopy, check as check_coverage, evaluate_advisory, evaluate_authority,
@@ -124,11 +125,12 @@ impl Failure {
         }
     }
 
+    /// The one mapping from a door's kind to the registry (Q2-05). Exhaustive: a new kind is a
+    /// compile error here until someone decides its exit.
     fn from_door(error: doors::DoorError) -> Self {
-        let exit = if error.over_budget {
-            Exit::InvalidInput
-        } else {
-            Exit::Io
+        let exit = match error.kind {
+            DoorErrorKind::Io | DoorErrorKind::Environment => Exit::Io,
+            DoorErrorKind::OverBudget | DoorErrorKind::Refused => Exit::InvalidInput,
         };
         Self::new(exit, error.message)
     }
@@ -253,14 +255,14 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
     let (facts, facts_sha256) = git_facts(&args.git, &patch)?;
     let git = GitOracle {
         path: git_path,
-        version: doors::child::git_version(&args.git)
-            .map_err(|e| Failure::new(Exit::Io, e.message))?,
+        version: doors::child::git_version(&args.git).map_err(Failure::from_door)?,
     };
 
     let verdict = if let Some(ranker) = &args.ranker {
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
             |failure| match failure {
                 RankerFailure::NotAdmitted(why) => Failure::new(Exit::InvalidInput, why),
+                RankerFailure::Door(error) => Failure::from_door(error),
                 RankerFailure::Failed(why) => Failure::new(Exit::Io, why),
             },
         )?;

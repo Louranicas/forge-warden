@@ -384,3 +384,274 @@ fn raw_attribute_names_and_paths_cannot_suppress_doors() {
         assert!(!door_lint_controls(source).is_empty(), "missed: {name}");
     }
 }
+
+/// Inside doors.rs, two narrower rules than "doors live here" (Q-DOOR). Q2-02: only
+/// `open_regular` may open a named file, so it is the only production item under which any lint
+/// attribute names `clippy::disallowed_types` (`std::fs::OpenOptions`). Q2-03: production code
+/// joins no thread (a zero-argument `.join()` call, or any path ending in `join`, which covers
+/// `JoinHandle::join` through an alias); results come back through channels read with a timeout.
+///
+/// Attributes are read by `check_meta` (raw names normalised, every level, nested `cfg_attr`) on
+/// every item, impl item and statement, and inside macro tokens. An item is skipped as test-only
+/// only if its `cfg` predicate implies `test` (`test`; `all(..)` with an implying member; `any(..)`
+/// whose members all imply it). `not(..)`, `any(test, unix)` and anything else count as production
+/// (Bastion's Q-DOOR boundary probes).
+#[derive(Default)]
+struct DoorShape {
+    current: Vec<String>,
+    types_doors: Vec<String>,
+    joins: Vec<String>,
+}
+
+/// Whether a `cfg` predicate is true only when `test` is set.
+fn implies_test(predicate: &Meta) -> bool {
+    match predicate {
+        Meta::Path(path) => path.segments.len() == 1 && last(path) == "test",
+        Meta::List(list) => {
+            let Ok(members) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            else {
+                return false;
+            };
+            match (list.path.segments.len(), last(&list.path).as_str()) {
+                (1, "all") => members.iter().any(implies_test),
+                (1, "any") => !members.is_empty() && members.iter().all(implies_test),
+                _ => false,
+            }
+        }
+        Meta::NameValue(_) => false,
+    }
+}
+
+/// Whether an item's own attributes compile it only under `test`.
+fn is_test_only(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        a.path().segments.len() == 1
+            && last(a.path()) == "cfg"
+            && a.meta.require_list().is_ok_and(|list| {
+                list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                    .is_ok_and(|args| args.len() == 1 && args.iter().all(implies_test))
+            })
+    })
+}
+
+impl DoorShape {
+    /// Walk an item under `name`, unless it is compiled only under `test`.
+    fn scoped(&mut self, attrs: &[Attribute], name: String, walk: impl FnOnce(&mut Self)) {
+        if is_test_only(attrs) {
+            return;
+        }
+        self.current.push(name);
+        walk(self);
+        self.current.pop();
+    }
+
+    fn context(&self) -> String {
+        self.current.join("::")
+    }
+
+    fn note_types_door(&mut self, found: &[String]) {
+        if found
+            .iter()
+            .any(|f| f.ends_with("(clippy::disallowed_types)"))
+        {
+            let here = self.context();
+            if !self.types_doors.contains(&here) {
+                self.types_doors.push(here);
+            }
+        }
+    }
+
+    /// `.join()` and `…::join` written as tokens inside a macro invocation.
+    fn scan_tokens_for_joins(&mut self, tokens: TokenStream) {
+        let trees: Vec<TokenTree> = tokens.into_iter().collect();
+        for (index, tree) in trees.iter().enumerate() {
+            if let TokenTree::Group(group) = tree {
+                self.scan_tokens_for_joins(group.stream());
+            }
+            let TokenTree::Ident(ident) = tree else {
+                continue;
+            };
+            if ident.unraw() != "join" {
+                continue;
+            }
+            let before = index.checked_sub(1).and_then(|i| trees.get(i));
+            let after = trees.get(index.saturating_add(1));
+            let dot_call = matches!(before, Some(TokenTree::Punct(p)) if p.as_char() == '.')
+                && matches!(after, Some(TokenTree::Group(g))
+                    if g.delimiter() == Delimiter::Parenthesis && g.stream().is_empty());
+            let path = matches!(before, Some(TokenTree::Punct(p)) if p.as_char() == ':');
+            if dot_call || path {
+                let here = self.context();
+                self.joins.push(here);
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for DoorShape {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.scoped(&item.attrs, format!("mod {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_mod(s, item);
+        });
+    }
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        self.scoped(&item.attrs, item.sig.ident.unraw().to_string(), |s| {
+            syn::visit::visit_item_fn(s, item);
+        });
+    }
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        self.scoped(&item.attrs, "impl".to_owned(), |s| {
+            syn::visit::visit_item_impl(s, item);
+        });
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.scoped(&item.attrs, item.sig.ident.unraw().to_string(), |s| {
+            syn::visit::visit_impl_item_fn(s, item);
+        });
+    }
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        self.scoped(&item.attrs, format!("const {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_const(s, item);
+        });
+    }
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        self.scoped(&item.attrs, format!("static {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_static(s, item);
+        });
+    }
+    fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+        self.scoped(&item.attrs, format!("struct {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_struct(s, item);
+        });
+    }
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        self.scoped(&item.attrs, format!("enum {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_enum(s, item);
+        });
+    }
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        self.scoped(&item.attrs, "use".to_owned(), |s| {
+            syn::visit::visit_item_use(s, item);
+        });
+    }
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        let mut found = Vec::new();
+        check_meta(&attribute.meta, &mut found);
+        self.note_types_door(&found);
+        syn::visit::visit_attribute(self, attribute);
+    }
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let mut found = Vec::new();
+        check_tokens(mac.tokens.clone(), &mut found);
+        self.note_types_door(&found);
+        self.scan_tokens_for_joins(mac.tokens.clone());
+        syn::visit::visit_macro(self, mac);
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if call.method.unraw() == "join" && call.args.is_empty() {
+            let here = self.context();
+            self.joins.push(here);
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path.path.segments.len() > 1 && last(&path.path) == "join" {
+            let here = self.context();
+            self.joins.push(here);
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+}
+
+fn door_shape(source: &str) -> DoorShape {
+    let mut shape = DoorShape::default();
+    match syn::parse_file(source) {
+        Ok(file) => shape.visit_file(&file),
+        // An unparseable file passes neither check: it names an impossible type door.
+        Err(e) => shape.types_doors.push(format!("does not parse: {e}")),
+    }
+    shape
+}
+
+#[test]
+fn the_door_shape_scanner_sees_joins_and_type_doors_and_skips_only_tests() {
+    let shape = door_shape(
+        r#"
+        #[expect(clippy::disallowed_types, reason = "door: open_regular")]
+        fn open_regular() {}
+        #[r#expect(r#clippy::r#disallowed_types, reason = "raw")]
+        fn raw_names() {}
+        #[cfg_attr(unix, expect(clippy::disallowed_types, reason = "conditional"))]
+        fn conditional() {}
+        fn inner() { #![allow(clippy::disallowed_types)] }
+        fn statement() { #[expect(clippy::disallowed_types, reason = "s")] let _o = 1; }
+        #[cfg(not(test))]
+        fn not_test() { let h = std::thread::spawn(|| ()); let _ = h.join(); }
+        #[cfg(any(test, unix))]
+        fn any_test_or_unix() { let _ = std::thread::spawn(|| ()).r#join(); }
+        fn ufcs(h: std::thread::JoinHandle<()>) { let _ = std::thread::JoinHandle::join(h); }
+        fn alias(h: std::thread::JoinHandle<()>) { use std::thread::JoinHandle as H; let _ = H::join(h); }
+        fn in_macro(h: std::thread::JoinHandle<()>) { let _ = format!("{:?}", h.join()); }
+        fn paths() { let _ = std::path::Path::new("a").join("b"); let _ = ["a"].join(","); }
+        #[cfg(test)]
+        mod tests {
+            #[expect(clippy::disallowed_types, reason = "test")]
+            fn t() { let _ = std::thread::spawn(|| ()).join(); }
+        }
+        #[cfg(all(unix, test))]
+        fn all_unix_test() { let _ = std::thread::spawn(|| ()).join(); }
+        #[cfg(any(test, all(test, unix)))]
+        fn any_all_test() { let _ = std::thread::spawn(|| ()).join(); }
+        "#,
+    );
+    assert_eq!(
+        shape.types_doors,
+        [
+            "open_regular",
+            "raw_names",
+            "conditional",
+            "inner",
+            "statement"
+        ]
+    );
+    assert_eq!(
+        shape.joins,
+        ["not_test", "any_test_or_unix", "ufcs", "alias", "in_macro"]
+    );
+}
+
+#[test]
+fn only_a_predicate_that_implies_test_is_test_only() {
+    for (cfg, test_only) in [
+        ("#[cfg(test)]", true),
+        ("#[r#cfg(r#test)]", true),
+        ("#[cfg(all(unix, test))]", true),
+        ("#[cfg(any(test, all(test, unix)))]", true),
+        ("#[cfg(not(test))]", false),
+        ("#[cfg(any(test, unix))]", false),
+        ("#[cfg(not(not(test)))]", false),
+        ("#[cfg(feature = \"test\")]", false),
+        ("#[cfg_attr(test, cfg(test))]", false),
+        ("#[cfg(any())]", false),
+    ] {
+        let item: syn::ItemFn = syn::parse_str(&format!("{cfg} fn f() {{}}")).unwrap();
+        assert_eq!(is_test_only(&item.attrs), test_only, "{cfg}");
+    }
+}
+
+#[test]
+fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
+    let source =
+        std::fs::read_to_string(root().join("crates/forge-warden-cli/src/doors.rs")).unwrap();
+    let shape = door_shape(&source);
+    assert_eq!(
+        shape.types_doors,
+        ["open_regular"],
+        "Q2-02: only open_regular may open a named file (and expect clippy::disallowed_types)"
+    );
+    assert!(
+        shape.joins.is_empty(),
+        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {:?}",
+        shape.joins
+    );
+}
