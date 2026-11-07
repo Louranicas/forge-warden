@@ -372,6 +372,78 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
 }
 
 #[test]
+fn a_fifo_given_as_any_input_file_is_refused_at_once_with_exit_4() {
+    // Q-DOOR.1 (Q2-02 at the binary): `--policy`, `--patch` and `--rank` pointed at a FIFO with no
+    // writer must be refused as an input to change (exit 4, change_input), not block the gate
+    // forever. A watchdog releases a blocked open (a child opens the FIFO for writing and closes
+    // it) so a regression fails instead of hanging the suite.
+    let dir = scratch("fifo-inputs");
+    let fifo = dir.join("input");
+    let made = common::command("/usr/bin/mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let fifo_text = text(&fifo).to_owned();
+    let (good_policy, good_patch, good_rank) = (
+        "examples/starter.warden.toml",
+        "fixtures/demo.patch",
+        "fixtures/demo.rank.json",
+    );
+    for (flag, policy, patch, rank) in [
+        ("--policy", fifo_text.as_str(), good_patch, good_rank),
+        ("--patch", good_policy, fifo_text.as_str(), good_rank),
+        ("--rank", good_policy, good_patch, fifo_text.as_str()),
+    ] {
+        let args: Vec<String> = [
+            "check",
+            "--policy",
+            policy,
+            "--patch",
+            patch,
+            "--advisory",
+            "--rank",
+            rank,
+            "--today",
+            TODAY,
+            "--json",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let judging = std::thread::spawn(move || {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let _sent = tx.send(run(&args, b""));
+        });
+        let outcome = rx.recv_timeout(std::time::Duration::from_secs(10));
+        if outcome.is_err() {
+            let _released = common::command("/usr/bin/timeout")
+                .args(["5", "/bin/sh", "-c", ": > \"$1\"", "sh", fifo_text.as_str()])
+                .status();
+        }
+        let _joined = judging.join();
+        let Ok(out) = outcome else {
+            panic!("{flag} FIFO: forge-warden blocked for 10 s instead of refusing it");
+        };
+        assert_eq!(out.code, 4, "{flag} FIFO: {}", out.stderr);
+        assert_eq!(out.stdout, "", "{flag} FIFO");
+        assert!(
+            out.stderr.contains("not a regular file"),
+            "{flag} FIFO: {}",
+            out.stderr
+        );
+        assert!(
+            out.stderr
+                .ends_with("next: change_input (forge-warden explain 4)\n"),
+            "{flag} FIFO: {}",
+            out.stderr
+        );
+    }
+    let _cleaned = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn git_still_checks_the_producer_and_refusals_hold() {
     let (dir, policy, ranker) = setup("git-checks");
     // The producer leaves a file out: Git sees it, so the verdict holds.
