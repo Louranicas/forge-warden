@@ -171,6 +171,21 @@ fn enum_lines(source: &str, module: &str, e: &syn::ItemEnum, out: &mut Vec<Strin
     }
 }
 
+/// A macro definition or item-level invocation, verbatim from its path to its closing delimiter.
+/// The reader cannot expand a macro, so the whole text is the API record: any change to what a macro
+/// generates (Bastion: `note_codes!` emits the public `NoteCode`, `ALL` and `name`) changes it.
+fn macro_line(source: &str, mac: &syn::Macro) -> String {
+    let close = match &mac.delimiter {
+        syn::MacroDelimiter::Paren(d) => d.span.close(),
+        syn::MacroDelimiter::Brace(d) => d.span.close(),
+        syn::MacroDelimiter::Bracket(d) => d.span.close(),
+    };
+    match mac.path.segments.first() {
+        Some(first) => through(source, first.ident.span(), close),
+        None => "<macro without a path>".to_owned(),
+    }
+}
+
 /// A trait impl's header, and every public method or constant of any impl.
 fn impl_lines(source: &str, module: &str, i: &syn::ItemImpl, out: &mut Vec<String>) {
     if i.trait_.is_some() {
@@ -199,6 +214,14 @@ fn impl_lines(source: &str, module: &str, i: &syn::ItemImpl, out: &mut Vec<Strin
                 through(source, start, c.semi_token.span)
             ));
         }
+        if let ImplItem::Macro(m) = member
+            && !is_test_only(&m.attrs)
+        {
+            out.push(format!(
+                "{module} {owner}::macro {}",
+                macro_line(source, &m.mac)
+            ));
+        }
     }
 }
 
@@ -223,7 +246,7 @@ fn whole(
 /// Every public line of one file's items under `module`.
 #[expect(
     clippy::wildcard_enum_match_arm,
-    reason = "syn::Item is #[non_exhaustive]; macros, extern crates and foreign modules carry no public API in the core"
+    reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
 )]
 fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
     for item in list {
@@ -277,7 +300,46 @@ fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
                 }
             }
             Item::Impl(i) if !is_test_only(&i.attrs) => impl_lines(source, module, i, out),
-            _ => {}
+            Item::Macro(m) if !is_test_only(&m.attrs) => {
+                out.push(format!(
+                    "{module} {}macro {}",
+                    markers(source, &m.attrs),
+                    macro_line(source, &m.mac)
+                ));
+            }
+            Item::ExternCrate(e) if !is_test_only(&e.attrs) => {
+                whole(source, module, &e.attrs, &e.vis, e.semi_token.span, out);
+            }
+            Item::Union(u) if !is_test_only(&u.attrs) => {
+                if let Some(start) = public(&u.vis) {
+                    let header = between(source, start, u.fields.brace_token.span.open());
+                    out.push(format!("{module} {}{header}", markers(source, &u.attrs)));
+                    for field in &u.fields.named {
+                        if let Some(span) = public(&field.vis) {
+                            out.push(format!("{module} {}.{}", u.ident, line_of(source, span)));
+                        }
+                    }
+                }
+            }
+            // The modelled kinds whose guard said test-only: nothing to record.
+            Item::Fn(_)
+            | Item::Struct(_)
+            | Item::Enum(_)
+            | Item::Trait(_)
+            | Item::Const(_)
+            | Item::Static(_)
+            | Item::Type(_)
+            | Item::Use(_)
+            | Item::Mod(_)
+            | Item::Impl(_)
+            | Item::Macro(_)
+            | Item::ExternCrate(_)
+            | Item::Union(_) => {}
+            // Anything else (foreign modules, trait aliases, unparsed tokens, future kinds) is
+            // recorded, never skipped: it changes the snapshot and gets a reviewer's eyes.
+            _ => out.push(format!(
+                "{module} UNKNOWN ITEM KIND: review the public API by hand"
+            )),
         }
     }
 }
@@ -379,6 +441,22 @@ pub mod door {
 pub fn test_only() {}
 #[cfg(any(test, unix))]
 pub fn production_on_unix() {}
+macro_rules! make {
+    ($name:ident) => {
+        #[derive(PartialOrd, Ord)]
+        pub enum $name { A }
+    };
+}
+make!(Generated);
+pub extern crate std as stdx;
+pub union U {
+    pub a: u8,
+}
+extern "C" {}
+#[cfg(test)]
+macro_rules! test_only_macro {
+    () => {};
+}
 "#;
     let file = syn::parse_file(source).unwrap();
     let mut out = Vec::new();
@@ -399,6 +477,12 @@ pub fn production_on_unix() {}
             "m #[cfg(feature = \"door\")] pub mod door",
             "m::door pub fn open()",
             "m #[cfg(any(test, unix))] pub fn production_on_unix()",
+            "m macro macro_rules! make { ($name:ident) => { #[derive(PartialOrd, Ord)] pub enum $name { A } }; }",
+            "m macro make!(Generated)",
+            "m pub extern crate std as stdx;",
+            "m pub union U",
+            "m U.pub a: u8,",
+            "m UNKNOWN ITEM KIND: review the public API by hand",
         ]
     );
 }

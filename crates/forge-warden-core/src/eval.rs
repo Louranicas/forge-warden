@@ -1,6 +1,7 @@
 //! Evaluating a policy over a ranking.
 //!
-//! The whole engine is one pure function, [`evaluate`]. Its contract:
+//! The whole engine is one pure, crate-private function, `evaluate` (the public judges are
+//! [`crate::authority::evaluate_authority`] and [`crate::authority::evaluate_advisory`]). Its contract:
 //!
 //! 1. Rules are evaluated independently, in policy order; violations keep deep-diff-forge's risk
 //!    order (highest first).
