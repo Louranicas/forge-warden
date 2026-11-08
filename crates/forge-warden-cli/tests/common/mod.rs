@@ -15,6 +15,8 @@
     reason = "each test crate uses a different subset of these helpers"
 )]
 
+pub(crate) mod attribute_policy;
+
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

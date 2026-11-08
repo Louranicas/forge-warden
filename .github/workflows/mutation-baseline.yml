@@ -15,9 +15,9 @@ concurrency:
 
 jobs:
   full-workspace:
+    timeout-minutes: 120
     name: full workspace mutation baseline
     runs-on: ubuntu-latest
-    timeout-minutes: 360
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_TERM_COLOR: always
