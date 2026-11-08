@@ -1,6 +1,7 @@
 # ADR 0001: A pure core, and effects only through named doors
 
 Status: Accepted
+Owner-deployment: Not-required
 
 Historical status record: **Status:** accepted, 2026-11-05
 

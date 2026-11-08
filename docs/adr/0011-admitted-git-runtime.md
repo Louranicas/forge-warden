@@ -1,6 +1,9 @@
 # ADR 0011 — Admit the Git runtime once and record its identity
 
 Status: Accepted
+Owner-deployment: Required
+
+Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).
 
 Historical status record: Status: **Accepted** by Lodestar O1 on 2026-11-08, with amendments A1-A3. Author: Bastion O4. Luke exclusively owns allowlist enrollment/revocation as an L4-class root. This decision changes no effective trust entry or runtime by itself. Implementation is queued after Q-TYPES-1 merges: builder Keel O2, independent verifier Touchstone O3, boundary reviewer Bastion O4. Builder and verifier remain distinct.
 

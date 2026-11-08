@@ -235,8 +235,45 @@ enum AdrStatus {
     Superseded(String),
 }
 
+const ADR_DEPLOYMENT_NOTICE: &str =
+    "Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).";
+
 fn adr_number(text: &str) -> bool {
     text.len() == 4 && text.bytes().all(|b| b.is_ascii_digit()) && text != "0000"
+}
+
+fn deployment_errors(number: &str, status: &AdrStatus, text: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    let deployment: Vec<_> = text
+        .lines()
+        .filter(|line| line.trim().starts_with("Owner-deployment:"))
+        .collect();
+    let required = match deployment.as_slice() {
+        ["Owner-deployment: Required"] => Some(true),
+        ["Owner-deployment: Not-required"] => Some(false),
+        _ => None,
+    };
+    if required.is_none()
+        || (matches!(number, "0006" | "0007" | "0008" | "0009" | "0010" | "0011")
+            && required != Some(true))
+    {
+        errors.push(format!(
+            "ADR_DEPLOYMENT: {number} needs one reviewed owner-deployment classification"
+        ));
+    }
+    if *status == AdrStatus::Accepted
+        && required == Some(true)
+        && text
+            .lines()
+            .filter(|line| *line == ADR_DEPLOYMENT_NOTICE)
+            .count()
+            != 1
+    {
+        errors.push(format!(
+            "ADR_DEPLOYMENT: {number} must distinguish accepted design from deployment"
+        ));
+    }
+    errors
 }
 
 fn adr_errors(documents: &[(String, String)]) -> Vec<String> {
@@ -271,6 +308,7 @@ fn adr_errors(documents: &[(String, String)]) -> Vec<String> {
             ));
             continue;
         };
+        errors.extend(deployment_errors(number, &status, text));
         statuses.insert(number.clone(), status);
         let claim_lines: Vec<_> = text
             .lines()
@@ -353,8 +391,14 @@ fn every_adr_has_one_current_status_and_reciprocal_replacements() {
 fn adr_status_fixtures_reject_ambiguous_stale_and_dangling_decisions() {
     let pair = |old: &str, new: &str| {
         vec![
-            ("0001".to_owned(), old.to_owned()),
-            ("0002".to_owned(), new.to_owned()),
+            (
+                "0001".to_owned(),
+                format!("{old}\nOwner-deployment: Not-required"),
+            ),
+            (
+                "0002".to_owned(),
+                format!("{new}\nOwner-deployment: Not-required"),
+            ),
         ]
     };
     for text in [
@@ -447,6 +491,82 @@ fn exact_phrase(text: &str, phrase: &str) -> bool {
     })
 }
 
+fn glossary_exemptions(
+    source: &str,
+    documents: &BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    let value: toml::Value = toml::from_str(source).map_err(|e| e.to_string())?;
+    let table = value
+        .as_table()
+        .ok_or("GLOSSARY: expected exemption table")?;
+    if table.len() != 1 {
+        return Err("GLOSSARY: unknown exemption keys".to_owned());
+    }
+    let entries = value
+        .get("exemption")
+        .and_then(toml::Value::as_array)
+        .ok_or("GLOSSARY: missing reviewed exemptions")?;
+    let mut exempt = BTreeSet::new();
+    for entry in entries {
+        let fields = entry.as_table().ok_or("GLOSSARY: invalid exemption")?;
+        if fields.len() != 3
+            || fields
+                .keys()
+                .any(|k| !["path", "kind", "reason"].contains(&k.as_str()))
+        {
+            return Err("GLOSSARY: unknown exemption fields".to_owned());
+        }
+        let path = entry
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .ok_or("GLOSSARY: missing exemption path")?;
+        let kind = entry
+            .get("kind")
+            .and_then(toml::Value::as_str)
+            .ok_or("GLOSSARY: missing exemption kind")?;
+        let reason = entry
+            .get("reason")
+            .and_then(toml::Value::as_str)
+            .ok_or("GLOSSARY: missing exemption reason")?;
+        if !documents.contains(path)
+            || !exempt.insert(path.to_owned())
+            || !["history", "quoted_terms"].contains(&kind)
+            || reason.trim().len() < 20
+        {
+            return Err("GLOSSARY: stale, duplicate or unreviewed exemption".to_owned());
+        }
+    }
+    Ok(exempt)
+}
+
+#[test]
+fn deployment_and_glossary_exemptions_have_explicit_refusal_controls() {
+    let doc = |body: &str| vec![("0006".to_owned(), body.to_owned())];
+    let good = format!("Status: Accepted\nOwner-deployment: Required\n{ADR_DEPLOYMENT_NOTICE}");
+    assert_eq!(adr_errors(&doc(&good)), Vec::<String>::new());
+    for bad in [
+        good.replace(ADR_DEPLOYMENT_NOTICE, ""),
+        good.replace("Required", "Not-required"),
+        format!("{good}\nOwner-deployment: Required"),
+    ] {
+        assert!(!adr_errors(&doc(&bad)).is_empty(), "{bad}");
+    }
+    let documents = BTreeSet::from(["history.md".to_owned()]);
+    let exemption = "[[exemption]]\npath='history.md'\nkind='history'\nreason='A dated historical record, preserved verbatim.'";
+    assert_eq!(
+        glossary_exemptions(exemption, &documents).unwrap(),
+        documents
+    );
+    for bad in [
+        exemption.replace("history.md", "*.md"),
+        exemption.replace("history.md", "missing.md"),
+        format!("{exemption}\n{exemption}"),
+        exemption.replace("kind='history'", "kind='any'"),
+    ] {
+        assert!(glossary_exemptions(&bad, &documents).is_err());
+    }
+}
+
 #[test]
 fn front_door_terms_follow_the_reviewed_glossary() {
     let glossary = read("docs/GLOSSARY.md");
@@ -469,12 +589,17 @@ fn front_door_terms_follow_the_reviewed_glossary() {
         ("producer data", "ranking"),
     ]);
     assert_eq!(actual, required);
+    let documents = common::markdown_documents(&common::root());
+    let exemptions =
+        glossary_exemptions(&read("docs/glossary-exemptions.toml"), &documents).unwrap();
     for path in ["README.md", "CONTRIBUTING.md", "CLAUDE.md"] {
-        let source = read(path);
         assert!(
-            source.contains("docs/GLOSSARY.md"),
+            read(path).contains("docs/GLOSSARY.md"),
             "{path} must link the canonical glossary"
         );
+    }
+    for path in documents.difference(&exemptions) {
+        let source = read(path);
         for (concept, canonical, forbidden) in &rows {
             for phrase in forbidden {
                 assert!(

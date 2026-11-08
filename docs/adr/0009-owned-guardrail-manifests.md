@@ -1,6 +1,9 @@
 # ADR 0009: Guardrail configuration has a checked source of truth
 
 Status: Accepted
+Owner-deployment: Required
+
+Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).
 
 Historical status record: Status: proposed implementation, WP-D6. Author: Bastion (O4).
 

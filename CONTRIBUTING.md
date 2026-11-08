@@ -33,13 +33,11 @@ Optional tools the full gate uses when present: `cargo-deny`, `cargo-mutants`, `
 
 This adds a policy rule using the existing `protect_paths` kind; adding a new Rust rule kind
 is a separate change. Build and test the clean checkout first (or use an already provisioned
-checkout/cache). Default Cargo output location `target/` is assumed; unset a custom
-CARGO_TARGET_DIR for these examples. No installed forge-warden or live ranker is required.
+checkout/cache). The exercise builds both the binary and fixture example explicitly before using either.
+Default Cargo output location `target/` is assumed; unset a custom CARGO_TARGET_DIR for these examples. No installed forge-warden or live ranker is required.
 
 ```bash
 cargo test --workspace --locked --offline
-cargo build --workspace --examples --locked --offline
-export PATH="$PWD/target/debug:$PATH"
 ```
 
 The following script writes a new policy that rejects changes under `private/`. The recorded
@@ -51,6 +49,10 @@ same copied patch bytes for both evaluations. All files stay under ignored `targ
 <!-- first-rule-exercise:start -->
 ```bash
 set -eu
+cargo build --workspace --bins --examples --locked --offline
+test -x target/debug/forge-warden
+test -x target/debug/examples/fixture-ranker
+export PATH="$PWD/target/debug:$PATH"
 mkdir -p target/first-rule
 cp fixtures/demo.patch target/first-rule/change.patch
 ranker="$PWD/target/debug/examples/fixture-ranker"
@@ -85,8 +87,8 @@ forge-warden check --policy target/first-rule/warden.toml --patch target/first-r
 The lint and both green evaluations exit 0 with verdict level `pass`; the intentionally tighter
 `src/` control exits 7 with verdict level `fail` and rule id `first-rule-private-files`.
 Returning to the original policy passes again. The documentation test executes this exact exercise
-in a scratch copy with the built binary and fixture ranker, checks both levels, notes and the rule
-outcome, and runs offline. E3d separately parses all four CLI invocations using the real grammar.
+in a fresh source copy with no prebuilt executables, performs the documented build before use,
+checks both levels, notes and the rule outcome, and runs offline. E3d separately parses all four CLI invocations using the real grammar.
 These controls show the new rule can pass and fail; production review still uses an independently
 admitted real ranker and the base policy. Keep policy and tests together in a pull request and run
 `just ci`; do not copy the tutorial's fixture producer admission into deployment.
