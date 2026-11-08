@@ -337,5 +337,5 @@ review_reason = "Q-DOOR: central read-only OpenOptions open uses O_NONBLOCK and 
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "dafc1add006997fc3b2a077691415bd8229a64662f8c882ab1f9526f8254ac33"
+sha256 = "9f5a1aee27e412e594e0bcc48f9b808274cead5573cb1b9b4a8efdc63275282a"
 review_reason = "Q-HERMETIC reviewed test-only JSON arrays of corpus groups, case identities and SHA256 values; Rust sources pin membership paths, not production contents. Parsed as data, never executable Rust."

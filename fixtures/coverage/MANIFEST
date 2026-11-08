@@ -1962,6 +1962,10 @@
         "a8d945e398d3d2123fe59698dc3f2d6ea1010dd7034c241135d240147c13f7b5"
       ],
       [
+        "crates/forge-warden-cli/tests/oracle_contracts.rs",
+        "2ebeda4cc067491737be93ea93bfb7bdbaec67c36615b95d05bb2703bb5bc73c"
+      ],
+      [
         "crates/forge-warden-cli/tests/repo_invariants.rs",
         "d91261d4e5e3326a3a09588c4692443482699a8e82f1928e696c703e18fd6184"
       ],
