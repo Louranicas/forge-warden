@@ -43,7 +43,7 @@ fn in_scope(scope: u8, file: &File) -> bool {
     scope == 0 || (scope == 1 && file.group == 0) || (scope == 2 && file.group == 2)
 }
 fn removed(file: &File) -> bool {
-    matches!(file.shape, 1 | 4)
+    std::matches!(file.shape, 1 | 4)
 }
 
 pub(super) fn reference(case: &Case) -> (u8, Vec<ResultSpec>) {
@@ -65,7 +65,7 @@ pub(super) fn reference(case: &Case) -> (u8, Vec<ResultSpec>) {
                             && !case
                                 .files
                                 .iter()
-                                .any(|other| other.group == 1 && matches!(other.shape, 0 | 3))
+                                .any(|other| other.group == 1 && std::matches!(other.shape, 0 | 3))
                     }
                     CheckSpec::FileScore(limit) => in_scope(rule.scope, file) && file.score > limit,
                     CheckSpec::ChangeScore(_) | CheckSpec::FileCount(_) => false,
@@ -96,7 +96,7 @@ pub(super) fn reference(case: &Case) -> (u8, Vec<ResultSpec>) {
                 ResultSpec::Clear
             } else if !aggregate
                 && index == 0
-                && matches!(case.waiver, 1 | 2)
+                && std::matches!(case.waiver, 1 | 2)
                 && violating.iter().all(|f| f.group == 0)
             {
                 ResultSpec::Exempt

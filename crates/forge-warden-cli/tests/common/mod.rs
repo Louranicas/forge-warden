@@ -225,16 +225,6 @@ pub(crate) fn text(path: &std::path::Path) -> &str {
     path.to_str().unwrap()
 }
 
-/// Whether `scripts/bless.sh` is regenerating the golden files (`FORGE_WARDEN_BLESS=1`).
-pub(crate) fn blessing() -> bool {
-    std::env::var_os("FORGE_WARDEN_BLESS").is_some_and(|v| v == "1")
-}
-
-/// Overwrite the golden file at `relative` (bless mode only).
-pub(crate) fn bless(relative: &str, contents: &str) {
-    std::fs::write(root().join(relative), contents).unwrap();
-}
-
 /// `path` relative to the repository root, canonicalized, with `/` separators (`crates/…`).
 pub(crate) fn relative(path: &std::path::Path) -> String {
     let base = std::fs::canonicalize(root()).unwrap();
@@ -570,4 +560,113 @@ pub(crate) fn write_executable(dir: &std::path::Path, name: &str, bytes: &[u8]) 
         path.display()
     );
     path
+}
+
+/// Read only a regular, non-symlink source below the reserved fixture namespace.
+pub(crate) fn read_fixture_regular(relative: &str) -> Result<String, String> {
+    if !relative.starts_with("fixtures/") {
+        return Err("fixture path must be below fixtures".to_owned());
+    }
+    read_repository_regular(relative)
+}
+
+/// Read a repository-relative regular file without following symlinks.
+pub(crate) fn read_repository_regular(relative: &str) -> Result<String, String> {
+    let path = std::path::Path::new(relative);
+    if relative.is_empty()
+        || path
+            .components()
+            .any(|p| !matches!(p, std::path::Component::Normal(_)))
+    {
+        return Err("fixture path must be relative below fixtures".to_owned());
+    }
+    let mut current = root();
+    for part in path.components() {
+        current.push(part);
+        let metadata = std::fs::symlink_metadata(&current).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err("fixture symlink refused".to_owned());
+        }
+    }
+    if !current.is_file() {
+        return Err("fixture must be a regular file".to_owned());
+    }
+    std::fs::read_to_string(current).map_err(|e| e.to_string())
+}
+
+/// Exercise the explicit golden producer without permitting ordinary tests to regenerate files.
+pub(crate) fn check_golden_output(ci_write_probe: Option<&str>) -> std::process::Output {
+    let mut cmd = command("python3");
+    cmd.current_dir(root()).args([
+        "-I",
+        "scripts/golden_output.py",
+        "--binary",
+        env!("CARGO_BIN_EXE_forge-warden"),
+    ]);
+    if let Some(marker) = ci_write_probe {
+        cmd.arg("--write").env(marker, "true");
+    }
+    cmd.output().unwrap()
+}
+
+/// Compile exact oracle bytes without the harness or its production dependencies.
+pub(crate) fn compile_oracle(source: &str) -> std::process::Output {
+    let mut child = command("python3")
+        .current_dir(root())
+        .args(["-I", "scripts/oracle_boundary.py"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _written = child.stdin.take().unwrap().write_all(source.as_bytes());
+    child.wait_with_output().unwrap()
+}
+
+/// Probe operator entrypoints only in a disposable fixture copy.
+pub(crate) fn probe_golden_controls() -> std::process::Output {
+    command("python3")
+        .current_dir(root())
+        .args([
+            "-I",
+            "scripts/golden_probe.py",
+            "--binary",
+            env!("CARGO_BIN_EXE_forge-warden"),
+        ])
+        .output()
+        .unwrap()
+}
+
+/// Read only a declared golden from the reviewed fixture namespace.
+pub(crate) fn read_golden(name: &str) -> String {
+    let registry: serde_json::Value =
+        serde_json::from_str(&read_fixture_regular("fixtures/quality-contract.json").unwrap())
+            .unwrap();
+    assert!(
+        registry["goldens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.as_str() == Some(name)),
+        "GOLDEN_CONSUMER_BINDING: undeclared golden"
+    );
+    read_fixture_regular(name).unwrap()
+}
+
+/// Compare actual bytes with the independently reviewed registered expectation.
+pub(crate) fn assert_golden(name: &str, actual: &str) {
+    assert_eq!(
+        actual,
+        read_golden(name),
+        "golden mismatch; ordinary tests never bless output"
+    );
+}
+
+/// Compare a normalized structured verdict with the registered expectation.
+pub(crate) fn assert_golden_json(name: &str, actual: &serde_json::Value) {
+    let expected: serde_json::Value = serde_json::from_str(&read_golden(name)).unwrap();
+    assert_eq!(
+        actual, &expected,
+        "golden mismatch; ordinary tests never bless output"
+    );
 }

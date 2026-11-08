@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 47 named plants over 46 guardrail rows. The remaining 5 register rows are explicitly PENDING
+This revision implements 50 named plants over 46 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24. The remaining 5 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -158,3 +158,25 @@ The harness pins Cargo colour off, TERM=dumb, NO_COLOR, CLICOLOR, locale and ter
 removes force-colour overrides. Child baselines and plants use the same environment, including
 when the caller requests colour. Named diagnostic matching remains strict: unrelated failures
 or missing tools cannot become CAUGHT. This is diagnostic normalization, not an execution sandbox.
+
+
+Oracle/golden cases are owned by Touchstone (O3). `oracle-production-coupling` replaces the local scope check with a production
+matcher call and requires the named independence refusal. The syn syntax restrictions are paired with a standalone
+Rust metadata target that has no harness or production dependencies; nested declarations cannot
+authorize a harness extern alias. The exact compiling alias attack is retained as regression data. `golden-behavior-rebless`
+constructs a behaviour-changing candidate as Git data and pairs it with the planted golden
+update; HEAD's immutable policy supplies the dedicated golden-review HOLD. The script's pass
+is a named-rule property, not an overall authority PASS (the CLI run is advisory). The candidate's
+allow-all policy is ignored. `golden-bless-environment` proves an inherited bless switch cannot
+make the ordinary golden test rewrite its expected bytes. This runner never calls the operator
+regeneration entrypoint.
+
+The quality contract binds both current demo golden consumers to registered assertion helpers.
+The dedicated trusted-base HOLD covers their source file and the producer/guard implementation,
+so moving or inlining their expected output retains that obligation. This is a declared-surface
+contract: arbitrary new inline expectations in unknown future tests require general test-owner
+review and registration; the checker does not infer all semantic expectations from Rust code.
+Holding the whole consumer file intentionally includes unrelated test edits in that file.
+Operator regeneration refuses either CI or GITHUB_ACTIONS and requires a private, owned,
+non-symlink backup directory outside the repository. The wrapper explicitly allocates it in /tmp.
+Write-control regressions run only against disposable fixture copies; live expected bytes stay read-only.

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Regenerate golden verdicts after an intended change, then review `git diff fixtures/`.
-# A golden file is a contract: bless only what you meant to change.
-#
-# The golden verdict is advisory mode on the demo patch and deep-diff-forge 0.7.0's recorded ranking;
-# a second test holds authority mode (the fixture ranker replaying that recording) to the same
-# judgement. The Git version depends on the machine, so it is a placeholder; every input seal is
-# real. The test itself writes the file and still checks the exit status (7).
+# Operator-only regeneration. Ordinary cargo tests are always read-only.
+# An independent verifier builds the reviewed subject, regenerates, compares exact bytes,
+# and retains the binary/output hashes for the owner-held golden review.
 set -euo pipefail
+if [ "${CI+x}" = x ] || [ "${GITHUB_ACTIONS+x}" = x ]; then
+  echo 'golden regeneration is refused in CI' >&2
+  exit 2
+fi
 cd "$(git rev-parse --show-toplevel)"
-FORGE_WARDEN_BLESS=1 cargo test --quiet --locked -p forge-warden-cli --test cli golden_verdict_for_the_demo_change
+backup_dir=$(mktemp -d /tmp/fw-golden-backups.XXXXXXXX)
+printf 'Golden backups: %s\n' "$backup_dir"
+cargo build --locked -p forge-warden-cli --bin forge-warden
+python3 -I scripts/golden_output.py --binary "${CARGO_TARGET_DIR:-target}/debug/forge-warden" --write --backup-dir "$backup_dir"
+cargo test --quiet --locked -p forge-warden-cli --test cli golden_verdict_for_the_demo_change
 git --no-pager diff --stat -- fixtures/

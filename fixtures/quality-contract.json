@@ -1,0 +1,33 @@
+{
+  "schema": "forge-warden.quality-contract.v2",
+  "oracles": [
+    "fixtures/adversarial/reference_model.rs"
+  ],
+  "goldens": [
+    "fixtures/demo.verdict.json"
+  ],
+  "golden_consumers": [
+    {
+      "path": "crates/forge-warden-cli/tests/cli.rs",
+      "tests": [
+        {
+          "name": "golden_verdict_for_the_demo_change",
+          "assertion": "assert_golden",
+          "golden": "fixtures/demo.verdict.json"
+        },
+        {
+          "name": "authority_mode_on_the_demo_reaches_the_golden_judgement",
+          "assertion": "assert_golden_json",
+          "golden": "fixtures/demo.verdict.json"
+        }
+      ]
+    }
+  ],
+  "golden_implementation": [
+    "crates/forge-warden-cli/tests/common/mod.rs",
+    "crates/forge-warden-cli/tests/oracle_contracts.rs",
+    "scripts/golden_output.py",
+    "scripts/golden_probe.py",
+    "scripts/bless.sh"
+  ]
+}
