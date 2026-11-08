@@ -2,8 +2,10 @@
 use super::Cli;
 use clap::Parser as _;
 
-const README: &str = include_str!("../../../README.md");
-const JUSTFILE: &str = include_str!("../../../justfile");
+fn document(path: &str) -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    String::from_utf8(super::doors::read_file(&root.join(path)).unwrap()).unwrap()
+}
 
 // A deliberately limited shell-example lexer: quoting, escaping, operators and comments. Shell
 // expansions remain literal argument values; nothing is evaluated. Unclosed quotes/escapes and
@@ -150,7 +152,7 @@ fn commands(readme: &str, justfile: &str) -> Vec<Vec<String>> {
 
 #[test]
 fn executable_documentation_uses_the_actual_cli_grammar() {
-    let commands = commands(README, JUSTFILE);
+    let commands = commands(&document("README.md"), &document("justfile"));
     assert!(
         commands.len() >= 6,
         "executable example discovery lost commands"
