@@ -56,12 +56,7 @@ fn golden_verdict_for_the_demo_change() {
         "a verdict is not an error: {}",
         out.stderr
     );
-    let golden = read("fixtures/demo.verdict.json");
-    assert_eq!(
-        golden_form(&out.stdout),
-        golden,
-        "the verdict changed. Golden tests never write expected output; an independent verifier must regenerate and compare bytes before owner review"
-    );
+    common::assert_golden("fixtures/demo.verdict.json", &golden_form(&out.stdout));
     assert_eq!(
         out.code, 7,
         "the starter policy fails the demo on ci_privilege"
@@ -93,7 +88,8 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
     );
     assert_eq!(out.code, 7, "{}", out.stderr);
     let mut produced: Value = serde_json::from_str(&golden_form(&out.stdout)).unwrap();
-    let golden: Value = serde_json::from_str(&read("fixtures/demo.verdict.json")).unwrap();
+    let golden: Value =
+        serde_json::from_str(&common::read_golden("fixtures/demo.verdict.json")).unwrap();
     assert_eq!(produced["seals"]["provenance"], "produced");
     assert_eq!(
         produced["seals"]["ranked_by"]["sha256"],
@@ -108,7 +104,7 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
     produced["seals"]["provenance"] = "supplied".into();
     produced["seals"]["ranked_by"]["sha256"] = Value::Null;
     produced["notes"] = golden["notes"].clone();
-    assert_eq!(produced, golden);
+    common::assert_golden_json("fixtures/demo.verdict.json", &produced);
     assert_eq!(
         golden["seals"]["rank_sha256"],
         forge_warden_core::seal::sha256_hex(&read_bytes(RANK)),

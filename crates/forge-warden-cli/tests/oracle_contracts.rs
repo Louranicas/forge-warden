@@ -42,62 +42,6 @@ fn standard_import(tree: &syn::UseTree) -> bool {
     }
 }
 
-fn oracle_roots(file: &syn::File) -> std::collections::BTreeSet<String> {
-    fn imports(tree: &syn::UseTree, names: &mut std::collections::BTreeSet<String>) {
-        match tree {
-            syn::UseTree::Path(p) => imports(&p.tree, names),
-            syn::UseTree::Name(n) => {
-                names.insert(n.ident.unraw().to_string());
-            }
-            syn::UseTree::Rename(n) => {
-                names.insert(n.rename.unraw().to_string());
-            }
-            syn::UseTree::Group(g) => g.items.iter().for_each(|t| imports(t, names)),
-            syn::UseTree::Glob(_) => {}
-        }
-    }
-    fn items(source: &[syn::Item], names: &mut std::collections::BTreeSet<String>) {
-        for item in source {
-            let ident = if let syn::Item::Struct(i) = item {
-                Some(&i.ident)
-            } else if let syn::Item::Enum(i) = item {
-                Some(&i.ident)
-            } else if let syn::Item::Type(i) = item {
-                Some(&i.ident)
-            } else if let syn::Item::Trait(i) = item {
-                Some(&i.ident)
-            } else if let syn::Item::Union(i) = item {
-                Some(&i.ident)
-            } else if let syn::Item::Mod(i) = item {
-                Some(&i.ident)
-            } else {
-                None
-            };
-            if let Some(name) = ident {
-                names.insert(name.unraw().to_string());
-            }
-            if let syn::Item::Use(i) = item {
-                imports(&i.tree, names);
-            }
-            if let syn::Item::Mod(i) = item
-                && let Some((_, nested)) = &i.content
-            {
-                items(nested, names);
-            }
-        }
-    }
-    let mut names = [
-        "std", "core", "alloc", "Self", "Vec", "String", "Option", "Result", "Box", "bool", "char",
-        "str", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
-        "isize", "f32", "f64",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
-    items(&file.items, &mut names);
-    names
-}
-
 // Parse only the argument grammars of the admitted standard macros, with syn nodes.
 // Opaque macro tokens never acquire an exemption from path checking.
 fn macro_arguments(mac: &syn::Macro, name: &str) -> syn::Result<(Vec<syn::Expr>, Vec<syn::Pat>)> {
@@ -139,7 +83,6 @@ fn macro_arguments(mac: &syn::Macro, name: &str) -> syn::Result<(Vec<syn::Expr>,
 
 struct Isolation {
     errors: Vec<String>,
-    roots: std::collections::BTreeSet<String>,
 }
 
 impl<'ast> syn::visit::Visit<'ast> for Isolation {
@@ -194,15 +137,6 @@ impl<'ast> syn::visit::Visit<'ast> for Isolation {
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        if path.segments.len() > 1
-            && path
-                .segments
-                .first()
-                .is_some_and(|segment| !self.roots.contains(&segment.ident.unraw().to_string()))
-        {
-            self.errors
-                .push("undeclared qualified oracle root".to_owned());
-        }
         if path
             .segments
             .iter()
@@ -326,10 +260,7 @@ fn oracle_violations(source: &str) -> Vec<String> {
         Ok(tree) => tree,
         Err(error) => return vec![format!("oracle syntax refused: {error}")],
     };
-    let mut visitor = Isolation {
-        errors: Vec::new(),
-        roots: oracle_roots(&tree),
-    };
+    let mut visitor = Isolation { errors: Vec::new() };
     visitor.visit_file(&tree);
     visitor.errors
 }
@@ -340,8 +271,6 @@ fn oracle_isolation_rejects_production_coupling_in_every_syntax_position() {
         "use forge_warden_core as production;",
         "use ::forge_warden_cli::Cli;",
         "extern crate forge_warden_core as model;",
-        "fn oracle() { let _ = external_alias::evaluate(); }",
-        "fn oracle() { let _ = std::matches!(x, external_alias::State); }",
         "fn oracle() { let _ = forge_warden_core::TOOL_VERSION; }",
         "fn oracle() { let _ = r#forge_warden_core::TOOL_VERSION; }",
         "fn oracle() { let _ = crate::matcher(); }",
@@ -386,9 +315,9 @@ fn declared_oracles_are_independent() {
     .unwrap();
     assert_eq!(
         registry["schema"].as_str(),
-        Some("forge-warden.quality-contract.v1")
+        Some("forge-warden.quality-contract.v2")
     );
-    assert_eq!(registry.as_object().unwrap().len(), 3);
+    assert_eq!(registry.as_object().unwrap().len(), 5);
     let sources = registry["oracles"].as_array().unwrap();
     assert!(!sources.is_empty(), "oracle registry must not be empty");
     assert!(
@@ -410,6 +339,12 @@ fn declared_oracles_are_independent() {
         );
         let errors = oracle_violations(&source);
         assert!(errors.is_empty(), "ORACLE_INDEPENDENCE: {name}: {errors:?}");
+        let compiled = common::compile_oracle(&source);
+        assert!(
+            compiled.status.success(),
+            "ORACLE_INDEPENDENCE: {name}: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
     }
 }
 
@@ -431,10 +366,39 @@ fn golden_outputs_require_independent_review() {
     };
     assert_eq!(rule["kind"].as_str(), Some("protect_paths"));
     assert_eq!(rule["severity"].as_str(), Some("hold"));
+    let expected: std::collections::BTreeSet<String> = std::iter::once("fixtures/**".to_owned())
+        .chain(
+            registry["golden_consumers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["path"].as_str().unwrap().to_owned()),
+        )
+        .chain(
+            registry["golden_implementation"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_owned()),
+        )
+        .collect();
+    let paths = rule["paths"].as_array().unwrap();
+    let actual: std::collections::BTreeSet<String> = paths
+        .iter()
+        .map(|p| p.as_str().unwrap().to_owned())
+        .collect();
     assert_eq!(
-        rule["paths"].as_array().unwrap(),
-        &vec![toml::Value::String("fixtures/**".to_owned())]
+        paths.len(),
+        actual.len(),
+        "duplicate golden protection path"
     );
+    assert_eq!(
+        actual, expected,
+        "GOLDEN_REVIEW_REQUIRED: consumer/implementation coverage"
+    );
+    for path in registry["golden_implementation"].as_array().unwrap() {
+        assert!(common::read_repository_regular(path.as_str().unwrap()).is_ok());
+    }
     assert!(
         rule.get("except").is_none(),
         "golden review must have no exception"
@@ -459,7 +423,7 @@ fn golden_outputs_require_independent_review() {
 #[test]
 fn explicit_golden_producer_checks_bytes_and_refuses_ci_writes() {
     let before = common::read_bytes("fixtures/demo.verdict.json");
-    let checked = common::check_golden_output(false);
+    let checked = common::check_golden_output(None);
     assert!(
         checked.status.success(),
         "producer byte check failed: {checked:?}"
@@ -469,8 +433,146 @@ fn explicit_golden_producer_checks_bytes_and_refuses_ci_writes() {
     assert_eq!(record["binary_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(record["output_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(common::read_bytes("fixtures/demo.verdict.json"), before);
-    let refused = common::check_golden_output(true);
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("regeneration is refused in CI"));
+    for marker in ["CI", "GITHUB_ACTIONS"] {
+        let refused = common::check_golden_output(Some(marker));
+        assert_eq!(refused.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("regeneration is refused in CI"));
+        assert_eq!(common::read_bytes("fixtures/demo.verdict.json"), before);
+    }
+    let controls = common::probe_golden_controls();
+    assert!(controls.status.success(), "golden controls: {controls:?}");
     assert_eq!(common::read_bytes("fixtures/demo.verdict.json"), before);
+}
+
+#[test]
+fn standalone_boundary_rejects_harness_aliases_even_with_nested_decoys() {
+    let regression: serde_json::Value = serde_json::from_str(
+        &common::read_fixture_regular("fixtures/adversarial/oracle-alias-regression.json").unwrap(),
+    )
+    .unwrap();
+    let source = regression["source"].as_str().unwrap();
+    // This exact source passes all eight laws when the harness supplies the alias.
+    // Nested declarations must not authorize either absolute or relative extern paths.
+    for candidate in [
+        source.to_owned(),
+        source.replace("::external_alias::", "external_alias::"),
+    ] {
+        assert_eq!(oracle_violations(&candidate), Vec::<String>::new());
+        let out = common::compile_oracle(&candidate);
+        assert!(
+            !out.status.success(),
+            "harness alias escaped standalone compilation"
+        );
+        let error = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            error.contains("ORACLE_STANDALONE_BOUNDARY") && error.contains("E0433"),
+            "{error}"
+        );
+    }
+    let good = common::compile_oracle(
+        "mod local { pub fn value() -> u8 { 1 } } fn oracle() { let _ = local::value(); }",
+    );
+    assert!(
+        good.status.success(),
+        "{}",
+        String::from_utf8_lossy(&good.stderr)
+    );
+}
+
+fn consumer_bound(source: &str, name: &str, assertion: &str, golden: &str) -> bool {
+    struct Calls<'a> {
+        assertion: &'a str,
+        golden: &'a str,
+        bound: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Calls<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = &*call.func {
+                let names: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|p| p.ident.to_string())
+                    .collect();
+                if names == ["common", self.assertion]
+                    && call.args.len() == 2
+                    && matches!(call.args.first(), Some(syn::Expr::Lit(l))
+                        if matches!(&l.lit, syn::Lit::Str(value) if value.value() == self.golden))
+                {
+                    self.bound = true;
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let Ok(tree) = syn::parse_file(source) else {
+        return false;
+    };
+    tree.items.iter().any(|item| {
+        let syn::Item::Fn(function) = item else {
+            return false;
+        };
+        if function.sig.ident != name || !function.attrs.iter().any(|a| a.path().is_ident("test")) {
+            return false;
+        }
+        let mut calls = Calls {
+            assertion,
+            golden,
+            bound: false,
+        };
+        calls.visit_block(&function.block);
+        calls.bound
+    })
+}
+
+#[test]
+fn registered_golden_consumers_cannot_move_or_inline_their_expectations() {
+    let registry: serde_json::Value = serde_json::from_str(
+        &common::read_fixture_regular("fixtures/quality-contract.json").unwrap(),
+    )
+    .unwrap();
+    let consumers = registry["golden_consumers"].as_array().unwrap();
+    assert_eq!(
+        consumers.len(),
+        1,
+        "review additions to the golden consumer surface"
+    );
+    assert_eq!(consumers[0]["path"], "crates/forge-warden-cli/tests/cli.rs");
+    let tests = consumers[0]["tests"].as_array().unwrap();
+    let required = [
+        ("golden_verdict_for_the_demo_change", "assert_golden"),
+        (
+            "authority_mode_on_the_demo_reaches_the_golden_judgement",
+            "assert_golden_json",
+        ),
+    ];
+    assert_eq!(tests.len(), required.len());
+    let source = common::read_repository_regular(consumers[0]["path"].as_str().unwrap()).unwrap();
+    for (name, assertion) in required {
+        assert!(
+            tests.iter().any(|t| t["name"] == name
+                && t["assertion"] == assertion
+                && t["golden"] == "fixtures/demo.verdict.json"),
+            "GOLDEN_CONSUMER_BINDING: undeclared required consumer"
+        );
+        assert!(
+            consumer_bound(&source, name, assertion, "fixtures/demo.verdict.json"),
+            "GOLDEN_CONSUMER_BINDING: {name} moved or inlined its expectation"
+        );
+    }
+    // The same attacks that escaped fixtures/** must be rejected even with the original intact.
+    let moved = source.replace("fixtures/demo.verdict.json", "outside/demo.verdict.json");
+    let inlined = source
+        .replace("common::assert_golden(", "assert_inlined(")
+        .replace("common::assert_golden_json(", "assert_inlined_json(");
+    for candidate in [&moved, &inlined] {
+        for (name, assertion) in required {
+            assert!(!consumer_bound(
+                candidate,
+                name,
+                assertion,
+                "fixtures/demo.verdict.json"
+            ));
+        }
+    }
 }

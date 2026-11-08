@@ -562,8 +562,16 @@ pub(crate) fn write_executable(dir: &std::path::Path, name: &str, bytes: &[u8]) 
 
 /// Read only a regular, non-symlink source below the reserved fixture namespace.
 pub(crate) fn read_fixture_regular(relative: &str) -> Result<String, String> {
+    if !relative.starts_with("fixtures/") {
+        return Err("fixture path must be below fixtures".to_owned());
+    }
+    read_repository_regular(relative)
+}
+
+/// Read a repository-relative regular file without following symlinks.
+pub(crate) fn read_repository_regular(relative: &str) -> Result<String, String> {
     let path = std::path::Path::new(relative);
-    if !relative.starts_with("fixtures/")
+    if relative.is_empty()
         || path
             .components()
             .any(|p| !matches!(p, std::path::Component::Normal(_)))
@@ -585,7 +593,7 @@ pub(crate) fn read_fixture_regular(relative: &str) -> Result<String, String> {
 }
 
 /// Exercise the explicit golden producer without permitting ordinary tests to regenerate files.
-pub(crate) fn check_golden_output(ci_write_probe: bool) -> std::process::Output {
+pub(crate) fn check_golden_output(ci_write_probe: Option<&str>) -> std::process::Output {
     let mut cmd = command("python3");
     cmd.current_dir(root()).args([
         "-I",
@@ -593,8 +601,70 @@ pub(crate) fn check_golden_output(ci_write_probe: bool) -> std::process::Output 
         "--binary",
         env!("CARGO_BIN_EXE_forge-warden"),
     ]);
-    if ci_write_probe {
-        cmd.arg("--write").env("CI", "1");
+    if let Some(marker) = ci_write_probe {
+        cmd.arg("--write").env(marker, "true");
     }
     cmd.output().unwrap()
+}
+
+/// Compile exact oracle bytes without the harness or its production dependencies.
+pub(crate) fn compile_oracle(source: &str) -> std::process::Output {
+    let mut child = command("python3")
+        .current_dir(root())
+        .args(["-I", "scripts/oracle_boundary.py"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _written = child.stdin.take().unwrap().write_all(source.as_bytes());
+    child.wait_with_output().unwrap()
+}
+
+/// Probe operator entrypoints only in a disposable fixture copy.
+pub(crate) fn probe_golden_controls() -> std::process::Output {
+    command("python3")
+        .current_dir(root())
+        .args([
+            "-I",
+            "scripts/golden_probe.py",
+            "--binary",
+            env!("CARGO_BIN_EXE_forge-warden"),
+        ])
+        .output()
+        .unwrap()
+}
+
+/// Read only a declared golden from the reviewed fixture namespace.
+pub(crate) fn read_golden(name: &str) -> String {
+    let registry: serde_json::Value =
+        serde_json::from_str(&read_fixture_regular("fixtures/quality-contract.json").unwrap())
+            .unwrap();
+    assert!(
+        registry["goldens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p.as_str() == Some(name)),
+        "GOLDEN_CONSUMER_BINDING: undeclared golden"
+    );
+    read_fixture_regular(name).unwrap()
+}
+
+/// Compare actual bytes with the independently reviewed registered expectation.
+pub(crate) fn assert_golden(name: &str, actual: &str) {
+    assert_eq!(
+        actual,
+        read_golden(name),
+        "golden mismatch; ordinary tests never bless output"
+    );
+}
+
+/// Compare a normalized structured verdict with the registered expectation.
+pub(crate) fn assert_golden_json(name: &str, actual: &serde_json::Value) {
+    let expected: serde_json::Value = serde_json::from_str(&read_golden(name)).unwrap();
+    assert_eq!(
+        actual, &expected,
+        "golden mismatch; ordinary tests never bless output"
+    );
 }

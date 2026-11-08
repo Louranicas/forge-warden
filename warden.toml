@@ -121,7 +121,7 @@ paths = ["crates/*/src/**"]
 
 [[rule]]
 id = "golden-output-needs-review"
-why = "Golden changes require an independent verifier to regenerate from the reviewed subject and compare bytes; a behaviour change must not bless its own expected result."
+why = "Declared golden outputs and their bound consumer/producer implementation require independent review; regeneration from the reviewed subject must not bless its own behaviour change. New undeclared inline expectations retain general test ownership until registered."
 kind = "protect_paths"
 severity = "hold"
-paths = ["fixtures/**"]
+paths = ["fixtures/**", "crates/forge-warden-cli/tests/cli.rs", "crates/forge-warden-cli/tests/common/mod.rs", "crates/forge-warden-cli/tests/oracle_contracts.rs", "scripts/golden_output.py", "scripts/golden_probe.py", "scripts/bless.sh"]
