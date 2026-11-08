@@ -114,12 +114,106 @@ fn block_examples(language: &str, body: &str) -> Vec<String> {
     }
 }
 
+// The admitted Markdown subset: repeated list/quote containers, then fence or indented code.
+// Keep indentation evidence before trimming each container, including after a quote marker.
+fn container_content(mut line: &str) -> (&str, bool) {
+    let mut indented = false;
+    loop {
+        let columns =
+            line.chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .fold(0_usize, |column, c| {
+                    column.saturating_add(if c == '\t' {
+                        4_usize.saturating_sub(column % 4)
+                    } else {
+                        1
+                    })
+                });
+        indented |= columns >= 4;
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            line = rest.strip_prefix(' ').or_display(rest);
+            continue;
+        }
+        if let Some(rest) = ['-', '*', '+']
+            .iter()
+            .find_map(|marker| trimmed.strip_prefix(*marker))
+            .filter(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+        {
+            line = rest.strip_prefix(' ').or_display(rest);
+            continue;
+        }
+        let digits = trimmed.bytes().take_while(u8::is_ascii_digit).count();
+        if (1..=9).contains(&digits) {
+            let after = trimmed.get(digits..).unwrap();
+            if let Some(rest) = after
+                .strip_prefix('.')
+                .or_else(|| after.strip_prefix(')'))
+                .filter(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+            {
+                line = rest.strip_prefix(' ').or_display(rest);
+                continue;
+            }
+        }
+        return (trimmed, indented);
+    }
+}
+
+// Only matched, equal-length backtick runs delimit inline code. Unmatched ticks are literal:
+// they must not hide a raw HTML code opener. This deliberately scans per line and may refuse
+// unsupported multiline inline spans rather than silently exempting subsequent HTML.
+fn without_inline_code(mut line: &str) -> String {
+    // Escaped backticks need a larger inline grammar; conservatively exempt nothing.
+    if line.contains(r"\`") {
+        return line.to_owned();
+    }
+    let mut out = String::new();
+    while let Some(start) = line.find('`') {
+        out.push_str(line.get(..start).unwrap());
+        let after = line.get(start..).unwrap();
+        let width = after.bytes().take_while(|b| *b == b'`').count();
+        let rest = after.get(width..).unwrap();
+        let mut cursor = rest;
+        let mut closing = None;
+        while let Some(next) = cursor.find('`') {
+            let run = cursor.get(next..).unwrap();
+            let length = run.bytes().take_while(|b| *b == b'`').count();
+            if length == width {
+                closing = Some(run.get(length..).unwrap());
+                break;
+            }
+            cursor = run.get(length..).unwrap();
+        }
+        if let Some(tail) = closing {
+            line = tail;
+        } else {
+            out.push_str(after);
+            return out;
+        }
+    }
+    out.push_str(line);
+    out
+}
+
+fn raw_code_tag(line: &str) -> bool {
+    let plain = without_inline_code(line).to_ascii_lowercase();
+    ["pre", "xmp", "listing", "code", "samp", "kbd"]
+        .iter()
+        .any(|name| {
+            let opening = format!("<{name}");
+            plain.match_indices(&opening).any(|(start, _)| {
+                plain
+                    .get(start.saturating_add(opening.len())..)
+                    .unwrap()
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c.is_whitespace() || c == '>' || c == '/')
+            })
+        })
+}
+
 fn fence_start(line: &str) -> Option<(char, usize, &str)> {
-    let trimmed = line.trim_start();
-    let trimmed = trimmed
-        .strip_prefix("- ")
-        .or_else(|| trimmed.strip_prefix("* "))
-        .or_display(trimmed);
+    let (trimmed, _) = container_content(line);
     let marker = trimmed.chars().next()?;
     if !['`', '~'].contains(&marker) {
         return None;
@@ -135,7 +229,19 @@ fn examples(readme: &str, justfile: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut fence: Option<(char, usize, &str)> = None;
     let mut body = String::new();
+    let mut indented_body = String::new();
     for line in readme.lines() {
+        let (content, indented) = container_content(line);
+        if fence.is_none() {
+            assert!(
+                !raw_code_tag(line),
+                "raw HTML code requires an explicit language fence: {line}"
+            );
+            if !indented && !indented_body.is_empty() {
+                out.extend(shell_lines(&indented_body));
+                indented_body.clear();
+            }
+        }
         if let Some((marker, length, info)) = fence_start(line) {
             if let Some((opened, opening_length, language)) = fence {
                 if marker == opened && length >= opening_length && info.is_empty() {
@@ -150,15 +256,14 @@ fn examples(readme: &str, justfile: &str) -> Vec<String> {
             }
         }
         if fence.is_some() {
-            body.push_str(line);
+            body.push_str(content);
             body.push('\n');
-        } else if (line.starts_with("    ") || line.starts_with('\t'))
-            && line.contains("forge-warden")
-        {
-            // Indented Markdown code is executable unless explicitly put in a data/text fence.
-            out.push(line.to_owned());
+        } else if indented {
+            indented_body.push_str(content);
+            indented_body.push('\n');
         }
     }
+    out.extend(shell_lines(&indented_body));
     assert!(fence.is_none(), "unclosed documentation block");
     let recipes = justfile
         .lines()
@@ -282,5 +387,136 @@ fn indented_fences_tabs_and_nonstandard_languages_cannot_hide_commands() {
     for style in ["|", "|-", "|+", ">", ">-", ">+"] {
         let text = format!("```yaml\n- run: {style}\n    forge-warden init --invented\n```\n");
         assert!(std::panic::catch_unwind(|| commands(&text, "")).is_err());
+    }
+}
+
+#[test]
+fn rendered_code_cannot_escape_admission_or_refusal() {
+    for tag in [
+        "pre",
+        "PRE class=x",
+        "xmp",
+        "listing",
+        "code",
+        "samp",
+        "kbd",
+    ] {
+        for prefix in [
+            "",
+            "<div>",
+            "Run ",
+            "> ",
+            "- ",
+            "* ",
+            "+ ",
+            "1. ",
+            "2) ",
+            "> - ",
+            "- > ",
+            "1. > + 2. > ",
+        ] {
+            let source = format!(
+                "{prefix}<{tag}>
+forge-warden init --invented
+"
+            );
+            assert!(
+                std::panic::catch_unwind(|| commands(&source, "")).is_err(),
+                "raw code escaped: {source:?}"
+            );
+        }
+    }
+    for prefix in [
+        "",
+        "> ",
+        ">> ",
+        "- ",
+        "* ",
+        "+ ",
+        "1. ",
+        "2) ",
+        "> - ",
+        "- > ",
+        "1. > + 2. > ",
+    ] {
+        for fence in ["```", "~~~"] {
+            let source = format!(
+                "{prefix}{fence}sh
+{prefix}forge-warden init --invented
+{prefix}{fence}
+"
+            );
+            let found = commands(&source, "");
+            assert_eq!(found.len(), 1, "container fence skipped: {source:?}");
+            assert!(Cli::try_parse_from(&found[0]).is_err());
+            let valid = format!(
+                "{prefix}{fence}sh
+{prefix}forge-warden check --policy p \\
+{prefix}--patch p --ranker r
+{prefix}{fence}
+"
+            );
+            let accepted = commands(&valid, "");
+            assert_eq!(accepted.len(), 1);
+            assert!(Cli::try_parse_from(&accepted[0]).is_ok());
+        }
+        let indented = format!(
+            "{prefix}    forge-warden check --policy p \\
+{prefix}    --patch p --ranker r --invented
+"
+        );
+        let found = commands(&indented, "");
+        assert_eq!(found.len(), 1, "indented code skipped: {indented:?}");
+        assert!(Cli::try_parse_from(&found[0]).is_err());
+        let valid_indented = indented.replace(" --invented", "");
+        let accepted_indented = commands(&valid_indented, "");
+        assert_eq!(accepted_indented.len(), 1);
+        assert!(Cli::try_parse_from(&accepted_indented[0]).is_ok());
+    }
+}
+
+#[test]
+fn raw_tag_boundaries_inline_spans_and_explicit_data_are_distinct() {
+    for source in [
+        "Use `<pre>`, ``<xmp>``, and `<listing>` in prose.",
+        "<preview> <prelude> <codebase> <xmpfoo> <listingx>",
+        "forge-warden init --invented",
+        "```text
+<pre>forge-warden init --invented</pre>
+```",
+        "```sh
+printf '<pre>'
+```",
+    ] {
+        assert!(commands(source, "").is_empty(), "{source:?}");
+    }
+    for source in [
+        "unmatched `<pre>",
+        r"escaped \`<pre>`",
+        "``one ` tick`` <pre>",
+        "<PrE	class=x>",
+        "<pre/>",
+        "<pre",
+        "> `safe` Run <pre>bad</pre>",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| commands(source, "")).is_err(),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn mixed_tabs_are_indented_code_in_every_container() {
+    for prefix in ["", "> ", "> - ", "1. > "] {
+        for indent in ["    ", "	", " 	", "  	", "   	"] {
+            let source = format!(
+                "{prefix}{indent}forge-warden init --invented
+"
+            );
+            let found = commands(&source, "");
+            assert_eq!(found.len(), 1, "{source:?}");
+            assert!(Cli::try_parse_from(&found[0]).is_err());
+        }
     }
 }

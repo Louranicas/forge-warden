@@ -80,7 +80,7 @@ pub(crate) fn files_under(dir: &str, suffix: &str) -> Vec<PathBuf> {
 }
 
 /// Discover source Markdown without Git metadata. Only reviewed output/metadata directories
-/// are omitted: `.git` at any depth, and root `target` or `mutants.out*` directories.
+/// are omitted: `.git` at any depth, and root `target`, `mutants.out` or `mutants.out.old` directories.
 /// Other symlinks refuse rather than hiding a document subtree or following it outside `base`.
 pub(crate) fn markdown_documents(base: &std::path::Path) -> std::collections::BTreeSet<String> {
     fn walk(
@@ -97,8 +97,7 @@ pub(crate) fn markdown_documents(base: &std::path::Path) -> std::collections::BT
             let kind = entry.file_type().unwrap();
             let path = entry.path();
             let generated = dir == base
-                && (name == "target"
-                    || name.to_str().is_some_and(|n| n.starts_with("mutants.out")));
+                && (name == "target" || name == "mutants.out" || name == "mutants.out.old");
             if generated && (kind.is_dir() || kind.is_symlink()) {
                 continue;
             }

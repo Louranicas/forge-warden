@@ -31,14 +31,23 @@ in archives and cargo-mutants copies. Untracked `.md` files (including `.MD`) ar
 Every source Markdown file and the justfile needs an exact invocation count in
 `docs/command-sources.tsv`; update that inventory with an intentional example change.
 
-The reviewed exclusions are `.git` metadata directories at any depth and root `target/` and
-`mutants.out*/` output directories (including output-directory symlinks). Nested source directories
+The reviewed exclusions are `.git` metadata entries at any depth and root `target/`,
+`mutants.out/`, and `mutants.out.old/` output directories (including output-directory symlinks).
+Root `target/` is reserved for Cargo
+build artifacts, including generated documentation; source documentation must live elsewhere.
+`mutants.out.old/` is cargo-mutants’ rotated previous output. These are exact directory names;
+`mutants.outline/` and `mutants.out.backup/` remain source-visible. Nested source directories
 named `target` and ordinary Markdown files named `mutants.out.*.md` remain visible. Other source
 symlinks refuse rather than hiding or following a document subtree. No ignore file controls this walk.
 
-Executable examples use the documented shell-fence and literal workflow subset. Inline prose
-fragments and data fences remain outside command parsing. Tests parse arguments with the actual
-CLI without executing shell expansions or promising example paths or tools are available.
+Executable examples use explicit shell fences or indented code, including nested lists and
+blockquotes; their continued lines are parsed together. Unknown fence languages refuse.
+Raw HTML code/preformatted openers (`pre`, `xmp`, `listing`, `code`, `samp`, `kbd`) outside
+fences refuse anywhere on a line after matched inline backtick spans are removed. Put recorded
+output in an explicit `text` fence. This is a conservative Markdown subset: multiline inline
+spans and escaped/commented HTML may also refuse; use a labeled fence when necessary.
+Inline prose fragments and data fences remain outside command parsing. Tests parse arguments
+with the actual CLI without executing shell expansions or promising example paths or tools.
 
 ## Branch protection (for the maintainer)
 
