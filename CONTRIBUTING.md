@@ -55,6 +55,28 @@ Per-file invocation counts remain exact. The shell lexer and literal YAML subset
 explicit limits: no command expansion or example subprocess is executed, and example paths or
 tools need not exist. These tests check actual CLI arguments, not general shell semantics.
 
+## Oracles and golden review
+
+`fixtures/quality-contract.json` declares independent Rust oracle sources and blessed output paths.
+Oracle sources are self-contained fixtures: the syn check rejects production crate/parent paths,
+non-standard imports, includes/out-of-line modules, and unreviewed attributes/macros. Pure
+standard-library macros use explicit `std::` or `core::` paths. This detects structural coupling;
+it does not prove that two independently written algorithms cannot share the same conceptual bug.
+
+Ordinary golden tests never write expected output, even if `FORGE_WARDEN_BLESS` is inherited.
+An independent verifier builds the reviewed subject and checks its output with
+`python3 -I scripts/golden_output.py --binary target/debug/forge-warden`.
+The explicit operator-only `scripts/bless.sh` entrypoint can regenerate after intended changes;
+it refuses CI and records binary/output hashes plus an outside-repository backup. The verifier
+must compare exact bytes; the builder's own re-blessing is not independent evidence.
+
+All blessed outputs belong under the reviewed `fixtures/` namespace. The trusted base's
+`golden-output-needs-review` HOLD covers that entire namespace, including new registered outputs;
+it is separate from generic quality ownership. A candidate cannot waive that obligation by
+editing its own policy. This new rule becomes authoritative after integration into the trusted
+base; an older base retains its existing generic fixture-ownership HOLD. Owner review and the
+existing trusted acknowledgement mechanism remain required; an unsigned rationale grants nothing.
+
 ## Branch protection (for the maintainer)
 
 Protect `main` with: require a pull request; require branches to be up to date; require these

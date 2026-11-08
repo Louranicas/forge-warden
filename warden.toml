@@ -118,3 +118,10 @@ kind = "max_files"
 severity = "hold"
 limit = 12
 paths = ["crates/*/src/**"]
+
+[[rule]]
+id = "golden-output-needs-review"
+why = "Golden changes require an independent verifier to regenerate from the reviewed subject and compare bytes; a behaviour change must not bless its own expected result."
+kind = "protect_paths"
+severity = "hold"
+paths = ["fixtures/**"]

@@ -223,16 +223,6 @@ pub(crate) fn text(path: &std::path::Path) -> &str {
     path.to_str().unwrap()
 }
 
-/// Whether `scripts/bless.sh` is regenerating the golden files (`FORGE_WARDEN_BLESS=1`).
-pub(crate) fn blessing() -> bool {
-    std::env::var_os("FORGE_WARDEN_BLESS").is_some_and(|v| v == "1")
-}
-
-/// Overwrite the golden file at `relative` (bless mode only).
-pub(crate) fn bless(relative: &str, contents: &str) {
-    std::fs::write(root().join(relative), contents).unwrap();
-}
-
 /// `path` relative to the repository root, canonicalized, with `/` separators (`crates/…`).
 pub(crate) fn relative(path: &std::path::Path) -> String {
     let base = std::fs::canonicalize(root()).unwrap();
@@ -568,4 +558,43 @@ pub(crate) fn write_executable(dir: &std::path::Path, name: &str, bytes: &[u8]) 
         path.display()
     );
     path
+}
+
+/// Read only a regular, non-symlink source below the reserved fixture namespace.
+pub(crate) fn read_fixture_regular(relative: &str) -> Result<String, String> {
+    let path = std::path::Path::new(relative);
+    if !relative.starts_with("fixtures/")
+        || path
+            .components()
+            .any(|p| !matches!(p, std::path::Component::Normal(_)))
+    {
+        return Err("fixture path must be relative below fixtures".to_owned());
+    }
+    let mut current = root();
+    for part in path.components() {
+        current.push(part);
+        let metadata = std::fs::symlink_metadata(&current).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err("fixture symlink refused".to_owned());
+        }
+    }
+    if !current.is_file() {
+        return Err("fixture must be a regular file".to_owned());
+    }
+    std::fs::read_to_string(current).map_err(|e| e.to_string())
+}
+
+/// Exercise the explicit golden producer without permitting ordinary tests to regenerate files.
+pub(crate) fn check_golden_output(ci_write_probe: bool) -> std::process::Output {
+    let mut cmd = command("python3");
+    cmd.current_dir(root()).args([
+        "-I",
+        "scripts/golden_output.py",
+        "--binary",
+        env!("CARGO_BIN_EXE_forge-warden"),
+    ]);
+    if ci_write_probe {
+        cmd.arg("--write").env("CI", "1");
+    }
+    cmd.output().unwrap()
 }

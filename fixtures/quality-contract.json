@@ -1,0 +1,5 @@
+{
+  "schema": "forge-warden.quality-contract.v1",
+  "oracles": ["fixtures/adversarial/reference_model.rs"],
+  "goldens": ["fixtures/demo.verdict.json"]
+}

@@ -7,8 +7,8 @@
 
 mod common;
 use common::{
-    bless, blessing, fixture_ranker, fixture_ranker_sha256, policy_admitting, read, read_bytes,
-    run, scratch, text, write,
+    fixture_ranker, fixture_ranker_sha256, policy_admitting, read, read_bytes, run, scratch, text,
+    write,
 };
 use serde_json::Value;
 
@@ -56,14 +56,11 @@ fn golden_verdict_for_the_demo_change() {
         "a verdict is not an error: {}",
         out.stderr
     );
-    if blessing() {
-        bless("fixtures/demo.verdict.json", &golden_form(&out.stdout));
-    }
     let golden = read("fixtures/demo.verdict.json");
     assert_eq!(
         golden_form(&out.stdout),
         golden,
-        "the verdict changed. If that is intended, run scripts/bless.sh and review the diff of fixtures/demo.verdict.json"
+        "the verdict changed. Golden tests never write expected output; an independent verifier must regenerate and compare bytes before owner review"
     );
     assert_eq!(
         out.code, 7,

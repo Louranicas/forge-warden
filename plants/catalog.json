@@ -789,6 +789,70 @@
       "old": "        --ranker \"$ranker\" --patch target/change.patch",
       "new": "        --ranker \"$ranker\" --patch target/change.patch || true",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "oracle-production-coupling",
+      "guardrail": "Q3-07",
+      "path": "fixtures/adversarial/reference_model.rs",
+      "append": "\nuse forge_warden_core as production_oracle;\n",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "oracle_contracts",
+        "declared_oracles_are_independent",
+        "--locked",
+        "--offline"
+      ],
+      "diagnostic": "ORACLE_INDEPENDENCE",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "golden-behavior-rebless",
+      "guardrail": "Q3-10",
+      "path": "fixtures/demo.verdict.json",
+      "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "command": [
+        "python3",
+        "plants/golden_review.py"
+      ],
+      "diagnostic": "GOLDEN_REVIEW_REQUIRED",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "golden-bless-environment",
+      "guardrail": "Q3-10",
+      "path": "fixtures/demo.verdict.json",
+      "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "command": [
+        "bash",
+        "-c",
+        "FORGE_WARDEN_BLESS=1 cargo test -p forge-warden-cli --test cli golden_verdict_for_the_demo_change --locked --offline"
+      ],
+      "diagnostic": "golden_verdict_for_the_demo_change.*FAILED",
+      "required_tools": [
+        "bash",
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
