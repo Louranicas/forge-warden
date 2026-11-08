@@ -1,6 +1,7 @@
 # ADR 0002: The lint wall
 
 Status: Accepted
+Owner-deployment: Not-required
 
 Historical status record: **Status:** accepted, 2026-11-05
 

@@ -671,41 +671,44 @@ pub(crate) fn assert_golden_json(name: &str, actual: &serde_json::Value) {
     );
 }
 
-/// Execute only the documented offline exercise in a scratch copy with already built artifacts.
+/// Copy the source checkout without Git metadata or generated root outputs.
+fn copy_first_rule_source(source: &std::path::Path, destination: &std::path::Path, at_root: bool) {
+    std::fs::create_dir_all(destination).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name == ".git"
+            || (at_root
+                && ["target", "mutants.out", "mutants.out.old"]
+                    .iter()
+                    .any(|skip| name == *skip))
+        {
+            continue;
+        }
+        let kind = entry.file_type().unwrap();
+        assert!(!kind.is_symlink(), "tutorial source copy refuses symlinks");
+        let to = destination.join(&name);
+        if kind.is_dir() {
+            copy_first_rule_source(&entry.path(), &to, false);
+        } else {
+            assert!(kind.is_file(), "tutorial source must be regular");
+            std::fs::copy(entry.path(), to).unwrap();
+        }
+    }
+}
+
+/// Build and execute the exact documented exercise in a fresh source copy, without prebuilt artifacts.
 pub(crate) fn run_first_rule_exercise(script: &str) -> (std::process::Output, Vec<String>) {
     let directory = scratch("first-rule-exercise");
-    write(
-        &directory,
-        "fixtures/demo.patch",
-        &read_bytes("fixtures/demo.patch"),
+    copy_first_rule_source(&root(), &directory, true);
+    assert!(
+        !directory.join("target").exists(),
+        "tutorial must start without build artifacts"
     );
-    std::fs::create_dir_all(directory.join("target/debug/examples")).unwrap();
-    for (source, destination) in [
-        (
-            PathBuf::from(env!("CARGO_BIN_EXE_forge-warden")),
-            directory.join("target/debug/forge-warden"),
-        ),
-        (
-            fixture_ranker(),
-            directory.join("target/debug/examples/fixture-ranker"),
-        ),
-    ] {
-        let status = command("/usr/bin/cp")
-            .arg("--")
-            .arg(source)
-            .arg(destination)
-            .status()
-            .unwrap();
-        assert!(status.success(), "copy already built tutorial executable");
-    }
     write(&directory, "exercise.sh", script.as_bytes());
     let output = command("bash")
         .current_dir(&directory)
         .arg("exercise.sh")
-        .env(
-            "PATH",
-            format!("{}:/usr/bin:/bin", directory.join("target/debug").display()),
-        )
         .output()
         .unwrap();
     let records = if output.status.success() {

@@ -1,6 +1,9 @@
 # ADR 0007: HOLD acknowledgements name exact evidence
 
 Status: Accepted
+Owner-deployment: Required
+
+Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).
 
 Historical status record: Status: proposed implementation, WP-D2. Author: Bastion (O4).
 

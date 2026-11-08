@@ -1,6 +1,9 @@
 # ADR 0006: The candidate is data to a trusted dogfood driver
 
 Status: Accepted
+Owner-deployment: Required
+
+Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).
 
 Historical status record: Status: proposed implementation, WP-D1. Author: Bastion (O4).
 

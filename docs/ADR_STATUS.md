@@ -24,3 +24,12 @@ ADR 0001's effect-door boundary includes child process execution: see ADR 0005 a
 for the bounded child and isolated Git-data contracts. This clarification extends the original
 examples; it does not move effects into the pure core. Current decision text is in [the ADR
 set](adr/0001-pure-core-and-effect-doors.md), starting at 0001 through 0011.
+
+Every ADR also declares exactly one `Owner-deployment: Required` or
+`Owner-deployment: Not-required` field. Required means the decision specifies separately
+owned runtime, repository, gate, or trust configuration; it is not an implementation-complete
+flag. The reviewed Required baseline is ADRs 0006 through 0011. ADRs 0001–0005 describe
+source-level architecture, lint and evaluation contracts without a separate deployment claim.
+New ADRs must declare their classification explicitly; the checker does not infer it from prose.
+Every Accepted Required ADR carries the exact design-versus-deployment pointer used in those
+six records. Missing/duplicate fields, downgrading a baseline record, and missing pointers fail.

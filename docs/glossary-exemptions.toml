@@ -1,0 +1,16 @@
+# Reviewed full-document exemptions; exact paths only, never patterns.
+# Historical records retain dated terminology; the glossary quotes the forbidden phrases as data.
+[[exemption]]
+path = "CHANGELOG.md"
+kind = "history"
+reason = "Append-only dated release history preserves the vocabulary used at that time."
+
+[[exemption]]
+path = "EVIDENCE.md"
+kind = "history"
+reason = "Append-only dated measurement records preserve the original evidence and wording."
+
+[[exemption]]
+path = "docs/GLOSSARY.md"
+kind = "quoted_terms"
+reason = "The canonical term table deliberately quotes every forbidden synonym as lint data."

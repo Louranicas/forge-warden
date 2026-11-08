@@ -5,7 +5,11 @@ These terms describe the current contracts without renaming Rust types or wire f
 type, and `Verdict` is the complete document. Capitalized PASS/HOLD/FAIL in human output and
 lowercase JSON values name the same levels. `policy_hold` names exit 8, not another level.
 
-The table is also the reviewed exact-phrase lint list for README, CONTRIBUTING and CLAUDE.md.
+The table is also the reviewed exact-phrase lint list for the complete source Markdown inventory,
+including SECURITY, docs, and the skills/agents under .claude. The filesystem inventory covers
+tracked and untracked Markdown and works in Git-less exports. Exact historical/quoted-text
+exemptions, with reasons, are reviewed in `docs/glossary-exemptions.toml`. No directory or glob
+is exempt; current ADR text is checked unless an exact record is explicitly admitted there.
 Matching folds ASCII case and collapses whitespace, then checks complete phrase boundaries.
 It does not interpret intent, execute examples, or reject arbitrary occurrences of Rust type
 names. A semicolon separates forbidden phrases; a dash means no forbidden phrase for that row.

@@ -1,6 +1,7 @@
 # ADR 0005: Coverage is verified, not claimed
 
 Status: Accepted
+Owner-deployment: Not-required
 
 Historical status record: **Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
 attack); record `mission4/lanes/lodestar/C0-ACCEPT.md`. Author: Keel (O2). Text unchanged from v3 (59b89ac) except

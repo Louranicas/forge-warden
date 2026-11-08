@@ -1,6 +1,9 @@
 # ADR 0010: Git treats candidate content as data
 
 Status: Accepted
+Owner-deployment: Required
+
+Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).
 
 Historical status record: Status: D3 correction contract; C1 coordination handoff. Author: Bastion (O4).
 
