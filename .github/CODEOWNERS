@@ -15,6 +15,7 @@
 /crates/forge-warden-cli/tests/repo_invariants.rs @Louranicas
 /deny.toml @Louranicas
 /fixtures/** @Louranicas
+/fixtures/coverage/MANIFEST @Louranicas
 /justfile @Louranicas
 /lint-expectations.toml @Louranicas
 /lint-floor.toml @Louranicas

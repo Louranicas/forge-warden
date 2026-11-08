@@ -189,3 +189,19 @@ evidence, not a completed baseline. The weekly job does not replace diff mutatio
 
 Architecture decisions are in [`docs/adr/`](docs/adr). A change that contradicts one starts with
 a new ADR, not a code change.
+
+The integration tests require the locked dependency set in the selected `CARGO_HOME` before
+an offline run. Run `cargo fetch --locked` with network access when provisioning that cache.
+Nested Rust test builds perform this check once per test process and report
+`TEST_LOCKED_DEPS_UNAVAILABLE` with the provisioning command when it fails. They never fetch
+online as a fallback. Test commands resolve executable locations explicitly and report
+`TEST_TOOL_UNAVAILABLE` when a prerequisite is absent; the executable-copy helper requires
+`/usr/bin/cp`. Signature verification additionally requires executable `/usr/bin/ssh-keygen`
+(OpenSSH client), with a `HOLD_ACK_TOOL_UNAVAILABLE` refusal if unavailable.
+
+Scratch directories and nested build targets are unique to each run and held by Drop guards
+until their last consumer finishes. They are removed on normal return and panic unwinding;
+process termination or abort cannot run Rust destructors. Concurrent runs must use separate
+writable source trees, Cargo homes and top-level build targets. Sharing an immutable registry
+seed does not share mutable compiler output. Case-list changes require reviewing the protected
+coverage manifest as well as the tests; a count alone does not attest retained cases.

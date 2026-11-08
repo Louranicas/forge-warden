@@ -4,6 +4,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -95,7 +96,10 @@ def verify(args):
         tmp = Path(directory)
         (tmp / "allowed_signers").write_bytes(allowed)
         (tmp / "ack.sig").write_bytes(signature)
-        subprocess.run(["/usr/bin/ssh-keygen", "-Y", "verify", "-f", str(tmp / "allowed_signers"),
+        ssh_keygen = Path("/usr/bin/ssh-keygen")
+        require(ssh_keygen.is_file() and os.access(ssh_keygen, os.X_OK),
+                "HOLD_ACK_TOOL_UNAVAILABLE: install executable /usr/bin/ssh-keygen (OpenSSH client) before verifying acknowledgements")
+        subprocess.run([str(ssh_keygen), "-Y", "verify", "-f", str(tmp / "allowed_signers"),
                         "-I", receipt["signer"], "-n", NAMESPACE, "-s", str(tmp / "ack.sig")],
                        input=raw, env=ENV, capture_output=True, timeout=5, check=True)
     return {"receipt": receipt, "signed_bytes_base64": base64.b64encode(raw).decode("ascii"),

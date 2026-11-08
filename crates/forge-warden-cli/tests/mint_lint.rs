@@ -16,8 +16,10 @@
 )]
 
 mod common;
+#[path = "../../forge-warden-core/tests/support/corpus_manifest.rs"]
+mod corpus_manifest;
 use common::root;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Each line carrying `// FORM:` must be reported as a disallowed method; `// CONTROL:` lines must not.
 const PLANTS: &str = r#"
@@ -132,8 +134,8 @@ pub fn pickers(
     let _j = *slot.get_or_insert_with(|| 0); // FORM: Option::get_or_insert_with
     let _k = *slot.get_or_insert_default(); // FORM: Option::get_or_insert_default
     n += o.map(usize::from).or_fail_safe(0); // CONTROL: map, then a named default
-    n += usize::from(o.is_some_and(|x| x > 1)); // CONTROL: a boolean predicate (default named by the method)
-    n += usize::from(o.is_none_or(|x| x > 1)); // CONTROL: a boolean predicate (default named by the method)
+    n += usize::from(o.is_some_and(|x| x > 1)); // CONTROL: is_some_and boolean predicate (default named by the method)
+    n += usize::from(o.is_none_or(|x| x > 1)); // CONTROL: is_none_or boolean predicate (default named by the method)
     n += usize::from(r.is_ok_and(|x| x > 1)); // CONTROL: a boolean predicate on Result
     n
 }
@@ -141,18 +143,30 @@ pub fn pickers(
 
 #[test]
 fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() {
-    check_plants("mint-lint", PLANTS, &root(), 16, &[]);
+    check_plants("mint-lint", PLANTS, &root(), "mint-plants", &[]);
 }
 
 #[test]
 fn clippy_refuses_every_raw_default_under_the_cli_configuration() {
-    check_plants("default-lint-cli", DEFAULT_PLANTS, &root(), 27, &[]);
+    check_plants(
+        "default-lint-cli",
+        DEFAULT_PLANTS,
+        &root(),
+        "default-plants",
+        &[],
+    );
 }
 
 #[test]
 fn clippy_refuses_every_raw_default_under_the_core_configuration() {
     let core = root().join("crates/forge-warden-core");
-    check_plants("default-lint-core", DEFAULT_PLANTS, &core, 27, &[]);
+    check_plants(
+        "default-lint-core",
+        DEFAULT_PLANTS,
+        &core,
+        "default-plants",
+        &[],
+    );
 }
 
 #[test]
@@ -164,7 +178,7 @@ fn an_outer_cap_lints_cannot_silence_the_regression() {
         "mint-lint-capped",
         PLANTS,
         &root(),
-        16,
+        "mint-plants",
         &[
             ("RUSTFLAGS", "--cap-lints=allow"),
             ("CARGO_ENCODED_RUSTFLAGS", "--cap-lints\u{1f}allow"),
@@ -175,15 +189,23 @@ fn an_outer_cap_lints_cannot_silence_the_regression() {
 
 /// Run clippy, configured by the `clippy.toml` in `config`, on `plants` in a scratch crate under
 /// `name`, with `hostile` environment variables set first (the nested command must clear them), and
-/// check that all `expected` forms are refused and no control is.
-fn check_plants(
-    name: &str,
-    plants: &str,
-    config: &Path,
-    expected: usize,
-    hostile: &[(&str, &str)],
-) {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+/// check that all manifest forms are refused and no control is.
+fn check_plants(name: &str, plants: &str, config: &Path, group: &str, hostile: &[(&str, &str)]) {
+    corpus_manifest::check(
+        group,
+        plants.lines().filter_map(|line| {
+            line.split_once("// FORM: ")
+                .map(|(_, identity)| (format!("form:{identity}"), line.as_bytes().to_vec()))
+                .or_else(|| {
+                    line.split_once("// CONTROL: ").map(|(_, identity)| {
+                        (format!("control:{identity}"), line.as_bytes().to_vec())
+                    })
+                })
+        }),
+    )
+    .unwrap();
+    common::require_locked_deps();
+    let dir = common::scratch(name);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let core = root().join("crates/forge-warden-core");
     std::fs::write(
@@ -202,6 +224,10 @@ fn check_plants(
             "--offline",
             "--quiet",
             "--message-format=short",
+        ])
+        .arg("--target-dir")
+        .arg(dir.join("target"))
+        .args([
             "--",
             "-A",
             "warnings",
@@ -217,7 +243,6 @@ fn check_plants(
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("CARGO_BUILD_RUSTFLAGS")
         .env("CLIPPY_CONF_DIR", config)
-        .env("CARGO_TARGET_DIR", dir.join("target"))
         .output()
         .unwrap();
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -231,11 +256,11 @@ fn check_plants(
         .filter_map(|l| l.strip_prefix("src/lib.rs:"))
         .filter_map(|l| l.split(':').next()?.parse().ok())
         .collect();
-    let mut forms = 0_usize;
+    let mut expected_lines = std::collections::BTreeSet::new();
     for (index, line) in plants.lines().enumerate() {
         let number = index.saturating_add(1);
         if let Some((_, form)) = line.split_once("// FORM: ") {
-            forms = forms.saturating_add(1);
+            expected_lines.insert(number);
             assert!(
                 reported.contains(&number),
                 "clippy missed: {form} (line {number})\n{stderr}"
@@ -248,6 +273,12 @@ fn check_plants(
             );
         }
     }
-    assert_eq!(forms, expected, "plant count");
+    assert_eq!(
+        reported
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected_lines,
+        "unexpected lint diagnostic locations"
+    );
     assert!(!out.status.success(), "planted forms must fail the build");
 }

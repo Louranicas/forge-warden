@@ -283,6 +283,15 @@ class CompiledSources(unittest.TestCase):
 
 
 class DependencyPrecondition(unittest.TestCase):
+    def test_missing_cargo_refuses_before_agreement_fixtures(self):
+        with tempfile.TemporaryDirectory(prefix="guardrails-empty-path-") as empty_path:
+            result = subprocess.run(
+                [sys.executable, "-I", str(Path(__file__).resolve()), "AgreementFixtures"],
+                cwd=ROOT, env=dict(os.environ, PATH=empty_path), capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GUARDRAILS_TOOL_UNAVAILABLE", result.stderr)
+        self.assertIn("Ran 0 tests", result.stderr)
+
     def test_empty_cargo_home_fails_before_agreement_fixtures(self):
         with tempfile.TemporaryDirectory(prefix="guardrails-empty-cargo-") as cargo_home:
             env = dict(os.environ, CARGO_HOME=cargo_home, CARGO_NET_OFFLINE="true")
@@ -304,7 +313,11 @@ class AgreementFixtures(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        fetched = subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT,
+        found = shutil.which("cargo")
+        if found is None:
+            raise RuntimeError("GUARDRAILS_TOOL_UNAVAILABLE: install Cargo and set PATH before running source-agreement fixtures")
+        cls.cargo = os.path.abspath(found)
+        fetched = subprocess.run([cls.cargo, "fetch", "--locked", "--offline"], cwd=ROOT,
                                  capture_output=True, text=True)
         if fetched.returncode:
             raise RuntimeError(
@@ -319,7 +332,7 @@ class AgreementFixtures(unittest.TestCase):
         shutil.copytree(ROOT, self.root, ignore=shutil.ignore_patterns(".git", "target", "__pycache__"))
 
     def run_cargo(self, *args):
-        return subprocess.run(["cargo", *args, "--target-dir", str(self.root / "target")],
+        return subprocess.run([self.cargo, *args, "--target-dir", str(self.root / "target")],
                               cwd=self.root, capture_output=True, text=True)
 
     def agreement(self):
@@ -339,7 +352,7 @@ class AgreementFixtures(unittest.TestCase):
             'description="Compiler context agreement fixture"\nlicense="MIT"\n'
             '[lints]\nworkspace=true\n')
         (member / "src/lib.rs").write_text('//! Compiled workspace identity control.\n/// A public control.\npub fn control() {}\n')
-        lock = subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=self.root,
+        lock = subprocess.run([self.cargo, "generate-lockfile", "--offline"], cwd=self.root,
                               capture_output=True, text=True)
         self.assertEqual(lock.returncode, 0, lock.stderr)
         result = self.agreement()

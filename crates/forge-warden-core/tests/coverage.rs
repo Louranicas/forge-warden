@@ -1,4 +1,4 @@
-//! ADR 0005 §2.2/§2.9 over a permanent corpus: 51 real patches (Mission 3 forgeries, Keel's and
+//! ADR 0005 §2.2/§2.9 over a permanent corpus: reviewed real patches (Mission 3 forgeries, Keel's and
 //! Touchstone's held-out cases, renames, binaries, modes, symlinks, submodules, odd names, CRLF,
 //! `--no-prefix`), each with Git's captured `apply --numstat -z` / `--summary` output and a ranking
 //! written by the real deep-diff-forge 0.7.0 binary. `fixtures/coverage/cases.json` holds the
@@ -9,6 +9,9 @@
     clippy::unwrap_used,
     reason = "test helpers read committed fixtures; a panic here is a failed test"
 )]
+
+#[path = "support/corpus_manifest.rs"]
+mod corpus_manifest;
 
 use forge_warden_core::facts::{Disagreement, PatchFacts, compare};
 use forge_warden_core::rank::parse_rank;
@@ -72,7 +75,29 @@ fn classify(case: &Value) -> String {
 fn every_case_in_the_coverage_corpus_classifies_as_expected() {
     let index: Value = serde_json::from_slice(&fixture("cases.json")).unwrap();
     let cases = index["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 57, "the corpus shrank");
+    corpus_manifest::check(
+        "coverage-cases",
+        cases.iter().map(|case| {
+            (
+                case["name"].as_str().unwrap().to_owned(),
+                serde_json::to_vec(case).unwrap(),
+            )
+        }),
+    )
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/coverage");
+    corpus_manifest::check(
+        "coverage-files",
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name().into_string().unwrap(), entry.path())
+            })
+            .filter(|(name, _)| name != "MANIFEST")
+            .map(|(name, path)| (name, std::fs::read(path).unwrap())),
+    )
+    .unwrap();
     let wrong: Vec<String> = cases
         .iter()
         .filter_map(|case| {

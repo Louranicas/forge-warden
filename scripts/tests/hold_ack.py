@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Offline acknowledgement attacks using disposable fixture keys, never deployment keys."""
 import json
+import os
+from unittest.mock import patch
 import shutil
 import subprocess
 import sys
@@ -12,8 +14,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def require_host_tools():
+    tool = Path("/usr/bin/ssh-keygen")
+    if not tool.is_file() or not os.access(tool, os.X_OK):
+        raise RuntimeError("HOLD_ACK_TOOL_UNAVAILABLE: install executable /usr/bin/ssh-keygen before constructing signature fixtures")
+
+
+class ToolAdmission(unittest.TestCase):
+    def test_missing_tool_refuses_before_fixture_construction(self):
+        with patch("os.access", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "HOLD_ACK_TOOL_UNAVAILABLE"):
+                require_host_tools()
+
+
 class BoundAck(unittest.TestCase):
+    def test_missing_signature_tool_has_named_refusal(self):
+        self.helper.write_text(self.helper.read_text().replace("/usr/bin/ssh-keygen", "/nonexistent/fw-ssh-keygen"))
+        result = self.run_helper("verify", "--ack", str(self.root / "ack.json"), "--signature", str(self.root / "ack.sig"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"HOLD_ACK_TOOL_UNAVAILABLE", result.stderr)
+
     def setUp(self):
+        require_host_tools()
         self.tmp = tempfile.TemporaryDirectory(prefix="ack-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
