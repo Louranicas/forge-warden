@@ -11,6 +11,7 @@ use common::{
     write,
 };
 use serde_json::Value;
+use std::fmt::Write as _;
 
 const POLICY: &str = "examples/starter.warden.toml";
 const RANK: &str = "fixtures/demo.rank.json";
@@ -354,4 +355,35 @@ fn hostile_paths_cannot_reach_the_terminal_raw() {
         "{}",
         out.stdout
     );
+}
+
+// Q2-06: generated diagnostics traverse actual CLI failure paths, not only an escaper unit.
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config { cases: 16, max_shrink_iters: 0, failure_persistence: None, ..proptest::test_runner::Config::default() })]
+    #[test]
+    fn diagnostics_are_printable_across_failure_paths(bytes in proptest::collection::vec(proptest::num::u8::ANY, 1..64)) {
+        let dir = scratch("diagnostic-property");
+        let mut hostile = b"context\x1b\0\n\xe2\x80\xae".to_vec();
+        hostile.extend_from_slice(&bytes);
+        let arg = String::from_utf8_lossy(&hostile).replace('\0', "_");
+        let missing = dir.join(arg.replace('/', "_"));
+        let ranker = fixture_ranker();
+        let policy = policy_admitting(&dir, POLICY, &[fixture_ranker_sha256()]);
+        let hex = hostile.iter().fold(String::new(), |mut out, b| { write!(out, "{b:02x}").unwrap(); out });
+        let mut outcomes = vec![
+            run(&["lint", "--policy", text(&missing)], b""),
+            run(&["explain", &arg], b""),
+            run(&["check", "--policy", POLICY, "--patch", PATCH, "--advisory", "--rank", RANK, "--git", text(&ranker)], b""),
+        ];
+        for mode in ["stderr-hex", "schema-hex"] {
+            let patch = write(&dir, mode, format!("+fixture-ranker: {mode} {hex}\n").as_bytes());
+            let out = run(&["check", "--policy", text(&policy), "--patch", text(&patch), "--ranker", text(&ranker), "--today", TODAY], b"");
+            proptest::prop_assert!(out.stderr.contains("context"), "failure context was lost: {:?}", out.stderr);
+            outcomes.push(out);
+        }
+        for out in outcomes {
+            proptest::prop_assert!(out.code != 0 && !out.stderr.is_empty());
+            proptest::prop_assert!(out.stderr.bytes().all(|b| b == b'\n' || (0x20..=0x7e).contains(&b)), "{:?}", out.stderr);
+        }
+    }
 }

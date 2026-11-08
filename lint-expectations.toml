@@ -261,8 +261,8 @@ review_reason = "C1c sole authority mint follows policy digest admission, bounde
 [[expectation]]
 file = "crates/forge-warden-cli/tests/support/fixture_ranker.rs"
 lint = "clippy::disallowed_methods"
-source_reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout"
-review_reason = "C1c non-shipping example reads fixture inputs and emits controlled ranking bytes to exercise authority admission and refusal cases."
+source_reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout/stderr"
+review_reason = "Q-DOOR.3 review: non-shipping example reads fixture inputs and emits controlled ranking or stderr bytes to exercise authority admission and escaped failure diagnostics."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/common/mod.rs"

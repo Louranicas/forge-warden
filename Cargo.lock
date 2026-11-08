@@ -166,6 +166,7 @@ dependencies = [
  "clap",
  "forge-warden-core",
  "proc-macro2",
+ "proptest",
  "pulldown-cmark",
  "serde_json",
  "syn",
