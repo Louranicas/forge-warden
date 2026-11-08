@@ -5,14 +5,17 @@ you find out in seconds, not in review.
 
 ## Setup
 
-Use Linux with Git, Bash, coreutils, Python 3.11 or newer, Rustup and `just` available.
+Use Linux with `/proc` mounted (including `/proc/self/fd`), Git, Bash, coreutils,
+Python 3.11 or newer, Rustup and `just` available.
 The checkout pins Rust 1.99.1 plus rustfmt/clippy in `rust-toolchain.toml`; Rustup may need
 network access to install that toolchain. Provision the dependency cache once with network
-access, then the walkthrough and test gates run offline:
+access, and provision the separate Rust 1.88.0 MSRV compiler for `just ci`. The pinned
+1.99.1 toolchain supplies rustfmt and Clippy. Then the walkthrough and test gates run offline:
 
 ```bash
 git clone https://github.com/Louranicas/forge-warden.git
 cd ./forge-warden
+rustup toolchain install 1.88.0 --profile minimal
 cargo fetch --locked
 ```
 
