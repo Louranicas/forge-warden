@@ -17,7 +17,7 @@ fn rust_and_python_classify_the_same_build_identically() {
         .arg(common::root().join("scripts/classifier_agreement.py"))
         .arg(evidence_path)
         .arg(expected_path)
-        .arg(target)
+        .arg(&target)
         .output()
         .unwrap();
     assert!(

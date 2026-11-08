@@ -81,7 +81,7 @@ fn notes(v: &Value) -> Vec<String> {
 }
 
 /// A scratch dir with the no-secrets policy admitting the fixture ranker.
-fn setup(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+fn setup(name: &str) -> (common::Scratch, PathBuf, PathBuf) {
     let dir = scratch(name);
     let policy = policy_admitting(&dir, NO_SECRETS, &[fixture_ranker_sha256()]);
     (dir, policy, fixture_ranker())

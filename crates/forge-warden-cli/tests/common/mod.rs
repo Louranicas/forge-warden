@@ -16,6 +16,8 @@
 )]
 
 pub(crate) mod attribute_policy;
+mod runtime;
+pub(crate) use runtime::{Scratch, require_locked_deps, scratch};
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -26,15 +28,25 @@ mod process_env;
 
 /// Clear ambient process configuration; admit only tool locations and an isolated HOME.
 /// Tests needing hostile variables must add them explicitly after this boundary.
+/// Commands and their children must finish before the creating test thread exits: that thread
+/// owns the isolated HOME guard. The current callers execute and wait on their creating thread.
 pub(crate) fn hermetic(command: &mut Command) -> &mut Command {
-    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    let home = HOME.get_or_init(|| scratch("process-home"));
-    process_env::configure(command, home)
+    std::thread_local! { static HOME: Scratch = scratch("process-home"); }
+    HOME.with(|home| {
+        process_env::configure(command, home);
+    });
+    if let Some(search) = std::env::var_os("PATH") {
+        let directories: Vec<PathBuf> = std::env::split_paths(&search)
+            .map(|directory| std::path::absolute(directory).unwrap())
+            .collect();
+        command.env("PATH", std::env::join_paths(directories).unwrap());
+    }
+    command
 }
 
 /// A test command with the shared explicit environment contract.
 pub(crate) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut command = Command::new(program);
+    let mut command = Command::new(runtime::tool(program.as_ref()));
     hermetic(&mut command);
     command
 }
@@ -188,15 +200,6 @@ pub(crate) fn fixture_ranker_sha256() -> String {
     forge_warden_core::seal::sha256_hex(&std::fs::read(fixture_ranker()).unwrap())
 }
 
-/// A fresh, empty directory for one test, under Cargo's per-target scratch directory.
-pub(crate) fn scratch(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{}", std::process::id()));
-    let _gone = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 /// Write `bytes` to `dir/name` and return the path.
 pub(crate) fn write(dir: &std::path::Path, name: &str, bytes: &[u8]) -> PathBuf {
     let path = dir.join(name);
@@ -338,6 +341,7 @@ pub(crate) struct Members {
 
 /// The workspace members, by exact ID (Touchstone C1c-O3-04: never by name substring).
 pub(crate) fn workspace_members() -> Members {
+    require_locked_deps();
     let out = command(env!("CARGO"))
         .args([
             "metadata",
@@ -375,9 +379,10 @@ pub(crate) fn workspace_members() -> Members {
 }
 
 /// The nested `cargo check --workspace --all-targets --message-format=json` stream: its own
-/// persistent discovery dir, inherited rustflags, wrappers and target dir cleared.
-fn discovery_stream() -> (String, PathBuf) {
-    let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("source-discovery");
+/// per-call owned discovery dir, inherited rustflags, wrappers and target dir cleared.
+fn discovery_stream() -> (String, Scratch) {
+    require_locked_deps();
+    let target = scratch("source-discovery");
     let out = command(env!("CARGO"))
         .args([
             "check",
@@ -459,7 +464,7 @@ pub(crate) fn sources() -> Sources {
 /// [`sources`] together with the exact evidence it classified: the `cargo check
 /// --message-format=json` stream and the discovery target directory holding its dep-info files, so a
 /// second classifier (D6's `guardrail_sources.py`, Rulings #9 agreement check) judges the same build.
-pub(crate) fn sources_with_evidence() -> (Sources, String, PathBuf) {
+pub(crate) fn sources_with_evidence() -> (Sources, String, Scratch) {
     let members = workspace_members();
     let (evidence, target) = discovery_stream();
     let mut production = std::collections::BTreeSet::new();

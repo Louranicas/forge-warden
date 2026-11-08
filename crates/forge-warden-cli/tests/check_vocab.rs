@@ -39,9 +39,8 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 /// A scratch repository whose `crates/deep-diff-forge-graph/src/{risk,evidence}.rs` are the
 /// fixtures with `edit` applied to one of them, committed; returns (repo, commit).
-fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (PathBuf, String) {
-    let repo = std::env::temp_dir().join(format!("fw-vocab-{}-{name}", std::process::id()));
-    let _gone = std::fs::remove_dir_all(&repo);
+fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (common::Scratch, String) {
+    let repo = common::scratch(name);
     let src = repo.join("crates/deep-diff-forge-graph/src");
     std::fs::create_dir_all(&src).unwrap();
     for f in ["risk.rs", "evidence.rs"] {
@@ -64,12 +63,12 @@ fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (PathBuf, String
 /// Run the script from a copy of the two files it needs, staged outside any Git repository (as in a
 /// mutation run's scratch tree or a release tarball), so it must find its tree without Git.
 fn check(repo: &Path, rev: &str) -> (i32, String) {
-    let tree = std::env::temp_dir().join(format!(
-        "fw-vocab-tree-{}-{}",
-        std::process::id(),
-        rev.get(..12).unwrap()
-    ));
-    let _gone = std::fs::remove_dir_all(&tree);
+    for tool in [
+        "bash", "dirname", "mktemp", "mkdir", "git", "tar", "python3", "rm",
+    ] {
+        let _admitted = common::command(tool);
+    }
+    let tree = common::scratch("vocab-tree");
     for file in [
         "scripts/check_vocab.sh",
         "crates/forge-warden-core/src/vocab.rs",
@@ -173,7 +172,6 @@ fn every_label_form_the_script_cannot_read_exactly_fails_closed() {
         let (code, text) = check(&repo, &commit);
         assert_eq!(code, 1, "{name}: {text}");
         assert!(text.contains(want), "{name}: {text}");
-        let _cleaned = std::fs::remove_dir_all(&repo);
     }
 }
 
