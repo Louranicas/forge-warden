@@ -81,8 +81,154 @@ fn markers(source: &str, attrs: &[Attribute]) -> String {
     }
 }
 
+/// Whitespace-normalised source. Every run of whitespace outside literals becomes one space, so
+/// formatting is not API. The characters of every string, byte-string, C-string, raw-string and char
+/// literal are kept exactly (Touchstone T-QTYPES8-01: `"a b"` and `"a  b"` are different constants,
+/// and so are a raw string's newline and a space). Inside a literal a backslash is doubled and any
+/// whitespace or control character other than a plain space is written `\u{..}`, so a record stays
+/// on one line and the encoding stays injective. Comments are trivia: their quotes start nothing.
 fn normalise(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    let chars: Vec<char> = text.chars().collect();
+    let at = |k: usize| chars.get(k).copied();
+    let mut out = String::new();
+    let mut space = false;
+    let mut i = 0_usize;
+    // Inside a comment (up to this index) nothing opens a literal; its words collapse like code.
+    let mut plain_until = 0_usize;
+    while let Some(c) = at(i) {
+        if c.is_whitespace() {
+            space = true;
+            i = i.saturating_add(1);
+            continue;
+        }
+        if space && !out.is_empty() {
+            out.push(' ');
+        }
+        space = false;
+        if i >= plain_until && c == '/' {
+            match at(i.saturating_add(1)) {
+                Some('/') => plain_until = comment_end(&chars, i, false),
+                Some('*') => plain_until = comment_end(&chars, i, true),
+                _ => {}
+            }
+        }
+        if i < plain_until {
+            out.push(c);
+            i = i.saturating_add(1);
+            continue;
+        }
+        if let Some(end) = literal_end(&chars, i) {
+            for ch in chars.get(i..end).unwrap_or_default() {
+                match *ch {
+                    '\\' => out.push_str("\\\\"),
+                    ' ' => out.push(' '),
+                    other if other.is_whitespace() || other.is_control() => {
+                        out.extend(other.escape_unicode());
+                    }
+                    other => out.push(other),
+                }
+            }
+            i = end;
+            continue;
+        }
+        out.push(c);
+        i = i.saturating_add(1);
+    }
+    out
+}
+
+fn is_ident_char(c: Option<char>) -> bool {
+    c.is_some_and(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Where the literal starting at `i` ends (exclusive), or `None` if no literal starts there. A raw
+/// string `r#"..."#` (also `br`/`cr`) needs `r` not to continue an identifier; a char literal is
+/// `'x'` or an escape, while `'a` alone is a lifetime.
+fn literal_end(chars: &[char], i: usize) -> Option<usize> {
+    let at = |k: usize| chars.get(k).copied();
+    let next = |k: usize| k.saturating_add(1);
+    match at(i)? {
+        '"' => {
+            let mut j = next(i);
+            loop {
+                match at(j)? {
+                    '\\' => j = j.saturating_add(2),
+                    '"' => return Some(next(j)),
+                    _ => j = next(j),
+                }
+            }
+        }
+        'r' => {
+            let before = i.checked_sub(1).and_then(at);
+            let prefix_ok = !is_ident_char(before)
+                || (matches!(before, Some('b' | 'c'))
+                    && !is_ident_char(i.checked_sub(2).and_then(at)));
+            if !prefix_ok {
+                return None;
+            }
+            let mut j = next(i);
+            let mut hashes = 0_usize;
+            while at(j) == Some('#') {
+                hashes = hashes.saturating_add(1);
+                j = next(j);
+            }
+            if at(j) != Some('"') {
+                return None;
+            }
+            j = next(j);
+            loop {
+                if at(j)? == '"' && (1..=hashes).all(|h| at(j.saturating_add(h)) == Some('#')) {
+                    return Some(j.saturating_add(hashes).saturating_add(1));
+                }
+                j = next(j);
+            }
+        }
+        '\'' => {
+            if at(next(i)) == Some('\\') {
+                let mut j = i.saturating_add(3);
+                while at(j).is_some_and(|c| c != '\'') && j < i.saturating_add(12) {
+                    j = next(j);
+                }
+                (at(j) == Some('\'')).then(|| next(j))
+            } else if at(next(i)).is_some() && at(i.saturating_add(2)) == Some('\'') {
+                Some(i.saturating_add(3))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Where the comment starting at `i` ends (exclusive): the end of the line for `//`, the matching
+/// close for a nested `/* */` (or the end of the text if it never closes).
+fn comment_end(chars: &[char], i: usize, block: bool) -> usize {
+    let at = |k: usize| chars.get(k).copied();
+    if !block {
+        let mut j = i;
+        while at(j).is_some_and(|c| c != '\n') {
+            j = j.saturating_add(1);
+        }
+        return j;
+    }
+    let mut depth = 0_usize;
+    let mut j = i;
+    while let Some(c) = at(j) {
+        let n = at(j.saturating_add(1));
+        if c == '/' && n == Some('*') {
+            depth = depth.saturating_add(1);
+            j = j.saturating_add(2);
+        } else if c == '*' && n == Some('/') {
+            depth = depth.saturating_sub(1);
+            j = j.saturating_add(2);
+            if depth == 0 {
+                return j;
+            }
+        } else {
+            j = j.saturating_add(1);
+        }
+    }
+    j
 }
 
 /// Source text between two spans (start of `from`, start of `to`), whitespace-normalised.
@@ -1072,4 +1218,98 @@ fn a_member_kind_the_reader_does_not_model_is_refused_not_skipped() {
     let mut out = Vec::new();
     members("", "m T::", 0, &[()], |()| None, |_| true, &mut out);
     assert_eq!(unvouched(&out.join("\n")).len(), 1, "{out:#?}");
+}
+
+/// Touchstone T-QTYPES8-01: literal payloads are API. Each pair is the same item with a different
+/// literal value, so the records must differ.
+const LITERAL_PAYLOADS: &[(&str, &str, &str)] = &[
+    (
+        "one space and two spaces in a string",
+        "pub const L: &str = \"a b\";\n",
+        "pub const L: &str = \"a  b\";\n",
+    ),
+    (
+        "a raw string's newline and a space",
+        "pub const R: &str = r#\"a\nb\"#;\n",
+        "pub const R: &str = r#\"a b\"#;\n",
+    ),
+    (
+        "a raw tab and a space in a string",
+        "pub const T: &str = \"a\tb\";\n",
+        "pub const T: &str = \"a b\";\n",
+    ),
+    (
+        "an escaped newline and a real newline",
+        "pub const N: &str = \"a\\nb\";\n",
+        "pub const N: &str = \"a\nb\";\n",
+    ),
+    (
+        "a byte string's spacing",
+        "pub const B: &[u8] = b\"a b\";\n",
+        "pub const B: &[u8] = b\"a   b\";\n",
+    ),
+    (
+        "a char literal tab and a space",
+        "pub const C: char = '\t';\n",
+        "pub const C: char = ' ';\n",
+    ),
+    (
+        "an attribute payload's spacing",
+        "#[deprecated(note = \"use b\")]\npub fn a() {}\n",
+        "#[deprecated(note = \"use  b\")]\npub fn a() {}\n",
+    ),
+    (
+        "a raw string holding the text \\u{a} and one holding a newline",
+        "pub const U: &str = r\"\\u{a}\";\n",
+        "pub const U: &str = r\"\n\";\n",
+    ),
+    (
+        "a raw string with embedded quotes and inner spacing",
+        "pub const Q: &str = r#\"a \"x  y\" b\"#;\n",
+        "pub const Q: &str = r#\"a \"x y\" b\"#;\n",
+    ),
+    (
+        "a macro payload's spacing",
+        "macro_rules! m { () => { \"x y\" }; }\n",
+        "macro_rules! m { () => { \"x  y\" }; }\n",
+    ),
+];
+
+/// Formatting outside literals is not API: each pair must read the same.
+const FORMATTING_ONLY: &[(&str, &str, &str)] = &[
+    (
+        "spacing and line breaks between tokens",
+        "pub const L: &str = \"a  b\";\npub fn f(x: u8) -> u8 { x }\n",
+        "pub const L:   &str =\n    \"a  b\";\npub fn f(x: u8)\n    -> u8 {\n    x\n}\n",
+    ),
+    (
+        "a comment's own spacing",
+        "pub fn g() /* a  b */ {}\n",
+        "pub fn g() /* a b */ {}\n",
+    ),
+    (
+        "a quote inside a comment opens no literal",
+        "pub fn h(/* don't */ x: u8) {}\n",
+        "pub fn h(/* don't */  x:   u8) {}\n",
+    ),
+    (
+        "a double quote inside a comment opens no string",
+        "pub fn q(/* \" */ x: u8, /* \" */) {}\n",
+        "pub fn q(/* \" */ x:  u8, /* \" */) {}\n",
+    ),
+    (
+        "lifetimes are not char literals",
+        "pub fn k<'a>(x: &'a str) -> &'a str { x }\n",
+        "pub fn k<'a>(x: &'a str)\n    -> &'a str { x }\n",
+    ),
+];
+
+#[test]
+fn a_literal_payload_change_changes_the_records_and_formatting_does_not() {
+    for (what, before, after) in LITERAL_PAYLOADS {
+        assert_ne!(api_of(before), api_of(after), "{what}");
+    }
+    for (what, before, after) in FORMATTING_ONLY {
+        assert_eq!(api_of(before), api_of(after), "{what}");
+    }
 }
