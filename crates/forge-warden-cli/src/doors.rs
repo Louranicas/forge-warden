@@ -1283,8 +1283,24 @@ mod child_tests {
             uuid_suffix(valid).unwrap(),
             "12345678-1234-4234-9234-123456789abc"
         );
+        // Exercise both hex boundaries and every RFC variant deterministically; runtime UUIDs
+        // alone would make these admission boundaries depend on a random sample.
+        for variant in ['8', '9', 'a', 'b'] {
+            let value = format!("00000000-ffff-4fff-{variant}fff-ffffffffffff\n");
+            assert_eq!(uuid_suffix(value.as_bytes()).unwrap(), value.trim_end());
+        }
+        for position in [8, 13, 18, 23] {
+            let mut malformed = valid.to_vec();
+            malformed[position] = b'0';
+            assert!(uuid_suffix(&malformed).is_err());
+        }
         for bad in [
             b"".as_slice(),
+            b"\n",
+            b"\xff\n",
+            b"12345678-1234-4234-9234-123456789ab\n",
+            b"12345678-1234-4234-9234-123456789abcd\n",
+            b"12345678-1234-4234-9234-123456789abF\n",
             b"../predictable\n",
             b"12345678-1234-1234-9234-123456789abc\n",
             b"12345678-1234-4234-7234-123456789abc\n",
