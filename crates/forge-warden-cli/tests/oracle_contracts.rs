@@ -54,6 +54,21 @@ impl<'ast> syn::visit::Visit<'ast> for Isolation {
         syn::visit::visit_item(self, item);
     }
 
+    fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+        if matches!(item, syn::ImplItem::Verbatim(_)) {
+            self.errors.push("unclassified oracle impl item".to_owned());
+        }
+        syn::visit::visit_impl_item(self, item);
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if matches!(item, syn::TraitItem::Verbatim(_)) {
+            self.errors
+                .push("unclassified oracle trait item".to_owned());
+        }
+        syn::visit::visit_trait_item(self, item);
+    }
+
     fn visit_expr(&mut self, expr: &'ast syn::Expr) {
         if matches!(expr, syn::Expr::Verbatim(_)) {
             self.errors
@@ -123,7 +138,10 @@ impl<'ast> syn::visit::Visit<'ast> for Isolation {
     }
 
     fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
-        if attr.path().is_ident("doc") {
+        if attr.path().is_ident("doc")
+            && matches!(&attr.meta, syn::Meta::NameValue(n) if matches!(&n.value,
+                syn::Expr::Lit(lit) if matches!(lit.lit, syn::Lit::Str(_))))
+        {
             return;
         }
         if attr.path().is_ident("derive") {
@@ -210,6 +228,7 @@ fn oracle_isolation_rejects_production_coupling_in_every_syntax_position() {
         "#[path = \"../../crates/forge-warden-core/src/eval.rs\"] mod model;",
         "#[cfg_attr(any(), path = \"hidden.rs\")] mod model {}",
         "mod external;",
+        "#[doc = include_str!(\"../../crates/forge-warden-core/src/eval.rs\")] fn oracle() {}",
         "fn oracle() { host_macro!(); }",
         "macro_rules! model { () => { 1 }; }",
         "#[derive(ProductionOracle)] struct Case;",
