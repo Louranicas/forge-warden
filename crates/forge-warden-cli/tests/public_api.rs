@@ -103,42 +103,131 @@ fn through(source: &str, from: Span, to: Span) -> String {
     slice(source, from.byte_range().start, to.byte_range().end)
 }
 
-/// The member that starts on the line holding `span` (after indentation), through its terminator:
-/// the first of `stops` at bracket depth 0 (`()`, `[]`, `{}`, `<>`; `->` and `=>` are not brackets),
-/// so a multi-line variant, field or trait method is read whole.
-fn member_text(source: &str, span: Span, stops: &[char]) -> String {
-    let at = span.byte_range().start;
-    let line_start = match source.get(..at).and_then(|s| s.rfind('\n')) {
-        Some(newline) => newline.saturating_add(1),
-        None => 0,
-    };
-    let Some(rest) = source.get(line_start..) else {
-        return format!("<unreadable member at {at}>");
-    };
+/// Q-TYPES-1 v4 (Bastion B-QTYPES-01): a member of a braced body (field, variant, trait item, impl
+/// item, foreign item) is the exact source between the end of its predecessor (or the opening
+/// brace) and its own terminator, read from the parser's token spans, never guessed from lines:
+/// so a compact `{ fn a(); }`, a multi-line member and a member whose visibility is inherited
+/// (every item of a trait impl) are all read whole. Leading trivia is dropped: whitespace,
+/// comments (doc comments are prose, not API) and outer attributes (recorded by [`markers`]).
+fn member(source: &str, from: usize, to: usize) -> String {
+    match source.get(from..to) {
+        Some(text) => slice(source, from.saturating_add(leading_trivia(text)), to),
+        None => format!("<unreadable span {from}..{to}>"),
+    }
+}
+
+/// Bytes of whitespace, comments and `#[..]` attributes at the start of `text`. A string literal
+/// inside an attribute is skipped whole, so a `]` in it does not end the attribute; anything this
+/// cannot classify ends the trivia, which can only make a record longer, never drop API text.
+fn leading_trivia(text: &str) -> usize {
+    let mut at = 0_usize;
+    loop {
+        let Some(rest) = text.get(at..) else {
+            return at;
+        };
+        let trimmed = rest.trim_start();
+        at = at.saturating_add(rest.len().saturating_sub(trimmed.len()));
+        let skipped = if trimmed.starts_with("//") {
+            trimmed.find('\n').unwrap_or(trimmed.len())
+        } else if trimmed.starts_with("/*") {
+            block_comment(trimmed)
+        } else if trimmed.starts_with("#[") {
+            attribute(trimmed)
+        } else {
+            return at;
+        };
+        if skipped == 0 {
+            return at;
+        }
+        at = at.saturating_add(skipped);
+    }
+}
+
+/// Length of the (nested) block comment that starts `text`, or 0 if it never closes.
+fn block_comment(text: &str) -> usize {
     let mut depth = 0_usize;
-    let mut previous = ' ';
-    let mut end = rest.len();
-    for (offset, c) in rest.char_indices() {
-        if depth == 0 && stops.contains(&c) {
-            end = offset.saturating_add(c.len_utf8());
-            break;
+    let mut chars = text.char_indices().peekable();
+    while let Some((offset, c)) = chars.next() {
+        let next = chars.peek().map(|&(_, n)| n);
+        if c == '/' && next == Some('*') {
+            depth = depth.saturating_add(1);
+            chars.next();
+        } else if c == '*' && next == Some('/') {
+            depth = depth.saturating_sub(1);
+            chars.next();
+            if depth == 0 {
+                return offset.saturating_add(2);
+            }
+        }
+    }
+    0
+}
+
+/// Length of the `#[..]` attribute that starts `text` (brackets balanced, string literals skipped),
+/// or 0 if it never closes.
+fn attribute(text: &str) -> usize {
+    let mut depth = 0_usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, c) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
         }
         match c {
-            '(' | '[' | '{' | '<' => depth = depth.saturating_add(1),
-            '>' if previous == '-' || previous == '=' => {}
-            ')' | ']' | '}' | '>' => {
-                if depth == 0 {
-                    end = offset;
-                    break;
-                }
+            '"' => in_string = true,
+            '[' => depth = depth.saturating_add(1),
+            ']' => {
                 depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return offset.saturating_add(1);
+                }
             }
             _ => {}
         }
-        previous = c;
     }
-    slice(source, line_start, line_start.saturating_add(end))
+    0
 }
+
+fn start(span: Span) -> usize {
+    span.byte_range().start
+}
+
+fn end(span: Span) -> usize {
+    span.byte_range().end
+}
+
+/// Where a macro invocation ends: its `;` if it has one, else its closing delimiter.
+fn macro_end(mac: &syn::Macro, semi: Option<&Token![;]>) -> usize {
+    match semi {
+        Some(semi) => end(semi.span),
+        None => end(match &mac.delimiter {
+            syn::MacroDelimiter::Paren(d) => d.span.close(),
+            syn::MacroDelimiter::Brace(d) => d.span.close(),
+            syn::MacroDelimiter::Bracket(d) => d.span.close(),
+        }),
+    }
+}
+
+/// Where a token stream ends (a group ends at its closing delimiter); `None` if it is empty.
+fn stream_end(tokens: &proc_macro2::TokenStream) -> Option<usize> {
+    tokens.clone().into_iter().last().map(|last| match last {
+        proc_macro2::TokenTree::Group(g) => end(g.span_close()),
+        proc_macro2::TokenTree::Ident(i) => end(i.span()),
+        proc_macro2::TokenTree::Punct(p) => end(p.span()),
+        proc_macro2::TokenTree::Literal(l) => end(l.span()),
+    })
+}
+
+/// The record for an item kind this reader cannot model. The snapshot test refuses any record
+/// containing it, so an unmodelled kind can never be blessed into a stable, change-blind line.
+const UNSUPPORTED: &str = "<UNSUPPORTED>";
 
 fn public(vis: &Visibility) -> Option<Span> {
     match vis {
@@ -160,86 +249,306 @@ fn type_name(ty: &syn::Type) -> String {
     }
 }
 
-/// A public struct's header and public fields.
-fn struct_lines(source: &str, module: &str, s: &syn::ItemStruct, out: &mut Vec<String>) {
-    let Some(start) = public(&s.vis) else { return };
-    let end = match &s.fields {
-        Fields::Named(named) => named.brace_token.span.open(),
-        Fields::Unnamed(_) | Fields::Unit => match &s.semi_token {
-            Some(semi) => semi.span,
-            None => s.ident.span(),
-        },
-    };
-    out.push(format!(
-        "{module} {}{}",
-        markers(source, &s.attrs),
-        between(source, start, end)
-    ));
-    for field in &s.fields {
-        if let Some(span) = public(&field.vis) {
-            out.push(format!(
-                "{module} {}.{}{}",
-                s.ident,
-                markers(source, &field.attrs),
-                member_text(source, span, &[','])
-            ));
+/// One member of a braced body, as the reader sees it: its attributes, its own visibility (`None`
+/// when it has none of its own: an associated type, a macro, unparsed tokens), where its record
+/// ends (a function's record is its signature, never its body) and where the member ends.
+struct Member<'a> {
+    attrs: &'a [Attribute],
+    vis: Option<&'a Visibility>,
+    record: usize,
+    whole: usize,
+}
+
+impl<'a> Member<'a> {
+    fn ending(attrs: &'a [Attribute], vis: Option<&'a Visibility>, at: usize) -> Self {
+        Self {
+            attrs,
+            vis,
+            record: at,
+            whole: at,
         }
     }
 }
 
-/// A public enum's header and every variant.
+/// Records each member of a braced body that `shown` admits, and an [`UNSUPPORTED`] record for a
+/// member kind `read` does not model. Each record is the source from the end of the previous
+/// member (or `open`) to the member's record end, so nothing between two members is ever skipped.
+fn members<'a, T>(
+    source: &str,
+    prefix: &str,
+    open: usize,
+    list: &'a [T],
+    read: impl Fn(&'a T) -> Option<Member<'a>>,
+    shown: impl Fn(&Member<'a>) -> bool,
+    out: &mut Vec<String>,
+) {
+    let mut from = open;
+    for item in list {
+        let Some(m) = read(item) else {
+            out.push(format!(
+                "{prefix}{UNSUPPORTED} member kind: extend public_api.rs"
+            ));
+            continue;
+        };
+        if shown(&m) && !is_test_only(m.attrs) {
+            out.push(format!(
+                "{prefix}{}{}",
+                markers(source, m.attrs),
+                member(source, from, m.record)
+            ));
+        }
+        from = m.whole;
+    }
+}
+
+/// A public struct's header, its public fields, and how many fields are private: adding a private
+/// field to a struct whose fields were all public changes who can build it.
+fn struct_lines(source: &str, module: &str, s: &syn::ItemStruct, out: &mut Vec<String>) {
+    let Some(vis) = public(&s.vis) else { return };
+    let Fields::Named(named) = &s.fields else {
+        // A tuple or unit struct is one record through its `;`, private field types included.
+        let close = s
+            .semi_token
+            .as_ref()
+            .map_or_else(|| s.ident.span(), |semi| semi.span);
+        out.push(format!(
+            "{module} {}{}",
+            markers(source, &s.attrs),
+            through(source, vis, close)
+        ));
+        return;
+    };
+    let brace = named.brace_token.span;
+    out.push(format!(
+        "{module} {}{}",
+        markers(source, &s.attrs),
+        between(source, vis, brace.open())
+    ));
+    field_lines(
+        source,
+        &format!("{module} {}.", s.ident),
+        brace,
+        &named.named,
+        out,
+    );
+}
+
+/// The public fields of a braced body (struct or union) and a count of the private ones.
+fn field_lines(
+    source: &str,
+    prefix: &str,
+    brace: proc_macro2::extra::DelimSpan,
+    fields: &Punctuated<syn::Field, Token![,]>,
+    out: &mut Vec<String>,
+) {
+    let mut from = end(brace.open());
+    let mut private = 0_usize;
+    for pair in fields.pairs() {
+        let to = pair
+            .punct()
+            .map_or_else(|| start(brace.close()), |comma| end(comma.span));
+        let field = pair.value();
+        if public(&field.vis).is_some() {
+            out.push(format!(
+                "{prefix}{}{}",
+                markers(source, &field.attrs),
+                member(source, from, to)
+            ));
+        } else {
+            private = private.saturating_add(1);
+        }
+        from = to;
+    }
+    if private > 0 {
+        out.push(format!("{prefix}<{private} private field(s)>"));
+    }
+}
+
+/// A public enum's header and every variant, whole (fields and discriminant included).
 fn enum_lines(source: &str, module: &str, e: &syn::ItemEnum, out: &mut Vec<String>) {
-    let Some(start) = public(&e.vis) else { return };
-    let header = between(source, start, e.brace_token.span.open());
-    out.push(format!("{module} {}{header}", markers(source, &e.attrs)));
-    for variant in &e.variants {
+    let Some(vis) = public(&e.vis) else { return };
+    let brace = e.brace_token.span;
+    out.push(format!(
+        "{module} {}{}",
+        markers(source, &e.attrs),
+        between(source, vis, brace.open())
+    ));
+    let mut from = end(brace.open());
+    for pair in e.variants.pairs() {
+        let to = pair
+            .punct()
+            .map_or_else(|| start(brace.close()), |comma| end(comma.span));
+        let variant = pair.value();
         out.push(format!(
             "{module} {}::{}{}",
             e.ident,
             markers(source, &variant.attrs),
-            member_text(source, variant.ident.span(), &[','])
+            member(source, from, to)
         ));
+        from = to;
     }
 }
 
-/// A public trait's header and every item in it (all trait items are public with the trait).
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "syn::TraitItem is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
-)]
+/// How the reader sees a trait item (every one is public with its trait). Every kind syn has today
+/// is named; the `_` arm (required: `syn::TraitItem` is `#[non_exhaustive]`) is a future kind,
+/// which [`members`] records as [`UNSUPPORTED`].
+fn trait_member(item: &syn::TraitItem) -> Option<Member<'_>> {
+    Some(match item {
+        syn::TraitItem::Fn(f) => match (&f.default, &f.semi_token) {
+            (Some(body), _) => Member {
+                attrs: &f.attrs,
+                vis: None,
+                record: start(body.brace_token.span.open()),
+                whole: end(body.brace_token.span.close()),
+            },
+            (None, Some(semi)) => Member::ending(&f.attrs, None, end(semi.span)),
+            (None, None) => return None,
+        },
+        syn::TraitItem::Const(c) => Member::ending(&c.attrs, None, end(c.semi_token.span)),
+        syn::TraitItem::Type(ty) => Member::ending(&ty.attrs, None, end(ty.semi_token.span)),
+        syn::TraitItem::Macro(m) => {
+            Member::ending(&m.attrs, None, macro_end(&m.mac, m.semi_token.as_ref()))
+        }
+        syn::TraitItem::Verbatim(tokens) => Member::ending(&[], None, stream_end(tokens)?),
+        _ => return None,
+    })
+}
+
+/// A public trait's header and every item in it.
 fn trait_lines(source: &str, module: &str, tr: &syn::ItemTrait, out: &mut Vec<String>) {
-    let Some(start) = public(&tr.vis) else { return };
-    let header = between(source, start, tr.brace_token.span.open());
-    out.push(format!("{module} {}{header}", markers(source, &tr.attrs)));
-    let name = tr.ident.unraw();
-    for item in &tr.items {
-        let line = match item {
-            syn::TraitItem::Fn(f) if !is_test_only(&f.attrs) => format!(
-                "{}{}",
-                markers(source, &f.attrs),
-                member_text(source, f.sig.ident.span(), &[';', '{'])
-            ),
-            syn::TraitItem::Const(c) if !is_test_only(&c.attrs) => format!(
-                "{}{}",
-                markers(source, &c.attrs),
-                member_text(source, c.ident.span(), &[';'])
-            ),
-            syn::TraitItem::Type(ty) if !is_test_only(&ty.attrs) => format!(
-                "{}{}",
-                markers(source, &ty.attrs),
-                member_text(source, ty.ident.span(), &[';'])
-            ),
-            syn::TraitItem::Macro(m) if !is_test_only(&m.attrs) => {
-                format!("macro {}", macro_line(source, &m.mac))
-            }
-            syn::TraitItem::Fn(_)
-            | syn::TraitItem::Const(_)
-            | syn::TraitItem::Type(_)
-            | syn::TraitItem::Macro(_) => continue,
-            _ => "UNKNOWN TRAIT ITEM KIND: review the public API by hand".to_owned(),
-        };
-        out.push(format!("{module} {name}::{line}"));
+    let Some(vis) = public(&tr.vis) else { return };
+    let brace = tr.brace_token.span;
+    out.push(format!(
+        "{module} {}{}",
+        markers(source, &tr.attrs),
+        between(source, vis, brace.open())
+    ));
+    let prefix = format!("{module} {}::", tr.ident.unraw());
+    members(
+        source,
+        &prefix,
+        end(brace.open()),
+        &tr.items,
+        trait_member,
+        |_| true,
+        out,
+    );
+}
+
+/// How the reader sees an impl item. `syn::ImplItem` is `#[non_exhaustive]`; a kind not named here
+/// returns `None`, which [`members`] records as [`UNSUPPORTED`].
+fn impl_member(item: &ImplItem) -> Option<Member<'_>> {
+    if let ImplItem::Fn(f) = item {
+        return Some(Member {
+            attrs: &f.attrs,
+            vis: Some(&f.vis),
+            record: start(f.block.brace_token.span.open()),
+            whole: end(f.block.brace_token.span.close()),
+        });
     }
+    if let ImplItem::Const(c) = item {
+        return Some(Member::ending(
+            &c.attrs,
+            Some(&c.vis),
+            end(c.semi_token.span),
+        ));
+    }
+    if let ImplItem::Type(ty) = item {
+        // An associated type is public with its impl, whatever its visibility token.
+        return Some(Member::ending(&ty.attrs, None, end(ty.semi_token.span)));
+    }
+    if let ImplItem::Macro(m) = item {
+        let at = macro_end(&m.mac, m.semi_token.as_ref());
+        return Some(Member::ending(&m.attrs, None, at));
+    }
+    if let ImplItem::Verbatim(tokens) = item {
+        return Some(Member::ending(&[], None, stream_end(tokens)?));
+    }
+    None
+}
+
+/// Every impl's header; every item of a trait impl (they are public with the trait, whatever their
+/// visibility token: Bastion B-QTYPES-01 `impl P for S { const N: u8 = 1; }`); and every public
+/// item of an inherent impl.
+fn impl_lines(source: &str, module: &str, i: &syn::ItemImpl, out: &mut Vec<String>) {
+    let brace = i.brace_token.span;
+    out.push(format!(
+        "{module} {}{}",
+        markers(source, &i.attrs),
+        between(source, i.impl_token.span, brace.open())
+    ));
+    let of_trait = i.trait_.is_some();
+    let prefix = format!("{module} {}::", type_name(&i.self_ty));
+    let shown = |m: &Member<'_>| of_trait || m.vis.is_none_or(|vis| public(vis).is_some());
+    members(
+        source,
+        &prefix,
+        end(brace.open()),
+        &i.items,
+        impl_member,
+        shown,
+        out,
+    );
+}
+
+/// How the reader sees a foreign item. `syn::ForeignItem` is `#[non_exhaustive]`; a kind not named
+/// here returns `None`, which [`members`] records as [`UNSUPPORTED`].
+fn foreign_member(item: &syn::ForeignItem) -> Option<Member<'_>> {
+    if let syn::ForeignItem::Fn(f) = item {
+        return Some(Member::ending(
+            &f.attrs,
+            Some(&f.vis),
+            end(f.semi_token.span),
+        ));
+    }
+    if let syn::ForeignItem::Static(s) = item {
+        return Some(Member::ending(
+            &s.attrs,
+            Some(&s.vis),
+            end(s.semi_token.span),
+        ));
+    }
+    if let syn::ForeignItem::Type(ty) = item {
+        return Some(Member::ending(
+            &ty.attrs,
+            Some(&ty.vis),
+            end(ty.semi_token.span),
+        ));
+    }
+    if let syn::ForeignItem::Macro(m) = item {
+        let at = macro_end(&m.mac, m.semi_token.as_ref());
+        return Some(Member::ending(&m.attrs, None, at));
+    }
+    if let syn::ForeignItem::Verbatim(tokens) = item {
+        return Some(Member::ending(&[], None, stream_end(tokens)?));
+    }
+    None
+}
+
+/// An `extern` block's header and each public item in it, whole (Bastion B-QTYPES-01: a changed
+/// foreign item inside an existing block was invisible behind one UNKNOWN line).
+fn foreign_lines(source: &str, module: &str, f: &syn::ItemForeignMod, out: &mut Vec<String>) {
+    let brace = f.brace_token.span;
+    let first = f
+        .unsafety
+        .as_ref()
+        .map_or_else(|| f.abi.extern_token.span, |unsafety| unsafety.span);
+    out.push(format!(
+        "{module} {}{}",
+        markers(source, &f.attrs),
+        between(source, first, brace.open())
+    ));
+    let prefix = format!("{module} extern::");
+    let shown = |m: &Member<'_>| m.vis.is_none_or(|vis| public(vis).is_some());
+    members(
+        source,
+        &prefix,
+        end(brace.open()),
+        &f.items,
+        foreign_member,
+        shown,
+        out,
+    );
 }
 
 /// A macro definition or item-level invocation, verbatim from its path to its closing delimiter.
@@ -254,62 +563,6 @@ fn macro_line(source: &str, mac: &syn::Macro) -> String {
     match mac.path.segments.first() {
         Some(first) => through(source, first.ident.span(), close),
         None => "<macro without a path>".to_owned(),
-    }
-}
-
-/// A trait impl's header, and every public method or constant of any impl.
-fn impl_lines(source: &str, module: &str, i: &syn::ItemImpl, out: &mut Vec<String>) {
-    // Every impl header (inherent too: its generics and where clause bound the methods).
-    out.push(format!(
-        "{module} {}{}",
-        markers(source, &i.attrs),
-        between(source, i.impl_token.span, i.brace_token.span.open())
-    ));
-    let owner = type_name(&i.self_ty);
-    for member in &i.items {
-        if let ImplItem::Fn(f) = member
-            && !is_test_only(&f.attrs)
-            && let Some(start) = public(&f.vis)
-        {
-            let sig = between(source, start, f.block.brace_token.span.open());
-            out.push(format!(
-                "{module} {owner}::{}{sig}",
-                markers(source, &f.attrs)
-            ));
-        }
-        if let ImplItem::Const(c) = member
-            && let Some(start) = public(&c.vis)
-        {
-            out.push(format!(
-                "{module} {owner}::{}",
-                through(source, start, c.semi_token.span)
-            ));
-        }
-        if let ImplItem::Macro(m) = member
-            && !is_test_only(&m.attrs)
-        {
-            out.push(format!(
-                "{module} {owner}::macro {}",
-                macro_line(source, &m.mac)
-            ));
-        }
-        if let ImplItem::Type(ty) = member
-            && !is_test_only(&ty.attrs)
-        {
-            // An associated type is public with its trait impl, whatever its visibility token.
-            out.push(format!(
-                "{module} {owner}::{}",
-                member_text(source, ty.ident.span(), &[';'])
-            ));
-        }
-        if !matches!(
-            member,
-            ImplItem::Fn(_) | ImplItem::Const(_) | ImplItem::Type(_) | ImplItem::Macro(_)
-        ) {
-            out.push(format!(
-                "{module} {owner}::UNKNOWN IMPL ITEM KIND: review the public API by hand"
-            ));
-        }
     }
 }
 
@@ -334,7 +587,7 @@ fn whole(
 /// Every public line of one file's items under `module`.
 #[expect(
     clippy::wildcard_enum_match_arm,
-    reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
+    reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is refused as UNSUPPORTED, which fails the snapshot test"
 )]
 fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
     for item in list {
@@ -394,18 +647,24 @@ fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
                 whole(source, module, &e.attrs, &e.vis, e.semi_token.span, out);
             }
             Item::Union(u) if !is_test_only(&u.attrs) => {
-                if let Some(start) = public(&u.vis) {
-                    let header = between(source, start, u.fields.brace_token.span.open());
+                if let Some(vis) = public(&u.vis) {
+                    let brace = u.fields.brace_token.span;
+                    let header = between(source, vis, brace.open());
                     out.push(format!("{module} {}{header}", markers(source, &u.attrs)));
-                    for field in &u.fields.named {
-                        if let Some(span) = public(&field.vis) {
-                            out.push(format!(
-                                "{module} {}.{}",
-                                u.ident,
-                                member_text(source, span, &[','])
-                            ));
-                        }
-                    }
+                    let prefix = format!("{module} {}.", u.ident);
+                    field_lines(source, &prefix, brace, &u.fields.named, out);
+                }
+            }
+            Item::ForeignMod(f) if !is_test_only(&f.attrs) => foreign_lines(source, module, f, out),
+            Item::Verbatim(tokens) => {
+                // Tokens syn could not type: recorded verbatim, so any change to them is seen.
+                if let (Some(head), Some(last)) =
+                    (tokens.clone().into_iter().next(), stream_end(tokens))
+                {
+                    out.push(format!(
+                        "{module} {}",
+                        slice(source, start(head.span()), last)
+                    ));
                 }
             }
             // The modelled kinds whose guard said test-only: nothing to record.
@@ -421,11 +680,12 @@ fn items(source: &str, module: &str, list: &[Item], out: &mut Vec<String>) {
             | Item::Impl(_)
             | Item::Macro(_)
             | Item::ExternCrate(_)
-            | Item::Union(_) => {}
-            // Anything else (foreign modules, trait aliases, unparsed tokens, future kinds) is
-            // recorded, never skipped: it changes the snapshot and gets a reviewer's eyes.
+            | Item::Union(_)
+            | Item::ForeignMod(_) => {}
+            // Anything else (trait aliases, future kinds) cannot be modelled, so it is refused: an
+            // UNSUPPORTED record fails the snapshot test and can never be blessed into it.
             _ => out.push(format!(
-                "{module} UNKNOWN ITEM KIND: review the public API by hand"
+                "{module} {UNSUPPORTED} item kind: extend public_api.rs"
             )),
         }
     }
@@ -471,9 +731,28 @@ fn current_api() -> String {
     text
 }
 
+/// Records the reader cannot vouch for: an item kind it does not model, a span it could not read,
+/// a file that does not parse.
+fn unvouched(api: &str) -> Vec<&str> {
+    api.lines()
+        .filter(|line| {
+            line.contains(UNSUPPORTED)
+                || line.contains("<unreadable span")
+                || line.contains(" DOES NOT PARSE: ")
+        })
+        .collect()
+}
+
 #[test]
 fn the_core_public_api_matches_its_committed_snapshot() {
     let current = current_api();
+    // Refused before any comparison, so they can never be blessed into the snapshot.
+    let refused = unvouched(&current);
+    assert!(
+        refused.is_empty(),
+        "the reader cannot vouch for these records, so no snapshot can cover them; extend \
+         public_api.rs to model them (do not bless them): {refused:#?}"
+    );
     // A missing snapshot reads as empty, so the test fails and proposes the first one.
     let committed = std::fs::read_to_string(root().join(SNAPSHOT)).or_fail_closed(String::new());
     if current != committed {
@@ -575,6 +854,7 @@ impl Iterator for Long {
 const CONTROL_LINES: &[&str] = &[
     "m #[derive(Debug, Clone)] #[non_exhaustive] pub struct S",
     "m S.pub a: u8,",
+    "m S.<1 private field(s)>",
     "m pub enum E",
     "m E::One,",
     "m E::Two(u8),",
@@ -584,6 +864,7 @@ const CONTROL_LINES: &[&str] = &[
     "m impl S",
     "m S::pub fn new() -> Self",
     "m impl std::fmt::Display for S",
+    "m S::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result",
     "m #[cfg(feature = \"door\")] pub mod door",
     "m::door pub fn open()",
     "m #[cfg(any(test, unix))] pub fn production_on_unix()",
@@ -592,16 +873,17 @@ const CONTROL_LINES: &[&str] = &[
     "m pub extern crate std as stdx;",
     "m pub union U",
     "m U.pub a: u8,",
-    "m UNKNOWN ITEM KIND: review the public API by hand",
+    "m extern \"C\"",
     "m pub trait Pick<T>",
     "m Pick::fn pick(self, d: T) -> T;",
-    "m Pick::fn twice(self) -> u8 {",
+    "m Pick::fn twice(self) -> u8",
     "m #[cfg_attr(all(), non_exhaustive)] pub enum Wide",
     "m Wide::Struct { a: u8, b: Vec<(u8, u8)>, },",
     "m pub struct Long",
     "m Long.pub f: std::collections::BTreeMap< String, Vec<u8>, >,",
     "m impl Iterator for Long",
     "m Long::type Item = u8;",
+    "m Long::fn next(&mut self) -> Option<u8>",
 ];
 
 #[test]
@@ -611,4 +893,183 @@ fn the_snapshot_reader_sees_every_kind_of_public_item_and_skips_tests() {
     let mut out = Vec::new();
     items(source, "m", &file.items, &mut out);
     assert_eq!(out, CONTROL_LINES);
+}
+
+/// Totality control (Q-TYPES-1 v4, Bastion B-QTYPES-01): one of every public item and member kind,
+/// in compact and multi-line forms, with every token that is not API named `hidden…`.
+const TOTAL: &str = r#"
+/// Doc prose is not API.
+#[derive(Debug)]
+pub struct Named<T: Clone> where T: Default {
+    /// Field prose is not API either.
+    pub field: Vec<T>,
+    hidden_field: hidden_t,
+}
+pub struct Tuple(pub u16, u8);
+pub enum Kind { Unit, Pair(u32, i8), Record { inner: i64 }, Valued = 7 }
+pub union Bits { pub word: u32, hidden_word: hidden_f }
+pub fn free<'life>(arg: &'life str) -> Option<&'life str> where 'life: 'static { hidden_body(hidden_local) }
+pub const LIMIT: usize = 64;
+pub static NAME: &str = "warden";
+pub type Alias = Result<u8, String>;
+pub use core::fmt::Write as WriteAlias;
+pub mod inner { pub fn nested() -> bool { hidden_value } }
+pub trait Compact { fn compact(&self) -> u8; }
+pub trait Wide<Param>: Sized {
+    const CAP: usize = 3;
+    type Out: Clone;
+    fn wide(self, by: Param) -> Self::Out;
+    fn defaulted(&self) -> i8 {
+        hidden_default
+    }
+}
+impl<T> Compact for Named<T> where T: Clone + Default {
+    fn compact(&self) -> u8 { hidden_impl_body }
+}
+impl Marker for Tuple {
+    // A plain comment.
+    #[inline]
+    const N: u8 = 1;
+    #[cfg(test)]
+    fn hidden_test_member() {}
+    type Assoc = u64;
+    fn inherited() {}
+}
+impl Kind {
+    pub fn make() -> Self { hidden_ctor }
+    pub const MAX: u8 = 9;
+    fn hidden_method() {}
+    const hidden_const: hidden_t = hidden_init;
+}
+unsafe extern "C" {
+    pub fn foreign(x: i32) -> i32;
+    pub static FOREIGN: u8;
+    fn hidden_foreign();
+}
+macro_rules! generate { ($name:ident) => { pub struct $name; }; }
+generate!(Generated);
+pub extern crate alloc as alloc_alias;
+#[cfg(test)]
+pub fn hidden_test_only(hidden_arg: hidden_ty) {}
+"#;
+
+fn api_of(source: &str) -> Vec<String> {
+    let file = syn::parse_file(source).unwrap();
+    let mut out = Vec::new();
+    items(source, "m", &file.items, &mut out);
+    out
+}
+
+/// Every identifier, literal and doc comment of `stream`: its byte range and a replacement.
+fn tokens(stream: proc_macro2::TokenStream, source: &str, found: &mut Vec<(usize, usize, String)>) {
+    for tree in stream {
+        match tree {
+            proc_macro2::TokenTree::Group(group) => tokens(group.stream(), source, found),
+            proc_macro2::TokenTree::Ident(ident) => {
+                let range = ident.span().byte_range();
+                found.push((range.start, range.end, format!("{ident}Z")));
+            }
+            proc_macro2::TokenTree::Literal(literal) => {
+                let range = literal.span().byte_range();
+                let text = source.get(range.clone()).unwrap_or_default();
+                let replacement = if text.starts_with("//") {
+                    format!("{text}Z")
+                } else if text.starts_with('"') {
+                    "\"zz\"".to_owned()
+                } else if text == "7" {
+                    "8".to_owned()
+                } else {
+                    "7".to_owned()
+                };
+                found.push((range.start, range.end, replacement));
+            }
+            proc_macro2::TokenTree::Punct(_) => {}
+        }
+    }
+}
+
+#[test]
+fn every_api_token_is_in_its_record_and_no_private_token_is() {
+    // Each identifier, literal and doc comment of TOTAL is changed in turn. A change to an API
+    // token must change the records; a change to a `hidden…` token or to doc prose must not. A
+    // variant that no longer parses (a keyword changed) proves nothing and is skipped, but the
+    // count of checked tokens must stay high, so the control cannot quietly shrink.
+    let base = api_of(TOTAL);
+    assert!(unvouched(&base.join("\n")).is_empty(), "{base:#?}");
+    let mut found = Vec::new();
+    tokens(TOTAL.parse().unwrap(), TOTAL, &mut found);
+    let mut checked = 0_usize;
+    let mut wrong = Vec::new();
+    for (from, to, replacement) in found {
+        let (Some(head), Some(original), Some(tail)) =
+            (TOTAL.get(..from), TOTAL.get(from..to), TOTAL.get(to..))
+        else {
+            continue;
+        };
+        let variant = format!("{head}{replacement}{tail}");
+        let Ok(file) = syn::parse_file(&variant) else {
+            continue;
+        };
+        let mut out = Vec::new();
+        items(&variant, "m", &file.items, &mut out);
+        let private = original.starts_with("hidden") || original.starts_with("//");
+        if (out == base) != private {
+            let why = if private {
+                "a private token changed the records"
+            } else {
+                "an API token is missing from the records"
+            };
+            wrong.push(format!("{original:?} at byte {from}: {why}"));
+        }
+        checked = checked.saturating_add(1);
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(checked >= 130, "only {checked} tokens were checked");
+}
+
+#[test]
+fn an_item_kind_the_reader_does_not_model_is_refused_not_recorded() {
+    let out = api_of("pub trait Alias = Clone;\n");
+    let api = out.join("\n");
+    assert_eq!(unvouched(&api).len(), 1, "{out:#?}");
+    assert!(api.contains(UNSUPPORTED), "{out:#?}");
+}
+
+/// Bastion's B-QTYPES-01 probes, kept as independent regressions: each pair must read differently.
+const PROBES: &[(&str, &str, &str)] = &[
+    (
+        "a trait impl's associated constant (inherited visibility)",
+        "impl P for S {\n    const N: u8 = 1;\n}\n",
+        "impl P for S {\n    const N: u8 = 2;\n}\n",
+    ),
+    (
+        "a public item inside an existing extern block",
+        "unsafe extern \"C\" {\n    pub fn first();\n}\n",
+        "unsafe extern \"C\" {\n    pub fn changed();\n}\n",
+    ),
+    (
+        "a compact one-line trait method",
+        "pub trait P { fn first(&self); }\n",
+        "pub trait P { fn changed(&self); }\n",
+    ),
+    (
+        "a formatted trait method",
+        "pub trait P {\n    fn first(&self);\n}\n",
+        "pub trait P {\n    fn changed(&self);\n}\n",
+    ),
+];
+
+#[test]
+fn bastion_b_qtypes_01_probes_each_change_the_records() {
+    for (what, before, after) in PROBES {
+        assert_ne!(api_of(before), api_of(after), "{what}");
+    }
+}
+
+#[test]
+fn a_member_kind_the_reader_does_not_model_is_refused_not_skipped() {
+    // No syn kind reaches this path today (every kind is named), so it is driven directly.
+    let mut out = Vec::new();
+    members("", "m T::", 0, &[()], |()| None, |_| true, &mut out);
+    assert_eq!(unvouched(&out.join("\n")).len(), 1, "{out:#?}");
 }

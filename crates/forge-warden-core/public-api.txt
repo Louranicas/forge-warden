@@ -1,6 +1,7 @@
 crate::authority #[derive(Debug)] pub enum Produced
 crate::authority #[derive(Debug)] pub enum Supplied
 crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Ranking<P>
+crate::authority Ranking.<3 private field(s)>
 crate::authority impl Ranking<Supplied>
 crate::authority Ranking::#[must_use] pub const fn supplied(doc: RankDoc) -> Self
 crate::authority impl Ranking<Produced>
@@ -9,11 +10,13 @@ crate::authority impl<P> Ranking<P>
 crate::authority Ranking::#[must_use] pub const fn doc(&self) -> &RankDoc
 crate::authority Ranking::#[must_use] pub fn producer_sha256(&self) -> Option<&str>
 crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Checked<'r, P>
+crate::authority Checked.<3 private field(s)>
 crate::authority #[must_use] pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P>
 crate::authority impl<P> Checked<'_, P>
 crate::authority Checked::#[must_use] pub const fn ranking(&self) -> &Ranking<P>
 crate::authority Checked::#[must_use] pub const fn is_covered(&self) -> bool
 crate::authority #[derive(Debug)] #[non_exhaustive] pub struct AdvisoryVerdict
+crate::authority AdvisoryVerdict.<1 private field(s)>
 crate::authority #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum AdvisoryOutcome
 crate::authority AdvisoryOutcome::Hold,
 crate::authority AdvisoryOutcome::Fail,
@@ -29,12 +32,14 @@ crate::authority SuppliedCopy::#[must_use] pub fn compare(supplied: Option<&[u8]
 crate::authority #[must_use] pub fn evaluate_authority( policy: &Policy, checked: &Checked<'_, Produced>, supplied: SuppliedCopy, seals: Seals, today: Date, ) -> Verdict
 crate::authority #[must_use] pub fn evaluate_advisory( policy: &Policy, checked: &Checked<'_, Supplied>, seals: Seals, today: Date, ) -> AdvisoryVerdict
 crate::date #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)] #[non_exhaustive] pub struct Date
+crate::date Date.<3 private field(s)>
 crate::date impl Date
 crate::date Date::#[must_use] pub fn new(year: u16, month: u8, day: u8) -> Option<Self>
 crate::date Date::#[must_use] pub fn parse(text: &str) -> Option<Self>
 crate::date Date::#[must_use] pub fn from_unix_days(days: u64) -> Option<Self>
 crate::date Date::#[must_use] pub fn to_unix_days(self) -> u64
 crate::date impl fmt::Display for Date
+crate::date Date::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::defaults pub trait NamedDefault<T>
 crate::defaults NamedDefault::type Missing;
 crate::defaults NamedDefault::#[must_use] fn or_fail_closed(self, strict: T) -> T;
@@ -43,8 +48,16 @@ crate::defaults NamedDefault::#[must_use] fn or_fail_safe(self, safe: T) -> T;
 crate::defaults NamedDefault::#[must_use] fn or_display(self, shown: T) -> T;
 crate::defaults impl<T> NamedDefault<T> for Option<T>
 crate::defaults Option::type Missing = ();
+crate::defaults Option::fn or_fail_closed(self, strict: T) -> T
+crate::defaults Option::fn or_fail_closed_with(self, strict: impl FnOnce(()) -> T) -> T
+crate::defaults Option::fn or_fail_safe(self, safe: T) -> T
+crate::defaults Option::fn or_display(self, shown: T) -> T
 crate::defaults impl<T, E> NamedDefault<T> for Result<T, E>
 crate::defaults Result::type Missing = E;
+crate::defaults Result::fn or_fail_closed(self, strict: T) -> T
+crate::defaults Result::fn or_fail_closed_with(self, strict: impl FnOnce(E) -> T) -> T
+crate::defaults Result::fn or_fail_safe(self, safe: T) -> T
+crate::defaults Result::fn or_display(self, shown: T) -> T
 crate::exit #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct ExitEntry
 crate::exit ExitEntry.pub code: u8,
 crate::exit ExitEntry.pub name: &'static str,
@@ -82,7 +95,9 @@ crate::facts Mode::File,
 crate::facts Mode::Exec,
 crate::facts Mode::Symlink,
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct FileChange
+crate::facts FileChange.<6 private field(s)>
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PatchFacts
+crate::facts PatchFacts.<1 private field(s)>
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum Unverifiable
 crate::facts Unverifiable::GitRefused(String),
 crate::facts Unverifiable::Empty,
@@ -98,6 +113,7 @@ crate::facts Unverifiable::UnreadableModeHeader(String),
 crate::facts Unverifiable::SymlinkTargetEdit,
 crate::facts Unverifiable::UnreadableGitOutput(String),
 crate::facts impl fmt::Display for Unverifiable
+crate::facts Unverifiable::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::facts #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum Disagreement
 crate::facts Disagreement::Missing(RepoPath),
 crate::facts Disagreement::Extraneous(RepoPath),
@@ -136,6 +152,7 @@ crate pub const TOOL_NAME: &str = "forge-warden";
 crate pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 crate pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 crate::nonempty #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct NonEmpty<T>
+crate::nonempty NonEmpty.<2 private field(s)>
 crate::nonempty impl<T> NonEmpty<T>
 crate::nonempty NonEmpty::#[must_use] pub fn from_vec(mut items: Vec<T>) -> Option<Self>
 crate::nonempty NonEmpty::#[must_use] pub const fn first(&self) -> &T
@@ -143,7 +160,7 @@ crate::nonempty NonEmpty::pub fn iter(&self) -> impl Iterator<Item = &T>
 crate::nonempty NonEmpty::#[must_use] #[expect( clippy::len_without_is_empty, reason = "a NonEmpty is never empty; an is_empty that always says false would be noise" )] pub const fn len(&self) -> usize
 crate::nonempty NonEmpty::pub fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> NonEmpty<U>
 crate::nonempty NonEmpty::#[must_use] pub fn into_vec(self) -> Vec<T>
-crate::path #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct RepoPath(String)
+crate::path #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct RepoPath(String);
 crate::path #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)] pub enum PathError
 crate::path PathError::#[error("is empty")] Empty,
 crate::path PathError::#[error("contains NUL")] Nul,
@@ -153,6 +170,7 @@ crate::path impl RepoPath
 crate::path RepoPath::pub fn parse(text: &str) -> Result<Self, PathError>
 crate::path RepoPath::#[must_use] pub fn as_str(&self) -> &str
 crate::path impl fmt::Display for RepoPath
+crate::path RepoPath::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::policy::error #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum PolicyError
 crate::policy::error PolicyError::#[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
 crate::policy::error PolicyError::#[error("policy is not valid TOML of the forge-warden.policy.v0 shape: {0}")] Malformed(String),
@@ -161,7 +179,9 @@ crate::policy::error #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pu
 crate::policy::error PolicyIssue.pub location: String,
 crate::policy::error PolicyIssue.pub message: String,
 crate::policy::error impl fmt::Display for PolicyIssue
+crate::policy::error PolicyIssue::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::policy::error impl fmt::Display for IssueList<'_>
+crate::policy::error IssueList::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::policy::issues impl Issues
 crate::policy::kind #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum Kind
 crate::policy::kind Kind::ForbidSignal,
@@ -191,6 +211,7 @@ crate::policy pub use model::{AdmittedProducer, Check, Policy, Rule, ScorePer, S
 crate::policy pub use paths::{PathSet, Scope};
 crate::policy pub use validate::{MAX_ID_CHARS, MIN_WHY_CHARS, POLICY_SCHEMA, parse_policy};
 crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Policy
+crate::policy::model Policy.<3 private field(s)>
 crate::policy::model impl Policy
 crate::policy::model Policy::#[must_use] pub const fn rules(&self) -> &NonEmpty<Rule>
 crate::policy::model Policy::#[must_use] pub fn waivers(&self) -> &[Waiver]
@@ -198,6 +219,7 @@ crate::policy::model Policy::#[must_use] pub fn producers(&self) -> &[String]
 crate::policy::model Policy::#[must_use] pub fn admits_producer(&self, sha256: &str) -> bool
 crate::policy::model Policy::#[must_use] pub fn admit_producer(&self, sha256: &str) -> Option<AdmittedProducer>
 crate::policy::model #[derive(Debug)] #[non_exhaustive] pub struct AdmittedProducer
+crate::policy::model AdmittedProducer.<1 private field(s)>
 crate::policy::model impl AdmittedProducer
 crate::policy::model AdmittedProducer::#[must_use] pub fn sha256(&self) -> &str
 crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Rule
@@ -229,10 +251,12 @@ crate::policy::model Waiver.pub reason: String,
 crate::policy::model Waiver.pub owner: String,
 crate::policy::model Waiver.pub expires: Date,
 crate::policy::paths #[derive(Debug, Clone)] #[non_exhaustive] pub struct PathSet
+crate::policy::paths PathSet.<2 private field(s)>
 crate::policy::paths impl PathSet
 crate::policy::paths PathSet::#[must_use] pub fn matches(&self, path: &str) -> bool
 crate::policy::paths PathSet::#[must_use] pub fn patterns(&self) -> &[String]
 crate::policy::paths #[derive(Debug, Clone)] #[non_exhaustive] pub struct Scope
+crate::policy::paths Scope.<2 private field(s)>
 crate::policy::paths impl Scope
 crate::policy::paths Scope::#[must_use] pub fn contains(&self, path: &str) -> bool
 crate::policy::raw impl RawRule
@@ -242,8 +266,11 @@ crate::policy::validate pub const MAX_ID_CHARS: usize = 64;
 crate::policy::validate pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError>
 crate::rank pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
 crate::rank #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct RankDoc
+crate::rank RankDoc.<3 private field(s)>
 crate::rank #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct RankedFile
+crate::rank RankedFile.<6 private field(s)>
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct Evidence
+crate::rank Evidence.<4 private field(s)>
 crate::rank impl RankDoc
 crate::rank RankDoc::pub fn new( input_sha256: String, tool_version: String, files: Vec<RankedFile>, ) -> Result<Self, RankError>
 crate::rank RankDoc::#[must_use] pub fn input_sha256(&self) -> &str
@@ -320,8 +347,9 @@ crate::verdict impl GitOracle
 crate::verdict GitOracle::#[must_use] pub const fn new(path: String, version: String) -> Self
 crate::verdict impl Claims
 crate::verdict Claims::#[must_use] pub const fn new(base: Option<String>, head: Option<String>) -> Self
-crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified;
 crate::verdict impl Serialize for Unverified
+crate::verdict Unverified::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct ExitInfo
 crate::verdict ExitInfo.pub code: u8,
 crate::verdict ExitInfo.pub name: &'static str,
@@ -370,7 +398,9 @@ crate::verdict Note.pub detail: String,
 crate::verdict macro macro_rules! note_codes { ($($doc:literal $variant:ident => $name:literal,)*) => { /// Why a verdict holds when the policy alone cannot decide. Every note holds the verdict at /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and /// the schema's enum lists exactly these names (tests check both). #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum NoteCode { $(#[doc = $doc] $variant,)* } impl NoteCode { /// Every code, in declaration order. pub const ALL: &'static [Self] = &[$(Self::$variant,)*]; /// The name the verdict writes. #[must_use] pub const fn name(self) -> &'static str { match self { $(Self::$variant => $name,)* } } } }; }
 crate::verdict macro note_codes! { "The ranking lists no file: there is nothing to judge." EmptyRanking => "empty_ranking", "A signal this forge-warden does not know." UnknownSignal => "unknown_signal", "A status this forge-warden does not know (including deep-diff-forge's `unknown`)." UnknownStatus => "unknown_status", "A rename or copy: rank.v0 does not report the source path." SourcePathUnknown => "source_path_unknown", "One path is listed more than once (deep-diff-forge does this for a type change)." DuplicatePaths => "duplicate_paths", "Git sees a file in the patch that the ranking does not list." RankIncomplete => "rank_incomplete", "The ranking lists a file the patch does not change." RankExtraneous => "rank_extraneous", "The ranking's status or change-kind signals contradict Git." StatusMismatch => "status_mismatch", "Git refused the patch, or its facts cannot be read; coverage cannot be verified." PatchUnverifiable => "patch_unverifiable", "The ranking was supplied, not produced (advisory mode)." RankUnverified => "rank_unverified", "The ranking supplied with `--rank` differs from the one forge-warden produced." RankMismatch => "rank_mismatch", }
 crate::verdict impl Serialize for NoteCode
+crate::verdict NoteCode::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::verdict impl PartialEq<&str> for NoteCode
+crate::verdict NoteCode::fn eq(&self, other: &&str) -> bool
 crate::verdict impl Verdict
 crate::verdict Verdict::#[must_use] pub fn to_json(&self) -> String
 crate::vocab pub const KNOWN_SIGNALS: [&str; 21] = [ // Path and shape signals (`risk.rs`). "public_api_surface", "new_file", "deleted_file", "binary_change", "large_change", "many_hunks", "config_or_lockfile", "test_only", "generated_or_vendored", "hazardous_text", "symlink_change", "executable_bit", // Code-evidence signals (`evidence.rs`). "unsafe_added", "process_spawn", "network_fetch", "dynamic_eval", "ci_privilege", "build_hook", "secret_like", "check_suppressed", "test_removed", ];
