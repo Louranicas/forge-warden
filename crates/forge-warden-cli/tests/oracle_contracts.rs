@@ -335,8 +335,7 @@ fn explicit_golden_producer_checks_bytes_and_refuses_ci_writes() {
     let checked = common::check_golden_output(false);
     assert!(
         checked.status.success(),
-        "producer byte check failed: {:?}",
-        checked
+        "producer byte check failed: {checked:?}"
     );
     let record: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
     assert_eq!(record["mode"].as_str(), Some("check"));
