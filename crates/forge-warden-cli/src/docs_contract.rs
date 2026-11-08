@@ -1,7 +1,7 @@
 //! Executable front-door examples are parsed by the actual clap grammar, without running them.
 use super::Cli;
 use clap::Parser as _;
-use forge_warden_core::defaults::NamedDefault as _;
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 fn document(path: &str) -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -114,52 +114,51 @@ fn block_examples(language: &str, body: &str) -> Vec<String> {
     }
 }
 
-fn fence_start(line: &str) -> Option<(char, usize, &str)> {
-    let trimmed = line.trim_start();
-    let trimmed = trimmed
-        .strip_prefix("- ")
-        .or_else(|| trimmed.strip_prefix("* "))
-        .or_display(trimmed);
-    let marker = trimmed.chars().next()?;
-    if !['`', '~'].contains(&marker) {
-        return None;
-    }
-    let length = trimmed.chars().take_while(|c| *c == marker).count();
-    if length < 3 {
-        return None;
-    }
-    Some((marker, length, trimmed.get(length..)?.trim()))
+// This is a policy on parser-classified HTML, not a Markdown/inline-span recognizer.
+// No raw HTML code opener is allowlisted; ordinary inline code is Event::Code instead.
+fn raw_code_tag(html: &str) -> bool {
+    let plain = html.to_ascii_lowercase();
+    ["pre", "xmp", "listing", "code", "samp", "kbd"]
+        .iter()
+        .any(|name| {
+            let opening = format!("<{name}");
+            plain.match_indices(&opening).any(|(start, _)| {
+                plain
+                    .get(start.saturating_add(opening.len())..)
+                    .unwrap()
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c.is_whitespace() || c == '>' || c == '/')
+            })
+        })
 }
 
-fn examples(readme: &str, justfile: &str) -> Vec<String> {
+fn examples(markdown: &str, justfile: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut fence: Option<(char, usize, &str)> = None;
+    let mut language = None;
     let mut body = String::new();
-    for line in readme.lines() {
-        if let Some((marker, length, info)) = fence_start(line) {
-            if let Some((opened, opening_length, language)) = fence {
-                if marker == opened && length >= opening_length && info.is_empty() {
-                    out.extend(block_examples(language, &body));
-                    body.clear();
-                    fence = None;
-                    continue;
-                }
-            } else {
-                fence = Some((marker, length, info));
-                continue;
+    for event in Parser::new(markdown) {
+        if let Event::Start(Tag::CodeBlock(kind)) = event {
+            assert!(language.is_none(), "nested code-block event");
+            language = Some(match kind {
+                CodeBlockKind::Indented => "sh".to_owned(),
+                CodeBlockKind::Fenced(info) => info.into_string(),
+            });
+        } else if let Event::End(TagEnd::CodeBlock) = event {
+            out.extend(block_examples(&language.take().unwrap(), &body));
+            body.clear();
+        } else if let Event::Text(text) = event {
+            if language.is_some() {
+                body.push_str(&text);
             }
-        }
-        if fence.is_some() {
-            body.push_str(line);
-            body.push('\n');
-        } else if (line.starts_with("    ") || line.starts_with('\t'))
-            && line.contains("forge-warden")
-        {
-            // Indented Markdown code is executable unless explicitly put in a data/text fence.
-            out.push(line.to_owned());
+        } else if let Event::Html(html) | Event::InlineHtml(html) = event {
+            assert!(
+                !raw_code_tag(&html),
+                "raw HTML code requires an explicit language fence: {html}"
+            );
         }
     }
-    assert!(fence.is_none(), "unclosed documentation block");
+    assert!(language.is_none(), "unclosed parser code-block event");
     let recipes = justfile
         .lines()
         .filter(|line| line.starts_with(' ') || line.starts_with('\t'))
@@ -282,5 +281,218 @@ fn indented_fences_tabs_and_nonstandard_languages_cannot_hide_commands() {
     for style in ["|", "|-", "|+", ">", ">-", ">+"] {
         let text = format!("```yaml\n- run: {style}\n    forge-warden init --invented\n```\n");
         assert!(std::panic::catch_unwind(|| commands(&text, "")).is_err());
+    }
+}
+
+#[test]
+fn rendered_code_cannot_escape_admission_or_refusal() {
+    for tag in [
+        "pre",
+        "PRE class=x",
+        "xmp",
+        "listing",
+        "code",
+        "samp",
+        "kbd",
+    ] {
+        for prefix in [
+            "",
+            "<div>",
+            "Run ",
+            "> ",
+            "- ",
+            "* ",
+            "+ ",
+            "1. ",
+            "2) ",
+            "> - ",
+            "- > ",
+            "1. > + 2. > ",
+        ] {
+            let source = format!(
+                "{prefix}<{tag}>
+forge-warden init --invented
+"
+            );
+            assert!(
+                std::panic::catch_unwind(|| commands(&source, "")).is_err(),
+                "raw code escaped: {source:?}"
+            );
+        }
+    }
+
+    for (prefix, continuation) in [
+        ("", ""),
+        ("> ", "> "),
+        (">> ", ">> "),
+        ("- ", "  "),
+        ("* ", "  "),
+        ("+ ", "  "),
+        ("1. ", "   "),
+        ("2) ", "   "),
+        ("> - ", ">   "),
+        ("- > ", "  > "),
+        ("1. > + 2. > ", "   >      > "),
+    ] {
+        for fence in ["```", "~~~"] {
+            let source = format!(
+                "{prefix}{fence}sh\n{continuation}forge-warden init --invented\n{continuation}{fence}\n"
+            );
+            let found = commands(&source, "");
+            assert_eq!(found.len(), 1, "container fence skipped: {source:?}");
+            assert!(Cli::try_parse_from(&found[0]).is_err());
+            let valid = format!(
+                "{prefix}{fence}sh\n{continuation}forge-warden check --policy p \\\n{continuation}--patch p --ranker r\n{continuation}{fence}\n"
+            );
+            let accepted = commands(&valid, "");
+            assert_eq!(accepted.len(), 1);
+            assert!(Cli::try_parse_from(&accepted[0]).is_ok());
+        }
+        let indented = format!(
+            "{prefix}intro\n{continuation}\n{continuation}    forge-warden check --policy p \\\n{continuation}    --patch p --ranker r --invented\n"
+        );
+        let found = commands(&indented, "");
+        assert_eq!(found.len(), 1, "{indented:?}");
+        assert!(Cli::try_parse_from(&found[0]).is_err());
+        let valid_indented = indented.replace(" --invented", "");
+        let accepted_indented = commands(&valid_indented, "");
+        assert_eq!(accepted_indented.len(), 1);
+        assert!(Cli::try_parse_from(&accepted_indented[0]).is_ok());
+    }
+}
+
+#[test]
+fn raw_tag_boundaries_inline_spans_and_explicit_data_are_distinct() {
+    for source in [
+        "Use `<pre>`, ``<xmp>``, and `<listing>` in prose.",
+        "<div></div>\n\nUse `<pre>` in prose.",
+        "</div>\n\n```text\n<pre>recorded output</pre>\n```",
+        "<div>\n\n```text\n<pre>recorded output</pre>\n```",
+        "<preview> <prelude> <codebase> <xmpfoo> <listingx>",
+        "forge-warden init --invented",
+        "```text
+<pre>forge-warden init --invented</pre>
+```",
+        "```sh
+printf '<pre>'
+```",
+    ] {
+        assert!(commands(source, "").is_empty(), "{source:?}");
+    }
+    for source in [
+        "unmatched `<pre>",
+        r"escaped \`<pre>`",
+        "``one ` tick`` <pre>",
+        "<PrE	class=x>",
+        "<pre/>",
+        "<pre",
+        "> `safe` Run <pre>bad</pre>",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| commands(source, "")).is_err(),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn mixed_tabs_are_indented_code_in_every_container() {
+    for (prefix, continuation) in [("", ""), ("> ", "> "), ("> - ", ">   "), ("1. > ", "   > ")] {
+        for indent in ["    ", "    \t", " \t\t", "  \t\t", "   \t\t"] {
+            let source = format!(
+                "{prefix}intro\n{continuation}\n{continuation}{indent}forge-warden init --invented\n"
+            );
+            let found = commands(&source, "");
+            assert_eq!(found.len(), 1, "{source:?}");
+            assert!(Cli::try_parse_from(&found[0]).is_err());
+        }
+    }
+}
+
+#[test]
+fn raw_html_context_cannot_hide_code_tags_behind_backticks() {
+    for source in [
+        "<div>`<pre>forge-warden init --invented</pre>`</div>",
+        "<custom-element>\n`<pre>forge-warden init --invented</pre>`\n</custom-element>",
+        "<!-- ` --> <pre>forge-warden init --invented</pre> `",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| commands(source, "")).is_err(),
+            "{source:?}"
+        );
+    }
+    assert_eq!(
+        commands("Use `<div>` and `<pre>` as inline examples.", "").len(),
+        0
+    );
+}
+
+#[test]
+fn xv_bastion_closing_html_context() {
+    let mut escaped = Vec::new();
+    for closing in ["</div>", "</table>", "</section>", "</custom-element>"] {
+        let source = format!("{closing}\n`<pre>forge-warden init --invented</pre>`\n");
+        let result = std::panic::catch_unwind(|| commands(&source, ""));
+        if result.is_ok() {
+            escaped.push(format!("{source:?}: {result:?}"));
+        }
+    }
+    assert!(
+        escaped.is_empty(),
+        "CLOSING HTML ESCAPES: {}",
+        escaped.join("; ")
+    );
+}
+#[test]
+fn xv_bastion_raw_html_fence_exemption() {
+    let mut escaped = Vec::new();
+    for tag in ["div", "table", "section"] {
+        let source =
+            format!("<{tag}>\n```text\n<pre>forge-warden init --invented</pre>\n```\n</{tag}>\n");
+        let result = std::panic::catch_unwind(|| commands(&source, ""));
+        if result.is_ok() {
+            escaped.push(format!("{source:?}: {result:?}"));
+        }
+    }
+    assert!(
+        escaped.is_empty(),
+        "RAW HTML FENCE ESCAPES: {}",
+        escaped.join("; ")
+    );
+}
+
+#[test]
+fn keel_original_reproducers_are_asserted_controls() {
+    for source in [
+        "<div><pre>\nforge-warden init --invented\n</pre></div>\n",
+        "> <pre>\n> forge-warden init --invented\n> </pre>\n",
+        "- <pre>\n  forge-warden init --invented\n  </pre>\n",
+        "<code>\nforge-warden init --invented\n</code>\n",
+        "<xmp>\nforge-warden init --invented\n</xmp>\n",
+        "<listing>\nforge-warden init --invented\n</listing>\n",
+        "Run <pre>\nforge-warden init --invented\n</pre>\n",
+        "\u{a0}<pre>\nforge-warden init --invented\n</pre>\n",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| commands(source, "")).is_err(),
+            "{source:?}"
+        );
+    }
+    for source in [
+        "> ```bash\n> forge-warden init --invented\n> ```\n",
+        ">     forge-warden init --invented\n",
+        "1. Run:\n\n   ```bash\n   forge-warden init --invented\n   ```\n",
+        "- a\n  - b\n\n      ```bash\n      forge-warden init --invented\n      ```\n",
+        "```bash\nforge-warden init --invented\n```\n",
+    ] {
+        let found = commands(source, "");
+        assert_eq!(found.len(), 1, "{source:?}");
+        assert!(Cli::try_parse_from(&found[0]).is_err());
+    }
+    for prose in [
+        "forge-warden init --invented\n",
+        "> intro\n> \n> \tforge-warden init --invented\n",
+    ] {
+        assert!(commands(prose, "").is_empty(), "{prose:?}");
     }
 }

@@ -31,14 +31,29 @@ in archives and cargo-mutants copies. Untracked `.md` files (including `.MD`) ar
 Every source Markdown file and the justfile needs an exact invocation count in
 `docs/command-sources.tsv`; update that inventory with an intentional example change.
 
-The reviewed exclusions are `.git` metadata directories at any depth and root `target/` and
-`mutants.out*/` output directories (including output-directory symlinks). Nested source directories
+The reviewed exclusions are `.git` metadata entries at any depth and root `target/`,
+`mutants.out/`, and `mutants.out.old/` output directories (including output-directory symlinks).
+Root `target/` is reserved for Cargo
+build artifacts, including generated documentation; source documentation must live elsewhere.
+`mutants.out.old/` is cargo-mutants’ rotated previous output. These are exact directory names;
+`mutants.outline/` and `mutants.out.backup/` remain source-visible. Nested source directories
 named `target` and ordinary Markdown files named `mutants.out.*.md` remain visible. Other source
 symlinks refuse rather than hiding or following a document subtree. No ignore file controls this walk.
 
-Executable examples use the documented shell-fence and literal workflow subset. Inline prose
-fragments and data fences remain outside command parsing. Tests parse arguments with the actual
-CLI without executing shell expansions or promising example paths or tools are available.
+The test-only pulldown-cmark parser classifies Markdown at every nesting depth. Every code
+block receives a language decision: indented code is parsed as shell; fenced code uses the
+explicit supported shell, literal YAML, or data language. Unknown or absent fence languages
+refuse. Continued shell lines are parsed together; use `text` for recorded output.
+
+Every raw HTML event (block or inline) containing a `pre`, `xmp`, `listing`, `code`, `samp`, or
+`kbd` opener refuses. There is no raw-HTML allowlist. Real inline backtick code is a distinct
+parser event and remains prose; so do ordinary paragraphs. A fence-looking line inside an
+HTML block is HTML, not a data exemption. Genuine data fences after the HTML block ends remain
+supported. The parser determines those boundaries; tests do not infer them from tag strings.
+
+Per-file invocation counts remain exact. The shell lexer and literal YAML subset still have
+explicit limits: no command expansion or example subprocess is executed, and example paths or
+tools need not exist. These tests check actual CLI arguments, not general shell semantics.
 
 ## Branch protection (for the maintainer)
 

@@ -187,6 +187,8 @@ fn source_walk_includes_untracked_and_nested_docs_but_excludes_reviewed_outputs(
         "docs/UPPER.MD",
         "docs/target/source.md",
         "mutants.out.source.md",
+        "mutants.outline/source.md",
+        "mutants.out.backup/source.md",
         "target/generated.md",
         "mutants.out/report.md",
         "mutants.out.old/report.md",
@@ -201,6 +203,8 @@ fn source_walk_includes_untracked_and_nested_docs_but_excludes_reviewed_outputs(
         "docs/UPPER.MD",
         "docs/target/source.md",
         "mutants.out.source.md",
+        "mutants.outline/source.md",
+        "mutants.out.backup/source.md",
     ]
     .into_iter()
     .map(str::to_owned)
