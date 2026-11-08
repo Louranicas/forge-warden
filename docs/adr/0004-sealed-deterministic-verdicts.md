@@ -1,6 +1,8 @@
 # ADR 0004: Sealed, deterministic verdicts
 
-**Status:** accepted, 2026-11-05
+Status: Accepted
+
+Historical status record: **Status:** accepted, 2026-11-05
 
 ## Decision
 

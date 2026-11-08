@@ -1,6 +1,8 @@
 # ADR 0009: Guardrail configuration has a checked source of truth
 
-Status: proposed implementation, WP-D6. Author: Bastion (O4).
+Status: Accepted
+
+Historical status record: Status: proposed implementation, WP-D6. Author: Bastion (O4).
 
 `protected-paths.txt` is the canonical sorted root-relative list. It uses literal segments,
 whole-segment `*`, and trailing `**`; arbitrary glob syntax refuses. Both structured edits and

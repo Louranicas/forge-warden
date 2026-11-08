@@ -1,6 +1,8 @@
 # ADR 0006: The candidate is data to a trusted dogfood driver
 
-Status: proposed implementation, WP-D1. Author: Bastion (O4).
+Status: Accepted
+
+Historical status record: Status: proposed implementation, WP-D1. Author: Bastion (O4).
 
 ## Problem
 

@@ -154,7 +154,7 @@ renewed or deleted. An active waiver that covered nothing is listed in `unused_w
 A note is something the policy cannot judge. **Every note holds the verdict at least** (`hold`,
 exit 8); rules still run, so a failing rule still fails (exit 7). Notes never make a verdict looser.
 
-| Code | Trigger | Outcome |
+| Code | Trigger | Minimum verdict level |
 | --- | --- | --- |
 | `empty_ranking` | The ranking lists no file. | hold |
 | `unknown_signal` | A file carries a signal this forge-warden does not know. | hold |
@@ -171,7 +171,7 @@ exit 8); rules still run, so a failing rule still fails (exit 7). Notes never ma
 ## Refuse or hold
 
 A **refusal** prints nothing on stdout, explains on stderr, and exits without a verdict. A
-**hold** is a verdict (exit 8) that asks a person to look.
+**hold** is a verdict level (exit 8) that asks a person to look.
 
 | Situation | Result | Exit |
 | --- | --- | --- |
@@ -199,3 +199,6 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
   `patch_unverifiable` / `duplicate_paths`.
 - **deep-diff-forge 0.7.0 omissions**: a binary added without `new_file` or deleted without
   `deleted_file` → `status_mismatch` until the ranker reports them (Git's kind is still applied).
+
+Canonical terminology and the distinction between a document and its level are in the
+[glossary](GLOSSARY.md).

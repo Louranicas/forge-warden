@@ -1,6 +1,8 @@
 # ADR 0010: Git treats candidate content as data
 
-Status: D3 correction contract; C1 coordination handoff. Author: Bastion (O4).
+Status: Accepted
+
+Historical status record: Status: D3 correction contract; C1 coordination handoff. Author: Bastion (O4).
 
 The authenticated runtime supplies the Git executable, controller-owned config and immutable
 subject/snapshot. Candidate repository config, worktree attributes and inherited process variables

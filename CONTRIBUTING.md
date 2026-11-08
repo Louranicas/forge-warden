@@ -5,6 +5,18 @@ you find out in seconds, not in review.
 
 ## Setup
 
+Use Linux with Git, Bash, coreutils, Python 3.11 or newer, Rustup and `just` available.
+The checkout pins Rust 1.99.1 plus rustfmt/clippy in `rust-toolchain.toml`; Rustup may need
+network access to install that toolchain. Provision the dependency cache once with network
+access, then the walkthrough and test gates run offline:
+
+```bash
+git clone https://github.com/Louranicas/forge-warden.git
+cd ./forge-warden
+cargo fetch --locked
+```
+
+
 ```bash
 just install-hooks   # pre-commit: fast gate; commit-msg: useful subjects; pre-push: full gate
 just fast            # fmt + clippy (the full lint wall) + tests
@@ -13,6 +25,71 @@ just ci              # everything CI runs that works offline
 
 Optional tools the full gate uses when present: `cargo-deny`, `cargo-mutants`, `zizmor`,
 `deep-diff-forge`.
+
+## First rule: a passing example and a failing control
+
+This adds a policy rule using the existing `protect_paths` kind; adding a new Rust rule kind
+is a separate change. Build and test the clean checkout first (or use an already provisioned
+checkout/cache). Default Cargo output location `target/` is assumed; unset a custom
+CARGO_TARGET_DIR for these examples. No installed forge-warden or live ranker is required.
+
+```bash
+cargo test --workspace --locked --offline
+cargo build --workspace --examples --locked --offline
+export PATH="$PWD/target/debug:$PATH"
+```
+
+The following script writes a new policy that rejects changes under `private/`. The recorded
+demo changes other paths, so this new rule passes. The test-only fixture ranker replays the
+recorded demo ranking; it is a learning fixture, not a production trust enrollment or a
+replacement for deep-diff-forge. Its SHA-256 admits only this local example binary. Use the
+same copied patch bytes for both evaluations. All files stay under ignored `target/`.
+
+<!-- first-rule-exercise:start -->
+```bash
+set -eu
+mkdir -p target/first-rule
+cp fixtures/demo.patch target/first-rule/change.patch
+ranker="$PWD/target/debug/examples/fixture-ranker"
+digest=$(sha256sum "$ranker" | cut -d ' ' -f 1)
+cat > target/first-rule/warden.toml <<EOF
+schema = "forge-warden.policy.v0"
+[producer]
+sha256 = ["$digest"]
+[[rule]]
+id = "first-rule-private-files"
+why = "Private implementation paths must stay unchanged in this example."
+kind = "protect_paths"
+severity = "fail"
+paths = ["private/**"]
+EOF
+forge-warden lint target/first-rule/warden.toml
+forge-warden check --policy target/first-rule/warden.toml --patch target/first-rule/change.patch \
+  --ranker "$ranker" --today 2026-11-05 --json > target/first-rule/green.json
+sed 's|private/|src/|' target/first-rule/warden.toml > target/first-rule/red.warden.toml
+if forge-warden check --policy target/first-rule/red.warden.toml --patch target/first-rule/change.patch \
+  --ranker "$ranker" --today 2026-11-05 --json > target/first-rule/red.json; then
+  echo 'expected the tightened control to fail' >&2
+  exit 1
+else
+  test "$?" -eq 7
+fi
+forge-warden check --policy target/first-rule/warden.toml --patch target/first-rule/change.patch \
+  --ranker "$ranker" --today 2026-11-05 --json > target/first-rule/green-again.json
+```
+<!-- first-rule-exercise:end -->
+
+The lint and both green evaluations exit 0 with verdict level `pass`; the intentionally tighter
+`src/` control exits 7 with verdict level `fail` and rule id `first-rule-private-files`.
+Returning to the original policy passes again. The documentation test executes this exact exercise
+in a scratch copy with the built binary and fixture ranker, checks both levels, notes and the rule
+outcome, and runs offline. E3d separately parses all four CLI invocations using the real grammar.
+These controls show the new rule can pass and fail; production review still uses an independently
+admitted real ranker and the base policy. Keep policy and tests together in a pull request and run
+`just ci`; do not copy the tutorial's fixture producer admission into deployment.
+
+Terms are defined once in the [glossary](docs/GLOSSARY.md). Current design status and whole-ADR
+replacement rules are in [ADR status](docs/ADR_STATUS.md).
 
 ## What a pull request needs
 
