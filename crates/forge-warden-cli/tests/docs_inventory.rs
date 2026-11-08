@@ -494,7 +494,7 @@ fn exact_phrase(text: &str, phrase: &str) -> bool {
 fn glossary_exemptions(
     source: &str,
     documents: &BTreeSet<String>,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<std::collections::BTreeMap<String, String>, String> {
     let value: toml::Value = toml::from_str(source).map_err(|e| e.to_string())?;
     let table = value
         .as_table()
@@ -506,7 +506,7 @@ fn glossary_exemptions(
         .get("exemption")
         .and_then(toml::Value::as_array)
         .ok_or("GLOSSARY: missing reviewed exemptions")?;
-    let mut exempt = BTreeSet::new();
+    let mut exempt = std::collections::BTreeMap::new();
     for entry in entries {
         let fields = entry.as_table().ok_or("GLOSSARY: invalid exemption")?;
         if fields.len() != 3
@@ -529,14 +529,154 @@ fn glossary_exemptions(
             .and_then(toml::Value::as_str)
             .ok_or("GLOSSARY: missing exemption reason")?;
         if !documents.contains(path)
-            || !exempt.insert(path.to_owned())
-            || !["history", "quoted_terms"].contains(&kind)
+            || exempt.insert(path.to_owned(), kind.to_owned()).is_some()
+            || !["dated_releases", "dated_evidence", "quoted_terms"].contains(&kind)
             || reason.trim().len() < 20
         {
             return Err("GLOSSARY: stale, duplicate or unreviewed exemption".to_owned());
         }
     }
     Ok(exempt)
+}
+
+fn dated_history_heading(heading: &str, kind: &str) -> bool {
+    let version = |v: &str| {
+        let pieces: Vec<_> = v.split('.').collect();
+        pieces.len() == 3
+            && pieces
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let pair = match kind {
+        "dated_releases" => heading
+            .strip_prefix("## [")
+            .and_then(|s| s.split_once("] - ")),
+        "dated_evidence" => heading
+            .strip_prefix("## ")
+            .and_then(|s| s.strip_suffix(')'))
+            .and_then(|s| s.rsplit_once(" (")),
+        _ => None,
+    };
+    let Some((label, date)) = pair else {
+        return false;
+    };
+    let label_ok = version(label) || (kind == "dated_evidence" && label == "Independent review");
+    let parts: Vec<_> = date.split('-').collect();
+    label_ok
+        && parts.len() == 3
+        && parts
+            .iter()
+            .zip([4, 2, 2])
+            .all(|(p, n)| p.len() == n && p.bytes().all(|b| b.is_ascii_digit()))
+        && parts
+            .get(1)
+            .and_then(|s| s.parse::<u8>().ok())
+            .is_some_and(|m| (1..=12).contains(&m))
+        && parts
+            .get(2)
+            .and_then(|s| s.parse::<u8>().ok())
+            .is_some_and(|d| (1..=31).contains(&d))
+}
+
+fn glossary_current_text(source: &str, kind: Option<&str>) -> String {
+    let Some(kind) = kind else {
+        return source.to_owned();
+    };
+    if kind == "quoted_terms" {
+        return String::new();
+    }
+    let mut retained = String::new();
+    let mut start = 0;
+    let mut historical = false;
+    let mut depth = 0_usize;
+    for (event, range) in pulldown_cmark::Parser::new(source).into_offset_iter() {
+        match event {
+            pulldown_cmark::Event::Start(tag) => {
+                if depth == 0
+                    && matches!(
+                        tag,
+                        pulldown_cmark::Tag::Heading {
+                            level: pulldown_cmark::HeadingLevel::H1
+                                | pulldown_cmark::HeadingLevel::H2,
+                            ..
+                        }
+                    )
+                {
+                    if !historical {
+                        let Some(part) = source.get(start..range.start) else {
+                            return source.to_owned();
+                        };
+                        retained.push_str(part);
+                    }
+                    start = range.start;
+                    let Some(section) = source.get(start..range.end) else {
+                        return source.to_owned();
+                    };
+                    let Some(heading) = section.lines().next() else {
+                        return source.to_owned();
+                    };
+                    historical = dated_history_heading(heading, kind);
+                }
+                depth = depth.saturating_add(1);
+            }
+            pulldown_cmark::Event::End(_) => depth = depth.saturating_sub(1),
+            pulldown_cmark::Event::Text(_)
+            | pulldown_cmark::Event::Code(_)
+            | pulldown_cmark::Event::InlineMath(_)
+            | pulldown_cmark::Event::DisplayMath(_)
+            | pulldown_cmark::Event::Html(_)
+            | pulldown_cmark::Event::InlineHtml(_)
+            | pulldown_cmark::Event::FootnoteReference(_)
+            | pulldown_cmark::Event::SoftBreak
+            | pulldown_cmark::Event::HardBreak
+            | pulldown_cmark::Event::Rule
+            | pulldown_cmark::Event::TaskListMarker(_) => {}
+        }
+    }
+    if !historical {
+        let Some(part) = source.get(start..) else {
+            return source.to_owned();
+        };
+        retained.push_str(part);
+    }
+    retained
+}
+
+#[test]
+fn only_dated_top_level_history_sections_are_exempt_from_glossary_lint() {
+    for (kind, dated) in [
+        ("dated_releases", "## [0.1.0] - 2026-11-05"),
+        ("dated_evidence", "## 0.1.0 (2026-11-05)"),
+        ("dated_evidence", "## Independent review (2026-11-05)"),
+    ] {
+        let text = format!(
+            "Preamble soft pass.\n\n## [Unreleased]\n\nCurrent soft pass.\n\n{dated}\n\nHistorical soft pass.\n\n### Details\n\nOld soft pass.\n\n## Not verified here\n\nPending soft pass.\n\n{dated}\n\nAgain historical.\n\n# Current overview\n\nOverview soft pass.\n"
+        );
+        let current = glossary_current_text(&text, Some(kind));
+        assert!(current.contains("Preamble soft pass"));
+        assert!(current.contains("Current soft pass"));
+        assert!(current.contains("Pending soft pass"));
+        assert!(current.contains("Overview soft pass"));
+        assert!(!current.contains("Historical soft pass"));
+        assert!(!current.contains("Old soft pass"));
+    }
+    for fake in [
+        "## [Unreleased]",
+        "## [0.1.0] - soon",
+        "## [0.1.0] - 2026-99-00",
+        "```md\n## [0.1.0] - 2026-11-05\n```",
+        "> ## [0.1.0] - 2026-11-05",
+        "- ## [0.1.0] - 2026-11-05",
+    ] {
+        let text = format!("{fake}\n\nA soft pass is current.\n");
+        assert!(
+            exact_phrase(
+                &glossary_current_text(&text, Some("dated_releases")),
+                "soft pass"
+            ),
+            "{fake}"
+        );
+    }
 }
 
 #[test]
@@ -552,16 +692,16 @@ fn deployment_and_glossary_exemptions_have_explicit_refusal_controls() {
         assert!(!adr_errors(&doc(&bad)).is_empty(), "{bad}");
     }
     let documents = BTreeSet::from(["history.md".to_owned()]);
-    let exemption = "[[exemption]]\npath='history.md'\nkind='history'\nreason='A dated historical record, preserved verbatim.'";
+    let exemption = "[[exemption]]\npath='history.md'\nkind='dated_releases'\nreason='A dated historical record, preserved verbatim.'";
     assert_eq!(
         glossary_exemptions(exemption, &documents).unwrap(),
-        documents
+        std::collections::BTreeMap::from([("history.md".to_owned(), "dated_releases".to_owned())])
     );
     for bad in [
         exemption.replace("history.md", "*.md"),
         exemption.replace("history.md", "missing.md"),
         format!("{exemption}\n{exemption}"),
-        exemption.replace("kind='history'", "kind='any'"),
+        exemption.replace("kind='dated_releases'", "kind='any'"),
     ] {
         assert!(glossary_exemptions(&bad, &documents).is_err());
     }
@@ -598,8 +738,8 @@ fn front_door_terms_follow_the_reviewed_glossary() {
             "{path} must link the canonical glossary"
         );
     }
-    for path in documents.difference(&exemptions) {
-        let source = read(path);
+    for path in &documents {
+        let source = glossary_current_text(&read(path), exemptions.get(path).map(String::as_str));
         for (concept, canonical, forbidden) in &rows {
             for phrase in forbidden {
                 assert!(

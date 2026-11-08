@@ -190,6 +190,13 @@ evidence, not a completed baseline. The weekly job does not replace diff mutatio
 Architecture decisions are in [`docs/adr/`](docs/adr). A change that contradicts one starts with
 a new ADR, not a code change.
 
+ADR authors must declare `Owner-deployment: Required` or `Not-required`. Reviewers must
+check that classification against the proposed runtime, repository, gate and trust configuration
+changes; it is an author declaration, not an automatic deployment assessment. In particular, a
+new `Not-required` declaration needs review even when the mechanical status checks pass. An
+Accepted decision marked Required must carry the notice and status link described in
+[ADR status](docs/ADR_STATUS.md).
+
 The integration tests require the locked dependency set in the selected `CARGO_HOME` before
 an offline run. Run `cargo fetch --locked` with network access when provisioning that cache.
 Nested Rust test builds perform this check once per test process and report
