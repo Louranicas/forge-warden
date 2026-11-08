@@ -14,6 +14,9 @@
 
 mod doors;
 
+#[cfg(test)]
+mod docs_contract;
+
 use clap::{ArgGroup, Parser, Subcommand};
 use doors::DoorErrorKind;
 use doors::child::{GitFactsFailure, RankerFailure};

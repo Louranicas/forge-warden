@@ -18,7 +18,7 @@ it. Judge the bytes.
    deep-diff-forge --stdin-patch --outline < target/review.patch          # risk order
    deep-diff-forge --stdin-patch --rank --json < target/review.patch > target/review.rank.json
    cargo run -q --bin forge-warden -- check --policy warden.toml \
-     --rank target/review.rank.json --patch target/review.patch
+     --advisory --rank target/review.rank.json --patch target/review.patch
    ```
    If `deep-diff-forge` is not installed, say so and review `git diff` directly in file order of
    risk: `crates/*/src` before tests before docs.

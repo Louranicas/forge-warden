@@ -26,7 +26,7 @@ Run each step. Record the command and its result; a step you could not run is re
 
 ## Summary format
 
-```
+```text
 What changed: <one paragraph>
 Verified:
   - <command> -> <result>
