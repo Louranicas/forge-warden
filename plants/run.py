@@ -18,10 +18,14 @@ LIMIT = 4 * 1024 * 1024
 def environment():
     """Neutral Git configuration and offline tools; this is not an execution sandbox."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
-    for key in ('CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS'):
+    for key in ('CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS',
+                'CLICOLOR_FORCE', 'FORCE_COLOR'):
         env.pop(key, None)
     env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
-               GIT_NO_REPLACE_OBJECTS='1', CARGO_NET_OFFLINE='true', RUSTUP_AUTO_INSTALL='0')
+               GIT_NO_REPLACE_OBJECTS='1', CARGO_NET_OFFLINE='true', RUSTUP_AUTO_INSTALL='0',
+               CARGO_TERM_COLOR='never', NO_COLOR='1', TERM='dumb', CLICOLOR='0',
+               LC_ALL='C', LANG='C', COLUMNS='80', LINES='24',
+               CARGO_TERM_PROGRESS_WHEN='never')
     return env
 
 

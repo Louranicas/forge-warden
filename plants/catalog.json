@@ -24,7 +24,8 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = rank.files().first().unwrap();\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = rank.files().first().unwrap();\n    let mut used_waivers = BTreeSet::new();",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "string-slice",
@@ -39,7 +40,8 @@
         "--offline"
       ],
       "old": "seal.get(..12).or_fail_safe(seal).to_owned()",
-      "new": "seal[..12].to_owned()"
+      "new": "seal[..12].to_owned()",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unchecked-add",
@@ -54,7 +56,8 @@
         "--offline"
       ],
       "old": "sum.saturating_add(u64::from(f.score()))",
-      "new": "sum + u64::from(f.score())"
+      "new": "sum + u64::from(f.score())",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "core-read",
@@ -69,7 +72,8 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = std::fs::read(\".\");\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = std::fs::read(\".\");\n    let mut used_waivers = BTreeSet::new();",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "hash-order",
@@ -84,7 +88,8 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = std::collections::HashMap::<String, String>::new();\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = std::collections::HashMap::<String, String>::new();\n    let mut used_waivers = BTreeSet::new();",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "kind-variant",
@@ -99,7 +104,8 @@
         "--offline"
       ],
       "old": "pub enum Kind {",
-      "new": "pub enum Kind {\n    /// Deliberately unhandled guardrail plant.\n    PlantUnhandled,"
+      "new": "pub enum Kind {\n    /// Deliberately unhandled guardrail plant.\n    PlantUnhandled,",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "member-lints",
@@ -116,7 +122,8 @@
         "--offline"
       ],
       "old": "[lints]\nworkspace = true\n",
-      "new": ""
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "allow-attribute",
@@ -133,7 +140,8 @@
         "--offline"
       ],
       "old": "#[must_use]\npub fn evaluate",
-      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub fn evaluate"
+      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub fn evaluate",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "readme-missing-row",
@@ -150,7 +158,8 @@
         "--offline"
       ],
       "old": "| 4 | `invalid_input` | The policy or the ranking failed to parse or validate, exceeded the byte budget, or the ranking's seal does not match the patch given with --patch. | `change_input` |",
-      "new": ""
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "golden-seal",
@@ -168,7 +177,8 @@
         "--offline"
       ],
       "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
-      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "todo-without-issue",
@@ -184,7 +194,8 @@
         "--locked",
         "--offline"
       ],
-      "append": "\n// TODO repair the planted breach\n"
+      "append": "\n// TODO repair the planted breach\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "cfg-allow",
@@ -201,7 +212,8 @@
         "--offline"
       ],
       "old": "#[must_use]\npub fn evaluate",
-      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub fn evaluate"
+      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub fn evaluate",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "misspelled-exit",
@@ -216,7 +228,8 @@
         "--offline"
       ],
       "old": "DoorErrorKind::Refused => Exit::InvalidInput,",
-      "new": "DoorErrorKind::Refused => Exit::InvalidInptu,"
+      "new": "DoorErrorKind::Refused => Exit::InvalidInptu,",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unsafe-code",
@@ -230,7 +243,8 @@
         "--locked",
         "--offline"
       ],
-      "append": "\n/// Deliberately unsafe guardrail plant.\n///\n/// # Safety\n/// Test plant; no caller.\npub unsafe fn planted_unsafe() {}\n"
+      "append": "\n/// Deliberately unsafe guardrail plant.\n///\n/// # Safety\n/// Test plant; no caller.\npub unsafe fn planted_unsafe() {}\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "dependency-cycle",
@@ -245,7 +259,8 @@
         "--offline"
       ],
       "old": "[dependencies]\n",
-      "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n"
+      "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unreviewed-default",
@@ -260,7 +275,8 @@
         "--offline"
       ],
       "old": "u64::try_from(count).or_fail_closed(u64::MAX)",
-      "new": "u64::try_from(count).unwrap_or(0)"
+      "new": "u64::try_from(count).unwrap_or(0)",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "effect-outside-door",
@@ -275,7 +291,8 @@
         "--offline"
       ],
       "old": "fn main() -> doors::Status {",
-      "new": "fn main() -> doors::Status {\n    let _planted_effect = std::fs::read(\".\");"
+      "new": "fn main() -> doors::Status {\n    let _planted_effect = std::fs::read(\".\");",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unknown-signal-pass",
@@ -293,7 +310,8 @@
         "--offline"
       ],
       "old": "file.signals().iter().filter(|s| !is_known_signal(s))",
-      "new": "file.signals().iter().filter(|s| !is_known_signal(s) && s.is_empty())"
+      "new": "file.signals().iter().filter(|s| !is_known_signal(s) && s.is_empty())",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "noncanonical-dotdot",
@@ -310,7 +328,8 @@
         "--offline"
       ],
       "old": "segment == \"..\"",
-      "new": "segment == \"...\""
+      "new": "segment == \"...\"",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "duplicate-path-pass",
@@ -328,7 +347,8 @@
         "--offline"
       ],
       "old": "    for path in duplicated {",
-      "new": "    for path in duplicated.into_iter().take(0) {"
+      "new": "    for path in duplicated.into_iter().take(0) {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "expanded-core-dependency",
@@ -344,7 +364,8 @@
         "the_core_depends_only_on_its_allow_list",
         "--offline"
       ],
-      "append": "\n[dependencies.memchr]\nversion = \"2\"\n"
+      "append": "\n[dependencies.memchr]\nversion = \"2\"\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "rank-schema-drift",
@@ -361,7 +382,8 @@
         "--offline"
       ],
       "old": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v0\";",
-      "new": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v1\";"
+      "new": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v1\";",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "dead-private-function",
@@ -375,7 +397,8 @@
         "--locked",
         "--offline"
       ],
-      "append": "\nfn planted_dead_code() {}\n"
+      "append": "\nfn planted_dead_code() {}\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "rank-budget-off-by-one",
@@ -392,7 +415,8 @@
         "--offline"
       ],
       "old": "if bytes.len() > crate::MAX_INPUT_BYTES {",
-      "new": "if bytes.len() > crate::MAX_INPUT_BYTES.saturating_add(1) {"
+      "new": "if bytes.len() > crate::MAX_INPUT_BYTES.saturating_add(1) {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "serde-additive-refusal",
@@ -409,7 +433,8 @@
         "--offline"
       ],
       "old": "#[derive(Deserialize)]\nstruct RawFile {",
-      "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {"
+      "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "swallowed-judge-exit",
@@ -421,7 +446,8 @@
         "scripts/tests/ci_local.sh"
       ],
       "old": "        --advisory --rank target/rank.json --patch target/change.patch",
-      "new": "        --advisory --rank target/rank.json --patch target/change.patch || true"
+      "new": "        --advisory --rank target/rank.json --patch target/change.patch || true",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "hook-shell-spelling",
@@ -435,7 +461,8 @@
         "Guard.test_shell_tokenization_and_rust_writes"
       ],
       "old": "tokens = list(lexer)  # Concatenated quotes and absolute paths are checked after tokenization.",
-      "new": "tokens = command.split()  # Deliberately discard shell quote concatenation."
+      "new": "tokens = command.split()  # Deliberately discard shell quote concatenation.",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "hook-malformed-open",
@@ -449,7 +476,8 @@
         "Guard.test_malformed_events_fail_closed"
       ],
       "old": "        refuse(f\"malformed event or unavailable check: {error}\")",
-      "new": "        return  # Deliberately turn malformed input into success."
+      "new": "        return  # Deliberately turn malformed input into success.",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "hook-unsupported-tool-open",
@@ -463,7 +491,8 @@
         "Guard.test_alternative_edit_tools_refuse"
       ],
       "old": "        refuse(f\"unsupported tool {tool!r}: no checked mutation adapter (including multi-edit/patch tools)\")",
-      "new": "        return  # Deliberately permit unsupported mutation adapters."
+      "new": "        return  # Deliberately permit unsupported mutation adapters.",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "candidate-judge-build",
@@ -475,7 +504,8 @@
         "scripts/tests/dogfood.sh"
       ],
       "old": "cd \"$trusted\"",
-      "new": "cd \"$candidate\""
+      "new": "cd \"$candidate\"",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "ack-head-replay",
@@ -489,7 +519,8 @@
         "BoundAck.test_valid_receipt_and_new_push"
       ],
       "old": "require(receipt == wanted, \"acknowledgement does not match current subject and verdict\")",
-      "new": "require({k: v for k, v in receipt.items() if k != \"head\"} == {k: v for k, v in wanted.items() if k != \"head\"}, \"acknowledgement does not match current subject and verdict\")"
+      "new": "require({k: v for k, v in receipt.items() if k != \"head\"} == {k: v for k, v in wanted.items() if k != \"head\"}, \"acknowledgement does not match current subject and verdict\")",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh", "ssh-keygen"]
     },
     {
       "id": "candidate-review-policy",
@@ -503,7 +534,8 @@
         "ReviewBundle.test_candidate_cannot_supply_instructions_or_policy"
       ],
       "old": "  trusted_git show \"$base:$file\" > \"$out/$(basename \"$file\")\"",
-      "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\""
+      "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\"",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "untested-mutation-branch",
@@ -516,7 +548,8 @@
         "plants/mutation_survivor.py"
       ],
       "old": "#[cfg(test)]\nmod tests {",
-      "new": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n\n#[cfg(test)]\nmod tests {"
+      "new": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n\n#[cfg(test)]\nmod tests {",
+      "required_tools": ["bash", "cargo", "cargo-clippy", "cargo-mutants", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "enum-wildcard",
@@ -531,7 +564,8 @@
         "--offline"
       ],
       "old": "Self::MaxFiles => \"max_files\",",
-      "new": "_ => \"max_files\","
+      "new": "_ => \"max_files\",",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "raw-terminal-control",
@@ -548,7 +582,8 @@
         "--offline"
       ],
       "old": "let _ignored = write!(out, \"\\\\u{{{:04x}}}\", u32::from(other));",
-      "new": "out.push(other);"
+      "new": "out.push(other);",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unchecked-rank-literal",
@@ -561,7 +596,8 @@
         "plants/private_constructor.py"
       ],
       "old": "pub struct RankDoc {\n    input_sha256: String,\n    tool_version: String,\n    files: Vec<RankedFile>,\n}",
-      "new": "pub struct RankDoc {\n    /// Deliberately exposed unchecked seal.\n    pub input_sha256: String,\n    /// Deliberately exposed unchecked version.\n    pub tool_version: String,\n    /// Deliberately exposed unchecked records.\n    pub files: Vec<RankedFile>,\n}"
+      "new": "pub struct RankDoc {\n    /// Deliberately exposed unchecked seal.\n    pub input_sha256: String,\n    /// Deliberately exposed unchecked version.\n    pub tool_version: String,\n    /// Deliberately exposed unchecked records.\n    pub files: Vec<RankedFile>,\n}",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "post-msrv-string-api",
@@ -574,7 +610,8 @@
         "plants/msrv_boundary.py"
       ],
       "old": "#[cfg(test)]\nmod tests {",
-      "new": "/// Deliberate API specimen for the pinned MSRV check.\n#[must_use]\npub fn planted_new_api(text: &str, index: usize) -> usize {\n    text.floor_char_boundary(index)\n}\n\n#[cfg(test)]\nmod tests {"
+      "new": "/// Deliberate API specimen for the pinned MSRV check.\n#[must_use]\npub fn planted_new_api(text: &str, index: usize) -> usize {\n    text.floor_char_boundary(index)\n}\n\n#[cfg(test)]\nmod tests {",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "vocabulary-corpus-drift",
@@ -592,7 +629,8 @@
         "--offline"
       ],
       "old": "    \"many_hunks\",",
-      "new": "    \"o3_unpublished_signal\","
+      "new": "    \"o3_unpublished_signal\",",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "missing-patch-success",
@@ -612,7 +650,8 @@
         "--offline",
         "--",
         "--nocapture"
-      ]
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "omitted-file-coverage",
@@ -632,7 +671,8 @@
         "--offline",
         "--",
         "--nocapture"
-      ]
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unadmitted-producer",
@@ -646,7 +686,8 @@
         "-I",
         "-c",
         "import json,subprocess,sys\nsteps=[[\"cargo\",\"build\",\"--workspace\",\"--examples\",\"--locked\",\"--offline\"],[\"cargo\",\"test\",\"-p\",\"forge-warden-cli\",\"--test\",\"authority_mode\",\"a_ranker_the_policy_does_not_list_is_refused_without_a_verdict\",\"--locked\",\"--offline\",\"--\",\"--nocapture\"]]\nfor cmd in steps:\n print(\"COMMAND \"+json.dumps(cmd),flush=True)\n result=subprocess.run(cmd)\n if result.returncode: sys.exit(result.returncode)"
-      ]
+      ],
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "citation-order-drift",
@@ -666,7 +707,8 @@
         "--offline",
         "--",
         "--nocapture"
-      ]
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "oversized-function",
@@ -680,7 +722,8 @@
         "--all-targets",
         "--locked",
         "--offline"
-      ]
+      ],
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unreachable-public-item",
@@ -694,7 +737,8 @@
         "--all-targets",
         "--locked",
         "--offline"
-      ]
+      ],
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "codeowners-protected-drift",
@@ -708,7 +752,8 @@
         "-I",
         "-c",
         "import runpy; from pathlib import Path; runpy.run_path(\"scripts/check_guardrails.py\")[\"check_paths\"](Path.cwd())"
-      ]
+      ],
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "reference-forbidden-file-skip",
@@ -728,7 +773,8 @@
         "--offline",
         "--",
         "--nocapture"
-      ]
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "swallowed-authority-judge-exit",
@@ -741,7 +787,8 @@
         "plants/authority_script.py"
       ],
       "old": "        --ranker \"$ranker\" --patch target/change.patch",
-      "new": "        --ranker \"$ranker\" --patch target/change.patch || true"
+      "new": "        --ranker \"$ranker\" --patch target/change.patch || true",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     }
   ],
   "pending_guardrails": [

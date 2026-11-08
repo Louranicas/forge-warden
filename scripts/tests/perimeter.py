@@ -8,6 +8,7 @@ import sys
 sys.dont_write_bytecode = True
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,6 +22,7 @@ def load(name):
 
 TOOLS = load("tool_versions")
 PLANTS = load("check_plants")
+CAPS = load("plant_tools")
 
 
 class Contracts(unittest.TestCase):
@@ -30,7 +32,7 @@ class Contracts(unittest.TestCase):
     def test_each_tool_or_compiler_drift_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for file in ("scripts/tool-versions.toml", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
+            for file in ("scripts/tool-versions.toml", "scripts/plant_tools.py", "plants/catalog.json", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
                 (root / file).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / file, root / file)
             workflow = root / ".github/workflows/ci.yml"
@@ -53,6 +55,50 @@ class Contracts(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         TOOLS.check(root)
             baseline.write_text(baseline_original)
+
+    def test_catalog_tools_are_provisioned_in_gate(self):
+        CAPS.check_ci(ROOT)
+
+    def test_gate_tool_install_cannot_be_removed_moved_or_revised(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for file in ("plants/catalog.json", "scripts/tool-versions.toml", ".github/workflows/ci.yml"):
+                (root / file).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / file, root / file)
+            path = root / ".github/workflows/ci.yml"
+            original = path.read_text()
+            install = ("      - uses: taiki-e/install-action@" + TOOLS.versions(ROOT)['install_action']
+                       + " # v2.90.1\n        with:\n          tool: cargo-mutants@"
+                       + TOOLS.versions(ROOT)['cargo_mutants'] + "\n")
+            self.assertIn(install, original)
+            gate_only_removed = original.replace(install, '', 1)
+            changed = [gate_only_removed,
+                       original.replace(install, install.replace('27.1.0', '0.0.0'), 1),
+                       original.replace(install, install.replace(TOOLS.versions(ROOT)['install_action'], '0'*40), 1),
+                       gate_only_removed.replace('      - run: python3 -I scripts/check_plants.py',
+                                                '      - run: python3 -I scripts/check_plants.py\n'+install, 1)]
+            for text in changed:
+                with self.subTest(text=text[:60]):
+                    path.write_text(text)
+                    with self.assertRaises(ValueError):
+                        CAPS.check_ci(root)
+
+    def test_catalog_tool_declarations_are_closed_and_match_direct_commands(self):
+        for case in ({'id': 'missing'}, {'id': 'empty', 'required_tools': []},
+                     {'id': 'unknown', 'required_tools': ['unknown']},
+                     {'id': 'duplicate', 'required_tools': ['cargo','cargo']},
+                     {'id': 'wrong', 'cargo': ['clippy'], 'required_tools': ['cargo']},
+                     {'id': 'command', 'command': ['bash','x.sh'], 'required_tools': ['python3']}):
+            with self.subTest(case=case), self.assertRaises(ValueError):
+                CAPS.requirements([case])
+
+    def test_missing_mutants_is_a_named_preflight_refusal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tool = Path(directory) / "cargo"
+            tool.write_text("#!/bin/sh\necho 'no such command: mutants' >&2\nexit 101\n")
+            tool.chmod(0o700)
+            with self.assertRaisesRegex(ValueError, "plant preflight: unavailable tool cargo-mutants"):
+                CAPS.preflight({'cargo-mutants'}, ROOT, {'PATH': directory})
 
     def test_receipt_requires_exact_subject_complete_unique_cases_and_caught(self):
         good = {"revision": "subject", "results": [{"id": "one", "status": "CAUGHT"}, {"id": "two", "status": "CAUGHT"}], "pending_guardrails": [{"id": "G-99", "status": "PENDING"}]}

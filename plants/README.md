@@ -135,3 +135,26 @@ The gate preflights the declared MSRV toolchain (already installed; no automatic
 installation) and the complete offline locked dependency set. Native Cargo options
 are inserted before the `--` test-argument separator, so exact named-test recipes
 use the isolated target rather than accidentally forwarding Cargo flags to libtest.
+
+### Hosted tool and diagnostic contract (Q-PERIMETER.1)
+
+Each runnable case declares `required_tools`, including reviewed transitive helper requirements.
+`python3 -I scripts/check_plants.py` validates these declarations and probes the union before
+creating an evidence run. A missing command/subcommand, wrong pinned cargo-mutants version or
+failed probe is a named `plant preflight` refusal, never a skip or a caught plant. The separate
+MSRV/dependency prerequisites still run before the catalog. Keep helper dependencies in the
+catalog when changing a recipe: the direct-argv check is not general static analysis of Python,
+shell or Rust subprocesses.
+
+The gate installs cargo-mutants at the canonical `scripts/tool-versions.toml` version, using the
+same canonical install-action SHA as the mutation job. `scripts/tool_versions.py --check` and
+`scripts/tests/perimeter.py` check both pins and that required capabilities are available in the
+gate job before the plants step. Basic shell/Git/Python/OpenSSH/coreutils capabilities come from
+the reviewed ubuntu-latest image contract and are probed at runtime; Rust/clippy are explicitly
+installed. A different runner image or workflow shape requires reviewing this provisioning
+contract, not silently assuming the tools exist.
+
+The harness pins Cargo colour off, TERM=dumb, NO_COLOR, CLICOLOR, locale and terminal size, and
+removes force-colour overrides. Child baselines and plants use the same environment, including
+when the caller requests colour. Named diagnostic matching remains strict: unrelated failures
+or missing tools cannot become CAUGHT. This is diagnostic normalization, not an execution sandbox.
