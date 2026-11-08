@@ -1452,11 +1452,11 @@
       ],
       [
         "control:the door's expect",
-        "18dacce77a3dfd01eb4577131170f8f37e0f52d2f49e4546799131916c2db8fa"
+        "d1f88a5717e0678ab2abd03a216e2b10d8f5e21885ed3d423a02f9d37072c0f7"
       ],
       [
         "form:attest UFCS",
-        "60c56f1cb8d69b13480675c210fb59f0bffdd4b60bdd966e38b47e489c0156ff"
+        "bba1e397a065364b23b2ac5b26362bd0c1d58a8ff3c0b4ac29c7d33e429acc9e"
       ],
       [
         "form:attest alias binding (B-C1c-01)",
@@ -1464,15 +1464,15 @@
       ],
       [
         "form:attest as fn pointer",
-        "e887bdd01c86d85ae6aa2c2a74ffff1d0b891968372878a421846384c2a9afed"
+        "6fcc20914e6108f095981ff8305c4b6a7ed657b375f3680e04c3276bb0895d4f"
       ],
       [
         "form:attest direct",
-        "182acd70394ae9da887395384376b8cbfca088562aba5421675e95036734adb3"
+        "210b73a8a88313114f31d47dea43052809018be48e2cc5b6636125d97f5e2a0f"
       ],
       [
         "form:attest in a closure",
-        "4f967a5b71009515094f60d9555ae45ec44c911c797dd2b270d7fc5284cbdd1e"
+        "9b8fb1b828e75bf85f86b26174b89d20176459a17a7d65fee07decc86e0b0ad2"
       ],
       [
         "form:attest inside an external macro",
@@ -1480,11 +1480,11 @@
       ],
       [
         "form:attest passed as a function",
-        "e676a27509bf819d32398fb2949389246827d0c31135c6c44802677fd1b9034b"
+        "4ad036635dd894d108815835a2baf4d617f3e928260349cbdaf777647dcf8062"
       ],
       [
         "form:attest qualified",
-        "b3efed096c17238d6c1d2efa6aebf5e531a256cd1848ac5eee9e941ceba0a64e"
+        "a903f61810c5219f0b856c2c6665ea3f9f24f2d993a199d25c7647fa16a239a9"
       ],
       [
         "form:attest through black_box",
@@ -1492,31 +1492,7 @@
       ],
       [
         "form:attest via use-as",
-        "c2a5d00fbf6d99469646a8ff6337fd4a286667b9eb144e87f6e164eb092fcf07"
-      ],
-      [
-        "form:evaluate alias binding",
-        "065176a568dcca9d552c6a8b8c988c474b3db2e2da6c3962fc4541e177552797"
-      ],
-      [
-        "form:evaluate as fn pointer",
-        "6df4ee16e15afd90271d699f10df42cc31ed05292fd44979794c3f48c62c9c93"
-      ],
-      [
-        "form:evaluate direct (re-export)",
-        "efc4523a212ab0062870848cfcd6fa5bc3249b523610317cf3a856a23682b715"
-      ],
-      [
-        "form:evaluate inside format!",
-        "7b67a81fe72cdd74acc274b4b447d56ac89cd27ebdab30333c2a176b26595a54"
-      ],
-      [
-        "form:evaluate qualified",
-        "c5195f76d2af50fcdaea1a906104a44ef2e5b11a6244685e66bd5dd3d078dd7f"
-      ],
-      [
-        "form:evaluate via use-as",
-        "a16d363c87f8e2ed0ce2722b6df3ed7f13b421599295261f9f4fa0adec6c73ed"
+        "09149824ca79b98ebf40b5c0c6f12fa2a67354a9acbdd871a860e5f5fa22ec2b"
       ]
     ]
   ],
@@ -1914,6 +1890,10 @@
         "678c04bc8c1de65df391db1d427e1b2c4ae5ce868b3d3541dbc6ff682c3ebe0f"
       ],
       [
+        "crates/forge-warden-cli/tests/api_boundary.rs",
+        "ad4f66f2cae241448082e888c71ad2d827427974d64b916a5b60eb65662a200e"
+      ],
+      [
         "crates/forge-warden-cli/tests/authority_mode.rs",
         "d3d0480fede8a73dddf0c53ed32cc1648d59b8df00f504106a13d19352784b77"
       ],
@@ -1964,6 +1944,10 @@
       [
         "crates/forge-warden-cli/tests/oracle_contracts.rs",
         "2ebeda4cc067491737be93ea93bfb7bdbaec67c36615b95d05bb2703bb5bc73c"
+      ],
+      [
+        "crates/forge-warden-cli/tests/public_api.rs",
+        "6a3697ddd558b4cb0bf75f573c07ae76e415ee706ff0a6b62f80bdf60e1fe1b0"
       ],
       [
         "crates/forge-warden-cli/tests/repo_invariants.rs",
