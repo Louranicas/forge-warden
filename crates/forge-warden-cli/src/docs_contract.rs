@@ -6,42 +6,55 @@ const README: &str = include_str!("../../../README.md");
 const JUSTFILE: &str = include_str!("../../../justfile");
 
 // A deliberately limited shell-example lexer: quoting, escaping, operators and comments. Shell
-// expansions remain literal argument values; nothing is evaluated. Unsupported syntax is refused.
-fn words(source: &str) -> Result<Vec<String>, String> {
+// expansions remain literal argument values; nothing is evaluated. Unclosed quotes/escapes and
+// YAML block commands are refused. This does not validate general shell program semantics.
+#[derive(Debug, PartialEq)]
+enum Token {
+    Word(String),
+    Separator(char),
+}
+
+fn words(source: &str) -> Result<Vec<Token>, String> {
     let mut out = Vec::new();
     let mut word = String::new();
+    let mut active = false;
     let mut quote = None;
     let mut escaped = false;
     for c in source.chars() {
         if escaped {
+            active = true;
             word.push(c);
             escaped = false;
         } else if c == '\\' && quote != Some('\'') {
+            active = true;
             escaped = true;
         } else if Some(c) == quote {
             quote = None;
         } else if quote.is_some() {
             word.push(c);
         } else if c == '\'' || c == '"' {
+            active = true;
             quote = Some(c);
-        } else if c == '#' && word.is_empty() {
+        } else if c == '#' && !active {
             break;
         } else if c.is_whitespace() || "|;&<>".contains(c) {
-            if !word.is_empty() {
-                out.push(std::mem::take(&mut word));
+            if active {
+                out.push(Token::Word(std::mem::take(&mut word)));
+                active = false;
             }
             if !c.is_whitespace() {
-                out.push(c.to_string());
+                out.push(Token::Separator(c));
             }
         } else {
+            active = true;
             word.push(c);
         }
     }
     if quote.is_some() || escaped {
         return Err("unclosed quote or escape in executable documentation".to_owned());
     }
-    if !word.is_empty() {
-        out.push(word);
+    if active {
+        out.push(Token::Word(word));
     }
     Ok(out)
 }
@@ -99,19 +112,20 @@ fn commands(readme: &str, justfile: &str) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     for line in examples(readme, justfile) {
         let tokens = words(&line).unwrap();
-        for (start, token) in tokens.iter().enumerate() {
+        for (start, item) in tokens.iter().enumerate() {
+            let Token::Word(token) = item else { continue };
             if token != "forge-warden" && token != "--bin=forge-warden" {
                 continue;
             }
             // cargo --bin names a target, not an executable. Only the args after `--` reach clap.
             let argv = if token == "--bin=forge-warden"
-                || (start > 0 && tokens[start.saturating_sub(1)] == "--bin")
+                || (start > 0 && tokens[start.saturating_sub(1)] == Token::Word("--bin".to_owned()))
             {
                 let Some(separator) = tokens
                     .iter()
                     .enumerate()
                     .skip(start.saturating_add(1))
-                    .find(|(_, value)| value.as_str() == "--")
+                    .find(|(_, value)| **value == Token::Word("--".to_owned()))
                     .map(|(index, _)| index)
                 else {
                     panic!("documented cargo invocation needs the clap argument separator: {line}");
@@ -122,8 +136,11 @@ fn commands(readme: &str, justfile: &str) -> Vec<Vec<String>> {
             };
             let mut command = vec!["forge-warden".to_owned()];
             command.extend(
-                argv.take_while(|arg| !["|", ";", "&", "<", ">"].contains(&arg.as_str()))
-                    .cloned(),
+                argv.take_while(|arg| !matches!(arg, Token::Separator(_)))
+                    .filter_map(|arg| match arg {
+                        Token::Word(value) => Some(value.clone()),
+                        Token::Separator(_) => None,
+                    }),
             );
             out.push(command);
         }
@@ -170,4 +187,8 @@ fn command_discovery_preserves_quotes_pipes_and_continuations_and_rejects_bad_cl
         }
     }
     assert!(words("forge-warden lint 'unclosed").is_err());
+    let quoted = commands("```bash\nforge-warden lint '|' --invented\n```", "");
+    assert_eq!(quoted.len(), 1);
+    assert!(Cli::try_parse_from(&quoted[0]).is_err());
+    assert_eq!(words("''").unwrap(), vec![Token::Word(String::new())]);
 }
