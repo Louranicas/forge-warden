@@ -195,8 +195,30 @@ fn without_inline_code(mut line: &str) -> String {
     out
 }
 
-fn raw_code_tag(line: &str) -> bool {
-    let plain = without_inline_code(line).to_ascii_lowercase();
+// Once raw HTML occurs, inline backticks cannot reliably be treated as code spans without a
+// full HTML-block renderer. Keep that context conservative for the remainder of this document.
+fn has_raw_html(line: &str) -> bool {
+    let plain = without_inline_code(line);
+    plain.match_indices('<').any(|(start, _)| {
+        let tail = plain.get(start.saturating_add(1)..).unwrap();
+        if tail.starts_with(['!', '?']) {
+            return true;
+        }
+        let mut chars = tail.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars
+                .find(|c| !c.is_ascii_alphanumeric() && *c != '-')
+                .is_none_or(|c| c.is_whitespace() || c == '>' || c == '/')
+    })
+}
+
+fn raw_code_tag(line: &str, raw_html: bool) -> bool {
+    let plain = if raw_html {
+        line.to_owned()
+    } else {
+        without_inline_code(line)
+    };
+    let plain = plain.to_ascii_lowercase();
     ["pre", "xmp", "listing", "code", "samp", "kbd"]
         .iter()
         .any(|name| {
@@ -230,11 +252,13 @@ fn examples(readme: &str, justfile: &str) -> Vec<String> {
     let mut fence: Option<(char, usize, &str)> = None;
     let mut body = String::new();
     let mut indented_body = String::new();
+    let mut raw_html = false;
     for line in readme.lines() {
         let (content, indented) = container_content(line);
         if fence.is_none() {
+            raw_html |= has_raw_html(line);
             assert!(
-                !raw_code_tag(line),
+                !raw_code_tag(line, raw_html),
                 "raw HTML code requires an explicit language fence: {line}"
             );
             if !indented && !indented_body.is_empty() {
@@ -519,4 +543,22 @@ fn mixed_tabs_are_indented_code_in_every_container() {
             assert!(Cli::try_parse_from(&found[0]).is_err());
         }
     }
+}
+
+#[test]
+fn raw_html_context_cannot_hide_code_tags_behind_backticks() {
+    for source in [
+        "<div>`<pre>forge-warden init --invented</pre>`</div>",
+        "<custom-element>\n`<pre>forge-warden init --invented</pre>`\n</custom-element>",
+        "<!-- ` --> <pre>forge-warden init --invented</pre> `",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| commands(source, "")).is_err(),
+            "{source:?}"
+        );
+    }
+    assert_eq!(
+        commands("Use `<div>` and `<pre>` as inline examples.", "").len(),
+        0
+    );
 }

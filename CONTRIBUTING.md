@@ -45,7 +45,8 @@ blockquotes; their continued lines are parsed together. Unknown fence languages 
 Raw HTML code/preformatted openers (`pre`, `xmp`, `listing`, `code`, `samp`, `kbd`) outside
 fences refuse anywhere on a line after matched inline backtick spans are removed. Put recorded
 output in an explicit `text` fence. This is a conservative Markdown subset: multiline inline
-spans and escaped/commented HTML may also refuse; use a labeled fence when necessary.
+spans and escaped/commented HTML may also refuse. After raw HTML is seen, inline backticks
+no longer exempt code tags for the rest of that document; use a labeled fence when necessary.
 Inline prose fragments and data fences remain outside command parsing. Tests parse arguments
 with the actual CLI without executing shell expansions or promising example paths or tools.
 
