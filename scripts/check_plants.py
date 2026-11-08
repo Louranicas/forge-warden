@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Gate every runnable plant on a clean exact subject, retaining pending coverage honestly."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+
+sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,8 +24,16 @@ def validate_report(report, revision, ids):
 
 
 def run():
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_NO_REPLACE_OBJECTS="1")
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    tools = load('plant_tools', ROOT / 'scripts/plant_tools.py')
+    runner = load('plant_runner', ROOT / 'plants/run.py')
+    env = runner.environment()
+    cases = json.loads((ROOT / "plants/catalog.json").read_text())["cases"]
+    tools.preflight(tools.requirements(cases), ROOT, env)
     def git(*args):
         return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", *args],
                                        cwd=ROOT, env=env, text=True).strip()
@@ -36,7 +47,6 @@ def run():
     env["RUSTUP_AUTO_INSTALL"] = "0"
     subprocess.run(["rustup", "run", msrv, "rustc", "--version"], cwd=ROOT, env=env, check=True)
     subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT, env=env, check=True)
-    cases = json.loads((ROOT / "plants/catalog.json").read_text())["cases"]
     ids = [case["id"] for case in cases]
     if not ids or len(ids) != len(set(ids)):
         raise ValueError("plant catalog must have unique nonempty cases")
