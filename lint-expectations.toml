@@ -334,3 +334,8 @@ file = "crates/forge-warden-cli/src/doors.rs"
 lint = "clippy::disallowed_types"
 source_reason = "door: open_regular (every named-file open)"
 review_reason = "Q-DOOR: central read-only OpenOptions open uses O_NONBLOCK and requires descriptor metadata is_file before reads; executable pins additionally use O_NOFOLLOW. This check does not exclude procfs files reporting regular-file metadata."
+
+[[data_input]]
+file = "fixtures/coverage/MANIFEST"
+sha256 = "dafc1add006997fc3b2a077691415bd8229a64662f8c882ab1f9526f8254ac33"
+review_reason = "Q-HERMETIC reviewed test-only JSON arrays of corpus groups, case identities and SHA256 values; Rust sources pin membership paths, not production contents. Parsed as data, never executable Rust."
