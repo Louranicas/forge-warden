@@ -359,21 +359,9 @@ lint = "clippy::unwrap_used"
 source_reason = "test door: reads the core's sources and writes a proposed snapshot under the target dir"
 review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and the committed snapshot; mismatch output is written under CARGO_TARGET_TMPDIR, never over the committed API file. Parse/setup failures fail the test."
 
-[[expectation]]
-file = "crates/forge-warden-cli/tests/public_api.rs"
-lint = "clippy::wildcard_enum_match_arm"
-source_reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
-review_reason = "Reviewed on Q-TYPES-1 v3 79978ee: test-only non-exhaustive syn::Item matching records an explicit UNKNOWN sentinel for unmodelled variants. This exception permits the required fallback; it does not establish complete Rust API equivalence or macro expansion coverage."
-
-[[expectation]]
-file = "crates/forge-warden-cli/tests/public_api.rs"
-lint = "clippy::wildcard_enum_match_arm"
-source_reason = "syn::TraitItem is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
-review_reason = "Reviewed on Q-TYPES-1 v3 79978ee: test-only non-exhaustive syn::TraitItem matching records an explicit UNKNOWN sentinel for unmodelled variants. This exception permits the required fallback; it does not establish complete Rust API equivalence or macro expansion coverage."
-
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "9f5a1aee27e412e594e0bcc48f9b808274cead5573cb1b9b4a8efdc63275282a"
+sha256 = "1ff768595983c97adfee0c6ebe57a1e8edfadbc5899555f54f127e4d5faef939"
 review_reason = "Q-HERMETIC reviewed test-only JSON arrays of corpus groups, case identities and SHA256 values; Rust sources pin membership paths, not production contents. Parsed as data, never executable Rust."
 
 [[expectation]]
@@ -381,3 +369,9 @@ file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test fixture: resolve scratch executable identity and child cwd independently of repository modes"
 review_reason = "Q-HERMETIC.1: canonicalize only owned scratch paths and read the test cwd to prove a relative executable retains identity after child chdir; no production exemption or copied repository mode dependency."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/public_api.rs"
+lint = "clippy::wildcard_enum_match_arm"
+source_reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is refused as UNSUPPORTED, which fails the snapshot test"
+review_reason = "Reviewed on Q-TYPES-1 v7 cf7eef5: test-only non-exhaustive syn::Item fallback emits UNSUPPORTED; unvouched() refuses it before snapshot comparison. This admits the required fallback, not general semantic API equivalence or macro expansion completeness."
