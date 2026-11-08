@@ -792,9 +792,8 @@
     },
     {
       "id": "oracle-production-coupling",
-      "guardrail": "Q3-07",
+      "guardrail": "G-45",
       "path": "fixtures/adversarial/reference_model.rs",
-      "append": "\nuse forge_warden_core as production_oracle;\n",
       "cargo": [
         "test",
         "-p",
@@ -812,11 +811,13 @@
         "python3",
         "rustc",
         "rustup"
-      ]
+      ],
+      "old": "scope == 0 || (scope == 1 && file.group == 0) || (scope == 2 && file.group == 2)",
+      "new": "{\n        let source: &[u8] = match scope {\n            0 => br#\"schema = \"forge-warden.policy.v0\"\n[[rule]]\nid = \"oracle\"\nwhy = \"production matcher coupling plant\"\nkind = \"protect_paths\"\nseverity = \"hold\"\npaths = [\"**\"]\n\"#,\n            1 => br#\"schema = \"forge-warden.policy.v0\"\n[[rule]]\nid = \"oracle\"\nwhy = \"production matcher coupling plant\"\nkind = \"protect_paths\"\nseverity = \"hold\"\npaths = [\"src/**\"]\n\"#,\n            2 => br#\"schema = \"forge-warden.policy.v0\"\n[[rule]]\nid = \"oracle\"\nwhy = \"production matcher coupling plant\"\nkind = \"protect_paths\"\nseverity = \"hold\"\npaths = [\"docs/**\"]\n\"#,\n            _ => return false,\n        };\n        let policy = forge_warden_core::policy::parse_policy(source).unwrap();\n        let forge_warden_core::policy::Check::ProtectPaths { scope: matcher } =\n            &policy.rules().first().check else { return false; };\n        matcher.contains(match file.group {\n            0 => \"src/model.rs\",\n            1 => \"tests/model.rs\",\n            _ => \"docs/model.md\",\n        })\n    }"
     },
     {
       "id": "golden-behavior-rebless",
-      "guardrail": "Q3-10",
+      "guardrail": "G-24",
       "path": "fixtures/demo.verdict.json",
       "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
       "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
@@ -835,7 +836,7 @@
     },
     {
       "id": "golden-bless-environment",
-      "guardrail": "Q3-10",
+      "guardrail": "G-24",
       "path": "fixtures/demo.verdict.json",
       "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
       "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",

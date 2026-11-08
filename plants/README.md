@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 50 named plants over 46 guardrail rows plus Q3-07/Q3-10 quality contracts. The remaining 5 register rows are explicitly PENDING
+This revision implements 50 named plants over 46 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24. The remaining 5 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -160,8 +160,8 @@ when the caller requests colour. Named diagnostic matching remains strict: unrel
 or missing tools cannot become CAUGHT. This is diagnostic normalization, not an execution sandbox.
 
 
-Oracle/golden cases are owned by Touchstone (O3). `oracle-production-coupling` appends a production
-crate alias and requires the named syn-based independence refusal. `golden-behavior-rebless`
+Oracle/golden cases are owned by Touchstone (O3). `oracle-production-coupling` replaces the local scope check with a production
+matcher call and requires the named syn-based independence refusal. `golden-behavior-rebless`
 constructs a behaviour-changing candidate as Git data and pairs it with the planted golden
 update; HEAD's immutable policy supplies the dedicated golden-review HOLD. The script's pass
 is a named-rule property, not an overall authority PASS (the CLI run is advisory). The candidate's
