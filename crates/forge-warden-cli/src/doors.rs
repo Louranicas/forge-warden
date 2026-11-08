@@ -1028,11 +1028,18 @@ mod child_tests {
         // The descendant touches a marker only after `setsid`, and the child waits for it before
         // exiting, so the group kill can never catch the descendant still in the group (measured:
         // without the wait, 1 run in ~100 killed it first and the writer saw EPIPE instead).
+        // Q-DOOR.2: with job control off, POSIX gives an asynchronous list stdin = /dev/null
+        // before its own redirections, so in dash (`/bin/sh` on Debian and Ubuntu) `<&0 &` hands
+        // the descendant /dev/null, not the pipe. The pipe is therefore saved on fd 3 first and
+        // passed as `<&3`, which holds in every POSIX shell. The descendant then writes what its
+        // fd 0 really is into the marker (under a temporary name, renamed when complete), and the
+        // test refuses to count a run in which it is not the pipe.
         let dir = scratch("escaped");
         let marker = dir.join("left-the-group");
         let script = format!(
-            "/usr/bin/setsid /bin/sh -c '/usr/bin/touch \"$1\"; exec /usr/bin/sleep 6' x '{}' \
-             <&0 >/dev/null 2>&1 & while [ ! -e '{}' ]; do :; done; exit 0",
+            "exec 3<&0; /usr/bin/setsid /bin/sh -c '/usr/bin/readlink /proc/self/fd/0 > \"$1.tmp\" \
+             && /usr/bin/mv \"$1.tmp\" \"$1\"; exec /usr/bin/sleep 6' x '{}' \
+             <&3 3<&- >/dev/null 2>&1 & exec 3<&-; while [ ! -e '{}' ]; do :; done; exit 0",
             marker.display(),
             marker.display()
         );
@@ -1047,9 +1054,12 @@ mod child_tests {
             took < Duration::from_secs(4),
             "run_child took {took:?}: the stdin writer outlived the deadline"
         );
+        let held_stdin = std::fs::read_to_string(&marker)
+            .expect("the descendant never left the group, so this did not test the escaped case");
         assert!(
-            marker.exists(),
-            "the descendant never left the group, so this did not test the escaped case"
+            held_stdin.starts_with("pipe:"),
+            "the descendant's stdin was {held_stdin:?}, not the pipe, so this did not test the \
+             escaped case (is this shell giving the asynchronous list /dev/null?)"
         );
         assert_eq!(got, Err(ChildFailure::Timeout));
         let _cleaned = std::fs::remove_dir_all(&dir);
