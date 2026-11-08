@@ -2,6 +2,7 @@
 mod common;
 use proc_macro2::{TokenStream, TokenTree};
 use syn::ext::IdentExt as _;
+use syn::parse::Parser as _;
 use syn::visit::Visit as _;
 
 fn forbidden(name: &str) -> bool {
@@ -41,9 +42,104 @@ fn standard_import(tree: &syn::UseTree) -> bool {
     }
 }
 
-#[derive(Default)]
+fn oracle_roots(file: &syn::File) -> std::collections::BTreeSet<String> {
+    fn imports(tree: &syn::UseTree, names: &mut std::collections::BTreeSet<String>) {
+        match tree {
+            syn::UseTree::Path(p) => imports(&p.tree, names),
+            syn::UseTree::Name(n) => {
+                names.insert(n.ident.unraw().to_string());
+            }
+            syn::UseTree::Rename(n) => {
+                names.insert(n.rename.unraw().to_string());
+            }
+            syn::UseTree::Group(g) => g.items.iter().for_each(|t| imports(t, names)),
+            syn::UseTree::Glob(_) => {}
+        }
+    }
+    fn items(source: &[syn::Item], names: &mut std::collections::BTreeSet<String>) {
+        for item in source {
+            let ident = if let syn::Item::Struct(i) = item {
+                Some(&i.ident)
+            } else if let syn::Item::Enum(i) = item {
+                Some(&i.ident)
+            } else if let syn::Item::Type(i) = item {
+                Some(&i.ident)
+            } else if let syn::Item::Trait(i) = item {
+                Some(&i.ident)
+            } else if let syn::Item::Union(i) = item {
+                Some(&i.ident)
+            } else if let syn::Item::Mod(i) = item {
+                Some(&i.ident)
+            } else {
+                None
+            };
+            if let Some(name) = ident {
+                names.insert(name.unraw().to_string());
+            }
+            if let syn::Item::Use(i) = item {
+                imports(&i.tree, names);
+            }
+            if let syn::Item::Mod(i) = item
+                && let Some((_, nested)) = &i.content
+            {
+                items(nested, names);
+            }
+        }
+    }
+    let mut names = [
+        "std", "core", "alloc", "Self", "Vec", "String", "Option", "Result", "Box", "bool", "char",
+        "str", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
+        "isize", "f32", "f64",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    items(&file.items, &mut names);
+    names
+}
+
+// Parse only the argument grammars of the admitted standard macros, with syn nodes.
+// Opaque macro tokens never acquire an exemption from path checking.
+fn macro_arguments(mac: &syn::Macro, name: &str) -> syn::Result<(Vec<syn::Expr>, Vec<syn::Pat>)> {
+    let parse = |input: syn::parse::ParseStream<'_>| {
+        if name == "vec" && input.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut expressions = vec![input.parse::<syn::Expr>()?];
+        let mut patterns = Vec::new();
+        if name == "matches" {
+            input.parse::<syn::Token![,]>()?;
+            patterns.push(input.call(syn::Pat::parse_multi_with_leading_vert)?);
+            if input.peek(syn::Token![if]) {
+                input.parse::<syn::Token![if]>()?;
+                expressions.push(input.parse::<syn::Expr>()?);
+            }
+            if input.peek(syn::Token![,]) {
+                input.parse::<syn::Token![,]>()?;
+            }
+        } else if name == "vec" && input.peek(syn::Token![;]) {
+            input.parse::<syn::Token![;]>()?;
+            expressions.push(input.parse::<syn::Expr>()?);
+        } else {
+            while input.peek(syn::Token![,]) {
+                input.parse::<syn::Token![,]>()?;
+                if input.is_empty() {
+                    break;
+                }
+                expressions.push(input.parse::<syn::Expr>()?);
+            }
+        }
+        if !input.is_empty() {
+            return Err(input.error("unsupported standard-macro arguments"));
+        }
+        Ok((expressions, patterns))
+    };
+    parse.parse2(mac.tokens.clone())
+}
+
 struct Isolation {
     errors: Vec<String>,
+    roots: std::collections::BTreeSet<String>,
 }
 
 impl<'ast> syn::visit::Visit<'ast> for Isolation {
@@ -98,6 +194,15 @@ impl<'ast> syn::visit::Visit<'ast> for Isolation {
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
+        if path.segments.len() > 1
+            && path
+                .segments
+                .first()
+                .is_some_and(|segment| !self.roots.contains(&segment.ident.unraw().to_string()))
+        {
+            self.errors
+                .push("undeclared qualified oracle root".to_owned());
+        }
         if path
             .segments
             .iter()
@@ -197,6 +302,20 @@ impl<'ast> syn::visit::Visit<'ast> for Isolation {
         if !known || token_coupling(mac.tokens.clone()) {
             self.errors
                 .push("oracle macro expansion/include is not admitted".to_owned());
+        } else if let Some(name) = names.last() {
+            match macro_arguments(mac, name) {
+                Ok((expressions, patterns)) => {
+                    for expr in &expressions {
+                        self.visit_expr(expr);
+                    }
+                    for pat in &patterns {
+                        self.visit_pat(pat);
+                    }
+                }
+                Err(error) => self
+                    .errors
+                    .push(format!("oracle macro arguments refused: {error}")),
+            }
         }
         syn::visit::visit_macro(self, mac);
     }
@@ -207,7 +326,10 @@ fn oracle_violations(source: &str) -> Vec<String> {
         Ok(tree) => tree,
         Err(error) => return vec![format!("oracle syntax refused: {error}")],
     };
-    let mut visitor = Isolation::default();
+    let mut visitor = Isolation {
+        errors: Vec::new(),
+        roots: oracle_roots(&tree),
+    };
     visitor.visit_file(&tree);
     visitor.errors
 }
@@ -218,6 +340,8 @@ fn oracle_isolation_rejects_production_coupling_in_every_syntax_position() {
         "use forge_warden_core as production;",
         "use ::forge_warden_cli::Cli;",
         "extern crate forge_warden_core as model;",
+        "fn oracle() { let _ = external_alias::evaluate(); }",
+        "fn oracle() { let _ = std::matches!(x, external_alias::State); }",
         "fn oracle() { let _ = forge_warden_core::TOOL_VERSION; }",
         "fn oracle() { let _ = r#forge_warden_core::TOOL_VERSION; }",
         "fn oracle() { let _ = crate::matcher(); }",
@@ -242,6 +366,9 @@ fn oracle_isolation_rejects_production_coupling_in_every_syntax_position() {
         "use std::num::NonZeroU32; #[derive(Clone, Debug)] struct Case { n: NonZeroU32 }",
         "enum State { Clear } fn oracle() { let _ = State::Clear; }",
         "fn oracle() { let _ = std::matches!(Some(1), Some(_)); }",
+        "fn oracle() { std::assert_eq!(Vec::<u8>::new(), std::vec![]); }",
+        "use std::num::NonZeroU32 as Count; fn oracle() { let _ = Count::new(1); }",
+        "mod local { pub fn value() -> u8 { 1 } } fn oracle() { let _ = local::value(); }",
         "// forge_warden_core::evaluate\nconst DOC: &str = \"forge_warden_core\";",
     ] {
         assert!(
