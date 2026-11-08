@@ -7,13 +7,15 @@
 .github/pull_request_template.md	0
 CHANGELOG.md	0
 CLAUDE.md	2
-CONTRIBUTING.md	0
+CONTRIBUTING.md	4
 EVIDENCE.md	0
 README.md	5
 SECURITY.md	0
 agents/managed/README.md	0
 agents/managed/REVIEW_CONTRACT.md	0
+docs/ADR_STATUS.md	0
 docs/CI_BOUNDS.md	0
+docs/GLOSSARY.md	0
 docs/POLICY_REFERENCE.md	0
 docs/SCANNER_ROLES.md	0
 docs/THREAT_MODEL.md	0
@@ -30,5 +32,5 @@ docs/adr/0010-isolated-git-data-contract.md	0
 docs/adr/0011-admitted-git-runtime.md	0
 docs/claude-project/INSTRUCTIONS.md	0
 docs/claude-project/README.md	0
-plants/README.md	0
 justfile	1
+plants/README.md	0

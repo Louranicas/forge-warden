@@ -1,6 +1,8 @@
 # ADR 0005: Coverage is verified, not claimed
 
-**Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
+Status: Accepted
+
+Historical status record: **Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
 attack); record `mission4/lanes/lodestar/C0-ACCEPT.md`. Author: Keel (O2). Text unchanged from v3 (59b89ac) except
 this line. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`, `c0v4.cases.json` (51 cases),
 `c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`. Implementation: WP-C1 (C1a doors and bounds, C1b

@@ -1,6 +1,8 @@
 # ADR 0007: HOLD acknowledgements name exact evidence
 
-Status: proposed implementation, WP-D2. Author: Bastion (O4).
+Status: Accepted
+
+Historical status record: Status: proposed implementation, WP-D2. Author: Bastion (O4).
 
 A persistent PR label is not fresh consent. An acknowledgement is a detached OpenSSH signature in namespace `forge-warden-ack`
 by a reviewer enrolled in the trusted base, over a receipt naming repository, full base and head

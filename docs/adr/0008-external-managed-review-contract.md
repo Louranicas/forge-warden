@@ -1,6 +1,8 @@
 # ADR 0008: Managed review instructions come from outside the candidate
 
-Status: proposed implementation, WP-D3. Author: Bastion (O4).
+Status: Accepted
+
+Historical status record: Status: proposed implementation, WP-D3. Author: Bastion (O4).
 
 The old managed definition read candidate CLAUDE.md first, installed candidate-selected tooling,
 ran candidate CI in its own harness, and fell back to candidate warden.toml if the base lacked one.

@@ -158,8 +158,8 @@ the ranking reports, never remove them. Pass `git diff --binary --no-renames` ou
     supplied ranking;
   - `git`: the Git that read the patch, recorded for audit;
   - optionally `claims`: `--base` and `--head` as given, always `verified: false` and never used.
-- `verdict`: `pass`, `hold` or `fail`, the strictest of every rule, note and expired waiver.
-- `rules`: one result per rule in policy order, each with its violations in deep-diff-forge's
+- `verdict`: the verdict level `pass`, `hold` or `fail`, the strictest of every rule, note and expired waiver.
+- `rules`: one rule outcome per rule in policy order, each with its violations in deep-diff-forge's
   risk order. Waived violations stay listed with `waived_by`, so exceptions remain visible.
 - `expired_waivers`, `unused_waivers` and `notes`. A note marks something the policy cannot
   judge, so a verdict with any note is at least `hold`, and a `fail` stays `fail`. The notes
@@ -176,7 +176,7 @@ the ranking reports, never remove them. Pass `git diff --binary --no-renames` ou
 Evaluation and rendering are deterministic. Identical policy, patch, ranking, Git facts and
 metadata, date, and `--base`/`--head` claims always give byte-identical output. Repeating a
 command reproduces that output only if the ranker (in authority mode) and Git also produce
-identical output. An admitted ranker's digest pins its identity, not its correctness. Results go to
+identical output. An admitted ranker's digest pins its identity, not its correctness. Verdict documents go to
 **stdout**, diagnostics to **stderr**, and on error stdout is empty. Paths in the human output
 are printed with every character outside printable ASCII escaped, so a hostile file name cannot
 inject terminal escapes or reorder text with bidi controls.
@@ -274,3 +274,5 @@ deep-diff-forge's action names.
 MIT OR Apache-2.0, at your option.
 
 [deep-diff-forge]: https://github.com/Louranicas/deep-diff-forge
+
+Terminology: [glossary](docs/GLOSSARY.md). Design status: [ADR status](docs/ADR_STATUS.md).

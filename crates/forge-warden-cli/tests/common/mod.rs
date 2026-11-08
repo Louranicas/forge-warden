@@ -670,3 +670,53 @@ pub(crate) fn assert_golden_json(name: &str, actual: &serde_json::Value) {
         "golden mismatch; ordinary tests never bless output"
     );
 }
+
+/// Execute only the documented offline exercise in a scratch copy with already built artifacts.
+pub(crate) fn run_first_rule_exercise(script: &str) -> (std::process::Output, Vec<String>) {
+    let directory = scratch("first-rule-exercise");
+    write(
+        &directory,
+        "fixtures/demo.patch",
+        &read_bytes("fixtures/demo.patch"),
+    );
+    std::fs::create_dir_all(directory.join("target/debug/examples")).unwrap();
+    for (source, destination) in [
+        (
+            PathBuf::from(env!("CARGO_BIN_EXE_forge-warden")),
+            directory.join("target/debug/forge-warden"),
+        ),
+        (
+            fixture_ranker(),
+            directory.join("target/debug/examples/fixture-ranker"),
+        ),
+    ] {
+        let status = command("/usr/bin/cp")
+            .arg("--")
+            .arg(source)
+            .arg(destination)
+            .status()
+            .unwrap();
+        assert!(status.success(), "copy already built tutorial executable");
+    }
+    write(&directory, "exercise.sh", script.as_bytes());
+    let output = command("bash")
+        .current_dir(&directory)
+        .arg("exercise.sh")
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", directory.join("target/debug").display()),
+        )
+        .output()
+        .unwrap();
+    let records = if output.status.success() {
+        ["green.json", "red.json", "green-again.json"]
+            .iter()
+            .map(|name| {
+                std::fs::read_to_string(directory.join("target/first-rule").join(name)).unwrap()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    (output, records)
+}

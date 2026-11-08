@@ -1,6 +1,8 @@
 # ADR 0003: Unknown is never pass
 
-**Status:** accepted, 2026-11-05
+Status: Accepted
+
+Historical status record: **Status:** accepted, 2026-11-05
 
 ## Context
 
