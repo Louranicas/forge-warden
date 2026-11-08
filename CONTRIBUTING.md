@@ -40,15 +40,20 @@ build artifacts, including generated documentation; source documentation must li
 named `target` and ordinary Markdown files named `mutants.out.*.md` remain visible. Other source
 symlinks refuse rather than hiding or following a document subtree. No ignore file controls this walk.
 
-Executable examples use explicit shell fences or indented code, including nested lists and
-blockquotes; their continued lines are parsed together. Unknown fence languages refuse.
-Raw HTML code/preformatted openers (`pre`, `xmp`, `listing`, `code`, `samp`, `kbd`) outside
-fences refuse anywhere on a line after matched inline backtick spans are removed. Put recorded
-output in an explicit `text` fence. This is a conservative Markdown subset: multiline inline
-spans and escaped/commented HTML may also refuse. After raw HTML is seen, inline backticks
-no longer exempt code tags for the rest of that document; use a labeled fence when necessary.
-Inline prose fragments and data fences remain outside command parsing. Tests parse arguments
-with the actual CLI without executing shell expansions or promising example paths or tools.
+The test-only pulldown-cmark parser classifies Markdown at every nesting depth. Every code
+block receives a language decision: indented code is parsed as shell; fenced code uses the
+explicit supported shell, literal YAML, or data language. Unknown or absent fence languages
+refuse. Continued shell lines are parsed together; use `text` for recorded output.
+
+Every raw HTML event (block or inline) containing a `pre`, `xmp`, `listing`, `code`, `samp`, or
+`kbd` opener refuses. There is no raw-HTML allowlist. Real inline backtick code is a distinct
+parser event and remains prose; so do ordinary paragraphs. A fence-looking line inside an
+HTML block is HTML, not a data exemption. Genuine data fences after the HTML block ends remain
+supported. The parser determines those boundaries; tests do not infer them from tag strings.
+
+Per-file invocation counts remain exact. The shell lexer and literal YAML subset still have
+explicit limits: no command expansion or example subprocess is executed, and example paths or
+tools need not exist. These tests check actual CLI arguments, not general shell semantics.
 
 ## Branch protection (for the maintainer)
 
