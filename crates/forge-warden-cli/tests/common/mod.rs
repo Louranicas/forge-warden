@@ -305,6 +305,7 @@ fn admit_data(name: &str) {
 }
 
 /// Production and test-only Rust sources of the workspace, decided by the compiler.
+#[derive(Clone)]
 pub(crate) struct Sources {
     /// Compiled into a `lib` or `bin` target built without `test` (what ships).
     pub(crate) production: std::collections::BTreeSet<String>,
@@ -452,13 +453,16 @@ fn check_coverage(
 
 /// Every first-party Rust source, classified by **compilation context**, never by its path (Bastion
 /// B-C1c-03; the contract of D6's `guardrail_sources.py`). A nested `cargo check --workspace
-/// --all-targets --message-format=json` (persistent discovery dir, inherited rustflags and wrappers
+/// --all-targets --message-format=json` (owned per-invocation discovery dir, inherited rustflags and wrappers
 /// cleared) reports every first-party artifact with its kind, its test profile and its dep-info.
 /// Refused, never guessed: unparseable dep-info; a missing or ambiguous dep-info file; a Rust input
 /// outside the repository; a source with a `tests` path component compiled into production; and
 /// any `crates/*/src` source the compiler did not compile at all (inactive source).
 pub(crate) fn sources() -> Sources {
-    sources_with_evidence().0
+    // The source tree is immutable during a test process (as already required by the production
+    // membership cache in repo_invariants). Cache only admitted sets, never build directories.
+    static CENSUS: std::sync::OnceLock<Sources> = std::sync::OnceLock::new();
+    CENSUS.get_or_init(|| sources_with_evidence().0).clone()
 }
 
 /// [`sources`] together with the exact evidence it classified: the `cargo check
