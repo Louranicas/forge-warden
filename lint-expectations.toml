@@ -362,8 +362,14 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 [[expectation]]
 file = "crates/forge-warden-cli/tests/public_api.rs"
 lint = "clippy::wildcard_enum_match_arm"
-source_reason = "syn::Item is #[non_exhaustive]; macros, extern crates and foreign modules carry no public API in the core"
-review_reason = "Test-only matching of non-exhaustive syn::Item needs a fallback. This lint exception does not validate snapshot completeness: ignored macros generate public NoteCode API, recorded as a boundary finding requiring correction."
+source_reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
+review_reason = "Reviewed on Q-TYPES-1 v3 79978ee: test-only non-exhaustive syn::Item matching records an explicit UNKNOWN sentinel for unmodelled variants. This exception permits the required fallback; it does not establish complete Rust API equivalence or macro expansion coverage."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/public_api.rs"
+lint = "clippy::wildcard_enum_match_arm"
+source_reason = "syn::TraitItem is #[non_exhaustive]: an item kind this reader does not model is recorded as UNKNOWN, so it changes the snapshot"
+review_reason = "Reviewed on Q-TYPES-1 v3 79978ee: test-only non-exhaustive syn::TraitItem matching records an explicit UNKNOWN sentinel for unmodelled variants. This exception permits the required fallback; it does not establish complete Rust API equivalence or macro expansion coverage."
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
