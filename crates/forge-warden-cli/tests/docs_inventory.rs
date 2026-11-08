@@ -154,16 +154,9 @@ fn front_door_docs_do_not_claim_the_child_door_spawns_nothing() {
 }
 
 #[test]
-fn every_tracked_markdown_document_has_an_exact_command_inventory() {
-    let git = common::command("git")
-        .current_dir(common::root())
-        .args(["ls-files", "-z", "--", "*.md"])
-        .output()
-        .unwrap();
-    assert!(git.status.success(), "git ls-files failed");
-    let output = String::from_utf8(git.stdout).unwrap();
-    let mut tracked: BTreeSet<_> = output.split('\0').filter(|s| !s.is_empty()).collect();
-    tracked.insert("justfile");
+fn every_source_markdown_document_has_an_exact_command_inventory() {
+    let mut discovered = common::markdown_documents(&common::root());
+    discovered.insert("justfile".to_owned());
     let inventory = read("docs/command-sources.tsv");
     let mut indexed = BTreeSet::new();
     for row in inventory.lines() {
@@ -174,10 +167,58 @@ fn every_tracked_markdown_document_has_an_exact_command_inventory() {
             count.parse::<usize>().is_ok(),
             "invalid command count for {path}"
         );
-        assert!(indexed.insert(path), "duplicate command document {path}");
+        assert!(
+            indexed.insert(path.to_owned()),
+            "duplicate command document {path}"
+        );
     }
     assert_eq!(
-        indexed, tracked,
-        "every tracked Markdown document and justfile must be indexed; no new doc may escape command checks"
+        indexed, discovered,
+        "every source Markdown document and justfile must be indexed; new or untracked docs cannot escape command checks"
     );
+}
+
+#[test]
+fn source_walk_includes_untracked_and_nested_docs_but_excludes_reviewed_outputs() {
+    let dir = common::scratch("documentation-tree");
+    for path in [
+        "README.md",
+        "docs/new.md",
+        "docs/UPPER.MD",
+        "docs/target/source.md",
+        "mutants.out.source.md",
+        "target/generated.md",
+        "mutants.out/report.md",
+        "mutants.out.old/report.md",
+        ".git/internal.md",
+        "nested/.git/internal.md",
+    ] {
+        common::write(&dir, path, b"document\n");
+    }
+    let expected: BTreeSet<_> = [
+        "README.md",
+        "docs/new.md",
+        "docs/UPPER.MD",
+        "docs/target/source.md",
+        "mutants.out.source.md",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(common::markdown_documents(&dir), expected);
+}
+
+#[test]
+#[cfg(unix)]
+fn source_walk_refuses_symlinks_instead_of_following_or_hiding_them() {
+    let outside = common::scratch("documentation-link-target");
+    let doc = common::write(&outside, "outside.md", b"document\n");
+    for (name, target) in [("file.md", doc.as_path()), ("directory", outside.as_path())] {
+        let dir = common::scratch(name);
+        common::fixture_symlink(target, &dir.join("linked"));
+        assert!(
+            std::panic::catch_unwind(|| common::markdown_documents(&dir)).is_err(),
+            "source link hidden or followed: {name}"
+        );
+    }
 }
