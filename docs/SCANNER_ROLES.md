@@ -1,0 +1,16 @@
+# Attribute scanner authority and independent checks
+
+WP-Q-CI-BOUNDS closes Q3-08's suppression-scanner ambiguity. The scanners have distinct policies; agreement does not mean that every scanner enforces every policy.
+
+| Consumer | Authority and scope |
+| --- | --- |
+| repo_invariants suppression check | Syn is authoritative for source-written Rust suppression syntax. The shared common/attribute_policy.rs parser rejects allow and requires each expect to have at least one lint and exactly one nonempty literal reason. It visits outer/inner attributes, inactive conditional attributes and attribute tokens inside macros. It includes repo_invariants itself; strings/comments no longer require a self-exclusion. The former line-prefix scanner is deleted. |
+| door_lints | Syn is authoritative for effect-door policy: lint levels/groups that can disable the doors, production source classification, and admitted door exceptions. A legitimate reason does not authorize an effect exception. General suppression validity is additionally required by repo_invariants; door_lints is not advertised as the global expectation ledger. Its narrowly admitted macro doc-token primitive is shared with the suppression parser. |
+| Python guardrail_attributes | Independent conservative lexical extraction for the expectation ledger, not a Rust parser or effect-authority check. It rejects allow and malformed/empty expectation reasons, extracts exact normalized lint/reason pairs, and the ledger compares file/lint/reason multiplicities against reviewed entries. It does not delegate to syn, so disagreement remains detectable. Unsupported Rust reason escapes may conservatively refuse rather than silently omit an entry. |
+| repo_invariants ignore check | Syn-based separate policy requiring a nonempty reason for ignore, including raw names, nested cfg_attr and inner attributes within macro token bodies. Python does not claim to enforce ignored-test policy. |
+
+The shared fixtures/attribute-policy.json corpus independently states the expected suppression pairs/refusal, door-policy verdict and unexplained-ignore count. Rust consumers and Python tests read the same cases and assert their own role's expected outputs. Cases cover raw identifiers in names/paths/reasons, nested cfg_attr, inner attributes, adjacent attributes, macro token bodies, multiple lints, missing/duplicate/blank/nonliteral reasons, and inert comments/raw strings. Positive examples prevent an always-refuse checker from passing.
+
+This is finite regression evidence, not a proof of parser equivalence for all Rust. Syn owns Rust syntax; Python's admitted ledger subset stays conservative. The source-written checks do not expand arbitrary procedural macros or reconstruct attributes assembled from fragments. Existing compiler/clippy controls, macro/source admission in door_lints, protected paths and independent review remain required. No scanner's output is permission to bypass another one's policy.
+
+Rung: parsed repository invariants plus independent ledger gate and protected review. The checks concern repository source and review metadata, not a production value that can be made unconstructible by a domain type. Compiler evidence still decides production membership; this change does not replace that classifier or weaken its refusal rules.

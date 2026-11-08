@@ -63,8 +63,97 @@ def preflight(required, root, env):
         print('plant preflight: ' + name + ' OK', flush=True)
 
 
+# Reviewed bounds, not candidate-provided ranges. Evidence/headroom: docs/CI_BOUNDS.md.
+# A budget change needs the same protected-code review as a workflow change.
+CI_TIMEOUTS = {
+    "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10, "workflow-audit": 10,
+               "mutation": 60, "dogfood": 10, "vocabulary": 10},
+    "mutation-baseline.yml": {"full-workspace": 120},
+}
+
+
+def workflow_lines(text):
+    """Reject multiline quoted/flow scalars; never count their contents as YAML fields."""
+    block_indent = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if block_indent is not None and indent > block_indent:
+            continue  # Contents of an explicitly admitted literal block are data.
+        block_indent = None
+        match = re.fullmatch(r" *(?:- )?[A-Za-z_][A-Za-z_0-9-]*:(?: (.*))?", line)
+        if not match:
+            raise ValueError("CI timeout contract: unsupported YAML line shape")
+        value = match[1] or ""
+        if value == "|":
+            block_indent = indent
+        elif value.startswith("'"):
+            if not re.fullmatch(r"'(?:[^']|'')*'(?: +#[^\n]*)?", value):
+                raise ValueError("CI timeout contract: multiline quoted scalar refused")
+        elif value.startswith('"'):
+            if not re.fullmatch(r'"(?:[^"\\]|\\.)*"(?: +#[^\n]*)?', value):
+                raise ValueError("CI timeout contract: multiline quoted scalar refused")
+        elif value.startswith("["):
+            if not re.fullmatch(r"\[[a-z][a-z0-9_-]*(?:, *[a-z][a-z0-9_-]*)*\]", value):
+                raise ValueError("CI timeout contract: unsupported flow scalar")
+        elif value.startswith(("{", "&", "*", "!", ">", "|")):
+            raise ValueError("CI timeout contract: unsupported YAML scalar")
+        yield line
+
+
+def check_timeouts(root):
+    """Admit this repository's literal block-style jobs; unknown YAML shapes refuse."""
+    for filename, budgets in CI_TIMEOUTS.items():
+        text = (root / ".github/workflows" / filename).read_text()
+        roots = []
+        jobs = {}
+        job = None
+        in_jobs = False
+        fields = set()
+        for line in workflow_lines(text):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if "\t" in line[:len(line) - len(line.lstrip())]:
+                raise ValueError("CI timeout contract: tab indentation")
+            if not line.startswith(" "):
+                match = re.fullmatch(r"([a-z][a-z-]*):(?: [A-Za-z0-9_-]+)?", line)
+                if not match or match[1] not in {"name", "on", "permissions", "concurrency", "env", "jobs"}:
+                    raise ValueError("CI timeout contract: unsupported workflow root shape")
+                if match[1] in roots:
+                    raise ValueError("CI timeout contract: duplicate workflow key")
+                roots.append(match[1])
+                in_jobs = line == "jobs:"
+                job = None
+            elif in_jobs:
+                indent = len(line) - len(line.lstrip(" "))
+                if indent == 2:
+                    match = re.fullmatch(r"  ([a-z][a-z0-9-]*):", line)
+                    if not match or match[1] in jobs or match[1] not in budgets:
+                        raise ValueError("CI timeout contract: unsupported, duplicate or unreviewed job")
+                    job = match[1]
+                    jobs[job] = None
+                    fields = set()
+                elif indent == 4 and job is not None:
+                    match = re.fullmatch(r"    ([a-z][a-z-]*):(.*)", line)
+                    if not match or match[1] not in {"name", "runs-on", "timeout-minutes", "if", "env", "steps"}:
+                        raise ValueError("CI timeout contract: unsupported job field")
+                    if match[1] in fields:
+                        raise ValueError("CI timeout contract: duplicate job field")
+                    fields.add(match[1])
+                    if match[1] == "timeout-minutes":
+                        if match[2] != " " + str(budgets[job]):
+                            raise ValueError("CI timeout contract: unjustified timeout for " + filename + ":" + job)
+                        jobs[job] = budgets[job]
+                elif job is None or indent < 4:
+                    raise ValueError("CI timeout contract: unsupported job indentation")
+        if set(jobs) != set(budgets) or any(value is None for value in jobs.values()):
+            raise ValueError("CI timeout contract: missing job or timeout in " + filename)
+
+
 def check_ci(root):
     """Conservative check of this repository's owned workflow shape, not a general YAML parser."""
+    check_timeouts(root)
     cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
     required = requirements(cases)
     workflow = (root / '.github/workflows/ci.yml').read_text()

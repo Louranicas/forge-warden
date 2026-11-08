@@ -46,6 +46,18 @@ class Guardrails(unittest.TestCase):
         self.assertEqual(checks.attributes.expectations(raw),
                          checks.attributes.expectations(ordinary))
 
+    def test_independent_attribute_scanner_matches_shared_corpus(self):
+        cases = json.loads((ROOT / "fixtures/attribute-policy.json").read_text())
+        self.assertGreaterEqual(len(cases), 30)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                if case["expectations"] is None:
+                    with self.assertRaises(ValueError):
+                        checks.attributes.expectations(case["source"])
+                else:
+                    actual = checks.attributes.expectations(case["source"])
+                    self.assertEqual(actual, [tuple(pair) for pair in case["expectations"]])
+
     def test_baseline_agrees(self):
         checks.check_paths(self.root)
         checks.check_floor(self.root)

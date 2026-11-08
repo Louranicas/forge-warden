@@ -40,7 +40,7 @@ fn rust_sources() -> Vec<(String, String)> {
         // This file names the markers and attributes it searches for, so it cannot scan itself.
         .filter(|rel| !rel.ends_with("tests/repo_invariants.rs"))
         .map(|rel| {
-            let text = std::fs::read_to_string(root().join(&rel)).unwrap_or_default();
+            let text = read(&rel);
             (rel, text)
         })
         .collect();
@@ -77,32 +77,12 @@ fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 
 #[test]
 fn suppressions_are_expectations_with_reasons() {
-    for (path, text) in rust_sources() {
-        let lines: Vec<&str> = text.lines().collect();
-        for (n, line) in code_lines(&text) {
-            let code = line.trim_start();
-            assert!(
-                !(code.starts_with("#[allow(")
-                    || code.starts_with("#![allow(")
-                    || (code.contains("cfg_attr(") && code.contains("allow("))),
-                "{path}:{}: use #[expect(lint, reason = \"…\")], which fails once it is no longer needed",
-                n + 1
-            );
-            if code.starts_with("#[expect(") || code.starts_with("#![expect(") {
-                // The attribute runs until the first line that closes it.
-                let attribute: String = lines[n..]
-                    .iter()
-                    .take_while(|l| !l.trim_end().ends_with(")]"))
-                    .chain(lines[n..].iter().find(|l| l.trim_end().ends_with(")]")))
-                    .copied()
-                    .collect();
-                assert!(
-                    attribute.contains("reason = \""),
-                    "{path}:{}: every #[expect] needs a reason = \"…\"",
-                    n + 1
-                );
-            }
-        }
+    let mut names = common::sources().test_only;
+    names.extend(rust_sources().into_iter().map(|(path, _)| path));
+    names.insert("crates/forge-warden-cli/tests/repo_invariants.rs".to_owned());
+    for path in names {
+        let result = common::attribute_policy::expectations(&read(&path));
+        assert!(result.is_ok(), "{path}: {result:?}");
     }
 }
 
@@ -542,6 +522,10 @@ fn unexplained_ignores(text: &str) -> usize {
             while let Some(token) = tokens.next() {
                 match token {
                     proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
+                        if matches!(tokens.peek(), Some(proc_macro2::TokenTree::Punct(bang)) if bang.as_char() == '!')
+                        {
+                            tokens.next();
+                        }
                         if let Some(proc_macro2::TokenTree::Group(group)) = tokens.peek()
                             && group.delimiter() == proc_macro2::Delimiter::Bracket
                             && let Ok(meta) = syn::parse2::<syn::Meta>(group.stream())
@@ -627,4 +611,34 @@ fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
         unexplained_ignores("macro_rules! probe { () => { #[ignore] fn probe() {} } }"),
         1
     );
+}
+
+#[test]
+fn suppression_and_ignore_scanners_match_the_shared_corpus() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(&read("fixtures/attribute-policy.json")).unwrap();
+    assert!(cases.len() >= 30, "attribute corpus shrank");
+    for case in cases {
+        let source = case
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        let expected = case.get("expectations").unwrap();
+        let actual = common::attribute_policy::expectations(source);
+        if expected.is_null() {
+            assert!(actual.is_err(), "{case}: {actual:?}");
+        } else {
+            let pairs: Vec<(String, String)> = serde_json::from_value(expected.clone()).unwrap();
+            assert_eq!(actual, Ok(pairs), "{case}");
+        }
+        let ignored = case
+            .get("unexplained_ignores")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap();
+        assert_eq!(
+            u64::try_from(unexplained_ignores(source)).unwrap(),
+            ignored,
+            "{case}"
+        );
+    }
 }

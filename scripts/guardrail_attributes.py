@@ -27,14 +27,14 @@ def tokens(text):
             if depth:
                 raise ValueError("unclosed Rust block comment")
         else:
-            raw = re.match(r'(?:br|cr|r)(\#*)"', text[i:])
+            raw = re.match(r'(br|cr|r)(\#*)"', text[i:])
             if raw:
                 start = i + raw.end()
-                end = text.find('"' + raw[1], start)
+                end = text.find('"' + raw[2], start)
                 if end < 0:
                     raise ValueError("unclosed raw string")
-                result.append(("string", text[start:end]))
-                i = end + 1 + len(raw[1])
+                result.append(("string" if raw[1] == "r" else "non_string_literal", text[start:end]))
+                i = end + 1 + len(raw[2])
                 continue
             if text[i] == '"':
                 start = i
@@ -94,35 +94,65 @@ def expectations(text):
         if depth:
             raise ValueError("unclosed attribute")
         attr = stream[start:j - 1]
-        for n, token in enumerate(attr):
-            if token == ("word", "allow") and attr[n + 1:n + 2] == [("punct", "(")]:
-                raise ValueError("allow attribute forbidden, including conditional/multiline forms")
-            if token != ("word", "expect") or attr[n + 1:n + 2] != [("punct", "(")]:
-                continue
-            args = []
-            k = n + 2
-            while k < len(attr) and attr[k] != ("punct", ")"):
-                args.append(attr[k])
-                k += 1
-            if k == len(attr):
-                raise ValueError("unclosed expectation")
-            parts = [[]]
-            for item in args:
-                if item == ("punct", ","):
-                    parts.append([])
-                else:
-                    parts[-1].append(item)
-            reasons = [part for part in parts if part[:2] == [("word", "reason"), ("punct", "=")]]
-            if len(reasons) != 1 or len(reasons[0]) != 3 or reasons[0][2][0] != "string" or not reasons[0][2][1]:
-                raise ValueError("expectation needs one literal nonempty reason")
-            reason = reasons[0][2][1]
-            lints = [part for part in parts if part and part is not reasons[0]]
-            if not lints:
-                raise ValueError("expectation needs a lint")
-            for lint in lints:
-                name = "".join(value for kind, value in lint if kind in ("word", "punct"))
-                if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*", name):
-                    raise ValueError("unsupported expectation lint syntax")
-                found.append((name, reason))
+        found.extend(meta_expectations(attr))
         i = j
+    return found
+
+
+def arguments(stream):
+    """Split one meta argument list, preserving nested syntax and literal token kinds."""
+    parts = [[]]
+    stack = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for token in stream:
+        kind, value = token
+        if kind == "punct" and value in "([{":
+            stack.append(value)
+        elif kind == "punct" and value in ")]}":
+            if not stack or stack.pop() != pairs[value]:
+                raise ValueError("unbalanced attribute arguments")
+        if token == ("punct", ",") and not stack:
+            parts.append([])
+        else:
+            parts[-1].append(token)
+    if stack:
+        raise ValueError("unclosed attribute arguments")
+    if parts and not parts[-1]:
+        parts.pop()
+    return parts
+
+
+def meta_expectations(attr):
+    # Only unqualified builtin attributes carry this policy. Tool attributes and cfg
+    # predicates are not recursively searched for words that resemble suppressions.
+    if not attr or attr[0][0] != "word":
+        return []
+    if attr[1:3] == [("punct", ":"), ("punct", ":")]:
+        return []
+    name = attr[0][1]
+    if name == "allow":
+        raise ValueError("allow attribute forbidden, including conditional/multiline forms")
+    if name not in ("expect", "cfg_attr"):
+        return []
+    if attr[1:2] != [("punct", "(")] or attr[-1:] != [("punct", ")")]:
+        raise ValueError("attribute requires arguments")
+    parts = arguments(attr[2:-1])
+    if name == "cfg_attr":
+        if len(parts) < 2:
+            raise ValueError("cfg_attr needs predicate and attribute")
+        return [pair for nested in parts[1:] for pair in meta_expectations(nested)]
+    reasons = [part for part in parts if part[:2] == [("word", "reason"), ("punct", "=")]]
+    if (len(reasons) != 1 or len(reasons[0]) != 3 or reasons[0][2][0] != "string"
+            or not reasons[0][2][1] or not reasons[0][2][1].strip()):
+        raise ValueError("expectation needs one literal nonempty reason")
+    lints = [part for part in parts if part is not reasons[0]]
+    if not lints:
+        raise ValueError("expectation needs a lint")
+    found = []
+    for lint in lints:
+        name = "".join(value for kind, value in lint if kind in ("word", "punct"))
+        if any(kind not in ("word", "punct") for kind, _ in lint) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z_0-9]*(?:::[A-Za-z_][A-Za-z_0-9]*)*", name):
+            raise ValueError("unsupported expectation lint syntax")
+        found.append((name, reasons[0][2][1]))
     return found

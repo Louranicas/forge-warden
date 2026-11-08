@@ -28,6 +28,7 @@ env:
 
 jobs:
   gate:
+    timeout-minutes: 20
     name: gate (fmt, clippy, test, doc)
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +67,7 @@ jobs:
           path: target/plants-*
 
   msrv:
+    timeout-minutes: 10
     name: declared Rust 1.88 compatibility
     runs-on: ubuntu-latest
     steps:
@@ -80,6 +82,7 @@ jobs:
           RUSTFLAGS: ""
 
   supply-chain:
+    timeout-minutes: 10
     name: supply chain (cargo-deny)
     runs-on: ubuntu-latest
     steps:
@@ -92,6 +95,7 @@ jobs:
       - run: cargo deny check
 
   workflow-audit:
+    timeout-minutes: 10
     name: workflow audit (zizmor)
     runs-on: ubuntu-latest
     steps:
@@ -104,6 +108,7 @@ jobs:
       - run: zizmor --persona=pedantic .github/workflows
 
   mutation:
+    timeout-minutes: 60
     name: diff mutation (cargo-mutants)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
@@ -133,6 +138,7 @@ jobs:
 
   # Repository-local workflow alone cannot enforce its own immutability: see ADR 0006.
   dogfood:
+    timeout-minutes: 10
     name: dogfood (trusted base judges candidate data)
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
@@ -171,6 +177,7 @@ jobs:
             ${{ runner.temp }}/warden-evidence/acknowledgement.json
 
   vocabulary:
+    timeout-minutes: 10
     name: vocabulary tracks deep-diff-forge
     runs-on: ubuntu-latest
     steps:

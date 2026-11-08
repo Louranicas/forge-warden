@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 sys.dont_write_bytecode = True
@@ -24,8 +25,100 @@ TOOLS = load("tool_versions")
 PLANTS = load("check_plants")
 CAPS = load("plant_tools")
 
+# Independent reviewed expectations, not values imported from the validator.
+TIMEOUTS = {
+    "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10,
+               "workflow-audit": 10, "mutation": 60, "dogfood": 10,
+               "vocabulary": 10},
+    # Provisional budget; hosted full-workspace baseline is not yet available.
+    "mutation-baseline.yml": {"full-workspace": 120},
+}
+
 
 class Contracts(unittest.TestCase):
+    def copy_ci_fixture(self, root):
+        for file in ("plants/catalog.json", "scripts/tool-versions.toml",
+                     ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
+            (root / file).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / file, root / file)
+        # Normalize only job-level timeouts in the owned block-style schema.
+        # This keeps negative plants isolated even before source workflows change.
+        for workflow, jobs in TIMEOUTS.items():
+            path = root / ".github/workflows" / workflow
+            text = path.read_text()
+            for job, minutes in jobs.items():
+                pattern = (r"^  " + re.escape(job)
+                           + r":\n(.*?)(?=^  [A-Za-z_][\w-]*:\n|\Z)")
+                match = re.search(pattern, text, re.M | re.S)
+                self.assertIsNotNone(match, (workflow, job))
+                body = re.sub(r"^    timeout-minutes:[^\n]*\n", "",
+                              match[1], flags=re.M)
+                text = (text[:match.start(1)] + f"    timeout-minutes: {minutes}\n"
+                        + body + text[match.end(1):])
+            path.write_text(text)
+
+    def test_reviewed_job_timeouts_are_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            CAPS.check_ci(root)
+
+    def test_every_job_timeout_is_required_literal_unique_and_reviewed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            for workflow, jobs in TIMEOUTS.items():
+                path = root / ".github/workflows" / workflow
+                original = path.read_text()
+                for job, minutes in jobs.items():
+                    header = f"  {job}:\n"
+                    timeout = f"    timeout-minutes: {minutes}\n"
+                    anchor = header + timeout
+                    self.assertEqual(original.count(anchor), 1)
+                    cases = {
+                        "missing": "",
+                        "zero": "    timeout-minutes: 0\n",
+                        "huge": "    timeout-minutes: 999999\n",
+                        "expression": "    timeout-minutes: ${{ 20 }}\n",
+                        "duplicate": timeout + timeout,
+                        "duplicate-conflicting": timeout + "    timeout-minutes: 0\n",
+                        "unreviewed-positive": f"    timeout-minutes: {minutes + 1}\n",
+                    }
+                    for case, replacement in cases.items():
+                        with self.subTest(workflow=workflow, job=job, case=case):
+                            path.write_text(original)
+                            CAPS.check_ci(root)  # Positive control for every plant.
+                            path.write_text(original.replace(anchor, header + replacement, 1))
+                            try:
+                                with self.assertRaises(ValueError):
+                                    CAPS.check_ci(root)
+                            finally:
+                                path.write_text(original)
+
+    def test_timeout_text_in_multiline_quoted_names_is_not_a_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            for workflow, jobs in TIMEOUTS.items():
+                path = root / ".github/workflows" / workflow
+                original = path.read_text()
+                for job, minutes in jobs.items():
+                    pattern = rf"(^  {re.escape(job)}:\n)(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)"
+                    match = re.search(pattern, original, re.M | re.S)
+                    self.assertIsNotNone(match)
+                    for quote in ("'", '"'):
+                        with self.subTest(workflow=workflow, job=job, quote=quote):
+                            body = match[2].replace(f"    timeout-minutes: {minutes}\n", "")
+                            body = re.sub(r"^    name: [^\n]*\n",
+                                f"    name: {quote}label\n    timeout-minutes: {minutes}\n      tail{quote}\n",
+                                body, count=1, flags=re.M)
+                            path.write_text(original[:match.start(2)] + body + original[match.end(2):])
+                            try:
+                                with self.assertRaisesRegex(ValueError, "quoted scalar"):
+                                    CAPS.check_ci(root)
+                            finally:
+                                path.write_text(original)
+
     def test_version_copies_match_canonical_inputs(self):
         TOOLS.check(ROOT)
 
@@ -62,9 +155,7 @@ class Contracts(unittest.TestCase):
     def test_gate_tool_install_cannot_be_removed_moved_or_revised(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for file in ("plants/catalog.json", "scripts/tool-versions.toml", ".github/workflows/ci.yml"):
-                (root / file).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(ROOT / file, root / file)
+            self.copy_ci_fixture(root)
             path = root / ".github/workflows/ci.yml"
             original = path.read_text()
             install = ("      - uses: taiki-e/install-action@" + TOOLS.versions(ROOT)['install_action']

@@ -12,6 +12,7 @@
 )]
 
 mod common;
+use common::attribute_policy::is_plain_doc;
 use common::{files_under, root};
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::ext::IdentExt as _;
@@ -78,21 +79,6 @@ fn check_meta(meta: &Meta, found: &mut Vec<String>) {
                 .collect();
             found.push(format!("{name}({})", names.join("::")));
         }
-    }
-}
-
-/// Whether the tokens of an attribute are EXACTLY a doc attribute that cannot change a lint level:
-/// `doc = <literal>` or, in a macro body, `doc = $name` (one metavariable). Anything else that
-/// starts with `doc` (`doc::allow(..)`, `doc = "a" allow(..)`, `doc = $($t)*`) is not admitted here
-/// and goes through the full parse and lint check (Touchstone E3a v4 boundary matrix).
-fn is_plain_doc(tokens: &TokenStream) -> bool {
-    let trees: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    let doc_eq = matches!(trees.first(), Some(TokenTree::Ident(i)) if i.unraw() == "doc")
-        && matches!(trees.get(1), Some(TokenTree::Punct(p)) if p.as_char() == '=');
-    match trees.as_slice() {
-        [_, _, TokenTree::Literal(_)] => doc_eq,
-        [_, _, TokenTree::Punct(dollar), TokenTree::Ident(_)] => doc_eq && dollar.as_char() == '$',
-        _ => false,
     }
 }
 
@@ -654,4 +640,22 @@ fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
         "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {:?}",
         shape.joins
     );
+}
+
+#[test]
+fn door_scanner_matches_its_role_in_the_shared_corpus() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(&common::read("fixtures/attribute-policy.json")).unwrap();
+    assert!(cases.len() >= 30, "attribute corpus shrank");
+    for case in cases {
+        let source = case
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        let expected = case
+            .get("door_violation")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap();
+        assert_eq!(!door_lint_controls(source).is_empty(), expected, "{case}");
+    }
 }
