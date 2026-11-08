@@ -79,6 +79,66 @@ pub(crate) fn files_under(dir: &str, suffix: &str) -> Vec<PathBuf> {
     out
 }
 
+/// Discover source Markdown without Git metadata. Only reviewed output/metadata directories
+/// are omitted: `.git` at any depth, and root `target` or `mutants.out*` directories.
+/// Other symlinks refuse rather than hiding a document subtree or following it outside `base`.
+pub(crate) fn markdown_documents(base: &std::path::Path) -> std::collections::BTreeSet<String> {
+    fn walk(
+        base: &std::path::Path,
+        dir: &std::path::Path,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name();
+            if name == ".git" {
+                continue;
+            }
+            let kind = entry.file_type().unwrap();
+            let path = entry.path();
+            let generated = dir == base
+                && (name == "target"
+                    || name.to_str().is_some_and(|n| n.starts_with("mutants.out")));
+            if generated && (kind.is_dir() || kind.is_symlink()) {
+                continue;
+            }
+            assert!(
+                !kind.is_symlink(),
+                "documentation walk refuses source symlink: {}",
+                path.display()
+            );
+            if kind.is_dir() {
+                walk(base, &path, out);
+            } else if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            {
+                assert!(
+                    kind.is_file(),
+                    "documentation must be a regular file: {}",
+                    path.display()
+                );
+                out.insert(
+                    path.strip_prefix(base)
+                        .unwrap()
+                        .to_str()
+                        .unwrap_or_else(|| panic!("documentation paths must be UTF-8"))
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    walk(base, base, &mut out);
+    out
+}
+
+/// Make a scratch fixture symlink, whose admission is tested separately from its target.
+#[cfg(unix)]
+pub(crate) fn fixture_symlink(target: &std::path::Path, link: &std::path::Path) {
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
 /// Run `forge-warden` with `args` from the repository root, feeding `stdin`.
 pub(crate) fn run(args: &[&str], stdin: &[u8]) -> Run {
     run_with_env(args, stdin, &[])
@@ -139,6 +199,7 @@ pub(crate) fn scratch(name: &str) -> PathBuf {
 /// Write `bytes` to `dir/name` and return the path.
 pub(crate) fn write(dir: &std::path::Path, name: &str, bytes: &[u8]) -> PathBuf {
     let path = dir.join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, bytes).unwrap();
     path
 }

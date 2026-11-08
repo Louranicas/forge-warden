@@ -24,6 +24,22 @@ explained.
 Read [`CLAUDE.md`](CLAUDE.md) even if you are not an agent: it is the shortest statement of the
 rules, with what to do instead of each forbidden move.
 
+## Command examples
+
+The documentation contract walks source files directly and works without Git metadata, including
+in archives and cargo-mutants copies. Untracked `.md` files (including `.MD`) are visible immediately.
+Every source Markdown file and the justfile needs an exact invocation count in
+`docs/command-sources.tsv`; update that inventory with an intentional example change.
+
+The reviewed exclusions are `.git` metadata directories at any depth and root `target/` and
+`mutants.out*/` output directories (including output-directory symlinks). Nested source directories
+named `target` and ordinary Markdown files named `mutants.out.*.md` remain visible. Other source
+symlinks refuse rather than hiding or following a document subtree. No ignore file controls this walk.
+
+Executable examples use the documented shell-fence and literal workflow subset. Inline prose
+fragments and data fences remain outside command parsing. Tests parse arguments with the actual
+CLI without executing shell expansions or promising example paths or tools are available.
+
 ## Branch protection (for the maintainer)
 
 Protect `main` with: require a pull request; require branches to be up to date; require these
