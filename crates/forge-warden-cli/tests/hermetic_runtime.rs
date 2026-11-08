@@ -52,11 +52,46 @@ fn missing_tools_have_a_named_precondition() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test fixture: resolve scratch executable identity and child cwd independently of repository modes"
+)]
 fn relative_tools_keep_their_identity_after_changing_directory() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tools = common::scratch("relative-tool");
+    // Own the executable and its mode; never rely on copied repository permission bits.
+    // The existing helper writes out-of-process to avoid concurrent-fork ETXTBSY (C1c v4.4).
+    let fixture = common::write_executable(
+        &tools,
+        "identity",
+        b"#!/bin/sh\nprintf 'scratch-tool\\n'\npwd -P\n",
+    );
+    std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let absolute = std::fs::canonicalize(&fixture).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let mut relative = std::path::PathBuf::new();
+    for _ in cwd.ancestors().skip(1) {
+        relative.push("..");
+    }
+    relative.push(absolute.strip_prefix("/").unwrap());
+    assert!(!relative.is_absolute());
     let elsewhere = common::scratch("tool-working-directory");
-    let mut child = common::command("../../scripts/check_vocab.sh");
+    let mut child = common::command(&relative);
     assert!(std::path::Path::new(child.get_program()).is_absolute());
-    assert!(child.current_dir(&elsewhere).output().is_ok());
+    assert_eq!(
+        std::fs::canonicalize(child.get_program()).unwrap(),
+        absolute
+    );
+    let output = child.current_dir(&elsewhere).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        output.stdout,
+        format!(
+            "scratch-tool\n{}\n",
+            std::fs::canonicalize(&elsewhere).unwrap().display()
+        )
+        .as_bytes()
+    );
 }
 
 #[test]

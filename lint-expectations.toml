@@ -339,3 +339,9 @@ review_reason = "Q-DOOR: central read-only OpenOptions open uses O_NONBLOCK and 
 file = "fixtures/coverage/MANIFEST"
 sha256 = "9f5a1aee27e412e594e0bcc48f9b808274cead5573cb1b9b4a8efdc63275282a"
 review_reason = "Q-HERMETIC reviewed test-only JSON arrays of corpus groups, case identities and SHA256 values; Rust sources pin membership paths, not production contents. Parsed as data, never executable Rust."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test fixture: resolve scratch executable identity and child cwd independently of repository modes"
+review_reason = "Q-HERMETIC.1: canonicalize only owned scratch paths and read the test cwd to prove a relative executable retains identity after child chdir; no production exemption or copied repository mode dependency."
