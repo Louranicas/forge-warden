@@ -106,15 +106,15 @@ class Contracts(unittest.TestCase):
                     pattern = rf"(^  {re.escape(job)}:\n)(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)"
                     match = re.search(pattern, original, re.M | re.S)
                     self.assertIsNotNone(match)
-                    for quote in ("'", '"'):
-                        with self.subTest(workflow=workflow, job=job, quote=quote):
+                    for quote, separation in ((q, sep) for q in ("'", '"') for sep in (" ", "  ", " \t")):
+                        with self.subTest(workflow=workflow, job=job, quote=quote, separation=separation):
                             body = match[2].replace(f"    timeout-minutes: {minutes}\n", "")
                             body = re.sub(r"^    name: [^\n]*\n",
-                                f"    name: {quote}label\n    timeout-minutes: {minutes}\n      tail{quote}\n",
+                                f"    name:{separation}{quote}label\n    timeout-minutes: {minutes}\n      tail{quote}\n",
                                 body, count=1, flags=re.M)
                             path.write_text(original[:match.start(2)] + body + original[match.end(2):])
                             try:
-                                with self.assertRaisesRegex(ValueError, "quoted scalar"):
+                                with self.assertRaisesRegex(ValueError, "quoted scalar|separation whitespace"):
                                     CAPS.check_ci(root)
                             finally:
                                 path.write_text(original)

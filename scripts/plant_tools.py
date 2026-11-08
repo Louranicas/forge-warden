@@ -86,6 +86,8 @@ def workflow_lines(text):
         if not match:
             raise ValueError("CI timeout contract: unsupported YAML line shape")
         value = match[1] or ""
+        if value.startswith((" ", "\t")):
+            raise ValueError("CI timeout contract: extra scalar separation whitespace refused")
         if value == "|":
             block_indent = indent
         elif value.startswith("'"):
