@@ -77,6 +77,17 @@ class Contracts(unittest.TestCase):
                        original.replace(install, install.replace(TOOLS.versions(ROOT)['install_action'], '0'*40), 1),
                        gate_only_removed.replace('      - run: python3 -I scripts/check_plants.py',
                                                 '      - run: python3 -I scripts/check_plants.py\n'+install, 1)]
+            for extra in ("        if: false\n", "        if: github.event_name == 'push'\n",
+                          "        continue-on-error: true\n", "        env:\n          PATH: /missing\n",
+                          "        timeout-minutes: 1\n"):
+                changed.append(original.replace(install, install + extra, 1))
+            changed.append(original.replace(install, install.replace('      - uses:',
+                '      - if: false\n        uses:'), 1))
+            for command in ('      - run: python3 -I scripts/check_plants.py',
+                            '      - run: rustup toolchain install ' + TOOLS.versions(ROOT)['rust']
+                            + ' --profile minimal --component rustfmt,clippy && rustup default '
+                            + TOOLS.versions(ROOT)['rust']):
+                changed.append(original.replace(command, command + '\n        if: false', 1))
             for text in changed:
                 with self.subTest(text=text[:60]):
                     path.write_text(text)

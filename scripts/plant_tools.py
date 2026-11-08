@@ -75,20 +75,37 @@ def check_ci(root):
     # The preflight checks these hosted-image assumptions at runtime, too.
     if '    runs-on: ubuntu-latest\n' not in body:
         raise ValueError('plant CI tool provisioning needs review for a new runner image')
-    before = body.split('      - run: python3 -I scripts/check_plants.py', 1)
-    if len(before) != 2:
-        raise ValueError('plant CI entrypoint missing')
-    body = before[0]
+    steps = re.split(r'(?=^      - )', body, flags=re.M)[1:]
     available = set(HOSTED)
-    if re.search(r'rustup toolchain install [0-9.]+ --profile minimal --component rustfmt,clippy', body):
-        available.update(('rustup', 'rustc', 'cargo', 'cargo-clippy'))
-    installs = re.findall(r'      - uses: taiki-e/install-action@([0-9a-f]{40})[^\n]*\n        with:\n          tool: ([^\s]+)', body)
     values = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
-    for action, tool in installs:
-        if action != values['install_action']:
-            raise ValueError('plant CI install-action pin drift')
-        if tool == 'cargo-mutants@' + values['cargo_mutants']:
-            available.add('cargo-mutants')
+    found_entrypoint = False
+    for raw in steps:
+        step = raw.rstrip() + '\n'
+        if 'scripts/check_plants.py' in step:
+            if step != '      - run: python3 -I scripts/check_plants.py\n':
+                raise ValueError('plant CI entrypoint must be unconditional with reviewed fields')
+            found_entrypoint = True
+            break
+        if 'rustup toolchain install' in step and '--component' in step:
+            compiler = re.fullmatch(
+                r'      - run: rustup toolchain install ([0-9.]+) --profile minimal '
+                r'--component rustfmt,clippy && rustup default \1\n', step)
+            if not compiler:
+                raise ValueError('plant CI compiler install must be unconditional with reviewed fields')
+            available.update(('rustup', 'rustc', 'cargo', 'cargo-clippy'))
+        if 'taiki-e/install-action' in step:
+            install = re.fullmatch(
+                r'      - uses: taiki-e/install-action@([0-9a-f]{40})(?: #[^\n]*)?\n'
+                r'        with:\n          tool: (cargo-mutants@[^\s]+)\n', step)
+            if not install:
+                raise ValueError('plant CI tool install must be unconditional with reviewed fields')
+            action, tool = install.groups()
+            if action != values['install_action']:
+                raise ValueError('plant CI install-action pin drift')
+            if tool == 'cargo-mutants@' + values['cargo_mutants']:
+                available.add('cargo-mutants')
+    if not found_entrypoint:
+        raise ValueError('plant CI entrypoint missing')
     if required - available:
         raise ValueError('plant CI gate lacks required tools: ' + ', '.join(sorted(required - available)))
     return required
