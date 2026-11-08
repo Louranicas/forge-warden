@@ -274,6 +274,11 @@ fn the_producer_allowlist_is_read_and_checked_entry_by_entry() {
     assert_eq!(policy.producers(), [a.clone(), b.clone()]);
     assert!(policy.admits_producer(&a) && policy.admits_producer(&b));
     assert!(!policy.admits_producer(&"f".repeat(64)));
+    // The token names exactly the ranker it admits (Q-TYPES-1 v4: the accessor was unchecked).
+    let admitted = policy.admit_producer(&b).unwrap();
+    assert_eq!(admitted.sha256(), b);
+    assert_eq!(admitted.into_sha256(), b);
+    assert!(policy.admit_producer(&"f".repeat(64)).is_none());
 
     let none = parse_policy(rule(GOOD).as_bytes()).unwrap();
     assert_eq!(none.producers(), Vec::<String>::new());
