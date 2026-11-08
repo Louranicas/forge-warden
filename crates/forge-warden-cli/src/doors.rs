@@ -203,7 +203,7 @@ impl std::process::Termination for Status {
 #[expect(clippy::disallowed_methods, reason = "door: diagnose")]
 pub(crate) fn diagnose(text: &str) {
     let mut err = std::io::stderr().lock();
-    let _ignored = writeln!(err, "{}", text.trim_end());
+    let _ignored = writeln!(err, "{}", forge_warden_core::render::terminal_safe(text));
 }
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
@@ -253,7 +253,12 @@ pub(crate) mod child {
         /// It was ended by a signal.
         Signal(i32),
         /// It exited with a nonzero status.
-        Exit(i32),
+        Exit {
+            code: i32,
+            /// Raw text whose escaped rendering fits 512 bytes. Escaped exactly once at the
+            /// diagnostic/output boundary, not here (which would double-escape backslashes).
+            stderr: String,
+        },
         /// Talking to it failed.
         Io(String),
     }
@@ -432,7 +437,12 @@ pub(crate) mod child {
         if err_over.load(Ordering::SeqCst) {
             return Err(ChildFailure::StderrOverflow);
         }
-        exited_cleanly(status)?;
+        let take = |got: Result<std::io::Result<Vec<u8>>, std::sync::mpsc::RecvTimeoutError>| {
+            got.map_err(|_| ChildFailure::Timeout)?
+                .map_err(|e| ChildFailure::Io(e.to_string()))
+        };
+        let captured_stderr = take(err_bytes)?;
+        exited_cleanly(status, &captured_stderr)?;
         match wrote {
             Ok(Ok(())) => {}
             // A child that exits 0 without reading all of stdin did not judge the whole input.
@@ -443,13 +453,9 @@ pub(crate) mod child {
                 return Err(ChildFailure::Io("the stdin writer panicked".to_owned()));
             }
         }
-        let take = |got: Result<std::io::Result<Vec<u8>>, std::sync::mpsc::RecvTimeoutError>| {
-            got.map_err(|_| ChildFailure::Timeout)?
-                .map_err(|e| ChildFailure::Io(e.to_string()))
-        };
         Ok(ChildOutput {
             stdout: take(out_bytes)?,
-            stderr: take(err_bytes)?,
+            stderr: captured_stderr,
         })
     }
 
@@ -503,16 +509,72 @@ pub(crate) mod child {
     }
 
     /// `Ok` only for a normal exit with status 0.
-    fn exited_cleanly(status: ExitStatus) -> Result<(), ChildFailure> {
+    fn exited_cleanly(status: ExitStatus, stderr: &[u8]) -> Result<(), ChildFailure> {
         use std::os::unix::process::ExitStatusExt as _;
         if let Some(signal) = status.signal() {
             return Err(ChildFailure::Signal(signal));
         }
         match status.code() {
             Some(0) => Ok(()),
-            Some(code) => Err(ChildFailure::Exit(code)),
+            Some(code) => Err(ChildFailure::Exit {
+                code,
+                stderr: stderr_excerpt(stderr),
+            }),
             None => Err(ChildFailure::Io("the child has no exit status".to_owned())),
         }
+    }
+
+    /// First whole characters whose escaped display fits the 512-printable-byte diagnostic
+    /// budget. Collection remains capped separately at 64 KiB. Lossy decoding is only for
+    /// diagnostics; it never feeds a verdict parser or a filesystem authority decision.
+    pub(super) fn stderr_excerpt(bytes: &[u8]) -> String {
+        let mut excerpt = String::new();
+        let mut used = 0_usize;
+        for ch in String::from_utf8_lossy(bytes).chars() {
+            let cost = forge_warden_core::render::terminal_safe(&ch.to_string()).len();
+            if used.saturating_add(cost) > 512 {
+                break;
+            }
+            used = used.saturating_add(cost);
+            excerpt.push(ch);
+        }
+        excerpt
+    }
+
+    /// Linux generates a fresh random UUID for each read. Reuse the fixed-path, no-follow,
+    /// nonblocking regular-file door (procfs reports regular metadata), with a 37-byte budget.
+    /// This CLI already requires Linux procfs for child supervision and descriptor pinning.
+    /// Missing/malformed entropy refuses; no clock/PID fallback weakens name unpredictability.
+    fn private_suffix() -> Result<String, DoorError> {
+        let what = "private directory randomness (/proc/sys/kernel/random/uuid)";
+        let (file, _) = open_regular(
+            Path::new("/proc/sys/kernel/random/uuid"),
+            Symlinks::Refuse,
+            what,
+        )?;
+        let bytes = read_within(file, what, 37)?;
+        uuid_suffix(&bytes)
+    }
+
+    pub(super) fn uuid_suffix(bytes: &[u8]) -> Result<String, DoorError> {
+        let refuse = || {
+            DoorError::environment(
+                "private directory randomness: kernel UUID is not canonical v4".to_owned(),
+            )
+        };
+        let text = std::str::from_utf8(bytes).map_err(|_| refuse())?;
+        let uuid = text.strip_suffix('\n').ok_or_else(refuse)?;
+        if uuid.len() != 36
+            || !uuid.bytes().enumerate().all(|(at, byte)| match at {
+                8 | 13 | 18 | 23 => byte == b'-',
+                14 => byte == b'4',
+                19 => matches!(byte, b'8' | b'9' | b'a' | b'b'),
+                _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+            })
+        {
+            return Err(refuse());
+        }
+        Ok(uuid.to_owned())
     }
 
     /// A private, empty, 0700 directory under the system temp directory, removed on drop. Git runs
@@ -528,8 +590,9 @@ pub(crate) mod child {
         /// never reused, and any other error is reported at once, not retried.
         pub(super) fn create_in(base: &Path) -> Result<Self, DoorError> {
             use std::os::unix::fs::DirBuilderExt as _;
-            for attempt in 0..64_u32 {
-                let path = base.join(format!("forge-warden-{}-{attempt}", std::process::id()));
+            for _attempt in 0..64_u32 {
+                let suffix = private_suffix()?;
+                let path = base.join(format!("forge-warden-{}-{suffix}", std::process::id()));
                 match std::fs::DirBuilder::new().mode(0o700).create(&path) {
                     Ok(()) => return Ok(Self { path }),
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -673,8 +736,8 @@ pub(crate) mod child {
             })
             .map(|out| out.stdout)
             .map_err(|failure| match failure {
-                ChildFailure::Exit(code) => {
-                    GitFactsFailure::Refused(format!("git apply exited {code}"))
+                ChildFailure::Exit { code, stderr } => {
+                    GitFactsFailure::Refused(format!("git apply exited {code}: {stderr}"))
                 }
                 ChildFailure::Spawn(why) | ChildFailure::Io(why) => {
                     GitFactsFailure::Unavailable(format!("git apply: {why}"))
@@ -735,7 +798,7 @@ pub(crate) mod child {
             ChildFailure::StdoutOverflow => "wrote more than its stdout budget".to_owned(),
             ChildFailure::StderrOverflow => "wrote more than its stderr budget".to_owned(),
             ChildFailure::Signal(signal) => format!("was killed by signal {signal}"),
-            ChildFailure::Exit(code) => format!("exited {code}"),
+            ChildFailure::Exit { code, stderr } => format!("exited {code}: {stderr}"),
             ChildFailure::Io(why) => format!("failed: {why}"),
         }
     }
@@ -1182,18 +1245,153 @@ mod child_tests {
     }
 
     #[test]
-    fn a_freed_private_dir_name_is_reused_so_absence_needs_an_exclusive_base() {
-        // The C1c v4.2 race, measured: names are `forge-warden-<pid>-<attempt>` and attempts start
-        // at 0, so after a drop the next private dir in the same base takes the freed name. Creation
-        // stays exclusive (a live name is never reused), but a test asserting a dropped path is gone
-        // must own its base; in the shared temp dir a concurrent test may legitimately recreate it.
+    fn child_exit_keeps_a_bounded_stderr_prefix_and_overflow_still_refuses() {
+        use super::child::stderr_excerpt;
+        let command = sh("printf 'reason\\033\\000\\n' >&2; exit 7");
+        let out = run_child(&spec(
+            Program::Absolute(Path::new("/bin/sh")),
+            &command,
+            b"",
+        ));
+        assert_eq!(
+            out,
+            Err(ChildFailure::Exit {
+                code: 7,
+                stderr: "reason\x1b\0\n".to_owned()
+            })
+        );
+        assert_eq!(stderr_excerpt(&vec![b'x'; 513]), "x".repeat(512));
+        assert_eq!(stderr_excerpt(&vec![b'x'; 512]), "x".repeat(512));
+        assert_eq!(stderr_excerpt(b""), "");
+        for bytes in [
+            vec![0; 1024],
+            "\u{202e}".repeat(1024).into_bytes(),
+            vec![255; 1024],
+            vec![b'\\'; 1024],
+        ] {
+            let safe = forge_warden_core::render::terminal_safe(&stderr_excerpt(&bytes));
+            assert!(safe.len() <= 512);
+            assert!(safe.bytes().all(|b| (0x20..=0x7e).contains(&b)));
+        }
+    }
+
+    #[test]
+    fn kernel_uuid_admission_refuses_malformed_entropy() {
+        use super::child::uuid_suffix;
+        let valid = b"12345678-1234-4234-9234-123456789abc\n";
+        assert_eq!(
+            uuid_suffix(valid).unwrap(),
+            "12345678-1234-4234-9234-123456789abc"
+        );
+        // Exercise both hex boundaries and every RFC variant deterministically; runtime UUIDs
+        // alone would make these admission boundaries depend on a random sample.
+        for variant in ['8', '9', 'a', 'b'] {
+            let value = format!("00000000-ffff-4fff-{variant}fff-ffffffffffff\n");
+            assert_eq!(uuid_suffix(value.as_bytes()).unwrap(), value.trim_end());
+        }
+        for position in [8, 13, 18, 23] {
+            let mut malformed = valid.to_vec();
+            malformed[position] = b'0';
+            assert!(uuid_suffix(&malformed).is_err());
+        }
+        for bad in [
+            b"".as_slice(),
+            b"\n",
+            b"\xff\n",
+            b"12345678-1234-4234-9234-123456789ab\n",
+            b"12345678-1234-4234-9234-123456789abcd\n",
+            b"12345678-1234-4234-9234-123456789abF\n",
+            b"../predictable\n",
+            b"12345678-1234-1234-9234-123456789abc\n",
+            b"12345678-1234-4234-7234-123456789abc\n",
+            b"12345678-1234-4234-9234-123456789abc",
+            b"12345678-1234-4234-9234-123456789abg\n",
+        ] {
+            assert!(uuid_suffix(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    // ADR0010 temporary-base bullet: reject before creating anything or running a child.
+    #[test]
+    fn adr0010_relative_tmpdir_refuses_without_fallback() {
+        assert!(
+            super::child::Isolation::create_in(Path::new("relative/base"))
+                .err()
+                .unwrap()
+                .message
+                .contains("not absolute")
+        );
+    }
+    #[test]
+    fn adr0010_colon_tmpdir_refuses_without_fallback() {
+        let base = scratch("adr0010-colon");
+        let path = base.join("a:b");
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            super::child::Isolation::create_in(&path)
+                .err()
+                .unwrap()
+                .message
+                .contains("contains ':'")
+        );
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+    }
+    #[test]
+    fn adr0010_non_utf8_tmpdir_refuses_without_fallback() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let base = scratch("adr0010-nonutf8");
+        let path = base.join(std::ffi::OsStr::from_bytes(b"bad\xff"));
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            super::child::Isolation::create_in(&path)
+                .err()
+                .unwrap()
+                .message
+                .contains("not UTF-8")
+        );
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+    }
+    #[test]
+    fn adr0010_absolute_tmpdir_preserves_home_cwd_and_ceiling() {
+        let base = scratch("adr0010-positive");
+        let isolation = super::child::Isolation::create_in(&base).unwrap();
+        let env = isolation.env();
+        let home = env.iter().find(|(k, _)| *k == "HOME").unwrap().1;
+        let ceiling = env
+            .iter()
+            .find(|(k, _)| *k == "GIT_CEILING_DIRECTORIES")
+            .unwrap()
+            .1;
+        assert_eq!(isolation.dir.path(), Path::new(home));
+        assert_eq!(Path::new(home).parent().unwrap(), Path::new(ceiling));
+        assert_eq!(Path::new(ceiling), std::fs::canonicalize(base).unwrap());
+    }
+
+    #[test]
+    fn predicted_private_names_do_not_exhaust_creation() {
+        use super::child::PrivateDir;
+        let base = scratch("predicted-names");
+        for attempt in 0..64 {
+            std::fs::create_dir(
+                base.join(format!("forge-warden-{}-{attempt}", std::process::id())),
+            )
+            .unwrap();
+        }
+        let dir =
+            PrivateDir::create_in(&base).expect("old predictable names must not exhaust creation");
+        assert!(dir.path().is_dir());
+    }
+
+    #[test]
+    fn a_freed_private_dir_gets_a_new_random_name() {
+        // Fresh entropy is read for every creation, including after an earlier Drop.
         use super::child::PrivateDir;
         let base = scratch("name-reuse");
         let first = PrivateDir::create_in(&base).unwrap();
         let name = first.path().to_owned();
         drop(first);
         let second = PrivateDir::create_in(&base).unwrap();
-        assert_eq!(second.path(), name);
+        assert_ne!(second.path(), name);
         let live = PrivateDir::create_in(&base).unwrap();
         assert_ne!(live.path(), second.path(), "a live name is never reused");
     }
@@ -1206,9 +1404,10 @@ mod child_tests {
         std::fs::create_dir_all(base.join(format!("forge-warden-{}-0", std::process::id())))
             .unwrap();
         let dir = PrivateDir::create_in(&base).unwrap();
-        assert!(
-            dir.path()
-                .ends_with(format!("forge-warden-{}-1", std::process::id()))
+        assert!(dir.path().is_dir());
+        assert_ne!(
+            dir.path(),
+            base.join(format!("forge-warden-{}-0", std::process::id()))
         );
         drop(dir);
         let missing = PrivateDir::create_in(&base.join("no-such-dir")).unwrap_err();
@@ -1380,7 +1579,10 @@ mod child_tests {
         let exits = sh("echo '{\"ranked\":[]}'; exit 3");
         assert_eq!(
             run_child(&spec(Program::Absolute(Path::new("/bin/sh")), &exits, b"")),
-            Err(ChildFailure::Exit(3))
+            Err(ChildFailure::Exit {
+                code: 3,
+                stderr: String::new()
+            })
         );
         let killed = sh("echo ok; kill -9 $$");
         assert_eq!(
@@ -1448,7 +1650,7 @@ mod child_tests {
         let out = run_child(&spec(Program::Pinned(&pinned), &[], b""));
         assert_eq!(out.map(|o| o.stdout), Ok(Vec::new()));
         let swapped = run_child(&spec(Program::Absolute(&path), &[], b""));
-        assert_eq!(swapped, Err(ChildFailure::Exit(1)));
+        assert!(matches!(swapped, Err(ChildFailure::Exit { code: 1, .. })));
     }
 
     #[test]
@@ -1474,7 +1676,7 @@ mod child_tests {
         let pinned = pin_executable(&script).unwrap();
         // The interpreter starts but cannot reopen the closed descriptor: the script never runs.
         let out = run_child(&spec(Program::Pinned(&pinned), &[], b""));
-        assert!(matches!(&out, Err(ChildFailure::Exit(_))), "{out:?}");
+        assert!(matches!(&out, Err(ChildFailure::Exit { .. })), "{out:?}");
     }
 }
 

@@ -13,7 +13,7 @@
 //!    `added`, `deleted` or `modified`, with `new_file` or `deleted_file` where Git would derive it.
 #![expect(
     clippy::disallowed_methods,
-    reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout"
+    reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout/stderr"
 )]
 
 use forge_warden_core::seal::sha256_hex;
@@ -30,6 +30,10 @@ struct File {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["--version"] {
+        let _ignored = std::io::stderr().write_all(b"git fixture \x1b\0\n\xe2\x80\xae");
+        return ExitCode::from(2);
+    }
     if args != ["--stdin-patch", "--rank", "--json"] {
         return ExitCode::from(2);
     }
@@ -48,6 +52,21 @@ fn main() -> ExitCode {
     for directive in &directives {
         let words: Vec<&str> = directive.split_whitespace().collect();
         match words.as_slice() {
+            ["stderr-hex" | "schema-hex", hex] => {
+                let bytes: Vec<u8> = hex
+                    .as_bytes()
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .filter_map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+                    .collect();
+                if words.first() == Some(&"stderr-hex") {
+                    let _ignored = std::io::stderr().write_all(&bytes);
+                    return ExitCode::from(2);
+                }
+                let doc = serde_json::json!({"schema": String::from_utf8_lossy(&bytes), "input_sha256": "a".repeat(64), "tool": {"name":"deep-diff-forge","version":"0.7.0"}, "ranked":[]});
+                return emit(doc.to_string().as_bytes(), 0);
+            }
             ["exit", n] => code = n.parse().unwrap_or(1),
             ["garbage"] => return emit(b"this is not a ranking\n", 0),
             ["wrong-seal"] => seal = "a".repeat(64),

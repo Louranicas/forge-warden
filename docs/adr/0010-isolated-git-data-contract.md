@@ -31,6 +31,13 @@ Shared requirements for scripts (D3) and the Rust door (ADR0005 §2.5):
   HOME/cwd identity, a parent ceiling that Git actually recognizes, and nonrecursive cleanup.
   Tests must cover relative, absolute-with-colon and non-UTF-8 inputs plus an ordinary absolute
   positive control. Canonical spelling alone is insufficient if its bytes contain a separator.
+  The current adapter refuses an unsupported TMPDIR instead of silently moving the child to
+  another filesystem. Each exclusive 0700 creation attempt uses a fresh Linux kernel v4 UUID
+  from `/proc/sys/kernel/random/uuid`, read through the fixed-path, no-follow regular-file door
+  with a 37-byte limit. Missing or malformed entropy refuses without a predictable fallback.
+  This assumes the trusted Linux runtime/procfs; it is not containment against root, a hostile
+  mount namespace or a same-uid process. Name unpredictability prevents pre-creating the old
+  finite PID/attempt namespace; exclusive creation remains the collision control.
   This requirement governs the private-directory adapter; D3's controller-owned object repository
   remains a separate, explicit trusted repository, not a candidate directory or a private-dir claim.
 - Absolute trusted Git executable, argv only, no shell interpolation of patch bytes. Where a
