@@ -91,6 +91,7 @@ paths = [
     "crates/forge-warden-cli/tests/repo_invariants.rs",
     "deny.toml",
     "fixtures/**",
+    "fixtures/coverage/MANIFEST",
     "justfile",
     "lint-expectations.toml",
     "lint-floor.toml",

@@ -8,6 +8,8 @@
 )]
 
 mod common;
+#[path = "../../forge-warden-core/tests/support/corpus_manifest.rs"]
+mod corpus_manifest;
 use common::{files_under, read, root};
 use syn::ext::IdentExt as _;
 
@@ -37,19 +39,24 @@ fn rust_sources() -> Vec<(String, String)> {
     names.extend(common::production_sources());
     let out: Vec<(String, String)> = names
         .into_iter()
-        // This file names the markers and attributes it searches for, so it cannot scan itself.
-        .filter(|rel| !rel.ends_with("tests/repo_invariants.rs"))
         .map(|rel| {
             let text = read(&rel);
             (rel, text)
         })
         .collect();
-    assert!(
-        out.len() >= 10,
-        "found only {} Rust files; is the walk broken?",
-        out.len()
+    // Membership only: pinning source content would trivially kill every cargo-mutants plant.
+    assert_eq!(
+        corpus_manifest::check(
+            "rust-sources",
+            out.iter()
+                .map(|(name, _)| (name.clone(), name.as_bytes().to_vec())),
+        ),
+        Ok(())
     );
-    out
+    // Marker scanning excludes this exact scanner; manifest membership above excludes nothing.
+    out.into_iter()
+        .filter(|(rel, _)| rel != "crates/forge-warden-cli/tests/repo_invariants.rs")
+        .collect()
 }
 
 #[test]
@@ -617,7 +624,16 @@ fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
 fn suppression_and_ignore_scanners_match_the_shared_corpus() {
     let cases: Vec<serde_json::Value> =
         serde_json::from_str(&read("fixtures/attribute-policy.json")).unwrap();
-    assert!(cases.len() >= 30, "attribute corpus shrank");
+    corpus_manifest::check(
+        "attribute-cases",
+        cases.iter().map(|case| {
+            (
+                case["name"].as_str().unwrap().to_owned(),
+                serde_json::to_vec(case).unwrap(),
+            )
+        }),
+    )
+    .unwrap();
     for case in cases {
         let source = case
             .get("source")

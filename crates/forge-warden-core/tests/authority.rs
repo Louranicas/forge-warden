@@ -6,6 +6,9 @@
     reason = "test helpers read committed fixtures; a panic is a failed test"
 )]
 
+#[path = "support/corpus_manifest.rs"]
+mod corpus_manifest;
+
 use forge_warden_core::authority::{
     AdvisoryOutcome, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
 };
@@ -91,7 +94,7 @@ fn codes(notes: &[forge_warden_core::verdict::Note]) -> Vec<&str> {
 fn a_supplied_ranking_never_passes_anywhere_in_the_corpus() {
     let index: serde_json::Value = serde_json::from_slice(&read("cases.json")).unwrap();
     let p = policy(PERMISSIVE);
-    let mut judged = 0;
+    let mut judged = Vec::new();
     for case in index["cases"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let Some(doc) = rank(name) else { continue };
@@ -106,9 +109,9 @@ fn a_supplied_ranking_never_passes_anywhere_in_the_corpus() {
             codes(&advisory.verdict().notes).contains(&"rank_unverified"),
             "{name}"
         );
-        judged += 1;
+        judged.push((name.to_owned(), read(&format!("{name}.rank.json"))));
     }
-    assert!(judged >= 45, "only {judged} cases had a parseable ranking");
+    corpus_manifest::check("parseable-rankings", judged).unwrap();
 }
 
 #[test]

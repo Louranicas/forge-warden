@@ -8,6 +8,8 @@
 )]
 
 mod common;
+#[path = "../../forge-warden-core/tests/support/corpus_manifest.rs"]
+mod corpus_manifest;
 use common::files_under;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
@@ -19,7 +21,13 @@ use forge_warden_core::{Date, evaluate};
 #[test]
 fn every_real_ranking_parses_with_known_vocabulary() {
     let files = files_under("fixtures/corpus", ".rank.json");
-    assert!(files.len() >= 30, "the corpus shrank to {}", files.len());
+    corpus_manifest::check(
+        "producer-rankings",
+        files
+            .iter()
+            .map(|path| (common::relative(path), std::fs::read(path).unwrap())),
+    )
+    .unwrap();
     let mut signals = std::collections::BTreeSet::new();
     for path in &files {
         let bytes = std::fs::read(path).unwrap();
