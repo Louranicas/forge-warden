@@ -152,3 +152,32 @@ fn front_door_docs_do_not_claim_the_child_door_spawns_nothing() {
         }
     }
 }
+
+#[test]
+fn every_tracked_markdown_document_has_an_exact_command_inventory() {
+    let git = common::command("git")
+        .current_dir(common::root())
+        .args(["ls-files", "-z", "--", "*.md"])
+        .output()
+        .unwrap();
+    assert!(git.status.success(), "git ls-files failed");
+    let output = String::from_utf8(git.stdout).unwrap();
+    let mut tracked: BTreeSet<_> = output.split('\0').filter(|s| !s.is_empty()).collect();
+    tracked.insert("justfile");
+    let inventory = read("docs/command-sources.tsv");
+    let mut indexed = BTreeSet::new();
+    for row in inventory.lines() {
+        let (path, count) = row
+            .split_once('\t')
+            .expect("command inventory row needs path TAB count");
+        assert!(
+            count.parse::<usize>().is_ok(),
+            "invalid command count for {path}"
+        );
+        assert!(indexed.insert(path), "duplicate command document {path}");
+    }
+    assert_eq!(
+        indexed, tracked,
+        "every tracked Markdown document and justfile must be indexed; no new doc may escape command checks"
+    );
+}

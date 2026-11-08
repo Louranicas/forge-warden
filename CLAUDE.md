@@ -66,8 +66,10 @@ scripts/ci_fast.sh                                   # the fast gate
 scripts/ci_local.sh                                  # everything CI runs that works offline
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
-git diff --no-renames main... | deep-diff-forge --stdin-patch --rank --json \
-  | cargo run -q --bin forge-warden -- check --policy warden.toml   # judge your own change
+git diff --binary --no-renames main... > target/change.patch
+deep-diff-forge --stdin-patch --rank --json < target/change.patch \
+  | cargo run -q --bin forge-warden -- check --policy warden.toml \
+      --patch target/change.patch --advisory --rank -   # advice; never approves
 ```
 
 ## Subagents and skills

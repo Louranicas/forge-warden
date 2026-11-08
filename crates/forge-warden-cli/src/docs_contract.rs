@@ -1,6 +1,7 @@
 //! Executable front-door examples are parsed by the actual clap grammar, without running them.
 use super::Cli;
 use clap::Parser as _;
+use forge_warden_core::defaults::NamedDefault as _;
 
 fn document(path: &str) -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -61,52 +62,107 @@ fn words(source: &str) -> Result<Vec<Token>, String> {
     Ok(out)
 }
 
-fn examples(readme: &str, justfile: &str) -> Vec<String> {
+fn shell_lines(source: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut fence = None;
     let mut continued = String::new();
-    for line in readme.lines() {
-        if let Some(language) = line.strip_prefix("```") {
-            assert!(continued.is_empty(), "unterminated shell continuation");
-            fence = if fence.is_some() {
-                None
-            } else {
-                Some(language)
-            };
-            continue;
-        }
-        let Some(language) = fence else { continue };
-        let executable = matches!(language, "bash" | "sh" | "shell" | "console");
-        let yaml_run = language == "yaml" && line.trim_start().starts_with("- run:");
-        if executable || yaml_run {
-            assert!(
-                !yaml_run || !line.trim_end().ends_with(['|', '>']),
-                "extend the example parser before adding YAML block commands"
-            );
-            let line = if yaml_run {
-                line.trim_start().strip_prefix("- run:").unwrap()
-            } else {
-                line
-            };
-            if let Some(part) = line.strip_suffix('\\') {
-                continued.push_str(part);
-                continued.push(' ');
-            } else {
-                continued.push_str(line);
-                out.push(std::mem::take(&mut continued));
-            }
+    for line in source.lines() {
+        if let Some(part) = line.strip_suffix('\\') {
+            continued.push_str(part);
+            continued.push(' ');
+        } else {
+            continued.push_str(line);
+            out.push(std::mem::take(&mut continued));
         }
     }
-    assert!(
-        fence.is_none() && continued.is_empty(),
-        "unclosed documentation block"
-    );
-    out.extend(
-        justfile
-            .lines()
-            .filter(|line| line.starts_with("    "))
-            .map(str::to_owned),
-    );
+    assert!(continued.is_empty(), "unterminated shell continuation");
+    out
+}
+
+fn block_examples(language: &str, body: &str) -> Vec<String> {
+    match language {
+        "bash" | "sh" | "shell" | "console" => shell_lines(body),
+        "text" | "toml" | "json" => Vec::new(),
+        "yaml" => {
+            let mut out = Vec::new();
+            for line in body.lines() {
+                let trimmed = line.trim_start().trim_start_matches("- ");
+                if let Some(run) = trimmed.strip_prefix("run:") {
+                    assert!(
+                        !run.trim_start().starts_with(['|', '>']),
+                        "extend the parser before adding YAML block commands"
+                    );
+                    out.push(run.to_owned());
+                } else {
+                    assert!(
+                        !line.contains("forge-warden"),
+                        "unrecognized YAML command-bearing line: {line}"
+                    );
+                }
+            }
+            out
+        }
+        _ => {
+            assert!(
+                !body.contains("forge-warden"),
+                "unsupported command-bearing fence language {language:?}"
+            );
+            Vec::new()
+        }
+    }
+}
+
+fn fence_start(line: &str) -> Option<(char, usize, &str)> {
+    let trimmed = line.trim_start();
+    let trimmed = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_display(trimmed);
+    let marker = trimmed.chars().next()?;
+    if !['`', '~'].contains(&marker) {
+        return None;
+    }
+    let length = trimmed.chars().take_while(|c| *c == marker).count();
+    if length < 3 {
+        return None;
+    }
+    Some((marker, length, trimmed.get(length..)?.trim()))
+}
+
+fn examples(readme: &str, justfile: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut fence: Option<(char, usize, &str)> = None;
+    let mut body = String::new();
+    for line in readme.lines() {
+        if let Some((marker, length, info)) = fence_start(line) {
+            if let Some((opened, opening_length, language)) = fence {
+                if marker == opened && length >= opening_length && info.is_empty() {
+                    out.extend(block_examples(language, &body));
+                    body.clear();
+                    fence = None;
+                    continue;
+                }
+            } else {
+                fence = Some((marker, length, info));
+                continue;
+            }
+        }
+        if fence.is_some() {
+            body.push_str(line);
+            body.push('\n');
+        } else if (line.starts_with("    ") || line.starts_with('\t'))
+            && line.contains("forge-warden")
+        {
+            // Indented Markdown code is executable unless explicitly put in a data/text fence.
+            out.push(line.to_owned());
+        }
+    }
+    assert!(fence.is_none(), "unclosed documentation block");
+    let recipes = justfile
+        .lines()
+        .filter(|line| line.starts_with(' ') || line.starts_with('\t'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    out.extend(shell_lines(&recipes));
     out
 }
 
@@ -152,16 +208,22 @@ fn commands(readme: &str, justfile: &str) -> Vec<Vec<String>> {
 
 #[test]
 fn executable_documentation_uses_the_actual_cli_grammar() {
-    let commands = commands(&document("README.md"), &document("justfile"));
-    assert!(
-        commands.len() >= 6,
-        "executable example discovery lost commands"
-    );
-    for argv in commands {
-        assert!(
-            Cli::try_parse_from(&argv).is_ok(),
-            "invalid documented command: {argv:?}"
-        );
+    for row in document("docs/command-sources.tsv").lines() {
+        let (path, expected) = row.split_once('\t').unwrap();
+        let expected: usize = expected.parse().unwrap();
+        let text = document(path);
+        let found = if path == "justfile" {
+            commands("", &text)
+        } else {
+            commands(&text, "")
+        };
+        assert_eq!(found.len(), expected, "command inventory changed in {path}");
+        for argv in found {
+            assert!(
+                Cli::try_parse_from(&argv).is_ok(),
+                "{path}: invalid documented command: {argv:?}"
+            );
+        }
     }
 }
 
@@ -193,4 +255,27 @@ fn command_discovery_preserves_quotes_pipes_and_continuations_and_rejects_bad_cl
     assert_eq!(quoted.len(), 1);
     assert!(Cli::try_parse_from(&quoted[0]).is_err());
     assert_eq!(words("''").unwrap(), vec![Token::Word(String::new())]);
+}
+
+#[test]
+fn indented_fences_tabs_and_nonstandard_languages_cannot_hide_commands() {
+    for fence in ["```", "~~~"] {
+        let text = format!("  {fence}bash\n  forge-warden lint p --invented\n  {fence}\n");
+        let found = commands(&text, "\tforge-warden init --invented");
+        assert_eq!(found.len(), 2);
+        for argv in found {
+            assert!(Cli::try_parse_from(&argv).is_err());
+        }
+    }
+    for language in ["zsh", "fish", "bash title=x", ""] {
+        let text = format!("```{language}\nforge-warden init --invented\n```\n");
+        assert!(
+            std::panic::catch_unwind(|| commands(&text, "")).is_err(),
+            "unrecognized command language admitted: {language}"
+        );
+    }
+    for style in ["|", "|-", "|+", ">", ">-", ">+"] {
+        let text = format!("```yaml\n- run: {style}\n    forge-warden init --invented\n```\n");
+        assert!(std::panic::catch_unwind(|| commands(&text, "")).is_err());
+    }
 }
