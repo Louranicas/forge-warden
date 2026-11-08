@@ -88,25 +88,28 @@ fn block_examples(language: &str, body: &str) -> Vec<String> {
                 let trimmed = line.trim_start().trim_start_matches("- ");
                 if let Some(run) = trimmed.strip_prefix("run:") {
                     assert!(
+                        !run.trim_start()
+                            .starts_with(['\'', '"', '!', '&', '*', '{', '[']),
+                        "unsupported YAML run scalar"
+                    );
+                    assert!(
                         !run.trim_start().starts_with(['|', '>']),
                         "extend the parser before adding YAML block commands"
                     );
                     out.push(run.to_owned());
                 } else {
                     assert!(
-                        !line.contains("forge-warden"),
-                        "unrecognized YAML command-bearing line: {line}"
+                        trimmed.is_empty()
+                            || trimmed.starts_with('#')
+                            || (trimmed.starts_with("env: {") && trimmed.ends_with('}')),
+                        "unsupported YAML example line: {line}"
                     );
                 }
             }
             out
         }
         _ => {
-            assert!(
-                !body.contains("forge-warden"),
-                "unsupported command-bearing fence language {language:?}"
-            );
-            Vec::new()
+            panic!("unsupported command-bearing fence language {language:?}; label data explicitly")
         }
     }
 }
@@ -267,6 +270,8 @@ fn indented_fences_tabs_and_nonstandard_languages_cannot_hide_commands() {
             assert!(Cli::try_parse_from(&argv).is_err());
         }
     }
+    let escaped = "```zsh\nforge\\-warden init --invented\n```\n";
+    assert!(std::panic::catch_unwind(|| commands(escaped, "")).is_err());
     for language in ["zsh", "fish", "bash title=x", ""] {
         let text = format!("```{language}\nforge-warden init --invented\n```\n");
         assert!(
