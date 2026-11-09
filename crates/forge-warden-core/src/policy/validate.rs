@@ -32,10 +32,14 @@ pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
     if bytes.len() > crate::MAX_INPUT_BYTES {
         return Err(PolicyError::TooLarge(bytes.len()));
     }
-    let text = std::str::from_utf8(bytes)
-        .map_err(|e| PolicyError::Malformed(format!("not UTF-8: {e}")))?;
-    let raw: RawPolicy =
-        toml::from_str(text).map_err(|e| PolicyError::Malformed(e.message().to_owned()))?;
+    let text = std::str::from_utf8(bytes).map_err(|e| PolicyError::Malformed {
+        message: format!("not UTF-8: {e}"),
+        at: None,
+    })?;
+    let raw: RawPolicy = toml::from_str(text).map_err(|e| PolicyError::Malformed {
+        message: e.message().to_owned(),
+        at: e.span().map(|span| line_column(text, span.start)),
+    })?;
     let mut issues = Issues::new();
     if raw.schema != POLICY_SCHEMA {
         issues.push(
@@ -336,4 +340,23 @@ fn validate_waiver(
         owner: raw.owner.trim().to_owned(),
         expires,
     })
+}
+
+/// The 1-based line and column (in characters) of byte `offset` in `text`. An offset past the end
+/// or inside a character is clamped to the last character boundary before it.
+fn line_column(text: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1_usize;
+    let mut column = 1_usize;
+    for (at, c) in text.char_indices() {
+        if at >= offset {
+            break;
+        }
+        if c == '\n' {
+            line = line.saturating_add(1);
+            column = 1;
+        } else {
+            column = column.saturating_add(1);
+        }
+    }
+    (line, column)
 }

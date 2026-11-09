@@ -173,7 +173,7 @@ crate::path impl fmt::Display for RepoPath
 crate::path RepoPath::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::policy::error #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum PolicyError
 crate::policy::error PolicyError::#[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
-crate::policy::error PolicyError::#[error("policy is not valid TOML of the forge-warden.policy.v0 shape: {0}")] Malformed(String),
+crate::policy::error PolicyError::#[error("policy is not valid TOML of the forge-warden.policy.v0 shape: {message}")] Malformed { /// The parser's message. message: String, /// Where, as (line, column), both 1-based; `None` when the parser gave no span. at: Option<(usize, usize)>, },
 crate::policy::error PolicyError::#[error("policy refused with {} issue(s):\\n{}", .0.len(), IssueList(.0))] Invalid(Vec<PolicyIssue>),
 crate::policy::error #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PolicyIssue
 crate::policy::error PolicyIssue.pub location: String,
