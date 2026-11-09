@@ -361,8 +361,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "1ff768595983c97adfee0c6ebe57a1e8edfadbc5899555f54f127e4d5faef939"
-review_reason = "Q-HERMETIC reviewed test-only JSON arrays of corpus groups, case identities and SHA256 values; Rust sources pin membership paths, not production contents. Parsed as data, never executable Rust."
+sha256 = "8d4eb9e2f2ec1543f6456be8272b828abb5482bde62772243f6c91cd52150460"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
