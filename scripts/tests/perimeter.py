@@ -43,12 +43,14 @@ def require_bytecode_guard(source, local_modules):
     """Conservative AST admission for repository-module import entrypoints."""
     tree = ast.parse(source)
     sys_names = {'sys'}
-    loader_names = {'__import__'}
     import_ops = {'spec_from_file_location', 'spec_from_loader', 'module_from_spec',
                   'exec_module', 'import_module', 'SourceFileLoader'}
+    loader_names = {'__import__', *import_ops}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             sys_names.update(a.asname or a.name for a in node.names if a.name == 'sys')
+            loader_names.update(a.asname or a.name.split('.')[0] for a in node.names
+                                if a.name.split('.')[0] == 'importlib')
         if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('importlib'):
             loader_names.update(a.asname or a.name for a in node.names)
     hazards = []
@@ -102,8 +104,9 @@ class Contracts(unittest.TestCase):
         for action in ('importlib.util.spec_from_file_location("x", "x.py")\n',
                        'load("x", "x.py")\n', 'sys.path.insert(0, "scripts")\n',
                        'import scripts.mutation_ci\n', 'from plants import run\n',
-                       'from mutation_ci import matrix\n', 'from sys import path as search_path\n'):
-            prefix = 'import sys\nfrom importlib.util import spec_from_file_location as load\n'
+                       'from mutation_ci import matrix\n', 'from sys import path as search_path\n',
+                       'getattr(il.util, "spec_from_file_location")("x", "x.py")\n'):
+            prefix = 'import sys\nimport importlib as il\nfrom importlib.util import spec_from_file_location as load\n'
             require_bytecode_guard(prefix + guard + action, {'scripts', 'plants', 'mutation_ci'})
             for bad in (prefix + action, prefix + action + guard,
                         prefix + 'if False:\n    ' + guard + action,
