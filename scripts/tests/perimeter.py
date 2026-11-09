@@ -44,14 +44,15 @@ def require_bytecode_guard(source, local_modules):
     tree = ast.parse(source)
     sys_names = {'sys'}
     import_ops = {'spec_from_file_location', 'spec_from_loader', 'module_from_spec',
-                  'exec_module', 'import_module', 'SourceFileLoader'}
+                  'exec_module', 'import_module', 'SourceFileLoader', 'run_module'}
     loader_names = {'__import__', *import_ops}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             sys_names.update(a.asname or a.name for a in node.names if a.name == 'sys')
             loader_names.update(a.asname or a.name.split('.')[0] for a in node.names
-                                if a.name.split('.')[0] == 'importlib')
-        if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('importlib'):
+                                if a.name.split('.')[0] in ('importlib', 'runpy'))
+        if isinstance(node, ast.ImportFrom) and ((node.module or '').startswith('importlib')
+                                               or node.module == 'runpy'):
             loader_names.update(a.asname or a.name for a in node.names)
     hazards = []
     for node in ast.walk(tree):
@@ -85,6 +86,21 @@ def require_bytecode_guard(source, local_modules):
 
 
 class Contracts(unittest.TestCase):
+    def test_runpy_module_bytecode_effect_is_guarded(self):
+        for guarded in (False, True):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'probe.py').write_text('value = 1\n')
+                source = ('import sys\nsys.dont_write_bytecode = True\n' if guarded else '')
+                source += 'import runpy\nrunpy.run_module("probe")\n'
+                subprocess.run([sys.executable, '-c', source], cwd=root, check=True)
+                self.assertEqual(bool(list(root.rglob('*.pyc'))), not guarded)
+                if guarded:
+                    require_bytecode_guard(source, {'probe'})
+                else:
+                    with self.assertRaisesRegex(ValueError, 'PY_BYTECODE_GUARD'):
+                        require_bytecode_guard(source, {'probe'})
+
     def test_all_python_repo_importers_disable_bytecode_before_import(self):
         # Walking this superset also works in git-less exports and covers untracked entrypoints.
         paths = sorted(p for directory in ('scripts', 'plants', '.claude/hooks')
@@ -105,7 +121,8 @@ class Contracts(unittest.TestCase):
                        'load("x", "x.py")\n', 'sys.path.insert(0, "scripts")\n',
                        'import scripts.mutation_ci\n', 'from plants import run\n',
                        'from mutation_ci import matrix\n', 'from sys import path as search_path\n',
-                       'getattr(il.util, "spec_from_file_location")("x", "x.py")\n'):
+                       'getattr(il.util, "spec_from_file_location")("x", "x.py")\n',
+                       'from runpy import run_module as run\nrun("scripts.mutation_ci")\n'):
             prefix = 'import sys\nimport importlib as il\nfrom importlib.util import spec_from_file_location as load\n'
             require_bytecode_guard(prefix + guard + action, {'scripts', 'plants', 'mutation_ci'})
             for bad in (prefix + action, prefix + action + guard,
