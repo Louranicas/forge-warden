@@ -5,8 +5,11 @@ from pathlib import Path
 import unittest
 import os
 import subprocess
+import sys
 from unittest.mock import patch
 
+# Dynamic imports must not leave bytecode in the committed subject before plants.
+sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('mutation_ci', ROOT / 'scripts/mutation_ci.py')
 M = importlib.util.module_from_spec(spec)

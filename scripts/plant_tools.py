@@ -200,6 +200,18 @@ def check_ci(root):
     if '    runs-on: ubuntu-latest\n' not in body:
         raise ValueError('plant CI tool provisioning needs review for a new runner image')
     steps = re.split(r'(?=^      - )', body, flags=re.M)[1:]
+    entrypoints = [i for i, step in enumerate(steps) if 'scripts/check_plants.py' in step]
+    if len(entrypoints) != 1:
+        raise ValueError('plant CI clean-tree entrypoint must occur exactly once')
+    # Cleanliness is checked at the entrypoint, after every gate command. Only the
+    # reviewed evidence upload may follow; later commands could dirty the subject unseen.
+    for raw in steps[entrypoints[0] + 1:]:
+        if not re.fullmatch(
+                r'      - if: always\(\)\n'
+                r'        uses: actions/upload-artifact@[0-9a-f]{40}(?: #[^\n]*)?\n'
+                r'        with:\n          name: guardrail-plants\n          path: target/plants-\*\n',
+                raw.rstrip() + '\n'):
+            raise ValueError('plant CI clean-tree entrypoint must follow every gate command')
     available = set(HOSTED)
     values = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
     found_entrypoint = False

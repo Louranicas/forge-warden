@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Owned gate contracts: exact tool inputs, complete plant receipts and merge subjects."""
 import importlib.util
+import ast
 import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 sys.dont_write_bytecode = True
 import tempfile
@@ -37,7 +39,135 @@ TIMEOUTS = {
 }
 
 
+def require_bytecode_guard(source, local_modules):
+    """Conservative AST admission for repository-module import entrypoints."""
+    tree = ast.parse(source)
+    sys_names = {'sys'}
+    loader_names = {'__import__'}
+    import_ops = {'spec_from_file_location', 'spec_from_loader', 'module_from_spec',
+                  'exec_module', 'import_module', 'SourceFileLoader'}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            sys_names.update(a.asname or a.name for a in node.names if a.name == 'sys')
+        if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('importlib'):
+            loader_names.update(a.asname or a.name for a in node.names)
+    hazards = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and (node.attr in import_ops or
+                (node.attr == 'path' and isinstance(node.value, ast.Name) and node.value.id in sys_names)):
+            hazards.append(node.lineno)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in loader_names:
+            hazards.append(node.lineno)
+        if isinstance(node, ast.Import) and any(a.name.split('.')[0] in local_modules for a in node.names):
+            hazards.append(node.lineno)
+        if isinstance(node, ast.ImportFrom) and (node.level or
+                (node.module or '').split('.')[0] in local_modules or
+                (node.module == 'sys' and any(a.name == 'path' for a in node.names))):
+            hazards.append(node.lineno)
+    if not hazards:
+        return
+    guards = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Attribute) and t.attr == 'dont_write_bytecode' for t in targets):
+                valid = (isinstance(node, ast.Assign) and len(targets) == 1
+                         and isinstance(targets[0].value, ast.Name) and targets[0].value.id in sys_names
+                         and isinstance(node.value, ast.Constant) and node.value.value is True)
+                if not valid:
+                    raise ValueError('PY_BYTECODE_GUARD: bytecode guard reset or nonliteral assignment')
+                if node in tree.body:
+                    guards.append(node.lineno)
+    if not guards or min(guards) >= min(hazards):
+        raise ValueError('PY_BYTECODE_GUARD: repo imports need unconditional prior sys.dont_write_bytecode = True')
+
+
 class Contracts(unittest.TestCase):
+    def test_all_python_repo_importers_disable_bytecode_before_import(self):
+        # Walking this superset also works in git-less exports and covers untracked entrypoints.
+        paths = sorted(p for directory in ('scripts', 'plants', '.claude/hooks')
+                       for p in (ROOT / directory).rglob('*.py'))
+        self.assertTrue(paths)
+        local_modules = {'scripts', 'plants', *(p.stem for p in paths)}
+        for path in paths:
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                require_bytecode_guard(path.read_text(), local_modules)
+
+    def test_bytecode_guard_removal_and_import_classes_are_caught(self):
+        guard = 'sys.dont_write_bytecode = True\n'
+        source = (ROOT / 'scripts/tests/mutation_budget.py').read_text()
+        self.assertIn(guard, source)
+        with self.assertRaisesRegex(ValueError, 'PY_BYTECODE_GUARD'):
+            require_bytecode_guard(source.replace(guard, '', 1), {'scripts', 'plants'})
+        for action in ('importlib.util.spec_from_file_location("x", "x.py")\n',
+                       'load("x", "x.py")\n', 'sys.path.insert(0, "scripts")\n',
+                       'import scripts.mutation_ci\n', 'from plants import run\n',
+                       'from mutation_ci import matrix\n', 'from sys import path as search_path\n'):
+            prefix = 'import sys\nfrom importlib.util import spec_from_file_location as load\n'
+            require_bytecode_guard(prefix + guard + action, {'scripts', 'plants', 'mutation_ci'})
+            for bad in (prefix + action, prefix + action + guard,
+                        prefix + 'if False:\n    ' + guard + action,
+                        prefix + guard + 'sys.dont_write_bytecode = False\n' + action):
+                with self.subTest(action=action, source=bad), self.assertRaisesRegex(ValueError, 'PY_BYTECODE_GUARD'):
+                    require_bytecode_guard(bad, {'scripts', 'plants', 'mutation_ci'})
+
+    def test_mutation_budget_subprocess_leaves_no_checkout_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('scripts/tests/mutation_budget.py', 'scripts/mutation_ci.py'):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, path)
+            before = sorted(str(p.relative_to(root)) for p in root.rglob('*'))
+            result = subprocess.run([sys.executable, '-I', str(root / 'scripts/tests/mutation_budget.py')],
+                                    cwd=root, capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sorted(str(p.relative_to(root)) for p in root.rglob('*')), before)
+
+    def test_dirty_subject_refusal_names_paths_before_plant_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('scripts/check_plants.py', 'scripts/plant_tools.py', 'plants/run.py'):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, path)
+            # Deliberately unusable catalog: dirt must be diagnosed before preflight.
+            (root / 'plants/catalog.json').write_text('not JSON')
+            def git(*args):
+                return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null',
+                                       '-c', 'user.name=fixture', '-c', 'user.email=fixture@invalid',
+                                       *args], cwd=root, capture_output=True, check=True)
+            git('init', '-q')
+            git('add', '.')
+            git('commit', '-qm', 'fixture')
+            (root / 'untracked file').write_text('new')
+            (root / 'staged file').write_text('new')
+            git('add', 'staged file')
+            (root / 'plants/run.py').write_text((root / 'plants/run.py').read_text() + '\n# dirty\n')
+            result = subprocess.run([sys.executable, '-I', str(root / 'scripts/check_plants.py')],
+                                    cwd=root, capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('CI_DIRTY_TREE', result.stderr)
+            for name in ('untracked file', 'staged file', 'plants/run.py'):
+                self.assertIn(name, result.stderr)
+            self.assertFalse((root / 'target').exists())
+
+    def test_clean_tree_entrypoint_cannot_precede_commands_or_repeat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            path = root / '.github/workflows/ci.yml'
+            original = path.read_text()
+            entry = '      - run: python3 -I scripts/check_plants.py\n'
+            moved = original.replace(entry, '', 1).replace(
+                '      - run: cargo doc --workspace --no-deps --locked\n',
+                entry + '      - run: cargo doc --workspace --no-deps --locked\n', 1)
+            for text in (moved, original.replace(entry, entry * 2, 1),
+                         original.replace(entry, entry + '      - run: touch leftover\n', 1)):
+                path.write_text(text)
+                with self.assertRaisesRegex(ValueError, 'clean-tree'):
+                    CAPS.check_ci(root)
+
     def copy_ci_fixture(self, root):
         for file in ("plants/catalog.json", "scripts/tool-versions.toml", "scripts/mutation_ci.py",
                      ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):

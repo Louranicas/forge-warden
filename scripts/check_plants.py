@@ -32,13 +32,15 @@ def run():
     tools = load('plant_tools', ROOT / 'scripts/plant_tools.py')
     runner = load('plant_runner', ROOT / 'plants/run.py')
     env = runner.environment()
-    cases = json.loads((ROOT / "plants/catalog.json").read_text())["cases"]
-    tools.preflight(tools.requirements(cases), ROOT, env)
     def git(*args):
         return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", *args],
                                        cwd=ROOT, env=env, text=True).strip()
-    if git("status", "--porcelain", "--untracked-files=all"):
-        raise ValueError("plants gate requires a clean committed subject")
+    dirty = git("status", "--porcelain=v1", "--untracked-files=all")
+    if dirty:
+        raise ValueError("CI_DIRTY_TREE: pre-plant steps changed the committed subject; "
+                         "dirty status/path records: " + json.dumps(dirty.splitlines(), ensure_ascii=True))
+    cases = json.loads((ROOT / "plants/catalog.json").read_text())["cases"]
+    tools.preflight(tools.requirements(cases), ROOT, env)
     revision = git("rev-parse", "HEAD")
     # Explicit prerequisites: never rely on a previous gate having warmed these.
     msrv = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["rust-version"]
