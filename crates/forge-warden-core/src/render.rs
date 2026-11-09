@@ -37,14 +37,17 @@ pub fn render_text(verdict: &Verdict) -> String {
         verdict.tool.version, verdict.exit.code, verdict.exit.name, verdict.exit.action
     );
     let ranker = match &verdict.seals.ranked_by.sha256 {
-        Some(sha256) => format!("produced by ranker {}", terminal_safe(&short(sha256))),
+        Some(sha256) => format!(
+            "produced by ranker {}",
+            terminal_safe(&short(sha256.as_str()))
+        ),
         None => "supplied, unverified".to_owned(),
     };
     let _ = writeln!(
         out,
         "  patch {}, policy {}, ranked by deep-diff-forge {} ({ranker}), on {}",
-        short(&verdict.seals.patch_sha256),
-        short(&verdict.seals.policy_sha256),
+        short(verdict.seals.patch_sha256.as_str()),
+        short(verdict.seals.policy_sha256.as_str()),
         terminal_safe(&verdict.seals.ranked_by.version),
         verdict.evaluated_on,
     );
@@ -91,7 +94,7 @@ pub fn render_text(verdict: &Verdict) -> String {
                     "               at {} line {} (hunk {})",
                     c.side,
                     c.line,
-                    short(&c.address)
+                    short(c.address.as_str())
                 );
             }
         }

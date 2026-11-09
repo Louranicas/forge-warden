@@ -25,7 +25,7 @@ use forge_warden_core::verdict::{Seals, Verdict};
 ";
 
 /// `(what, source, the rustc error code it must fail with)`.
-const REFUSED: [(&str, &str, &str); 6] = [
+const REFUSED: [(&str, &str, &str); 7] = [
     (
         "attest with a bare string instead of an admitted producer",
         "pub fn f(doc: RankDoc) -> Ranking<Produced> { Ranking::attest(doc, String::new()) }",
@@ -48,6 +48,11 @@ const REFUSED: [(&str, &str, &str); 6] = [
         "E0639",
     ),
     (
+        "a seal built by hand (Q-TYPES-2: only Sha256Hex::of and ::parse make one)",
+        "pub fn f() -> forge_warden_core::seal::Sha256Hex { forge_warden_core::seal::Sha256Hex(String::new()) }",
+        "E0603",
+    ),
+    (
         "one ranking judged with another ranking's coverage proof (the old separate argument)",
         "pub fn f(p: &Policy, a: &Ranking<Produced>, b: &Ranking<Produced>, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Verdict { \
          let checked = check(a, x); evaluate_authority(p, b, &checked, SuppliedCopy::Absent, s, t) }",
@@ -65,7 +70,7 @@ const REFUSED: [(&str, &str, &str); 6] = [
 const ADMITTED: [(&str, &str); 2] = [
     (
         "admit, attest, check, judge",
-        "pub fn f(p: &Policy, doc: RankDoc, pin: &str, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Option<Verdict> { \
+        "pub fn f(p: &Policy, doc: RankDoc, pin: &forge_warden_core::seal::Sha256Hex, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Option<Verdict> { \
          let admitted = p.admit_producer(pin)?; let ranking = Ranking::attest(doc, admitted); \
          let checked = check(&ranking, x); Some(evaluate_authority(p, &checked, SuppliedCopy::Absent, s, t)) }",
     ),

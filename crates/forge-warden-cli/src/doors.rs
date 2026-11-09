@@ -242,7 +242,7 @@ pub(crate) mod child {
     use forge_warden_core::authority::{Produced, Ranking};
     use forge_warden_core::defaults::NamedDefault as _;
     use forge_warden_core::rank::parse_rank;
-    use forge_warden_core::seal::sha256_hex;
+    use forge_warden_core::seal::{Sha256Hex, sha256_hex};
     use std::io::{Read as _, Write as _};
     use std::path::Path;
     use std::process::ExitStatus;
@@ -265,7 +265,7 @@ pub(crate) mod child {
     pub(crate) struct PinnedExecutable {
         file: std::fs::File,
         /// SHA-256 of the bytes read through the descriptor.
-        pub(crate) sha256: String,
+        pub(crate) sha256: Sha256Hex,
     }
 
     #[cfg(not(test))]
@@ -278,16 +278,16 @@ pub(crate) mod child {
     pub(crate) struct AdmittedGit {
         executable: PinnedExecutable,
         path: std::path::PathBuf,
-        allowlist_sha256: Option<String>,
+        allowlist_sha256: Option<Sha256Hex>,
     }
 
     impl AdmittedGit {
-        pub(crate) fn sha256(&self) -> &str {
+        pub(crate) const fn sha256(&self) -> &Sha256Hex {
             &self.executable.sha256
         }
 
-        pub(crate) fn allowlist_sha256(&self) -> Option<&str> {
-            self.allowlist_sha256.as_deref()
+        pub(crate) const fn allowlist_sha256(&self) -> Option<&Sha256Hex> {
+            self.allowlist_sha256.as_ref()
         }
     }
 
@@ -322,7 +322,7 @@ pub(crate) mod child {
     /// A closed policy document. TOML rejects duplicate keys; the digest set rejects duplicates.
     pub(super) fn parse_git_allowlist(
         bytes: &[u8],
-    ) -> Result<std::collections::BTreeSet<String>, DoorError> {
+    ) -> Result<std::collections::BTreeSet<Sha256Hex>, DoorError> {
         let text = std::str::from_utf8(bytes).map_err(git_refusal)?;
         let value: toml::Value = toml::from_str(text).map_err(git_refusal)?;
         let table = value
@@ -350,12 +350,8 @@ pub(crate) mod child {
             let digest = entry
                 .as_str()
                 .ok_or_else(|| git_refusal("digest must be a string"))?;
-            if digest.len() != 64
-                || !digest
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                || !digests.insert(digest.to_owned())
-            {
+            let unique = Sha256Hex::parse(digest).is_ok_and(|seal| digests.insert(seal));
+            if !unique {
                 return Err(git_refusal("digests must be unique lowercase SHA-256"));
             }
         }
@@ -437,7 +433,7 @@ pub(crate) mod child {
     fn git_policy(
         path: &Path,
         trust: &GitTrust<'_>,
-    ) -> Result<Option<(std::collections::BTreeSet<String>, String)>, DoorError> {
+    ) -> Result<Option<(std::collections::BTreeSet<Sha256Hex>, Sha256Hex)>, DoorError> {
         if !git_parents(path, trust)? {
             return Ok(None);
         }
@@ -1285,7 +1281,7 @@ pub(crate) mod child {
             RankerFailure::Failed(format!("the ranker's output is not a ranking: {e}"))
         })?;
         let patch_sha256 = sha256_hex(patch);
-        if doc.input_sha256() != patch_sha256 {
+        if *doc.input_sha256() != patch_sha256 {
             return Err(RankerFailure::Failed(format!(
                 "the ranker sealed patch {} but was given {patch_sha256}",
                 doc.input_sha256()
@@ -1476,15 +1472,15 @@ mod child_tests {
         );
         std::fs::write(&policy, &bytes).unwrap();
         let git = fixture_git(&executable, &policy, &root, owner, false).unwrap();
-        assert_eq!(git.sha256(), digest);
+        assert_eq!(git.sha256(), &digest);
         assert_eq!(
             git.allowlist_sha256(),
-            Some(forge_warden_core::seal::sha256_hex(bytes.as_bytes()).as_str())
+            Some(&forge_warden_core::seal::sha256_hex(bytes.as_bytes()))
         );
         let version = git_version(&git).unwrap();
         std::fs::rename(&executable, root.join("old-git")).unwrap();
         std::fs::copy("/usr/bin/false", &executable).unwrap();
-        std::fs::write(&policy, bytes.replace(&digest, &"0".repeat(64))).unwrap();
+        std::fs::write(&policy, bytes.replace(digest.as_str(), &"0".repeat(64))).unwrap();
         assert_eq!(git_version(&git).unwrap(), version);
         assert!(fixture_git(&executable, &policy, &root, owner, false).is_err());
         // Restoring the executable does not undo owner-policy revocation.
@@ -1528,7 +1524,7 @@ mod child_tests {
         assert!(fixture_git(git, &linked, &root, owner, true).is_err());
         std::fs::write(&policy, vec![b' '; 65 * 1024]).unwrap();
         assert!(fixture_git(git, &policy, &root, owner, true).is_err());
-        std::fs::write(&policy, bytes.replace(&digest, &"0".repeat(64))).unwrap();
+        std::fs::write(&policy, bytes.replace(digest.as_str(), &"0".repeat(64))).unwrap();
         assert!(fixture_git(git, &policy, &root, owner, true).is_err());
         let script = root.join("script");
         std::fs::write(&script, b"#!/bin/sh\nexit 0\n").unwrap();

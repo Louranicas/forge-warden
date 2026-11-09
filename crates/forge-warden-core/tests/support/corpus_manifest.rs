@@ -21,11 +21,12 @@ pub(crate) fn check(
     group: &str,
     entries: impl IntoIterator<Item = (String, Vec<u8>)>,
 ) -> Result<(), String> {
-    let actual = unique(
-        entries
-            .into_iter()
-            .map(|(name, bytes)| (name, forge_warden_core::seal::sha256_hex(&bytes))),
-    )?;
+    let actual = unique(entries.into_iter().map(|(name, bytes)| {
+        (
+            name,
+            forge_warden_core::seal::sha256_hex(&bytes).to_string(),
+        )
+    }))?;
     let groups: Vec<(String, Entries)> =
         serde_json::from_str(include_str!("../../../../fixtures/coverage/MANIFEST"))
             .map_err(|error| format!("invalid protected corpus manifest: {error}"))?;

@@ -22,6 +22,7 @@ use crate::exit::Outcome;
 use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_signals};
 use crate::policy::{AdmittedProducer, Policy};
 use crate::rank::RankDoc;
+use crate::seal::Sha256Hex;
 use crate::verdict::{ExitInfo, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -39,7 +40,7 @@ pub enum Supplied {}
 #[non_exhaustive]
 pub struct Ranking<P> {
     doc: RankDoc,
-    producer_sha256: Option<String>,
+    producer_sha256: Option<Sha256Hex>,
     provenance: PhantomData<P>,
 }
 
@@ -78,8 +79,8 @@ impl<P> Ranking<P> {
 
     /// The pinned ranker's SHA-256, for a produced ranking.
     #[must_use]
-    pub fn producer_sha256(&self) -> Option<&str> {
-        self.producer_sha256.as_deref()
+    pub const fn producer_sha256(&self) -> Option<&Sha256Hex> {
+        self.producer_sha256.as_ref()
     }
 }
 

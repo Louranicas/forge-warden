@@ -44,7 +44,7 @@ fn golden_form(stdout: &str) -> String {
     let mut v: Value = serde_json::from_str(stdout).unwrap();
     assert_eq!(
         v["seals"]["git"]["sha256"],
-        forge_warden_core::seal::sha256_hex(&read_bytes("/usr/bin/git"))
+        forge_warden_core::seal::sha256_hex(&read_bytes("/usr/bin/git")).as_str()
     );
     v["seals"]["git"]["sha256"] = "0".repeat(64).into();
     v["seals"]["git"]["version"] = "<git --version>".into();
@@ -114,7 +114,7 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
     );
     assert_eq!(
         produced["seals"]["git"]["allowlist_sha256"],
-        forge_warden_core::seal::sha256_hex(git_policy.as_bytes())
+        forge_warden_core::seal::sha256_hex(git_policy.as_bytes()).as_str()
     );
     produced["seals"]["git"]["admission"] = golden["seals"]["git"]["admission"].clone();
     produced["seals"]["git"]["allowlist_sha256"] = Value::Null;
@@ -124,7 +124,7 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
     common::assert_golden_json("fixtures/demo.verdict.json", &produced);
     assert_eq!(
         golden["seals"]["rank_sha256"],
-        forge_warden_core::seal::sha256_hex(&read_bytes(RANK)),
+        forge_warden_core::seal::sha256_hex(&read_bytes(RANK)).as_str(),
         "the produced ranking is the recorded one"
     );
 }
@@ -419,7 +419,7 @@ fn machine_contract_lint_json_is_a_versioned_document() {
     assert_eq!(value["schema"], "forge-warden.lint.v1");
     assert_eq!(
         value["policy_sha256"],
-        forge_warden_core::seal::sha256_hex(&read_bytes(POLICY))
+        forge_warden_core::seal::sha256_hex(&read_bytes(POLICY)).as_str()
     );
     assert!(value["rules"].as_u64().unwrap() > 0);
     assert!(value["waivers"].is_u64());

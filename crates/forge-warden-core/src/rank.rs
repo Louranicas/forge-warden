@@ -6,7 +6,7 @@
 //! signals and evidence. A document that fails any check is refused as a whole.
 
 use crate::path::RepoPath;
-use crate::seal::is_sha256_hex;
+use crate::seal::Sha256Hex;
 use serde::Deserialize;
 
 /// The only ranking schema this version reads.
@@ -16,7 +16,7 @@ pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RankDoc {
-    input_sha256: String,
+    input_sha256: Sha256Hex,
     tool_version: String,
     files: Vec<RankedFile>,
 }
@@ -38,27 +38,22 @@ pub struct RankedFile {
 #[non_exhaustive]
 pub struct Evidence {
     signal: String,
-    address: String,
+    address: Sha256Hex,
     side: String,
     line: u64,
 }
 
 impl RankDoc {
-    /// A ranking, if the seal is a well-formed SHA-256 and the producer version is exact.
+    /// A ranking, if the producer version is exact (the seal is a [`Sha256Hex`], so already well formed).
     ///
     /// # Errors
     ///
     /// [`RankError::Invalid`] naming the problem.
     pub fn new(
-        input_sha256: String,
+        input_sha256: Sha256Hex,
         tool_version: String,
         files: Vec<RankedFile>,
     ) -> Result<Self, RankError> {
-        if !is_sha256_hex(&input_sha256) {
-            return Err(RankError::Invalid(
-                "input_sha256 is not 64 lowercase hex digits".to_owned(),
-            ));
-        }
         if tool_version.trim().is_empty() {
             return Err(RankError::Invalid(
                 "tool.version is empty or whitespace".to_owned(),
@@ -78,7 +73,7 @@ impl RankDoc {
 
     /// deep-diff-forge's seal: SHA-256 of the patch bytes it ranked.
     #[must_use]
-    pub fn input_sha256(&self) -> &str {
+    pub const fn input_sha256(&self) -> &Sha256Hex {
         &self.input_sha256
     }
 
@@ -213,22 +208,17 @@ impl RankedFile {
 }
 
 impl Evidence {
-    /// Evidence, if the address is a hunk seal, the side is `new` or `old` and the line is 1-based.
+    /// Evidence, if the side is `new` or `old` and the line is 1-based (the address is a [`Sha256Hex`]).
     ///
     /// # Errors
     ///
     /// [`RankError::Invalid`] naming the problem.
     pub fn new(
         signal: String,
-        address: String,
+        address: Sha256Hex,
         side: String,
         line: u64,
     ) -> Result<Self, RankError> {
-        if !is_sha256_hex(&address) {
-            return Err(RankError::Invalid(
-                "address is not 64 lowercase hex digits".to_owned(),
-            ));
-        }
         if side != "new" && side != "old" {
             return Err(RankError::Invalid(format!(
                 "side is {side:?}; expected \"new\" or \"old\""
@@ -255,7 +245,7 @@ impl Evidence {
 
     /// The hunk's content address.
     #[must_use]
-    pub fn address(&self) -> &str {
+    pub const fn address(&self) -> &Sha256Hex {
         &self.address
     }
 
@@ -352,7 +342,10 @@ pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError> {
         .enumerate()
         .map(|(index, file)| validate_file(index, file))
         .collect::<Result<Vec<_>, _>>()?;
-    RankDoc::new(raw.input_sha256, raw.tool.version, files)
+    let input_sha256 = Sha256Hex::parse(&raw.input_sha256).map_err(|_| {
+        RankError::Invalid("input_sha256 is not 64 lowercase hex digits".to_owned())
+    })?;
+    RankDoc::new(input_sha256, raw.tool.version, files)
 }
 
 fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
@@ -363,7 +356,12 @@ fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
         .into_iter()
         .enumerate()
         .map(|(e_index, item)| {
-            Evidence::new(item.signal, item.address, item.side, item.line)
+            let address = Sha256Hex::parse(&item.address).map_err(|_| {
+                at(&format!(
+                    "evidence[{e_index}]: address is not 64 lowercase hex digits"
+                ))
+            })?;
+            Evidence::new(item.signal, address, item.side, item.line)
                 .map_err(|e| at(&format!("evidence[{e_index}]: {}", reason(&e))))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -449,7 +447,7 @@ mod tests {
         assert_eq!(rank.files.len(), 1);
         assert_eq!(rank.files[0].evidence[0].line, 3);
         assert_eq!(rank.tool_version(), "0.7.0");
-        assert_eq!(rank.input_sha256(), SEAL);
+        assert_eq!(rank.input_sha256().as_str(), SEAL);
     }
 
     #[test]

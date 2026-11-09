@@ -10,6 +10,7 @@
 
 use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
+use crate::seal::Sha256Hex;
 use serde::Serialize;
 
 /// The schema name every verdict carries.
@@ -62,15 +63,15 @@ pub struct Tool {
 #[non_exhaustive]
 pub struct Seals {
     /// SHA-256 of the policy bytes.
-    pub policy_sha256: String,
+    pub policy_sha256: Sha256Hex,
     /// SHA-256 of the ranking document bytes (the produced ranking, in authority mode).
-    pub rank_sha256: String,
+    pub rank_sha256: Sha256Hex,
     /// SHA-256 of the patch. forge-warden hashed the patch itself and found the ranking's own seal
     /// equal to it.
-    pub patch_sha256: String,
+    pub patch_sha256: Sha256Hex,
     /// SHA-256 of Git's facts about the patch: `git apply --numstat -z` output, one 0x00 byte, then
     /// `git apply --summary` output. `null` when Git refused the patch.
-    pub patch_facts_sha256: Option<String>,
+    pub patch_facts_sha256: Option<Sha256Hex>,
     /// Whether forge-warden produced the ranking itself (`produced`, authority mode) or was given it
     /// (`supplied`, advisory mode; such a verdict is never a pass).
     pub provenance: Provenance,
@@ -88,9 +89,9 @@ impl Seals {
     /// rest. The authority evaluators set `provenance` and `ranked_by` from the ranking itself.
     #[must_use]
     pub const fn new(
-        policy_sha256: String,
-        rank_sha256: String,
-        patch_sha256: String,
+        policy_sha256: Sha256Hex,
+        rank_sha256: Sha256Hex,
+        patch_sha256: Sha256Hex,
         ranked_by_version: String,
     ) -> Self {
         Self {
@@ -110,7 +111,7 @@ impl Seals {
 
     /// These seals with Git's facts digest and the Git that produced them.
     #[must_use]
-    pub fn with_git(mut self, facts_sha256: Option<String>, git: GitOracle) -> Self {
+    pub fn with_git(mut self, facts_sha256: Option<Sha256Hex>, git: GitOracle) -> Self {
         self.patch_facts_sha256 = facts_sha256;
         self.git = Some(git);
         self
@@ -142,7 +143,7 @@ pub struct RankedBy {
     /// The version the ranking reports.
     pub version: String,
     /// SHA-256 of the ranker binary forge-warden ran; `null` for a supplied ranking.
-    pub sha256: Option<String>,
+    pub sha256: Option<Sha256Hex>,
 }
 
 /// The Git whose facts the verdict used. Recorded for audit, not attested (ADR 0005 §2.4). Build
@@ -155,11 +156,11 @@ pub struct GitOracle {
     /// What `git --version` printed, trimmed.
     pub version: String,
     /// SHA-256 of the executable read through the descriptor used for every Git invocation.
-    pub sha256: String,
+    pub sha256: Sha256Hex,
     /// `approved` when the executable digest occurs in the owner policy; `unpinned` otherwise.
     pub admission: &'static str,
     /// SHA-256 of the exact admitted owner policy bytes; absent only for unpinned advisory Git.
-    pub allowlist_sha256: Option<String>,
+    pub allowlist_sha256: Option<Sha256Hex>,
 }
 
 /// What the caller claimed about the change. Recorded, never checked, never used.
@@ -179,7 +180,7 @@ pub struct Claims {
 impl RankedBy {
     /// The ranker that wrote a ranking: its reported `version`, and its SHA-256 if forge-warden ran it.
     #[must_use]
-    pub const fn new(version: String, sha256: Option<String>) -> Self {
+    pub const fn new(version: String, sha256: Option<Sha256Hex>) -> Self {
         Self { version, sha256 }
     }
 }
@@ -190,8 +191,8 @@ impl GitOracle {
     pub fn new(
         path: String,
         version: String,
-        sha256: String,
-        allowlist_sha256: Option<String>,
+        sha256: Sha256Hex,
+        allowlist_sha256: Option<Sha256Hex>,
     ) -> Self {
         let admission = if allowlist_sha256.is_some() {
             "approved"
@@ -337,7 +338,7 @@ pub struct Violation {
 #[non_exhaustive]
 pub struct Citation {
     /// The hunk's content address (`deep-diff-forge --hunks --address <A>` shows it).
-    pub address: String,
+    pub address: Sha256Hex,
     /// `new` or `old`.
     pub side: String,
     /// The line on that side.

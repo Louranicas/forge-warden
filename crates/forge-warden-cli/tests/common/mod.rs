@@ -292,7 +292,7 @@ fn fixture_receipt(binary: PathBuf) -> FixtureCli {
         .into_iter()
         .map(|name| {
             let digest = forge_warden_core::seal::sha256_hex(&read_bytes(&name));
-            (name, digest)
+            (name, digest.to_string())
         })
         .collect();
     let subject = format!(
@@ -346,7 +346,7 @@ pub(crate) fn fixture_ranker() -> PathBuf {
 
 /// The fixture ranker's SHA-256, as a policy's `[producer] sha256` lists it.
 pub(crate) fn fixture_ranker_sha256() -> String {
-    forge_warden_core::seal::sha256_hex(&std::fs::read(fixture_ranker()).unwrap())
+    forge_warden_core::seal::sha256_hex(&std::fs::read(fixture_ranker()).unwrap()).to_string()
 }
 
 /// Write `bytes` to `dir/name` and return the path.
@@ -447,7 +447,7 @@ fn admit_data(name: &str) {
     };
     let bytes = std::fs::read(root().join(name)).unwrap();
     assert_eq!(
-        forge_warden_core::seal::sha256_hex(&bytes),
+        forge_warden_core::seal::sha256_hex(&bytes).as_str(),
         *pin,
         "reviewed production data changed without its pin: {name}"
     );

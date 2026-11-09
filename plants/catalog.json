@@ -596,8 +596,8 @@
         "-I",
         "plants/private_constructor.py"
       ],
-      "old": "pub struct RankDoc {\n    input_sha256: String,\n    tool_version: String,\n    files: Vec<RankedFile>,\n}",
-      "new": "pub struct RankDoc {\n    /// Deliberately exposed unchecked seal.\n    pub input_sha256: String,\n    /// Deliberately exposed unchecked version.\n    pub tool_version: String,\n    /// Deliberately exposed unchecked records.\n    pub files: Vec<RankedFile>,\n}",
+      "old": "pub struct RankDoc {\n    input_sha256: Sha256Hex,\n    tool_version: String,\n    files: Vec<RankedFile>,\n}",
+      "new": "pub struct RankDoc {\n    /// Deliberately exposed unchecked seal.\n    pub input_sha256: Sha256Hex,\n    /// Deliberately exposed unchecked version.\n    pub tool_version: String,\n    /// Deliberately exposed unchecked records.\n    pub files: Vec<RankedFile>,\n}",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {

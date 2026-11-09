@@ -20,6 +20,11 @@ use forge_warden_core::verdict::{Provenance, RankedBy, Seals};
 use forge_warden_core::{Date, Outcome, Policy};
 use std::path::PathBuf;
 
+/// A test seal from a known-good constant.
+fn seal(text: &str) -> forge_warden_core::seal::Sha256Hex {
+    forge_warden_core::seal::Sha256Hex::parse(text).unwrap()
+}
+
 const HASH: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
 
 fn read(name: &str) -> Vec<u8> {
@@ -48,19 +53,14 @@ fn policy(body: &str) -> Policy {
 }
 
 fn seals() -> Seals {
-    Seals::new(
-        HASH.to_owned(),
-        HASH.to_owned(),
-        HASH.to_owned(),
-        "0.7.0".to_owned(),
-    )
+    Seals::new(seal(HASH), seal(HASH), seal(HASH), "0.7.0".to_owned())
 }
 
 /// The seals an authority verdict carries for a ranking attested with `HASH`.
 fn produced_seals() -> Seals {
     let mut seals = seals();
     seals.provenance = Provenance::Produced;
-    seals.ranked_by.sha256 = Some(HASH.to_owned());
+    seals.ranked_by.sha256 = Some(seal(HASH));
     seals
 }
 
@@ -68,7 +68,7 @@ fn produced_seals() -> Seals {
 /// way to obtain the token (Q-TYPES-1).
 fn produced(doc: RankDoc) -> Ranking<Produced> {
     let admitting = policy(&format!("[producer]\nsha256 = [\"{HASH}\"]\n{PERMISSIVE}"));
-    Ranking::attest(doc, admitting.admit_producer(HASH).unwrap())
+    Ranking::attest(doc, admitting.admit_producer(&seal(HASH)).unwrap())
 }
 
 fn today() -> Date {
@@ -210,7 +210,12 @@ fn only_a_produced_ranking_names_its_producer() {
     let doc = rank("new-mode").unwrap();
     assert_eq!(Ranking::supplied(doc.clone()).producer_sha256(), None);
     let ranking = produced(doc.clone());
-    assert_eq!(ranking.producer_sha256(), Some(HASH));
+    assert_eq!(
+        ranking
+            .producer_sha256()
+            .map(forge_warden_core::seal::Sha256Hex::as_str),
+        Some(HASH)
+    );
     assert_eq!(ranking.doc(), &doc);
 }
 
@@ -258,7 +263,7 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
     let supplied = Ranking::supplied(doc.clone());
     let mut lying = seals();
     lying.provenance = Provenance::Produced;
-    lying.ranked_by = RankedBy::new("9.9.9".to_owned(), Some("f".repeat(64)));
+    lying.ranked_by = RankedBy::new("9.9.9".to_owned(), Some(seal(&"f".repeat(64))));
     let authority = evaluate_authority(
         &p,
         &check(&ranking, facts(name)),
@@ -269,7 +274,7 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
     assert_eq!(authority.seals.provenance, Provenance::Produced);
     assert_eq!(
         authority.seals.ranked_by,
-        RankedBy::new(doc.tool_version().to_owned(), Some(HASH.to_owned()))
+        RankedBy::new(doc.tool_version().to_owned(), Some(seal(HASH)))
     );
     let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), lying, today());
     assert_eq!(advisory.verdict().seals.provenance, Provenance::Supplied);
@@ -293,8 +298,8 @@ fn advisory_git_admission_note_is_composed_by_core() {
             Some(GitOracle::new(
                 "/usr/bin/git".to_owned(),
                 "git fixture".to_owned(),
-                HASH.to_owned(),
-                Some(HASH.to_owned()),
+                seal(HASH),
+                Some(seal(HASH)),
             )),
             "",
         ),
@@ -302,7 +307,7 @@ fn advisory_git_admission_note_is_composed_by_core() {
             Some(GitOracle::new(
                 "/usr/bin/git".to_owned(),
                 "git fixture".to_owned(),
-                HASH.to_owned(),
+                seal(HASH),
                 None,
             )),
             "; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved",

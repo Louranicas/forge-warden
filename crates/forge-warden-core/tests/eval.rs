@@ -16,6 +16,11 @@ use forge_warden_core::verdict::{RuleOutcome, Seals};
 use forge_warden_core::{Date, Outcome};
 use proptest::prelude::*;
 
+/// A test seal from a known-good constant.
+fn seal(text: &str) -> forge_warden_core::seal::Sha256Hex {
+    forge_warden_core::seal::Sha256Hex::parse(text).unwrap()
+}
+
 const SEAL: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
 
 fn file(path: &str, status: &str, score: u32, signals: &[&str]) -> RankedFile {
@@ -42,20 +47,15 @@ fn file_with(
 }
 
 fn evidence(signal: &str, side: &str, line: u64) -> Evidence {
-    Evidence::new(signal.to_owned(), SEAL.to_owned(), side.to_owned(), line).unwrap()
+    Evidence::new(signal.to_owned(), seal(SEAL), side.to_owned(), line).unwrap()
 }
 
 fn rank(files: Vec<RankedFile>) -> RankDoc {
-    RankDoc::new(SEAL.to_owned(), "0.7.0".to_owned(), files).unwrap()
+    RankDoc::new(seal(SEAL), "0.7.0".to_owned(), files).unwrap()
 }
 
 fn seals() -> Seals {
-    Seals::new(
-        SEAL.to_owned(),
-        SEAL.to_owned(),
-        SEAL.to_owned(),
-        "0.7.0".to_owned(),
-    )
+    Seals::new(seal(SEAL), seal(SEAL), seal(SEAL), "0.7.0".to_owned())
 }
 
 fn today() -> Date {

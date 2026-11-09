@@ -8,7 +8,7 @@ crate::authority impl Ranking<Produced>
 crate::authority Ranking::#[must_use] pub fn attest(doc: RankDoc, producer: AdmittedProducer) -> Self
 crate::authority impl<P> Ranking<P>
 crate::authority Ranking::#[must_use] pub const fn doc(&self) -> &RankDoc
-crate::authority Ranking::#[must_use] pub fn producer_sha256(&self) -> Option<&str>
+crate::authority Ranking::#[must_use] pub const fn producer_sha256(&self) -> Option<&Sha256Hex>
 crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Checked<'r, P>
 crate::authority Checked.<3 private field(s)>
 crate::authority #[must_use] pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P>
@@ -215,13 +215,13 @@ crate::policy::model Policy.<3 private field(s)>
 crate::policy::model impl Policy
 crate::policy::model Policy::#[must_use] pub const fn rules(&self) -> &NonEmpty<Rule>
 crate::policy::model Policy::#[must_use] pub fn waivers(&self) -> &[Waiver]
-crate::policy::model Policy::#[must_use] pub fn producers(&self) -> &[String]
-crate::policy::model Policy::#[must_use] pub fn admits_producer(&self, sha256: &str) -> bool
-crate::policy::model Policy::#[must_use] pub fn admit_producer(&self, sha256: &str) -> Option<AdmittedProducer>
+crate::policy::model Policy::#[must_use] pub fn producers(&self) -> &[Sha256Hex]
+crate::policy::model Policy::#[must_use] pub fn admits_producer(&self, sha256: &Sha256Hex) -> bool
+crate::policy::model Policy::#[must_use] pub fn admit_producer(&self, sha256: &Sha256Hex) -> Option<AdmittedProducer>
 crate::policy::model #[derive(Debug)] #[non_exhaustive] pub struct AdmittedProducer
 crate::policy::model AdmittedProducer.<1 private field(s)>
 crate::policy::model impl AdmittedProducer
-crate::policy::model AdmittedProducer::#[must_use] pub fn sha256(&self) -> &str
+crate::policy::model AdmittedProducer::#[must_use] pub const fn sha256(&self) -> &Sha256Hex
 crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Rule
 crate::policy::model Rule.pub id: String,
 crate::policy::model Rule.pub why: String,
@@ -272,8 +272,8 @@ crate::rank RankedFile.<6 private field(s)>
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct Evidence
 crate::rank Evidence.<4 private field(s)>
 crate::rank impl RankDoc
-crate::rank RankDoc::pub fn new( input_sha256: String, tool_version: String, files: Vec<RankedFile>, ) -> Result<Self, RankError>
-crate::rank RankDoc::#[must_use] pub fn input_sha256(&self) -> &str
+crate::rank RankDoc::pub fn new( input_sha256: Sha256Hex, tool_version: String, files: Vec<RankedFile>, ) -> Result<Self, RankError>
+crate::rank RankDoc::#[must_use] pub const fn input_sha256(&self) -> &Sha256Hex
 crate::rank RankDoc::#[must_use] pub fn tool_version(&self) -> &str
 crate::rank RankDoc::#[must_use] pub fn files(&self) -> &[RankedFile]
 crate::rank impl RankedFile
@@ -285,9 +285,9 @@ crate::rank RankedFile::#[must_use] pub fn signals(&self) -> &[String]
 crate::rank RankedFile::#[must_use] pub fn evidence(&self) -> &[Evidence]
 crate::rank RankedFile::#[must_use] pub const fn evidence_truncated(&self) -> bool
 crate::rank impl Evidence
-crate::rank Evidence::pub fn new( signal: String, address: String, side: String, line: u64, ) -> Result<Self, RankError>
+crate::rank Evidence::pub fn new( signal: String, address: Sha256Hex, side: String, line: u64, ) -> Result<Self, RankError>
 crate::rank Evidence::#[must_use] pub fn signal(&self) -> &str
-crate::rank Evidence::#[must_use] pub fn address(&self) -> &str
+crate::rank Evidence::#[must_use] pub const fn address(&self) -> &Sha256Hex
 crate::rank Evidence::#[must_use] pub fn side(&self) -> &str
 crate::rank Evidence::#[must_use] pub const fn line(&self) -> u64
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum RankError
@@ -297,8 +297,17 @@ crate::rank RankError::#[error("ranking refused: {0}")] Invalid(String),
 crate::rank pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError>
 crate::render #[must_use] pub fn terminal_safe(text: &str) -> String
 crate::render #[must_use] pub fn render_text(verdict: &Verdict) -> String
-crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> String
-crate::seal #[must_use] pub fn is_sha256_hex(text: &str) -> bool
+crate::seal #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)] #[serde(transparent)] pub struct Sha256Hex(String);
+crate::seal #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum SealError
+crate::seal SealError::#[error("a seal is 64 lowercase hex digits, not {len} bytes")] Length { /// The byte length found. len: usize, },
+crate::seal SealError::#[error("a seal is 64 lowercase hex digits; byte {at} is not one")] NotLowercaseHex { /// The offset of the first offending byte. at: usize, },
+crate::seal impl Sha256Hex
+crate::seal Sha256Hex::#[must_use] pub fn of(bytes: &[u8]) -> Self
+crate::seal Sha256Hex::pub fn parse(text: &str) -> Result<Self, SealError>
+crate::seal Sha256Hex::#[must_use] pub fn as_str(&self) -> &str
+crate::seal impl std::fmt::Display for Sha256Hex
+crate::seal Sha256Hex::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex
 crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
 crate::verdict Verdict.pub schema: &'static str,
@@ -316,38 +325,38 @@ crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustiv
 crate::verdict Tool.pub name: &'static str,
 crate::verdict Tool.pub version: &'static str,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Seals
-crate::verdict Seals.pub policy_sha256: String,
-crate::verdict Seals.pub rank_sha256: String,
-crate::verdict Seals.pub patch_sha256: String,
-crate::verdict Seals.pub patch_facts_sha256: Option<String>,
+crate::verdict Seals.pub policy_sha256: Sha256Hex,
+crate::verdict Seals.pub rank_sha256: Sha256Hex,
+crate::verdict Seals.pub patch_sha256: Sha256Hex,
+crate::verdict Seals.pub patch_facts_sha256: Option<Sha256Hex>,
 crate::verdict Seals.pub provenance: Provenance,
 crate::verdict Seals.pub ranked_by: RankedBy,
 crate::verdict Seals.pub git: Option<GitOracle>,
 crate::verdict Seals.#[serde(skip_serializing_if = "Option::is_none")] pub claims: Option<Claims>,
 crate::verdict impl Seals
-crate::verdict Seals::#[must_use] pub const fn new( policy_sha256: String, rank_sha256: String, patch_sha256: String, ranked_by_version: String, ) -> Self
-crate::verdict Seals::#[must_use] pub fn with_git(mut self, facts_sha256: Option<String>, git: GitOracle) -> Self
+crate::verdict Seals::#[must_use] pub const fn new( policy_sha256: Sha256Hex, rank_sha256: Sha256Hex, patch_sha256: Sha256Hex, ranked_by_version: String, ) -> Self
+crate::verdict Seals::#[must_use] pub fn with_git(mut self, facts_sha256: Option<Sha256Hex>, git: GitOracle) -> Self
 crate::verdict Seals::#[must_use] pub fn with_claims(mut self, claims: Claims) -> Self
 crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "snake_case")] #[non_exhaustive] pub enum Provenance
 crate::verdict Provenance::Produced,
 crate::verdict Provenance::Supplied,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct RankedBy
 crate::verdict RankedBy.pub version: String,
-crate::verdict RankedBy.pub sha256: Option<String>,
+crate::verdict RankedBy.pub sha256: Option<Sha256Hex>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct GitOracle
 crate::verdict GitOracle.pub path: String,
 crate::verdict GitOracle.pub version: String,
-crate::verdict GitOracle.pub sha256: String,
+crate::verdict GitOracle.pub sha256: Sha256Hex,
 crate::verdict GitOracle.pub admission: &'static str,
-crate::verdict GitOracle.pub allowlist_sha256: Option<String>,
+crate::verdict GitOracle.pub allowlist_sha256: Option<Sha256Hex>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Claims
 crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub base: Option<String>,
 crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub head: Option<String>,
 crate::verdict Claims.pub verified: Unverified,
 crate::verdict impl RankedBy
-crate::verdict RankedBy::#[must_use] pub const fn new(version: String, sha256: Option<String>) -> Self
+crate::verdict RankedBy::#[must_use] pub const fn new(version: String, sha256: Option<Sha256Hex>) -> Self
 crate::verdict impl GitOracle
-crate::verdict GitOracle::#[must_use] pub fn new( path: String, version: String, sha256: String, allowlist_sha256: Option<String>, ) -> Self
+crate::verdict GitOracle::#[must_use] pub fn new( path: String, version: String, sha256: Sha256Hex, allowlist_sha256: Option<Sha256Hex>, ) -> Self
 crate::verdict impl Claims
 crate::verdict Claims::#[must_use] pub const fn new(base: Option<String>, head: Option<String>) -> Self
 crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified;
@@ -386,7 +395,7 @@ crate::verdict Violation.#[serde(skip_serializing_if = "Vec::is_empty")] pub evi
 crate::verdict Violation.#[serde(skip_serializing_if = "std::ops::Not::not")] pub evidence_truncated: bool,
 crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub waived_by: Option<usize>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)] #[non_exhaustive] pub struct Citation
-crate::verdict Citation.pub address: String,
+crate::verdict Citation.pub address: Sha256Hex,
 crate::verdict Citation.pub side: String,
 crate::verdict Citation.pub line: u64,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct WaiverNote

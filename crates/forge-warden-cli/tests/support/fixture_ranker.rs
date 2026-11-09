@@ -16,7 +16,7 @@
     reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout/stderr"
 )]
 
-use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::seal::{Sha256Hex, sha256_hex};
 use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -69,7 +69,7 @@ fn main() -> ExitCode {
             }
             ["exit", n] => code = n.parse().unwrap_or(1),
             ["garbage"] => return emit(b"this is not a ranking\n", 0),
-            ["wrong-seal"] => seal = "a".repeat(64),
+            ["wrong-seal"] => seal = Sha256Hex::parse(&"a".repeat(64)).unwrap_or(seal),
             ["flood"] => return flood(),
             ["omit", path] => files.retain(|f| f.path != *path),
             ["signal", _] => {}

@@ -107,11 +107,11 @@ fn a_produced_ranking_that_covers_the_patch_passes_and_says_who_produced_it() {
     assert_eq!(seals["ranked_by"]["version"], "0.7.0");
     assert_eq!(
         seals["patch_sha256"],
-        sha256_hex(&std::fs::read(&patch).unwrap())
+        sha256_hex(&std::fs::read(&patch).unwrap()).as_str()
     );
     assert_eq!(
         seals["policy_sha256"],
-        sha256_hex(&std::fs::read(&policy).unwrap())
+        sha256_hex(&std::fs::read(&policy).unwrap()).as_str()
     );
     assert!(
         seals["patch_facts_sha256"]
@@ -321,8 +321,8 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
         &dir,
         NO_SECRETS,
         &[
-            sha256_hex(&bytes),
-            sha256_hex(&std::fs::read(&script).unwrap()),
+            sha256_hex(&bytes).to_string(),
+            sha256_hex(&std::fs::read(&script).unwrap()).to_string(),
         ],
     );
     // A FIFO, made by a child (`mkfifo`): never opened for a blocking read.

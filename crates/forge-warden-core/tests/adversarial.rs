@@ -6,7 +6,7 @@
 
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankError, parse_rank};
-use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::seal::{Sha256Hex, sha256_hex};
 use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::Seals;
 use forge_warden_core::{Date, Outcome};
@@ -58,7 +58,7 @@ fn judge(body: &str, input: &Value, day: &str) -> forge_warden_core::Verdict {
     let seals = Seals::new(
         sha256_hex(&policy_bytes),
         sha256_hex(&rank_bytes),
-        HASH.to_owned(),
+        Sha256Hex::parse(HASH).unwrap(),
         "0.7.0".to_owned(),
     );
     evaluate(&policy, &rank, seals, Date::parse(day).unwrap())
