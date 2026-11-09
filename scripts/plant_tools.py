@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Reviewed plant capabilities and fail-closed runtime/hosted provisioning checks."""
+import hashlib
 import json
 import re
 import subprocess
@@ -67,8 +68,10 @@ def preflight(required, root, env):
 # A budget change needs the same protected-code review as a workflow change.
 CI_TIMEOUTS = {
     "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10, "workflow-audit": 10,
-               "mutation": 60, "dogfood": 10, "vocabulary": 10},
-    "mutation-baseline.yml": {"full-workspace": 120},
+               "mutation": 5, "mutation-plan": 10, "mutation-shards": "${{ matrix.minutes }}",
+               "dogfood": 10, "vocabulary": 10},
+    "mutation-baseline.yml": {"full-workspace": 5, "mutation-plan": 10,
+                              "mutation-shards": "${{ matrix.minutes }}"},
 }
 
 
@@ -138,7 +141,11 @@ def check_timeouts(root):
                     fields = set()
                 elif indent == 4 and job is not None:
                     match = re.fullmatch(r"    ([a-z][a-z-]*):(.*)", line)
-                    if not match or match[1] not in {"name", "runs-on", "timeout-minutes", "if", "env", "steps"}:
+                    allowed = {"name", "runs-on", "timeout-minutes", "if", "env", "steps"}
+                    allowed.update({"mutation-plan": {"outputs"},
+                                    "mutation-shards": {"needs", "strategy"},
+                                    "mutation": {"needs"}, "full-workspace": {"needs"}}.get(job, set()))
+                    if not match or match[1] not in allowed:
                         raise ValueError("CI timeout contract: unsupported job field")
                     if match[1] in fields:
                         raise ValueError("CI timeout contract: duplicate job field")
@@ -153,9 +160,35 @@ def check_timeouts(root):
             raise ValueError("CI timeout contract: missing job or timeout in " + filename)
 
 
+# Exact reviewed orchestration: protects the single required check, every matrix member,
+# failure propagation, honest scope/flags, inventory binding and the measured budget formula.
+# These pins are not external authority; changing them requires owner review (ADR0006/0009).
+MUTATION_CONTRACT = {
+    ('ci.yml', 'mutation-plan'): 'ead40464329ae65d88e971c65024ddb0c59685f300545e5b7ff1bfee9ca35ab6',
+    ('ci.yml', 'mutation-shards'): 'fb283a1342631e9837b7a77313433a5e5607772011fba36402666667866d491e',
+    ('ci.yml', 'mutation'): 'dcbad6a3b73cbc3e2f5c16fc8e307aa18ed1225ca61f94c4c61d5b8e529d8e02',
+    ('mutation-baseline.yml', 'mutation-plan'): 'ea1c1c5c7c1d1f800409765d42d1147cf46f572632245480de0b0a7f999622d8',
+    ('mutation-baseline.yml', 'mutation-shards'): 'c7d339068b77740e7d96fd3ad756eeaa594161b15241d3df05a11aa225b687c0',
+    ('mutation-baseline.yml', 'full-workspace'): '952432a0135022009d488de17045a82fc742520493518173f5e02fda1e4c6277',
+}
+MUTATION_DRIVER_SHA256 = '79d89f4bc97940b8c28fbe6dfb924232ee2595ac012c427c14edea20da8559e7'
+
+
+def check_mutation_contract(root):
+    for (filename, job), digest in MUTATION_CONTRACT.items():
+        text = (root / '.github/workflows' / filename).read_text()
+        match = re.search(r'^  ' + job + r':\n(.*?)(?=^  [a-z][a-z0-9-]*:|^  # Repository|\Z)',
+                          text, re.M | re.S)
+        if not match or hashlib.sha256((match[0].rstrip() + '\n').encode()).hexdigest() != digest:
+            raise ValueError('mutation orchestration requires review: ' + filename + ':' + job)
+    if hashlib.sha256((root / 'scripts/mutation_ci.py').read_bytes()).hexdigest() != MUTATION_DRIVER_SHA256:
+        raise ValueError('mutation inventory/budget driver requires review')
+
+
 def check_ci(root):
     """Conservative check of this repository's owned workflow shape, not a general YAML parser."""
     check_timeouts(root)
+    check_mutation_contract(root)
     cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
     required = requirements(cases)
     workflow = (root / '.github/workflows/ci.yml').read_text()

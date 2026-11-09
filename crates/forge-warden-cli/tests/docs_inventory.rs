@@ -69,9 +69,10 @@ fn front_door_schema_tokens_exist_and_match_code() {
 #[test]
 fn contributing_required_checks_equal_actual_ci_job_names() {
     // Both inventories are declarations, deliberately read independently. This is a YAML subset
-    // contract: job display names must be literal scalars, not generated matrix expressions.
+    // contract: required display names remain literal. Only the two explicitly named internal
+    // mutation jobs are excluded; check_ci pins their complete aggregate dependency contract.
     let ci = read(".github/workflows/ci.yml");
-    let actual: BTreeSet<_> = ci
+    let mut actual: BTreeSet<_> = ci
         .lines()
         .filter_map(|line| line.strip_prefix("    name: "))
         .collect();
@@ -87,6 +88,14 @@ fn contributing_required_checks_equal_actual_ci_job_names() {
         actual.len(),
         jobs,
         "each CI job must have a unique literal display name"
+    );
+    assert!(
+        actual.remove("plan mutation shards"),
+        "mutation planner missing"
+    );
+    assert!(
+        actual.remove("mutation shard ${{ matrix.index }}"),
+        "mutation workers missing"
     );
     assert!(
         actual.iter().all(|name| !name.contains("${{")),

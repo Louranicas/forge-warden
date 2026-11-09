@@ -1,4 +1,4 @@
-# Every job here is a required check on `main` (see CONTRIBUTING.md#branch-protection).
+# Required checks retain their names; mutation workers report through one aggregate check.
 # Hardening: read-only token by default, no persisted credentials, every action pinned to a commit
 # SHA (the trailing comment names the tag; dependabot keeps both current), and `zizmor` audits
 # this file on every run.
@@ -46,6 +46,7 @@ jobs:
         run: cargo fetch --locked
       - run: python3 -I scripts/tool_versions.py --check
       - run: python3 -I scripts/tests/perimeter.py
+      - run: python3 -I scripts/tests/mutation_budget.py
       - run: bash scripts/tests/ci_local.sh
       - run: python3 -I scripts/tests/mutation_env.py
       - run: bash scripts/tests/dogfood.sh
@@ -107,34 +108,89 @@ jobs:
           tool: zizmor@1.30.1
       - run: zizmor --persona=pedantic .github/workflows
 
-  mutation:
-    timeout-minutes: 60
-    name: diff mutation (cargo-mutants)
+  mutation-plan:
+    timeout-minutes: 10
+    name: plan mutation shards
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
       - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
-      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-mutants@27.1.0
-      - name: Mutate only the lines this pull request changes
+      - run: python3 -I scripts/tool_versions.py --check
+      - name: Count the complete mutation inventory and size budgets
+        id: plan
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: python3 -I scripts/mutation_ci.py plan diff
+
+  mutation-shards:
+    timeout-minutes: ${{ matrix.minutes }}
+    name: mutation shard ${{ matrix.index }}
+    needs: [mutation-plan]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.mutation-plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        with:
+          tool: cargo-mutants@27.1.0
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - run: cargo fetch --locked
+      - name: Record the exact subject and tool versions
         run: |
-          git diff "${BASE_SHA}...HEAD" -- 'crates/*/src/**.rs' > pr.diff
-          if [ ! -s pr.diff ]; then echo "no Rust source changed"; exit 0; fi
-          # --no-config: a pull request cannot shrink its own mutation scope via .cargo/mutants.toml.
-          env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff pr.diff --workspace --no-shuffle -vV
-      - if: failure()
+          git rev-parse HEAD > mutation-provenance.txt
+          rustc --version >> mutation-provenance.txt
+          cargo mutants --version >> mutation-provenance.txt
+          cat scripts/tool-versions.toml >> mutation-provenance.txt
+      - name: Verify inventory and test every mutant assigned to this shard
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          SHARD_INDEX: ${{ matrix.index }}
+          SHARD_COUNT: ${{ matrix.shards }}
+          MUTANT_TOTAL: ${{ matrix.total }}
+          INVENTORY_DIGEST: ${{ matrix.digest }}
+          SHARD_MINUTES: ${{ matrix.minutes }}
+        run: python3 -I scripts/mutation_ci.py run diff
+      - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mutants-out
-          path: mutants.out
+          name: mutants-shard-${{ matrix.index }}
+          path: |
+            mutants.out
+            mutation-provenance.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  mutation:
+    timeout-minutes: 5
+    name: diff mutation (cargo-mutants)
+    needs: [mutation-plan, mutation-shards]
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require successful planning and every shard
+        env:
+          PLAN_RESULT: ${{ needs.mutation-plan.result }}
+          SHARD_RESULT: ${{ needs.mutation-shards.result }}
+        run: python3 -I scripts/mutation_ci.py aggregate
 
   # Repository-local workflow alone cannot enforce its own immutability: see ADR 0006.
   dogfood:
