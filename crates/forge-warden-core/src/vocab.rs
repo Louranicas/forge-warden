@@ -467,6 +467,18 @@ mod tests {
     }
 
     #[test]
+    fn values_display_as_their_wire_name_and_compare_by_it() {
+        assert_eq!(Signal::SecretLike.to_string(), "secret_like");
+        assert_eq!(Signal::parse("zz_unknown").to_string(), "zz_unknown");
+        assert_eq!(Status::parse("added").to_string(), "added");
+        assert_eq!(Side::New.to_string(), "new");
+        assert_eq!(Side::Old.to_string(), "old");
+        let (added, deleted) = (Status::parse("added"), Status::parse("deleted"));
+        assert_eq!(added.partial_cmp(&deleted), Some(std::cmp::Ordering::Less));
+        assert!(added < deleted);
+    }
+
+    #[test]
     fn levenshtein_basics() {
         assert_eq!(levenshtein("", ""), 0);
         assert_eq!(levenshtein("abc", ""), 3);

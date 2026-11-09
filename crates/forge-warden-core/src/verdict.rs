@@ -21,7 +21,7 @@ pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 /// A sealed, deterministic verdict. It cannot be cloned out of a shared judged view.
 ///
 /// Q-TYPES-2 (Q1-03): every field is private. A verdict is assembled once, by
-/// [`Verdict::assemble`], which derives the outcome (one strictest-wins fold over rules, notes and
+/// `Verdict::assemble` (crate-private), which derives the outcome (one strictest-wins fold over rules, notes and
 /// expired waivers), the exit status (from the outcome) and the summary (from the rules), so no
 /// holder can make them disagree (`verdict = pass` with `exit = 8` is unrepresentable). Serialized
 /// member names and order are unchanged.

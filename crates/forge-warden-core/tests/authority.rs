@@ -286,6 +286,33 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
 }
 
 #[test]
+fn a_recorded_git_and_the_verdict_report_exactly_what_was_recorded() {
+    use forge_warden_core::seal::sha256_hex;
+    use forge_warden_core::verdict::{Admission, GitOracle, VERDICT_SCHEMA};
+    let (binary, allowlist) = (sha256_hex(b"git binary"), sha256_hex(b"owner policy"));
+    let approved = GitOracle::approved(
+        "/usr/bin/git".to_owned(),
+        "git version 2.51.0".to_owned(),
+        binary.clone(),
+        allowlist.clone(),
+    );
+    assert_eq!(approved.path(), "/usr/bin/git");
+    assert_eq!(approved.version(), "git version 2.51.0");
+    assert_eq!(approved.sha256(), &binary);
+    assert_eq!(approved.admission(), Admission::Approved);
+    assert_eq!(approved.allowlist_sha256(), Some(&allowlist));
+    let unpinned = GitOracle::unpinned("/bin/git".to_owned(), "v".to_owned(), binary);
+    assert_eq!(unpinned.admission(), Admission::Unpinned);
+    assert_eq!(unpinned.allowlist_sha256(), None);
+
+    let supplied = Ranking::supplied(rank("m3-demo-real").unwrap());
+    let checked = check(&supplied, facts("m3-demo-real"));
+    let judged = evaluate_advisory(&policy(PERMISSIVE), &checked, seals(), today());
+    assert_eq!(judged.verdict().schema(), VERDICT_SCHEMA);
+    assert_eq!(VERDICT_SCHEMA, "forge-warden.verdict.v2");
+}
+
+#[test]
 fn advisory_git_admission_note_is_composed_by_core() {
     use forge_warden_core::verdict::GitOracle;
     let supplied = Ranking::supplied(rank("m3-demo-real").unwrap());
