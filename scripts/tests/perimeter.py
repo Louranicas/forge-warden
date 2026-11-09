@@ -49,7 +49,8 @@ class Contracts(unittest.TestCase):
                 (root / 'probe.py').write_text('value = 1\n')
                 source = ('import sys\nsys.dont_write_bytecode = True\n' if guarded else '')
                 source += 'import runpy\nrunpy.run_module("probe")\n'
-                subprocess.run([sys.executable, '-c', source], cwd=root, check=True)
+                # Ignore inherited PYTHONDONTWRITEBYTECODE; keep cwd importable for the control.
+                subprocess.run([sys.executable, '-E', '-s', '-c', source], cwd=root, check=True)
                 self.assertEqual(bool(list(root.rglob('*.pyc'))), not guarded)
                 if guarded:
                     require_bytecode_guard(source, {'probe'})
