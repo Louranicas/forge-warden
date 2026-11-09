@@ -25,7 +25,7 @@ use forge_warden_core::verdict::{Seals, Verdict};
 ";
 
 /// `(what, source, the rustc error code it must fail with)`.
-const REFUSED: [(&str, &str, &str); 8] = [
+const REFUSED: [(&str, &str, &str); 10] = [
     (
         "attest with a bare string instead of an admitted producer",
         "pub fn f(doc: RankDoc) -> Ranking<Produced> { Ranking::attest(doc, String::new()) }",
@@ -50,6 +50,16 @@ const REFUSED: [(&str, &str, &str); 8] = [
     (
         "a verdict's outcome rewritten after judging (Q-TYPES-2: fields are private, derived once)",
         "pub fn f(mut v: Verdict) -> Verdict { v.verdict = forge_warden_core::Outcome::Pass; v }",
+        "E0616",
+    ),
+    (
+        "T-GITPIN-01: a judged verdict cloned, then its outcome rewritten",
+        "pub fn f(v: &Verdict) -> Verdict { let mut w = v.clone(); w.verdict = forge_warden_core::Outcome::Pass; w }",
+        "E0616",
+    ),
+    (
+        "T-GITPIN-01: a note's detail rewritten on an owned verdict",
+        "pub fn f(mut v: Verdict) -> Verdict { for n in &mut v.notes { n.detail.push_str(\"x\"); } v }",
         "E0616",
     ),
     (
