@@ -91,7 +91,7 @@ proptest = { version = "1.7", default-features = false, features = ["std"] }
 pulldown-cmark = { version = "=0.13.6", default-features = false }
 # Test-only: a real Rust parser for the door-lint suppression check (WP-C1c v3). Never a
 # dependency of either crate's library or binary.
-proc-macro2 = { version = "1.0.107", default-features = false }
+proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
 syn = { version = "3.0.9", default-features = false, features = ["full", "parsing", "visit"] }
 
 [profile.release]

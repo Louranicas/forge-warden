@@ -139,8 +139,8 @@
         "--locked",
         "--offline"
       ],
-      "old": "#[must_use]\npub fn evaluate",
-      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub fn evaluate",
+      "old": "#[must_use]\npub(crate) fn evaluate",
+      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub(crate) fn evaluate",
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
@@ -211,8 +211,8 @@
         "--locked",
         "--offline"
       ],
-      "old": "#[must_use]\npub fn evaluate",
-      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub fn evaluate",
+      "old": "#[must_use]\npub(crate) fn evaluate",
+      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub(crate) fn evaluate",
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
@@ -679,8 +679,8 @@
       "guardrail": "G-15",
       "path": "crates/forge-warden-cli/src/doors.rs",
       "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
-      "old": "if !policy.admits_producer(&pinned.sha256) {",
-      "new": "if false && !policy.admits_producer(&pinned.sha256) {",
+      "old": "let Some(admitted) = policy.admit_producer(&pinned.sha256) else {",
+      "new": "let Some(admitted) = policy.producers().first().and_then(|listed| policy.admit_producer(listed)) else {",
       "command": [
         "python3",
         "-I",

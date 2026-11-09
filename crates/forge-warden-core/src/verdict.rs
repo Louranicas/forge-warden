@@ -17,6 +17,7 @@ pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v1";
 
 /// A sealed, deterministic verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Verdict {
     /// Always [`VERDICT_SCHEMA`].
     pub schema: &'static str,
@@ -48,6 +49,7 @@ pub struct Verdict {
 
 /// Tool identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Tool {
     /// `forge-warden`.
     pub name: &'static str,
@@ -57,6 +59,7 @@ pub struct Tool {
 
 /// The seals that bind a verdict to its inputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Seals {
     /// SHA-256 of the policy bytes.
     pub policy_sha256: String,
@@ -124,6 +127,7 @@ impl Seals {
 /// Where a ranking came from (ADR 0005 §2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Provenance {
     /// forge-warden ran the pinned ranker on the patch it holds.
     Produced,
@@ -133,6 +137,7 @@ pub enum Provenance {
 
 /// The ranker that wrote the ranking.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct RankedBy {
     /// The version the ranking reports.
     pub version: String,
@@ -140,8 +145,10 @@ pub struct RankedBy {
     pub sha256: Option<String>,
 }
 
-/// The Git whose facts the verdict used. Recorded for audit, not attested (ADR 0005 §2.4).
+/// The Git whose facts the verdict used. Recorded for audit, not attested (ADR 0005 §2.4). Build
+/// one with [`GitOracle::new`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct GitOracle {
     /// The absolute path that was run.
     pub path: String,
@@ -151,6 +158,7 @@ pub struct GitOracle {
 
 /// What the caller claimed about the change. Recorded, never checked, never used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Claims {
     /// The claimed base commit.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,8 +170,38 @@ pub struct Claims {
     pub verified: Unverified,
 }
 
+impl RankedBy {
+    /// The ranker that wrote a ranking: its reported `version`, and its SHA-256 if forge-warden ran it.
+    #[must_use]
+    pub const fn new(version: String, sha256: Option<String>) -> Self {
+        Self { version, sha256 }
+    }
+}
+
+impl GitOracle {
+    /// The Git at the absolute `path` that printed `version` for `git --version`.
+    #[must_use]
+    pub const fn new(path: String, version: String) -> Self {
+        Self { path, version }
+    }
+}
+
+impl Claims {
+    /// What the caller claimed about the change. Never verified: `verified` is always `false`,
+    /// and no caller can say otherwise (the field's type has no other value and no public constructor).
+    #[must_use]
+    pub const fn new(base: Option<String>, head: Option<String>) -> Self {
+        Self {
+            base,
+            head,
+            verified: Unverified,
+        }
+    }
+}
+
 /// A value that serializes as `false` and has no other state: claims are never verified.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Unverified;
 
 impl Serialize for Unverified {
@@ -174,6 +212,7 @@ impl Serialize for Unverified {
 
 /// The exit status and next action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct ExitInfo {
     /// Process exit status.
     pub code: u8,
@@ -185,6 +224,7 @@ pub struct ExitInfo {
 
 /// Counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Summary {
     /// Files in the ranking.
     pub files: usize,
@@ -203,6 +243,8 @@ pub struct Summary {
 /// How one rule came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+// Exhaustive on purpose: a rule's outcome lattice (ADR 0003). Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum RuleOutcome {
     /// No violation.
     Pass,
@@ -228,6 +270,7 @@ impl RuleOutcome {
 
 /// One rule's result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct RuleResult {
     /// The rule id.
     pub id: String,
@@ -245,6 +288,7 @@ pub struct RuleResult {
 
 /// One violation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Violation {
     /// The file, when the violation is about one file (budgets over a whole change have none).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,6 +312,7 @@ pub struct Violation {
 
 /// A pointer into the patch: a hunk address, a side and a line.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[non_exhaustive]
 pub struct Citation {
     /// The hunk's content address (`deep-diff-forge --hunks --address <A>` shows it).
     pub address: String,
@@ -279,6 +324,7 @@ pub struct Citation {
 
 /// A waiver, reported because it expired or matched nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct WaiverNote {
     /// Its index in the policy.
     pub index: usize,
@@ -292,6 +338,7 @@ pub struct WaiverNote {
 
 /// Something the policy cannot judge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Note {
     /// Why the verdict holds; see [`NoteCode`].
     pub code: NoteCode,
@@ -310,6 +357,7 @@ macro_rules! note_codes {
         /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and
         /// the schema's enum lists exactly these names (tests check both).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        #[non_exhaustive]
         pub enum NoteCode {
             $(#[doc = $doc] $variant,)*
         }

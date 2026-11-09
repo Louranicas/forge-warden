@@ -11,8 +11,9 @@
 use forge_warden_core::path::RepoPath;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{Evidence, RankDoc, RankedFile};
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::{RuleOutcome, Seals};
-use forge_warden_core::{Date, Outcome, evaluate};
+use forge_warden_core::{Date, Outcome};
 use proptest::prelude::*;
 
 const SEAL: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";

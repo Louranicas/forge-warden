@@ -7,8 +7,9 @@
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankError, parse_rank};
 use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::Seals;
-use forge_warden_core::{Date, Outcome, evaluate};
+use forge_warden_core::{Date, Outcome};
 use serde_json::{Value, json};
 
 const HEADER: &str = "schema=\"forge-warden.policy.v0\"\n";

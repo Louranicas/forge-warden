@@ -264,7 +264,10 @@ fn core_dependency_violations(manifest: &str) -> Vec<String> {
         "thiserror",
         "toml",
     ];
-    const ALLOWED_DEV: [&str; 1] = ["proptest"];
+    // `forge-warden-core` itself: the engine tests' self dev-dependency that enables the
+    // `unattested-evaluate` test door (Q-TYPES-1); a normal dependency may never enable it
+    // (`no_normal_dependency_opens_the_unattested_evaluate_door`).
+    const ALLOWED_DEV: [&str; 2] = ["forge-warden-core", "proptest"];
     let declared = match declared_dependencies(manifest) {
         Ok(declared) => declared,
         Err(error) => return vec![format!("the manifest is not valid TOML: {error}")],
@@ -480,10 +483,105 @@ fn the_clippy_config_disallows_minting_and_raw_judging() {
     let config = read("clippy.toml");
     for path in [
         "path = \"forge_warden_core::authority::Ranking::attest\"",
-        "path = \"forge_warden_core::eval::evaluate\"",
+        "path = \"forge_warden_core::testing::evaluate\"",
     ] {
         assert!(config.contains(path), "clippy.toml lost {path}");
     }
+}
+
+#[test]
+fn no_normal_dependency_opens_the_unattested_evaluate_door() {
+    // Q-TYPES-1: the raw engine (`forge_warden_core::testing::evaluate`, which can pass with no
+    // provenance) exists only with the `unattested-evaluate` feature, and only [dev-dependencies]
+    // may enable it. Judged on the RESOLVED graph, not on manifest tables (Bastion: a
+    // target-specific, renamed or transitive dependency can enable it too): cargo tree over every
+    // member, every target, normal and build edges only, with feature nodes.
+    let core: toml::Table = toml::from_str(&read("crates/forge-warden-core/Cargo.toml")).unwrap();
+    let defaults = core
+        .get("features")
+        .and_then(|f| f.get("default"))
+        .and_then(toml::Value::as_array)
+        .map(Vec::len);
+    assert!(
+        matches!(defaults, None | Some(0)),
+        "forge-warden-core has default features: {defaults:?}"
+    );
+    let out = common::command(env!("CARGO"))
+        .args([
+            "tree",
+            "--offline",
+            "--locked",
+            "--workspace",
+            "--target",
+            "all",
+            "-e",
+            "normal,build,features",
+            "--prefix",
+            "none",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    let tree = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        out.status.success() && tree.contains("forge-warden-core v"),
+        "cargo tree did not run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let opened: Vec<&str> = tree
+        .lines()
+        .filter(|l| l.contains("feature \"unattested-evaluate\""))
+        .collect();
+    assert!(
+        opened.is_empty(),
+        "a normal or build dependency enables unattested-evaluate: {opened:?}"
+    );
+
+    // The declarations, too, so a dependency or feature that is off by default (an optional or
+    // target-specific dependency, a renamed key, a member feature forwarding to it) is refused
+    // before anyone turns it on (Bastion B-QTYPES-02): every member, every dependency kind but
+    // dev, every [features] value.
+    let meta = common::command(env!("CARGO"))
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(meta.status.success(), "cargo metadata did not run");
+    let meta: serde_json::Value = serde_json::from_slice(&meta.stdout).unwrap();
+    let feature = "unattested-evaluate";
+    let mut declared = Vec::new();
+    for package in meta["packages"].as_array().unwrap() {
+        let name = package["name"].as_str().unwrap();
+        for dep in package["dependencies"].as_array().unwrap() {
+            let enables = dep["name"] == "forge-warden-core"
+                && dep["kind"].as_str() != Some("dev")
+                && dep["features"]
+                    .as_array()
+                    .is_some_and(|f| f.iter().any(|v| v == feature));
+            if enables {
+                declared.push(format!("{name}: dependency {dep}"));
+            }
+        }
+        for (key, values) in package["features"].as_object().unwrap() {
+            for value in values.as_array().unwrap() {
+                let text = value.as_str().unwrap();
+                if text.ends_with("/unattested-evaluate") {
+                    declared.push(format!("{name}: feature {key} = {text}"));
+                }
+            }
+        }
+    }
+    assert!(
+        declared.is_empty(),
+        "unattested-evaluate is declared outside [dev-dependencies]: {declared:#?}"
+    );
 }
 
 /// Inspect parsed attributes, including conditional attributes; comments and strings are inert.

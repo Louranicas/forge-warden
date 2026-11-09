@@ -56,7 +56,7 @@ disallowed-methods = [
     { path = "std::fs::create_dir", reason = "forge-warden never writes files" },
     { path = "std::fs::create_dir_all", reason = "forge-warden never writes files" },
     { path = "forge_warden_core::authority::Ranking::attest", reason = "only doors::child::produce_ranking mints a produced ranking, right after the pinned ranker ran (ADR 0005 §2.7)" },
-    { path = "forge_warden_core::eval::evaluate", reason = "the binary judges only through evaluate_authority / evaluate_advisory, never raw evaluate (ADR 0005 §2.7)" },
+    { path = "forge_warden_core::testing::evaluate", reason = "the binary judges only through evaluate_authority / evaluate_advisory; the raw engine is a test door (feature unattested-evaluate, dev-dependencies only; Q-TYPES-1)" },
     { path = "core::option::Option::unwrap_or", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
     { path = "core::option::Option::unwrap_or_else", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },
     { path = "core::option::Option::unwrap_or_default", reason = "name the default: forge_warden_core::defaults::NamedDefault (G-04)" },

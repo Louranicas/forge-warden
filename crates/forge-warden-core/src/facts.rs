@@ -13,6 +13,8 @@ use std::fmt;
 
 /// What happened to a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Exhaustive on purpose: Git reports a file as added, deleted or modified. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum ChangeKind {
     /// The file is new.
     Added,
@@ -24,6 +26,8 @@ pub enum ChangeKind {
 
 /// A Git file mode forge-warden supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Exhaustive on purpose: the file modes ADR 0005 §2.2 admits. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum Mode {
     /// `100644`
     File,
@@ -35,6 +39,7 @@ pub enum Mode {
 
 /// Git's facts about one file in a patch.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FileChange {
     path: RepoPath,
     kind: ChangeKind,
@@ -46,12 +51,14 @@ pub struct FileChange {
 
 /// Git's facts about a whole patch: one record per file, each path once.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PatchFacts {
     files: BTreeMap<RepoPath, FileChange>,
 }
 
 /// Why Git's view of a patch cannot be trusted as complete. Each one holds the verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Unverifiable {
     /// Git refused the patch (nonzero exit).
     GitRefused(String),
@@ -116,6 +123,7 @@ impl fmt::Display for Unverifiable {
 
 /// Where the ranking and Git disagree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Disagreement {
     /// Git sees this path; the ranking does not list it.
     Missing(RepoPath),
@@ -421,6 +429,42 @@ impl FileChange {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_derived_signal_is_a_non_empty_constant() {
+        // Zen B4: `RankedFile::with_added_signals` is infallible because an added signal can never
+        // be empty. Every combination of kind, modes and binary is enumerated here.
+        let kinds = [ChangeKind::Added, ChangeKind::Deleted, ChangeKind::Modified];
+        let modes = [
+            None,
+            Some(Mode::File),
+            Some(Mode::Exec),
+            Some(Mode::Symlink),
+        ];
+        let mut seen = BTreeSet::new();
+        for kind in kinds {
+            for old_mode in modes {
+                for new_mode in modes {
+                    for binary in [false, true] {
+                        let change = FileChange {
+                            path: RepoPath::parse("a").unwrap(),
+                            kind,
+                            old_mode,
+                            new_mode,
+                            binary,
+                            content: true,
+                        };
+                        for signal in derived_signals(&change) {
+                            assert!(!signal.is_empty(), "{change:?}");
+                            assert_eq!(signal.trim(), signal, "{change:?}");
+                            seen.insert(signal);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen.len() >= 4, "too few derived signals reached: {seen:?}");
+    }
 
     fn facts(numstat: &str, summary: &str) -> Result<PatchFacts, Unverifiable> {
         PatchFacts::from_git(numstat.as_bytes(), summary.as_bytes(), b"")

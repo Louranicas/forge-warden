@@ -1,9 +1,10 @@
 //! Independent output anchors: external seal digests and explicit citation ordering.
 
+use forge_warden_core::Date;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::Seals;
-use forge_warden_core::{Date, evaluate};
 use serde_json::{Value, json};
 
 #[test]

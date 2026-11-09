@@ -1,9 +1,11 @@
-//! Bastion B-C1c-01: only doors.rs may mint `Ranking<Produced>` or judge with raw `evaluate`.
-//! The rule is a compiler check, not a text search: `clippy.toml` makes both paths disallowed
-//! methods for this crate, and clippy resolves the *path*, so every way of naming it is caught.
-//! This test runs the real clippy, with this repository's `clippy.toml`, on a scratch crate that
-//! names the two functions in every form measured for C1c v2, and requires each form to be refused
-//! and the two controls (the door's `#[expect]`, and an allowed function) not to be.
+//! Bastion B-C1c-01: only `doors.rs` may mint `Ranking<Produced>`. Since Q-TYPES-1, `attest` needs an
+//! `AdmittedProducer` that only the policy's allowlist makes, and raw `evaluate` is not nameable
+//! outside the core (`tests/api_boundary.rs` proves both for any downstream crate). Which file of the
+//! binary may mint is still the binary's rule: `clippy.toml` makes `attest` a disallowed method,
+//! clippy resolves the *path*, so every way of naming it is caught. This test runs the real clippy,
+//! with this repository's `clippy.toml`, on a scratch crate that names `attest` in every form
+//! measured for C1c v2, and requires each form to be refused and the two controls (the door's
+//! `#[expect]`, and an allowed function) not to be.
 //!
 //! G-04 (WP-B7, B7.1): the same real clippy, run once with each crate's own `clippy.toml`, refuses
 //! every way of choosing a raw default (`unwrap_or*`, `map_or*`, `get_or_insert*`), and admits the
@@ -23,47 +25,44 @@ use std::path::Path;
 
 /// Each line carrying `// FORM:` must be reported as a disallowed method; `// CONTROL:` lines must not.
 const PLANTS: &str = r#"
+use forge_warden_core::Policy;
 use forge_warden_core::authority::{Produced, Ranking};
 use forge_warden_core::authority::Ranking as R;
-use forge_warden_core::evaluate as judge;
+use forge_warden_core::policy::AdmittedProducer;
 use forge_warden_core::rank::RankDoc;
-use forge_warden_core::verdict::{Seals, Verdict};
-use forge_warden_core::{Date, Policy};
 
 fn apply<A, B, T>(f: impl Fn(A, B) -> T, a: A, b: B) -> T {
     f(a, b)
 }
 
-pub fn forms(doc: RankDoc, policy: &Policy, seals: Seals, today: Date) -> usize {
+/// A token, as the door gets one: from the policy's allowlist. (Raw `evaluate` and a bare-string
+/// `attest` no longer compile downstream at all; tests/api_boundary.rs measures that, Q-TYPES-1.)
+fn token(policy: &Policy) -> AdmittedProducer {
+    policy.admit_producer("0").unwrap()
+}
+
+pub fn forms(doc: RankDoc, policy: &Policy) -> usize {
     let mut n = 0;
-    let _a = Ranking::attest(doc.clone(), String::new()); // FORM: attest direct
+    let _a = Ranking::attest(doc.clone(), token(policy)); // FORM: attest direct
     let forge = Ranking::attest; // FORM: attest alias binding (B-C1c-01)
-    let _b = forge(doc.clone(), String::new());
-    let _c = forge_warden_core::authority::Ranking::<Produced>::attest(doc.clone(), String::new()); // FORM: attest qualified
-    let _d = R::attest(doc.clone(), String::new()); // FORM: attest via use-as
-    let _e = apply(Ranking::attest, doc.clone(), String::new()); // FORM: attest passed as a function
-    let p: fn(RankDoc, String) -> Ranking<Produced> = Ranking::attest; // FORM: attest as fn pointer
-    let _f = <Ranking<Produced>>::attest(doc.clone(), String::new()); // FORM: attest UFCS
-    let _g = Some(doc.clone()).map(|d| Ranking::attest(d, String::new())); // FORM: attest in a closure
+    let _b = forge(doc.clone(), token(policy));
+    let _c = forge_warden_core::authority::Ranking::<Produced>::attest(doc.clone(), token(policy)); // FORM: attest qualified
+    let _d = R::attest(doc.clone(), token(policy)); // FORM: attest via use-as
+    let _e = apply(Ranking::attest, doc.clone(), token(policy)); // FORM: attest passed as a function
+    let p: fn(RankDoc, AdmittedProducer) -> Ranking<Produced> = Ranking::attest; // FORM: attest as fn pointer
+    let _f = <Ranking<Produced>>::attest(doc.clone(), token(policy)); // FORM: attest UFCS
+    let _g = Some(doc.clone()).map(|d| Ranking::attest(d, token(policy))); // FORM: attest in a closure
     let _h = vec![Ranking::attest]; // FORM: attest inside an external macro
     let _i = std::hint::black_box(Ranking::<Produced>::attest); // FORM: attest through black_box
-    let _v1 = forge_warden_core::evaluate(policy, &doc, seals.clone(), today); // FORM: evaluate direct (re-export)
-    let ev = forge_warden_core::eval::evaluate; // FORM: evaluate alias binding
-    let _v2 = forge_warden_core::eval::evaluate(policy, &doc, seals.clone(), today); // FORM: evaluate qualified
-    let _v3 = judge(policy, &doc, seals.clone(), today); // FORM: evaluate via use-as
-    let q: fn(&Policy, &RankDoc, Seals, Date) -> Verdict = judge; // FORM: evaluate as fn pointer
-    let _v4 = format!("{:?}", forge_warden_core::evaluate as fn(&Policy, &RankDoc, Seals, Date) -> Verdict); // FORM: evaluate inside format!
-    let _v5 = Some(seals.clone()).map(|s| q(policy, &doc, s, today));
-    let _x = ev(policy, &doc, seals.clone(), today);
-    let _y = p(doc.clone(), String::new());
-    n += door(doc.clone());
+    let _y = p(doc.clone(), token(policy));
+    n += door(doc.clone(), policy);
     n += forge_warden_core::seal::sha256_hex(b"").len(); // CONTROL: an allowed function
     n
 }
 
 #[expect(clippy::disallowed_methods, reason = "door: the positive control")]
-fn door(doc: RankDoc) -> usize {
-    Ranking::attest(doc, String::new()).producer_sha256().map_or(0, str::len) // CONTROL: the door's expect
+fn door(doc: RankDoc, policy: &Policy) -> usize {
+    Ranking::attest(doc, token(policy)).producer_sha256().map_or(0, str::len) // CONTROL: the door's expect
 }
 "#;
 

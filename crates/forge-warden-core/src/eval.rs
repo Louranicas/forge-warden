@@ -1,6 +1,7 @@
 //! Evaluating a policy over a ranking.
 //!
-//! The whole engine is one pure function, [`evaluate`]. Its contract:
+//! The whole engine is one pure, crate-private function, `evaluate` (the public judges are
+//! [`crate::authority::evaluate_authority`] and [`crate::authority::evaluate_advisory`]). Its contract:
 //!
 //! 1. Rules are evaluated independently, in policy order; violations keep deep-diff-forge's risk
 //!    order (highest first).
@@ -23,9 +24,12 @@ use crate::verdict::{
 use crate::vocab::{is_known_signal, is_known_status};
 use std::collections::BTreeSet;
 
-/// Evaluate `policy` over `rank`, judging waivers as of `today`.
+/// Evaluate `policy` over `rank`, judging waivers as of `today`. The raw rule engine: it knows
+/// nothing of provenance or coverage, so it is crate-private (Q1-01). The only public judges are
+/// [`crate::authority::evaluate_authority`] and [`crate::authority::evaluate_advisory`]; engine
+/// tests reach this through the off-by-default `unattested-evaluate` feature (`crate::testing`).
 #[must_use]
-pub fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict {
+pub(crate) fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict {
     let mut used_waivers = BTreeSet::new();
     let judged: NonEmpty<RuleResult> = policy
         .rules()
