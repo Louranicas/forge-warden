@@ -241,6 +241,39 @@ fn text_output_lists_every_note() {
 }
 
 #[test]
+fn a_refused_today_says_why() {
+    for (today, why) in [
+        ("2026-02-30", "it is not a calendar date"),
+        ("1969-12-31", "it is outside 1970-01-01..=9999-12-31"),
+        ("tomorrow", "it is not YYYY-MM-DD"),
+    ] {
+        let out = run(
+            &[
+                "check",
+                "--policy",
+                POLICY,
+                "--patch",
+                PATCH,
+                "--advisory",
+                "--rank",
+                RANK,
+                "--today",
+                today,
+            ],
+            b"",
+        );
+        assert_eq!(out.code, 2, "{today}: {}", out.stderr);
+        assert!(
+            out.stderr.contains(&format!(
+                "--today {today:?} is not a YYYY-MM-DD date: {why}"
+            )),
+            "{today}: {}",
+            out.stderr
+        );
+    }
+}
+
+#[test]
 fn usage_errors_exit_2_and_io_errors_exit_3() {
     let ranker = fixture_ranker();
     let ranker = text(&ranker);

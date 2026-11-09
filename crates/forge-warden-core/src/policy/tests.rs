@@ -137,6 +137,28 @@ fn waivers_must_name_a_rule_an_owner_a_reason_and_a_date() {
 }
 
 #[test]
+fn a_refused_waiver_date_says_why() {
+    for (expires, why) in [
+        ("2026-13-01", "it is not a calendar date"),
+        ("2026-02-30", "it is not a calendar date"),
+        ("1969-12-31", "it is outside 1970-01-01..=9999-12-31"),
+        ("2026-1-01", "it is not YYYY-MM-DD"),
+    ] {
+        let text = format!(
+            "{}[[waiver]]\nrule = \"no-secrets\"\npaths = [\"a\"]\nreason = \"{}\"\nowner = \"@o\"\nexpires = \"{expires}\"\n",
+            rule(GOOD),
+            "y".repeat(MIN_WHY_CHARS)
+        );
+        let wanted = format!("expires {expires:?} is not a YYYY-MM-DD date: {why}");
+        let issues = issues_of(&text);
+        assert!(
+            issues.iter().any(|i| i.contains(&wanted)),
+            "missing {wanted:?} in {issues:?}"
+        );
+    }
+}
+
+#[test]
 fn max_score_needs_limit_and_per() {
     let base = r#"id = "budget"
 why = "Large risky changes are reviewed in pieces."

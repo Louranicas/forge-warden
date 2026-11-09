@@ -324,10 +324,13 @@ fn validate_waiver(
             "`owner` names who answers for the exemption; it must not be empty".to_owned(),
         );
     }
-    let expires = Date::parse(&raw.expires).map_err(|_| {
+    let expires = Date::parse(&raw.expires).map_err(|why| {
         issues.reject(
             location,
-            format!("expires {:?} is not a YYYY-MM-DD date", raw.expires),
+            format!(
+                "expires {:?} is not a YYYY-MM-DD date: it {why}",
+                raw.expires
+            ),
         )
     });
     let paths = compile(location, "paths", &raw.paths, issues);
