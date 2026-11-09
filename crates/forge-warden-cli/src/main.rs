@@ -297,10 +297,10 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         ));
     }
     let today = match &args.today {
-        Some(text) => Date::parse(text).map_err(|_| {
+        Some(text) => Date::parse(text).map_err(|why| {
             Failure::new(
                 Exit::Usage,
-                format!("--today {text:?} is not a YYYY-MM-DD date"),
+                format!("--today {text:?} is not a YYYY-MM-DD date: it {why}"),
             )
         })?,
         None => doors::today().map_err(Failure::from_door)?,
