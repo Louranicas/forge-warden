@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 50 named plants over 46 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24. The remaining 5 register rows are explicitly PENDING
+This revision implements 62 named plants over 46 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24. The remaining 5 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -180,3 +180,5 @@ Holding the whole consumer file intentionally includes unrelated test edits in t
 Operator regeneration refuses either CI or GITHUB_ACTIONS and requires a private, owned,
 non-symlink backup directory outside the repository. The wrapper explicitly allocates it in /tmp.
 Write-control regressions run only against disposable fixture copies; live expected bytes stay read-only.
+
+WP-GIT-PIN adds twelve plants for Git owner/mode/regular-file/symlink/size admission, missing policy, unlisted digest, exact policy snapshot, descriptor-bound version execution, script refusal, acknowledgement revocation and v1 downgrade. Each runs the specific positive/refusal test before and after planting. They extend G-15 and G-36 rather than claiming new historical register coverage.
