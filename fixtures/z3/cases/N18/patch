@@ -1,0 +1,10 @@
+diff --git a/src/a.rs b/src/a.rs
+index 1111111..2222222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/tests/a.rs b/tests/a.rs
+index 1111111..2222222 100644
+Binary files a/tests/a.rs and b/tests/a.rs differ
