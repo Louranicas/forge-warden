@@ -1,0 +1,78 @@
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct S {
+    pub a: u8,
+    b: u8,
+}
+pub enum E {
+    One,
+    Two(u8),
+}
+pub fn f(x: u8) -> u8 {
+    x
+}
+pub(crate) fn hidden() {}
+pub const C: u8 = 1;
+pub use std::fmt::Debug;
+impl S {
+    pub fn new() -> Self {
+        Self { a: 0, b: 0 }
+    }
+    fn private(&self) {}
+}
+impl std::fmt::Display for S {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+#[cfg(feature = "door")]
+pub mod door {
+    pub fn open() {}
+}
+#[cfg(test)]
+pub fn test_only() {}
+#[cfg(any(test, unix))]
+pub fn production_on_unix() {}
+macro_rules! make {
+    ($name:ident) => {
+        #[derive(PartialOrd, Ord)]
+        pub enum $name { A }
+    };
+}
+make!(Generated);
+pub extern crate std as stdx;
+pub union U {
+    pub a: u8,
+}
+extern "C" {}
+#[cfg(test)]
+macro_rules! test_only_macro {
+    () => {};
+}
+pub trait Pick<T> {
+    /// prose is not API
+    fn pick(self, d: T) -> T;
+    fn twice(self) -> u8 {
+        2
+    }
+}
+#[cfg_attr(all(), non_exhaustive)]
+pub enum Wide {
+    Struct {
+        a: u8,
+        b: Vec<(u8, u8)>,
+    },
+}
+pub struct Long {
+    pub f: std::collections::BTreeMap<
+        String,
+        Vec<u8>,
+    >,
+}
+impl Iterator for Long {
+    type Item = u8;
+    fn next(&mut self) -> Option<u8> {
+        None
+    }
+}
