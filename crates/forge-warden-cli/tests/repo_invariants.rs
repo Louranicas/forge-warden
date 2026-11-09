@@ -952,3 +952,114 @@ fn cli_borrows_judged_verdicts_directly_and_never_takes_ownership() {
         );
     }
 }
+
+#[derive(Default)]
+struct ScratchOperations {
+    calls: Vec<String>,
+    methods: Vec<String>,
+    literals: Vec<String>,
+}
+impl<'ast> syn::visit::Visit<'ast> for ScratchOperations {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref()
+            && let Some(last) = path.path.segments.last()
+        {
+            self.calls.push(last.ident.unraw().to_string());
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.methods.push(call.method.unraw().to_string());
+        syn::visit::visit_expr_method_call(self, call);
+    }
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.literals.push(literal.value());
+    }
+}
+
+/// Raw temporary-root access is confined to reviewed allocators and production door bases.
+/// The runtime same-label/concurrency tests prove isolation; this is a structural backstop.
+#[test]
+fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
+    use syn::visit::Visit as _;
+
+    struct Helpers<'a> {
+        path: &'a str,
+        scratch_count: usize,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Helpers<'_> {
+        fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+            let name = function.sig.ident.unraw().to_string();
+            let mut operations = ScratchOperations::default();
+            operations.visit_block(&function.block);
+            let is_allocator = name == "scratch"
+                && matches!(
+                    self.path,
+                    "crates/forge-warden-cli/src/doors.rs"
+                        | "crates/forge-warden-cli/tests/common/runtime.rs"
+                );
+            if is_allocator {
+                self.scratch_count = self.scratch_count.checked_add(1).unwrap();
+                for required in ["temp_dir", "create_dir"] {
+                    assert!(
+                        operations.calls.iter().any(|call| call == required),
+                        "{}: scratch needs {required}",
+                        self.path
+                    );
+                }
+                assert!(
+                    operations
+                        .methods
+                        .iter()
+                        .any(|method| method == "fetch_add"),
+                    "{}: scratch needs a per-call atomic identity",
+                    self.path
+                );
+                for forbidden in ["remove_dir_all", "create_dir_all"] {
+                    assert!(
+                        !operations.calls.iter().any(|call| call == forbidden),
+                        "{}: scratch must reserve exclusively, never {forbidden}",
+                        self.path
+                    );
+                }
+            }
+            if operations.calls.iter().any(|call| call == "temp_dir") && !is_allocator {
+                // Production bases delegate to random/exclusive PrivateDir creation; the
+                // vocabulary test passes the root only as Git's discovery ceiling.
+                assert!(
+                    (self.path == "crates/forge-warden-cli/src/doors.rs"
+                        && matches!(
+                            name.as_str(),
+                            "git_facts" | "git_version" | "produce_ranking"
+                        ))
+                        || self.path == "crates/forge-warden-cli/tests/check_vocab.rs",
+                    "{}::{name}: raw temporary root requires a reviewed unique allocator",
+                    self.path
+                );
+            }
+            assert!(
+                !operations
+                    .literals
+                    .iter()
+                    .any(|value| value == "/tmp" || value.starts_with("/tmp/")),
+                "{}::{name}: fixed temporary paths bypass scratch ownership",
+                self.path
+            );
+            syn::visit::visit_item_fn(self, function);
+        }
+    }
+    let mut allocators = 0_usize;
+    for (path, text) in rust_sources() {
+        let parsed = syn::parse_file(&text).unwrap();
+        let mut helpers = Helpers {
+            path: &path,
+            scratch_count: 0,
+        };
+        helpers.visit_file(&parsed);
+        allocators = allocators.checked_add(helpers.scratch_count).unwrap();
+    }
+    assert_eq!(
+        allocators, 2,
+        "both reviewed scratch allocators must be checked"
+    );
+}

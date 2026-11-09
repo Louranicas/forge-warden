@@ -1358,6 +1358,60 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "git-test-scratch-identity",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "scratch_calls_never_replace_a_live_directory.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "scratch_calls_never_replace_a_live_directory",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)",
+      "new": "NEXT.fetch_add(0, std::sync::atomic::Ordering::Relaxed)",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-test-scratch-exclusive",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "scratch_helpers_require_per_call_identity_and_exclusive_creation.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "scratch_helpers_require_per_call_identity_and_exclusive_creation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "match std::fs::create_dir(&dir) {",
+      "new": "match std::fs::create_dir_all(&dir) {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [

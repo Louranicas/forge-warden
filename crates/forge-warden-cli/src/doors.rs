@@ -1400,6 +1400,52 @@ mod child_tests {
         assert!(super::child::parse_git_allowlist(&[255]).is_err());
     }
 
+    #[test]
+    fn scratch_calls_never_replace_a_live_directory() {
+        let first = scratch("same-label");
+        let sentinel = first.join("owned");
+        std::fs::write(&sentinel, b"first caller").unwrap();
+        let second = scratch("same-label");
+        assert_ne!(first, second, "each scratch call owns a distinct path");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"first caller");
+        std::fs::remove_dir_all(first).unwrap();
+        std::fs::remove_dir_all(second).unwrap();
+    }
+
+    fn concurrent_git_policy_callers(callers: usize) {
+        use std::sync::{Arc, Barrier};
+        for iteration in 0..100 {
+            let start = Arc::new(Barrier::new(callers.checked_add(1).unwrap()));
+            let mut workers = Vec::new();
+            for _ in 0..callers {
+                let start = Arc::clone(&start);
+                workers.push(std::thread::spawn(move || {
+                    start.wait();
+                    test_git()
+                }));
+            }
+            start.wait();
+            let results: Vec<_> = workers
+                .into_iter()
+                .map(std::thread::JoinHandle::join)
+                .collect();
+            assert!(
+                results.iter().all(Result::is_ok),
+                "{callers} test_git callers raced at iteration {iteration}"
+            );
+        }
+    }
+
+    #[test]
+    fn three_concurrent_git_policy_callers_keep_snapshots_separate() {
+        concurrent_git_policy_callers(3);
+    }
+
+    #[test]
+    fn four_concurrent_git_policy_callers_keep_snapshots_separate() {
+        concurrent_git_policy_callers(4);
+    }
+
     fn test_git() -> super::child::AdmittedGit {
         use std::os::unix::fs::MetadataExt as _;
         let root = scratch("git-policy");
@@ -1407,7 +1453,12 @@ mod child_tests {
         let policy = root.join("allowlist.toml");
         let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
         std::fs::write(&policy, format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n")).unwrap();
-        super::child::fixture_git(Path::new("/usr/bin/git"), &policy, &root, owner, false).unwrap()
+        let git =
+            super::child::fixture_git(Path::new("/usr/bin/git"), &policy, &root, owner, false)
+                .unwrap();
+        // Admission owns its descriptor and snapshot; only this call owns the fixture path.
+        std::fs::remove_dir_all(&root).unwrap();
+        git
     }
 
     #[test]
@@ -1664,10 +1715,18 @@ mod child_tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fw-child-{}-{name}", std::process::id()));
-        let _gone = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        for _ in 0..128 {
+            let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir()
+                .join(format!("fw-child-{}-{name}-{serial}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("creating test scratch {}: {error}", dir.display()),
+            }
+        }
+        panic!("unique test scratch attempts exhausted");
     }
 
     #[test]
@@ -2038,8 +2097,7 @@ mod child_tests {
     #[test]
     fn a_private_dir_skips_taken_names_and_reports_other_errors_at_once() {
         use super::child::{GIT_STDERR_CAP, PrivateDir};
-        let base = std::env::temp_dir().join(format!("fw-pdbase-{}", std::process::id()));
-        let _gone = std::fs::remove_dir_all(&base);
+        let base = scratch("private-dir-collision");
         std::fs::create_dir_all(base.join(format!("forge-warden-{}-0", std::process::id())))
             .unwrap();
         let dir = PrivateDir::create_in(&base).unwrap();
