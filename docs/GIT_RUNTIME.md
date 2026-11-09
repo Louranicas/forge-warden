@@ -94,3 +94,10 @@ Why a source-input subject: dirty checkouts, Git-less exports and cargo-mutants 
 remain testable. The source digest does not assert a commit; the verifier separately binds
 the checkout to the frozen subject. Admission and the policy hash remain visible in golden
 output; only the measured executable digest and version are normalized.
+
+The core's Verdict does not implement Clone. Reporting borrows the authority result or the
+advisory wrapper's shared verdict directly; cloning that value to edit it fails compilation.
+The exact T-GITPIN-01 clone-and-shadow case is a compiler plant, independent of goldens.
+The AST check is only a secondary check for the current direct capture and single report
+shape. It does not establish general data-flow integrity; Q-TYPES-2's private fields supply
+the separate field-mutation barrier.

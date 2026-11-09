@@ -15,8 +15,8 @@ use serde::Serialize;
 /// The schema name every verdict carries.
 pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 
-/// A sealed, deterministic verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// A sealed, deterministic verdict. It cannot be cloned out of a shared judged view.
+#[derive(Debug, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct Verdict {
     /// Always [`VERDICT_SCHEMA`].

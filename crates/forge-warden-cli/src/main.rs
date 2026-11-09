@@ -324,7 +324,9 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         admitted_git.allowlist_sha256().map(str::to_owned),
     );
 
-    let verdict: &Verdict = &if let Some(ranker) = &args.ranker {
+    let authority;
+    let advisory;
+    let verdict: &Verdict = if let Some(ranker) = &args.ranker {
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
             |failure| match failure {
                 RankerFailure::NotAdmitted(why) => Failure::new(Exit::InvalidInput, why),
@@ -343,7 +345,8 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             git,
             claims,
         );
-        evaluate_authority(&policy, &checked, copy, seals, today)
+        authority = evaluate_authority(&policy, &checked, copy, seals, today);
+        &authority
     } else {
         // clap admits advisory mode only with `--rank`.
         let bytes = supplied.ok_or_else(|| Failure::new(Exit::Usage, "--advisory needs --rank"))?;
@@ -369,9 +372,8 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             git,
             claims,
         );
-        evaluate_advisory(&policy, &checked, seals, today)
-            .verdict()
-            .clone()
+        advisory = evaluate_advisory(&policy, &checked, seals, today);
+        advisory.verdict()
     };
     report(verdict, args.json)
 }

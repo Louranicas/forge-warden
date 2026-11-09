@@ -1273,11 +1273,35 @@
         "--",
         "--nocapture"
       ],
-      "old": "let verdict: &Verdict = &if",
-      "new": "let verdict: &mut Verdict = &mut if",
+      "old": "let verdict: &Verdict = if",
+      "new": "let verdict = if",
       "required_tools": [
         "cargo",
         "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-judged-verdict-clone",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "no method named .clone. found for struct .*Verdict",
+      "cargo": [
+        "check",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    report(verdict, args.json)\n",
+      "new": "    let mut rewritten = (*verdict).clone();\n    for note in &mut rewritten.notes {\n        note.detail.push_str(\"; post-evaluation edit\");\n    }\n    let verdict = &rewritten;\n    report(verdict, args.json)\n",
+      "required_tools": [
+        "cargo",
         "git",
         "python3",
         "rustc",

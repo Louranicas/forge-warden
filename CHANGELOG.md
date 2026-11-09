@@ -8,6 +8,8 @@ listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Verdict no longer implements Clone; CLI reporting borrows judged authority/advisory results without copying them (T-GITPIN-01).
+
 ### CLI machine contract
 
 - `lint --json` emits `forge-warden.lint.v1`; `check`, `lint`, `explain` and `schema` with

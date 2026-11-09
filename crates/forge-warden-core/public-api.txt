@@ -300,7 +300,7 @@ crate::render #[must_use] pub fn render_text(verdict: &Verdict) -> String
 crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> String
 crate::seal #[must_use] pub fn is_sha256_hex(text: &str) -> bool
 crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
-crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
+crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
 crate::verdict Verdict.pub schema: &'static str,
 crate::verdict Verdict.pub tool: Tool,
 crate::verdict Verdict.pub evaluated_on: String,

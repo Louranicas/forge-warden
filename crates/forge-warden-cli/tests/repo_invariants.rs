@@ -822,9 +822,9 @@ fn final_expression(block: &syn::Block) -> Option<&syn::Expr> {
     }
 }
 
-/// An interim rung before Q-TYPES-2 private fields: the CLI captures the two evaluator results
-/// directly behind a shared reference. Rust then refuses mutable borrowing of the judged value.
-/// The exact call shape excludes wrappers that edit an owned result before borrowing it.
+/// Secondary shape check only: two immutable result holders feed one shared view and the
+/// immediately following report. Verdict's absent Clone implementation is the compiler rung
+/// against copying a judged view; Q-TYPES-2 separately makes all verdict fields private.
 fn read_only_judgement(source: &str) -> bool {
     let Ok(file) = syn::parse_file(source) else {
         return false;
@@ -838,29 +838,27 @@ fn read_only_judgement(source: &str) -> bool {
     }) else {
         return false;
     };
-    let Some(binding) = check.block.stmts.iter().find_map(|statement| match statement {
-        syn::Stmt::Local(local) if matches!(&local.pat, syn::Pat::Type(pattern)
-            if matches!(pattern.pat.as_ref(), syn::Pat::Ident(name) if name.ident == "verdict" && name.mutability.is_none())
-            && matches!(pattern.ty.as_ref(), syn::Type::Reference(reference) if reference.mutability.is_none()
-                && matches!(reference.elem.as_ref(), syn::Type::Path(path) if path.path.is_ident("Verdict")))) => Some(local),
-        syn::Stmt::Local(_) | syn::Stmt::Item(_) | syn::Stmt::Expr(..) | syn::Stmt::Macro(_) => None,
-    }) else { return false };
+    let Some(syn::Stmt::Local(binding)) = check.block.stmts.iter().rev().nth(1) else {
+        return false;
+    };
+    if !matches!(&binding.pat, syn::Pat::Type(pattern)
+        if matches!(pattern.pat.as_ref(), syn::Pat::Ident(name) if name.ident == "verdict" && name.mutability.is_none())
+        && matches!(pattern.ty.as_ref(), syn::Type::Reference(reference) if reference.mutability.is_none()
+            && matches!(reference.elem.as_ref(), syn::Type::Path(path) if path.path.is_ident("Verdict"))))
+    {
+        return false;
+    }
     let Some(initializer) = &binding.init else {
         return false;
     };
-    let syn::Expr::Reference(reference) = initializer.expr.as_ref() else {
+    let syn::Expr::If(branches) = initializer.expr.as_ref() else {
         return false;
     };
-    if reference.mutability.is_some() {
-        return false;
-    }
-    let syn::Expr::If(branches) = reference.expr.as_ref() else {
-        return false;
-    };
-    let Some(authority) = final_expression(&branches.then_branch) else {
-        return false;
-    };
-    if !named_call(authority, "evaluate_authority") {
+    if !matches!(final_expression(&branches.then_branch), Some(syn::Expr::Reference(reference))
+        if reference.mutability.is_none()
+            && matches!(reference.expr.as_ref(), syn::Expr::Path(path) if path.path.is_ident("authority")))
+        || !assigned_evaluation(&branches.then_branch, "authority", "evaluate_authority")
+    {
         return false;
     }
     let Some((_, otherwise)) = &branches.else_branch else {
@@ -869,17 +867,10 @@ fn read_only_judgement(source: &str) -> bool {
     let syn::Expr::Block(block) = otherwise.as_ref() else {
         return false;
     };
-    let Some(syn::Expr::MethodCall(clone)) = final_expression(&block.block) else {
-        return false;
-    };
-    let syn::Expr::MethodCall(borrow) = clone.receiver.as_ref() else {
-        return false;
-    };
-    if clone.method != "clone"
-        || !clone.args.is_empty()
-        || borrow.method != "verdict"
-        || !borrow.args.is_empty()
-        || !named_call(&borrow.receiver, "evaluate_advisory")
+    if !matches!(final_expression(&block.block), Some(syn::Expr::MethodCall(borrow))
+        if borrow.method == "verdict" && borrow.args.is_empty()
+            && matches!(borrow.receiver.as_ref(), syn::Expr::Path(path) if path.path.is_ident("advisory")))
+        || !assigned_evaluation(&block.block, "advisory", "evaluate_advisory")
     {
         return false;
     }
@@ -894,6 +885,12 @@ fn read_only_judgement(source: &str) -> bool {
     let mut visitor = JudgementReferences::default();
     syn::visit::Visit::visit_file(&mut visitor, &file);
     visitor.evaluators == 2 && !visitor.renamed
+}
+
+fn assigned_evaluation(block: &syn::Block, holder: &str, evaluator: &str) -> bool {
+    matches!(block.stmts.iter().rev().nth(1), Some(syn::Stmt::Expr(syn::Expr::Assign(assignment), Some(_)))
+        if matches!(assignment.left.as_ref(), syn::Expr::Path(path) if path.path.is_ident(holder))
+            && named_call(&assignment.right, evaluator))
 }
 
 #[derive(Default)]
@@ -931,10 +928,10 @@ fn cli_borrows_judged_verdicts_directly_and_never_takes_ownership() {
         "CLI evaluator results must be captured directly as &Verdict and reported by shared reference"
     );
     for broken in [
-        source.replace("let verdict: &Verdict = &if", "let mut verdict = if"),
+        source.replace("let verdict: &Verdict = if", "let mut verdict = if"),
         source.replace(
-            "let verdict: &Verdict = &if",
-            "let verdict: &mut Verdict = &mut if",
+            "let verdict: &Verdict = if",
+            "let verdict: &mut Verdict = if",
         ),
         source.replace(
             "evaluate_authority(&policy, &checked, copy, seals, today)",
@@ -946,6 +943,8 @@ fn cli_borrows_judged_verdicts_directly_and_never_takes_ownership() {
             "report(verdict, args.json)",
             "report(&rewritten, args.json)",
         ),
+        source.replace("report(verdict, args.json)", "let mut rewritten = (*verdict).clone(); for note in &mut rewritten.notes { note.detail.push_str(\"; post-evaluation edit\"); } let verdict = &rewritten; report(verdict, args.json)"),
+
     ] {
         assert!(
             !read_only_judgement(&broken),
