@@ -1307,6 +1307,33 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "git-parent-error-class",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_parent_absence_is_distinct_from_metadata_failure.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_parent_absence_is_distinct_from_metadata_failure",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),",
+      "new": "Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Ok(false),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [

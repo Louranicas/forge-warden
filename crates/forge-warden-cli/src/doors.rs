@@ -1513,6 +1513,37 @@ mod child_tests {
     }
 
     #[test]
+    fn git_parent_absence_is_distinct_from_metadata_failure() {
+        use super::child::fixture_git;
+        use std::os::unix::fs::MetadataExt as _;
+        let root = scratch("git-parent-errors");
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let executable = Path::new("/usr/bin/git");
+        let missing = root.join("missing-parent").join("allowlist.toml");
+        let advisory = fixture_git(executable, &missing, &root, owner, true).unwrap();
+        assert_eq!(advisory.allowlist_sha256(), None);
+        assert!(
+            fixture_git(executable, &missing, &root, owner, false)
+                .unwrap_err()
+                .message
+                .contains("no Git allowlist enrolled")
+        );
+
+        // ENAMETOOLONG is reproducible even as root; permission-denial fixtures are not.
+        let impossible_parent = root.join("x".repeat(4096));
+        let error = std::fs::symlink_metadata(&impossible_parent).unwrap_err();
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
+        let unreadable = impossible_parent.join("allowlist.toml");
+        for advisory in [false, true] {
+            let error = fixture_git(executable, &unreadable, &root, owner, advisory).unwrap_err();
+            assert!(
+                !error.message.contains("no Git allowlist enrolled"),
+                "metadata errors must not become absent-policy fallback"
+            );
+        }
+    }
+
+    #[test]
     fn git_policy_budget_is_exactly_64_kib() {
         use super::child::fixture_git;
         use std::os::unix::fs::MetadataExt as _;
