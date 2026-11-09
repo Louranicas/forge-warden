@@ -16,7 +16,7 @@ use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
-use crate::rank::{RankDoc, RankedFile};
+use crate::rank::{RankDoc, RankShape, RankedFile};
 use crate::verdict::{
     Citation, Note, NoteCode, RuleOutcome, RuleResult, Seals, Verdict, Violation, WaiverNote,
 };
@@ -254,28 +254,25 @@ fn classify_waivers(
 
 fn notes_for(rank: &RankDoc) -> Vec<Note> {
     let mut notes = Vec::new();
-    if rank.files().is_empty() {
-        notes.push(Note {
+    // A real producer lists one path twice for a type change (file -> symlink: an addition and a
+    // deletion; MATRIX.md). Which entry a rule sees would then be an accident of order, so hold.
+    match rank.shape() {
+        RankShape::Empty => notes.push(Note {
             code: NoteCode::EmptyRanking,
             path: None,
             detail: "the ranking lists no files; there is nothing to judge, so nothing passes by default".to_owned(),
-        });
-    }
-    // A real producer lists one path twice for a type change (file -> symlink: an addition and a
-    // deletion; MATRIX.md). Which entry a rule sees would then be an accident of order, so hold.
-    let mut seen = BTreeSet::new();
-    let mut duplicated = BTreeSet::new();
-    for file in rank.files() {
-        if !seen.insert(file.path().as_str()) {
-            duplicated.insert(file.path().as_str());
+        }),
+        RankShape::Duplicates(paths) => {
+            let duplicated = paths.iter();
+            for path in duplicated {
+                notes.push(Note {
+                    code: NoteCode::DuplicatePaths,
+                    path: Some(path.to_string()),
+                    detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
+                });
+            }
         }
-    }
-    for path in duplicated {
-        notes.push(Note {
-            code: NoteCode::DuplicatePaths,
-            path: Some(path.to_owned()),
-            detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
-        });
+        RankShape::Clean => {}
     }
     for file in rank.files() {
         for signal in file.signals().iter().filter(|s| !s.is_known()) {
