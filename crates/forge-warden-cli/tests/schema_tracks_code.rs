@@ -246,3 +246,141 @@ fn the_reference_documents_every_note_code_and_seal_exactly_once() {
         "each seal member is documented once"
     );
 }
+
+/// New machine documents use these scalar types; exercise the committed constraints, not only keys.
+fn scalar_members_conform(value: &Value, schema: &Value) {
+    conforms(value, schema, "machine document");
+    for (key, field) in value.as_object().unwrap() {
+        let definition = schema["properties"].get(key).unwrap();
+        if let Some(kind) = definition.get("type").and_then(Value::as_str) {
+            assert!(
+                match kind {
+                    "string" => field.is_string(),
+                    "integer" => field.is_u64(),
+                    "boolean" => field.is_boolean(),
+                    _ => false,
+                },
+                "{key}: {field}"
+            );
+        }
+        if let Some(minimum) = definition.get("minimum") {
+            assert!(
+                field.as_u64().unwrap() >= minimum.as_u64().unwrap(),
+                "{key}"
+            );
+        }
+        if let Some(pattern) = definition.get("pattern").and_then(Value::as_str) {
+            let text = field.as_str().unwrap();
+            assert!(
+                match pattern {
+                    "^[ -~]*$" => text.bytes().all(|b| (b' '..=b'~').contains(&b)),
+                    "^[0-9a-f]{64}$" =>
+                        text.len() == 64
+                            && text
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    _ => false,
+                },
+                "unsupported or unsatisfied pattern {pattern}: {key}"
+            );
+        }
+        if let Some(expected) = definition.get("const") {
+            assert_eq!(field, expected, "{key}");
+        }
+        if let Some(values) = definition.get("enum") {
+            assert!(values.as_array().unwrap().contains(field), "{key}: {field}");
+        }
+    }
+}
+
+#[test]
+fn every_machine_document_has_a_committed_schema() {
+    let lint: Value =
+        serde_json::from_str(&run(&["lint", "examples/starter.warden.toml", "--json"], b"").stdout)
+            .unwrap();
+    let lint_schema: Value = serde_json::from_str(&read("schemas/lint.v1.schema.json")).unwrap();
+    scalar_members_conform(&lint, &lint_schema);
+    let hash = lint["policy_sha256"].as_str().unwrap();
+    assert_eq!(hash.len(), 64);
+    assert!(
+        hash.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+    assert_eq!(
+        lint_schema["properties"]["policy_sha256"]["pattern"],
+        "^[0-9a-f]{64}$"
+    );
+
+    let error_schema: Value = serde_json::from_str(&read("schemas/error.v1.schema.json")).unwrap();
+    assert_eq!(
+        error_schema["properties"]["exit"]["enum"],
+        serde_json::json!([2, 3, 4, 101])
+    );
+    assert_eq!(
+        error_schema["properties"]["name"]["enum"],
+        serde_json::json!(["usage", "io", "invalid_input", "internal"])
+    );
+    assert_eq!(error_schema["properties"]["message"]["pattern"], "^[ -~]*$");
+    assert_eq!(lint_schema["properties"]["rules"]["minimum"], 0);
+    assert_eq!(lint_schema["properties"]["waivers"]["minimum"], 0);
+    for (args, code, name) in [
+        (vec!["lint", "--json"], 2, "usage"),
+        (vec!["lint", "absent-policy.toml", "--json"], 3, "io"),
+        (
+            vec!["lint", "fixtures/bad.warden.toml", "--json"],
+            4,
+            "invalid_input",
+        ),
+    ] {
+        let out = run(&args, b"");
+        assert_eq!(out.code, code);
+        let error: Value = serde_json::from_str(&out.stderr).unwrap();
+        scalar_members_conform(&error, &error_schema);
+        assert_eq!(error["name"], name);
+        assert_eq!(error["exit"], code);
+    }
+    assert_eq!(
+        strings(&error_schema["properties"]["next"]["enum"]),
+        [
+            "fix_invocation",
+            "check_input_output",
+            "check_environment",
+            "reduce_input_size",
+            "change_input",
+            "report_bug"
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    );
+
+    let entry_schema: Value =
+        serde_json::from_str(&read("schemas/exit-entry.v1.schema.json")).unwrap();
+    let codes_schema: Value =
+        serde_json::from_str(&read("schemas/exit-codes.v1.schema.json")).unwrap();
+    assert_eq!(codes_schema["type"], "array");
+    let registry: Value =
+        serde_json::from_str(&run(&["schema", "exit-codes", "--json"], b"").stdout).unwrap();
+    assert_eq!(
+        registry.as_array().unwrap().len(),
+        forge_warden_core::EXIT_REGISTRY.len()
+    );
+    for entry in registry.as_array().unwrap() {
+        scalar_members_conform(entry, &entry_schema);
+        scalar_members_conform(entry, &codes_schema["items"]);
+        let explained = run(&["explain", &entry["code"].to_string(), "--json"], b"");
+        assert_eq!(explained.code, 0);
+        let value: Value = serde_json::from_str(&explained.stdout).unwrap();
+        assert_eq!(value, *entry);
+    }
+    for (command, file) in [
+        ("lint", "lint"),
+        ("error", "error"),
+        ("exit-entry", "exit-entry"),
+        ("exit-codes-schema", "exit-codes"),
+    ] {
+        let out = run(&["schema", command, "--json"], b"");
+        assert_eq!(out.code, 0);
+        assert_eq!(out.stdout, read(&format!("schemas/{file}.v1.schema.json")));
+    }
+}

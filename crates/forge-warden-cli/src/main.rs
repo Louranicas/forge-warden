@@ -39,6 +39,10 @@ const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v1.sche
 const POLICY_SCHEMA_JSON: &str = include_str!("../../../schemas/policy.v0.schema.json");
 /// The starter policy `forge-warden init` prints.
 const STARTER_POLICY: &str = include_str!("../../../examples/starter.warden.toml");
+const LINT_SCHEMA_JSON: &str = include_str!("../../../schemas/lint.v1.schema.json");
+const ERROR_SCHEMA_JSON: &str = include_str!("../../../schemas/error.v1.schema.json");
+const EXIT_ENTRY_SCHEMA_JSON: &str = include_str!("../../../schemas/exit-entry.v1.schema.json");
+const EXIT_CODES_SCHEMA_JSON: &str = include_str!("../../../schemas/exit-codes.v1.schema.json");
 
 #[derive(Parser)]
 #[command(
@@ -63,7 +67,7 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         policy: PathBuf,
         /// The patch to judge (`git diff --binary --no-renames`). Read once; the ranker and Git
-        /// both read that one buffer.
+        /// both read that one buffer. `--patch -` is refused: stdin is reserved for `--rank -`.
         #[arg(long, value_name = "FILE")]
         patch: PathBuf,
         /// Authority mode: the deep-diff-forge binary to run. Its SHA-256 must be listed in the
@@ -98,17 +102,26 @@ enum Command {
     Lint {
         /// The policy file.
         policy: PathBuf,
+        /// Print the forge-warden.lint.v1 document; failures are one JSON line on stderr.
+        #[arg(long)]
+        json: bool,
     },
     /// Explain an exit code (by number or name) and the action it asks for.
     Explain {
         /// A code such as `7`, or a name such as `policy_hold`.
         code: String,
+        /// Keep the JSON result; also format failures as one JSON line on stderr.
+        #[arg(long)]
+        json: bool,
     },
     /// Print a JSON Schema or the exit-code registry.
     Schema {
         /// What to print.
-        #[arg(value_parser = ["verdict", "policy", "exit-codes"])]
+        #[arg(value_parser = ["verdict", "policy", "exit-codes", "lint", "error", "exit-entry", "exit-codes-schema"])]
         what: String,
+        /// Keep the JSON result; also format failures as one JSON line on stderr.
+        #[arg(long)]
+        json: bool,
     },
     /// Print a starter policy: `forge-warden init > warden.toml`.
     Init,
@@ -118,6 +131,7 @@ enum Command {
 struct Failure {
     exit: Exit,
     message: String,
+    next: &'static str,
 }
 
 impl Failure {
@@ -125,17 +139,24 @@ impl Failure {
         Self {
             exit,
             message: message.into(),
+            next: exit.entry().action,
         }
     }
 
     /// The one mapping from a door's kind to the registry (Q2-05). Exhaustive: a new kind is a
     /// compile error here until someone decides its exit.
     fn from_door(error: doors::DoorError) -> Self {
-        let exit = match error.kind {
-            DoorErrorKind::Io | DoorErrorKind::Environment => Exit::Io,
-            DoorErrorKind::OverBudget | DoorErrorKind::Refused => Exit::InvalidInput,
+        let (exit, next) = match error.kind {
+            DoorErrorKind::Io => (Exit::Io, "check_input_output"),
+            DoorErrorKind::Environment => (Exit::Io, "check_environment"),
+            DoorErrorKind::OverBudget => (Exit::InvalidInput, "reduce_input_size"),
+            DoorErrorKind::Refused => (Exit::InvalidInput, "change_input"),
         };
-        Self::new(exit, error.message)
+        Self {
+            exit,
+            message: error.message,
+            next,
+        }
     }
 }
 
@@ -144,35 +165,56 @@ fn main() -> doors::Status {
 }
 
 fn run_cli() -> Exit {
-    let cli = match Cli::try_parse() {
+    let arguments = doors::arguments();
+    let json = machine_requested(&arguments);
+    let cli = match Cli::try_parse_from(arguments) {
         Ok(cli) => cli,
         Err(error) => {
             let text = error.render().to_string();
             return if error.use_stderr() {
-                doors::diagnose(&text);
-                Exit::Usage
+                if json {
+                    finish(Err(Failure::new(Exit::Usage, text)), true)
+                } else {
+                    doors::diagnose(&text);
+                    Exit::Usage
+                }
             } else {
                 finish(
                     doors::emit(&text)
                         .map(|()| Exit::Pass)
                         .map_err(Failure::from_door),
+                    json,
                 )
             };
         }
     };
-    finish(run(cli.command))
+    finish(run(cli.command), json)
 }
 
-fn finish(result: Result<Exit, Failure>) -> Exit {
+/// An exact flag before the option terminator requests machine diagnostics, even on parse errors.
+/// A positional file named `--json` after `--` does not change the output contract.
+fn machine_requested(arguments: &[std::ffi::OsString]) -> bool {
+    arguments
+        .iter()
+        .skip(1)
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == "--json")
+}
+
+fn finish(result: Result<Exit, Failure>, json: bool) -> Exit {
     match result {
         Ok(exit) => exit,
         Err(failure) => {
             let entry = failure.exit.entry();
-            doors::diagnose(&format!("forge-warden: {}", failure.message));
-            doors::diagnose(&format!(
-                "next: {} (forge-warden explain {})",
-                entry.action, entry.code
-            ));
+            if json {
+                doors::diagnose_json(failure.exit, &failure.message, failure.next);
+            } else {
+                doors::diagnose(&format!("forge-warden: {}", failure.message));
+                doors::diagnose(&format!(
+                    "next: {} (forge-warden explain {})",
+                    failure.next, entry.code
+                ));
+            }
             failure.exit
         }
     }
@@ -202,9 +244,9 @@ fn run(command: Command) -> Result<Exit, Failure> {
             today,
             json,
         }),
-        Command::Lint { policy } => lint(&policy),
-        Command::Explain { code } => explain(&code),
-        Command::Schema { what } => schema(&what),
+        Command::Lint { policy, json } => lint(&policy, json),
+        Command::Explain { code, json: _ } => explain(&code),
+        Command::Schema { what, json: _ } => schema(&what),
         Command::Init => emit(STARTER_POLICY),
     }
 }
@@ -237,6 +279,12 @@ struct CheckArgs {
 }
 
 fn check(args: &CheckArgs) -> Result<Exit, Failure> {
+    if args.patch.as_os_str() == "-" {
+        return Err(Failure::new(
+            Exit::InvalidInput,
+            "patch_stdin_unsupported: --patch - is not supported; save the patch to a file (stdin is reserved for --rank -)",
+        ));
+    }
     let today = match &args.today {
         Some(text) => Date::parse(text).ok_or_else(|| {
             Failure::new(
@@ -362,6 +410,7 @@ fn git_facts(
                 Some(sha256_hex(&sealed)),
             ))
         }
+        Err(GitFactsFailure::Door(error)) => Err(Failure::from_door(error)),
         Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::GitRefused(why)), None)),
         Err(GitFactsFailure::Unavailable(why)) => Err(Failure::new(Exit::Io, why)),
     }
@@ -416,9 +465,18 @@ fn seals<P>(
     }
 }
 
-fn lint(policy_path: &Path) -> Result<Exit, Failure> {
+fn lint(policy_path: &Path, json: bool) -> Result<Exit, Failure> {
     let bytes = doors::read_file(policy_path).map_err(Failure::from_door)?;
     let policy = parse_policy(&bytes).map_err(|e| policy_failure(&e))?;
+    if json {
+        let value = serde_json::json!({
+            "schema": "forge-warden.lint.v1",
+            "rules": policy.rules().len(),
+            "waivers": policy.waivers().len(),
+            "policy_sha256": sha256_hex(&bytes),
+        });
+        return emit(&format!("{value}\n"));
+    }
     emit(&format!(
         "ok: {} rule(s), {} waiver(s), policy sha256 {}\n",
         policy.rules().len(),
@@ -448,6 +506,10 @@ fn schema(what: &str) -> Result<Exit, Failure> {
     match what {
         "verdict" => emit(VERDICT_SCHEMA_JSON),
         "policy" => emit(POLICY_SCHEMA_JSON),
+        "lint" => emit(LINT_SCHEMA_JSON),
+        "error" => emit(ERROR_SCHEMA_JSON),
+        "exit-entry" => emit(EXIT_ENTRY_SCHEMA_JSON),
+        "exit-codes-schema" => emit(EXIT_CODES_SCHEMA_JSON),
         _ => {
             let value = serde_json::to_string_pretty(&EXIT_REGISTRY).map_err(|e| {
                 Failure::new(Exit::Internal, format!("serializing the registry: {e}"))

@@ -4,7 +4,10 @@
     "fixtures/adversarial/reference_model.rs"
   ],
   "goldens": [
-    "fixtures/demo.verdict.json"
+    "fixtures/demo.verdict.json",
+    "fixtures/cli-stderr/io.txt",
+    "fixtures/cli-stderr/refused.txt",
+    "fixtures/cli-stderr/over-budget.txt"
   ],
   "golden_consumers": [
     {
@@ -19,6 +22,21 @@
           "name": "authority_mode_on_the_demo_reaches_the_golden_judgement",
           "assertion": "assert_golden_json",
           "golden": "fixtures/demo.verdict.json"
+        },
+        {
+          "name": "golden_stderr_io_resources",
+          "assertion": "assert_golden",
+          "golden": "fixtures/cli-stderr/io.txt"
+        },
+        {
+          "name": "golden_stderr_refused_file",
+          "assertion": "assert_golden",
+          "golden": "fixtures/cli-stderr/refused.txt"
+        },
+        {
+          "name": "golden_stderr_over_budget",
+          "assertion": "assert_golden",
+          "golden": "fixtures/cli-stderr/over-budget.txt"
         }
       ]
     }

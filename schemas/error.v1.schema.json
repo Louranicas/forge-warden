@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Louranicas/forge-warden/schemas/error.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "exit",
+    "name",
+    "message",
+    "next"
+  ],
+  "properties": {
+    "exit": {
+      "type": "integer",
+      "enum": [
+        2,
+        3,
+        4,
+        101
+      ]
+    },
+    "name": {
+      "type": "string",
+      "enum": [
+        "usage",
+        "io",
+        "invalid_input",
+        "internal"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "pattern": "^[ -~]*$"
+    },
+    "next": {
+      "type": "string",
+      "enum": [
+        "fix_invocation",
+        "check_input_output",
+        "check_environment",
+        "reduce_input_size",
+        "change_input",
+        "report_bug"
+      ]
+    }
+  }
+}
