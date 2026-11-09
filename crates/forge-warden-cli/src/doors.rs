@@ -293,7 +293,12 @@ pub(crate) mod child {
         }
 
         /// The verdict's record of this Git: built only here, from this admission and the version
-        /// its own descriptor printed (Q-TYPES-2, B2).
+        /// its own descriptor printed (Q-TYPES-2, B2). The constructors are disallowed everywhere else
+        /// in the binary (clippy.toml; Q-TYPES-2.1), so this door is the only record of a Git.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "door: AdmittedGit::oracle records the admitted Git (the only place the binary may)"
+        )]
         pub(crate) fn oracle(
             &self,
             path: String,

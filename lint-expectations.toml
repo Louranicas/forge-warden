@@ -259,6 +259,12 @@ source_reason = "door: produce_ranking mints Ranking<Produced> (the only place t
 review_reason = "C1c sole authority mint follows policy digest admission, bounded isolated producer execution and patch-seal validation; the exemption stays in the named door."
 
 [[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: AdmittedGit::oracle records the admitted Git (the only place the binary may)"
+review_reason = "Q-TYPES-2.1 PROPOSED, awaiting Bastion: the sole GitOracle record follows descriptor admission and the owner-allowlist decision; approved/unpinned stay disallowed elsewhere in the binary."
+
+[[expectation]]
 file = "crates/forge-warden-cli/tests/support/fixture_ranker.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout/stderr"
