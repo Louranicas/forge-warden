@@ -291,6 +291,24 @@ pub(crate) mod child {
         }
     }
 
+    /// Authority proof: only pinned admission constructs this private-field token.
+    #[derive(Debug)]
+    pub(crate) struct PinnedGit {
+        admitted: AdmittedGit,
+    }
+
+    impl PinnedGit {
+        pub(crate) fn admitted(&self) -> &AdmittedGit {
+            &self.admitted
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum GitAdmission {
+        Pinned,
+        Advisory,
+    }
+
     /// Ownership boundary for a protected filesystem tree. Production always uses root at `/`.
     struct GitTrust<'a> {
         root: &'a Path,
@@ -437,11 +455,11 @@ pub(crate) mod child {
         policy: &Path,
         trust: &GitTrust<'_>,
         executable_trust: &GitTrust<'_>,
-        advisory: bool,
+        admission: GitAdmission,
     ) -> Result<AdmittedGit, DoorError> {
         use std::os::unix::fs::MetadataExt as _;
         let snapshot = git_policy(policy, trust)?;
-        if snapshot.is_none() && !advisory {
+        if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) {
             return Err(git_refusal("no Git allowlist enrolled"));
         }
         let (file, bytes) = git_file(path, executable_trust, MAX_EXECUTABLE_BYTES)?;
@@ -466,10 +484,10 @@ pub(crate) mod child {
     }
 
     /// The production admission boundary. Its policy path, owner, and trust root are fixed.
-    pub(crate) fn admit_git(path: &Path, advisory: bool) -> Result<AdmittedGit, DoorError> {
+    fn admit_git(path: &Path, admission: GitAdmission) -> Result<AdmittedGit, DoorError> {
         #[cfg(test)]
         {
-            match fixture_git_from_environment(path, advisory) {
+            match fixture_git_from_environment(path, admission) {
                 Some(result) => result,
                 None => Err(git_refusal("test fixture policy root is required")),
             }
@@ -480,8 +498,18 @@ pub(crate) mod child {
                 root: Path::new("/"),
                 owner: 0,
             };
-            admit_git_with(path, Path::new(GIT_ALLOWLIST), &trust, &trust, advisory)
+            admit_git_with(path, Path::new(GIT_ALLOWLIST), &trust, &trust, admission)
         }
+    }
+
+    /// Authority has no absent-policy path and receives an unforgeable proof token.
+    pub(crate) fn admit_git_pinned(path: &Path) -> Result<PinnedGit, DoorError> {
+        admit_git(path, GitAdmission::Pinned).map(|admitted| PinnedGit { admitted })
+    }
+
+    /// Advisory may record an absent policy, but cannot mint authority proof.
+    pub(crate) fn admit_git_advisory(path: &Path) -> Result<AdmittedGit, DoorError> {
+        admit_git(path, GitAdmission::Advisory)
     }
 
     #[cfg(test)]
@@ -491,7 +519,7 @@ pub(crate) mod child {
     )]
     fn fixture_git_from_environment(
         path: &Path,
-        advisory: bool,
+        admission: GitAdmission,
     ) -> Option<Result<AdmittedGit, DoorError>> {
         use std::os::unix::fs::MetadataExt as _;
         let root = std::path::PathBuf::from(std::env::var_os("FORGE_WARDEN_TEST_POLICY_ROOT")?);
@@ -504,7 +532,7 @@ pub(crate) mod child {
                         &root.join("allowlist.toml"),
                         &root,
                         meta.uid(),
-                        advisory,
+                        matches!(admission, GitAdmission::Advisory),
                     )
                 }),
         )
@@ -528,7 +556,17 @@ pub(crate) mod child {
                 owner: 0,
             }
         };
-        admit_git_with(path, policy, &trust, &executable_trust, advisory)
+        admit_git_with(
+            path,
+            policy,
+            &trust,
+            &executable_trust,
+            if advisory {
+                GitAdmission::Advisory
+            } else {
+                GitAdmission::Pinned
+            },
+        )
     }
 
     #[test]
@@ -1838,7 +1876,7 @@ mod child_tests {
         let tiny_patch = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
         assert!(git_facts(&test_git(), tiny_patch).is_ok());
         assert!(
-            super::child::admit_git(Path::new("/nonexistent/git"), true)
+            super::child::admit_git_advisory(Path::new("/nonexistent/git"))
                 .unwrap_err()
                 .message
                 .contains("test fixture policy root is required")

@@ -314,19 +314,12 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
     let patch_sha256 = sha256_hex(&patch);
     let supplied = args.rank.as_deref().map(read_rank).transpose()?;
 
-    let admitted_git =
-        doors::child::admit_git(&args.git, args.ranker.is_none()).map_err(Failure::from_door)?;
-    let (facts, facts_sha256) = git_facts(&admitted_git, &patch)?;
-    let git = GitOracle::new(
-        git_path,
-        doors::child::git_version(&admitted_git).map_err(Failure::from_door)?,
-        admitted_git.sha256().to_owned(),
-        admitted_git.allowlist_sha256().map(str::to_owned),
-    );
-
     let authority;
     let advisory;
     let verdict: &Verdict = if let Some(ranker) = &args.ranker {
+        let admitted_git = doors::child::admit_git_pinned(&args.git).map_err(Failure::from_door)?;
+        let (facts, facts_sha256) = authority_git_facts(&admitted_git, &patch)?;
+        let git = git_oracle(admitted_git.admitted(), git_path)?;
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
             |failure| match failure {
                 RankerFailure::NotAdmitted(why) => Failure::new(Exit::InvalidInput, why),
@@ -348,6 +341,10 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         authority = evaluate_authority(&policy, &checked, copy, seals, today);
         &authority
     } else {
+        let admitted_git =
+            doors::child::admit_git_advisory(&args.git).map_err(Failure::from_door)?;
+        let (facts, facts_sha256) = git_facts(&admitted_git, &patch)?;
+        let git = git_oracle(&admitted_git, git_path)?;
         // clap admits advisory mode only with `--rank`.
         let bytes = supplied.ok_or_else(|| Failure::new(Exit::Usage, "--advisory needs --rank"))?;
         let doc = parse_rank(&bytes).map_err(|e| rank_failure(&e))?;
@@ -409,6 +406,23 @@ fn git_path(git: &Path) -> Result<String, Failure> {
     git.to_str()
         .map(str::to_owned)
         .ok_or_else(|| Failure::new(Exit::Usage, format!("--git {} is not UTF-8", git.display())))
+}
+
+/// Authority facts require the proof minted exclusively by pinned admission.
+fn authority_git_facts(
+    git: &doors::child::PinnedGit,
+    patch: &[u8],
+) -> Result<(Result<PatchFacts, Unverifiable>, Option<String>), Failure> {
+    git_facts(git.admitted(), patch)
+}
+
+fn git_oracle(git: &doors::child::AdmittedGit, path: String) -> Result<GitOracle, Failure> {
+    Ok(GitOracle::new(
+        path,
+        doors::child::git_version(git).map_err(Failure::from_door)?,
+        git.sha256().to_owned(),
+        git.allowlist_sha256().map(str::to_owned),
+    ))
 }
 
 /// Git's facts about the patch, and their digest. A refusal is a fact about the patch (it holds

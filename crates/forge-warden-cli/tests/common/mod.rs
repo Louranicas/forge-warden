@@ -164,6 +164,21 @@ pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) ->
         let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
         write(&directory, "allowlist.toml", format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n").as_bytes());
     }
+    run_with_git_policy(args, stdin, env, &directory)
+}
+
+/// Explicit empty policy context for authority refusal controls; never reads host policy.
+pub(crate) fn run_without_git_policy(args: &[&str]) -> Run {
+    let directory = scratch("empty-git-policy");
+    run_with_git_policy(args, b"", &[], &directory)
+}
+
+fn run_with_git_policy(
+    args: &[&str],
+    stdin: &[u8],
+    env: &[(&str, &str)],
+    directory: &std::path::Path,
+) -> Run {
     assert!(
         !env.iter()
             .any(|(key, _)| *key == "FORGE_WARDEN_TEST_POLICY_ROOT"),

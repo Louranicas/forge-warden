@@ -82,7 +82,7 @@ feature or effective-host enrollment. See ADR 0011 and the Mission 6 GIT-PIN R3 
 
 
 Every check-mode integration test supplies a fresh policy root: empty for advisory,
-explicitly populated for authority. The fixture refuses a missing root rather than reading
+explicitly populated for authority positive controls, and empty for authority refusal controls. The fixture refuses a missing root rather than reading
 the host policy. The tutorial and golden producer use that same test-only artifact.
 The Rust helper publishes an artifact SHA-256, exact cfg set and a content-addressed
 source-input subject. The operator passes all three artifact-pointer fields explicitly;
@@ -101,3 +101,19 @@ The exact T-GITPIN-01 clone-and-shadow case is a compiler plant, independent of 
 The AST check is only a secondary check for the current direct capture and single report
 shape. It does not establish general data-flow integrity; Q-TYPES-2's private fields supply
 the separate field-mutation barrier.
+
+## Authority wiring proof
+
+The CLI exposes two named admission constructors. `admit_git_pinned` returns a private-field
+`PinnedGit` proof after required policy admission; `admit_git_advisory` returns `AdmittedGit`,
+which may record an absent policy. There is no mode flag on either constructor and no
+conversion from general admission to the proof. The authority facts builder requires
+`&PinnedGit`; replacing its constructor with advisory admission fails compilation. The
+same admitted descriptor supplies version and facts. Core stays independent of CLI I/O types.
+
+`authority_requires_git_policy_before_producing_a_verdict` exercises the full fixture CLI
+with an admitted ranker and an explicitly empty policy root: exit 3, named admission refusal,
+and no verdict. The `git-authority-mode-wiring` compiler plant checks constructor substitution;
+`git-missing-policy` separately checks the admission implementation's required-policy branch.
+These controls do not claim arbitrary data-flow integrity or protect against changes to the
+trusted proof-minting implementation itself without review and testing.

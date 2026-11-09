@@ -1013,8 +1013,8 @@
         "--",
         "--nocapture"
       ],
-      "old": "if snapshot.is_none() && !advisory {",
-      "new": "if snapshot.is_none() && !advisory && false {",
+      "old": "if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) {",
+      "new": "if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) && false {",
       "required_tools": [
         "cargo",
         "coreutils",
@@ -1327,6 +1327,30 @@
       ],
       "old": "Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),",
       "new": "Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Ok(false),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-authority-mode-wiring",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "expected reference .&PinnedGit.",
+      "cargo": [
+        "check",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline"
+      ],
+      "old": "doors::child::admit_git_pinned(&args.git)",
+      "new": "doors::child::admit_git_advisory(&args.git)",
       "required_tools": [
         "cargo",
         "git",
