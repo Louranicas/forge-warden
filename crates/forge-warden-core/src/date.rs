@@ -149,6 +149,13 @@ impl Date {
     }
 }
 
+// Serialized as `YYYY-MM-DD` (its Display), so a typed date writes the same bytes the string did.
+impl serde::Serialize for Date {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 impl fmt::Display for Date {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:04}-{:02}-{:02}", self.year, self.month, self.day)

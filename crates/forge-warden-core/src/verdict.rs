@@ -8,6 +8,7 @@
 //! v1 (ADR 0005 §5) seals where the ranking came from (`provenance`, `ranked_by.sha256`), what Git
 //! saw in the patch (`patch_facts_sha256`, `git`), and any unverified `claims` about the change.
 
+use crate::date::Date;
 use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
@@ -29,7 +30,7 @@ pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 pub struct Verdict {
     schema: &'static str,
     tool: Tool,
-    evaluated_on: String,
+    evaluated_on: Date,
     seals: Seals,
     #[expect(
         clippy::struct_field_names,
@@ -352,7 +353,7 @@ pub struct WaiverNote {
     /// Who owns it.
     pub owner: String,
     /// Its last day.
-    pub expires: String,
+    pub expires: Date,
 }
 
 /// Something the policy cannot judge.
@@ -464,7 +465,7 @@ impl Verdict {
     /// The only way to make a verdict: the outcome, exit status and summary are derived here from
     /// the parts, never supplied.
     pub(crate) fn assemble(
-        evaluated_on: String,
+        evaluated_on: Date,
         seals: Seals,
         files: usize,
         rules: NonEmpty<RuleResult>,
@@ -533,8 +534,8 @@ impl Verdict {
 
     /// The date waivers were judged against (`YYYY-MM-DD`).
     #[must_use]
-    pub fn evaluated_on(&self) -> &str {
-        &self.evaluated_on
+    pub const fn evaluated_on(&self) -> Date {
+        self.evaluated_on
     }
 
     /// Exactly which bytes this verdict is about.

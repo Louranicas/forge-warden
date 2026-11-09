@@ -39,7 +39,7 @@ pub(crate) fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Dat
 
     // A policy always has a rule; the outcome, exit and summary are derived in Verdict::assemble.
     Verdict::assemble(
-        today.to_string(),
+        today,
         seals,
         rank.files().len(),
         judged,
@@ -235,7 +235,7 @@ fn classify_waivers(
         index,
         rule: w.rule.clone(),
         owner: w.owner.clone(),
-        expires: w.expires.to_string(),
+        expires: w.expires,
     };
     let expired = waivers
         .iter()

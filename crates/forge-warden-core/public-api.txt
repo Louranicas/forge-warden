@@ -42,6 +42,8 @@ crate::date Date::pub fn new(year: u16, month: u8, day: u8) -> Result<Self, Date
 crate::date Date::pub fn parse(text: &str) -> Result<Self, DateError>
 crate::date Date::#[must_use] pub fn from_unix_days(days: u64) -> Option<Self>
 crate::date Date::#[must_use] pub fn to_unix_days(self) -> u64
+crate::date impl serde::Serialize for Date
+crate::date Date::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::date impl fmt::Display for Date
 crate::date Date::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::defaults pub trait NamedDefault<T>
@@ -411,7 +413,7 @@ crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustiv
 crate::verdict WaiverNote.pub index: usize,
 crate::verdict WaiverNote.pub rule: String,
 crate::verdict WaiverNote.pub owner: String,
-crate::verdict WaiverNote.pub expires: String,
+crate::verdict WaiverNote.pub expires: Date,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Note
 crate::verdict Note.pub code: NoteCode,
 crate::verdict Note.#[serde(skip_serializing_if = "Option::is_none")] pub path: Option<String>,
@@ -427,7 +429,7 @@ crate::verdict ExitInfo::fn from(outcome: Outcome) -> Self
 crate::verdict impl Verdict
 crate::verdict Verdict::#[must_use] pub const fn schema(&self) -> &'static str
 crate::verdict Verdict::#[must_use] pub const fn tool(&self) -> &Tool
-crate::verdict Verdict::#[must_use] pub fn evaluated_on(&self) -> &str
+crate::verdict Verdict::#[must_use] pub const fn evaluated_on(&self) -> Date
 crate::verdict Verdict::#[must_use] pub const fn seals(&self) -> &Seals
 crate::verdict Verdict::#[must_use] pub const fn outcome(&self) -> Outcome
 crate::verdict Verdict::#[must_use] pub const fn exit(&self) -> &ExitInfo
