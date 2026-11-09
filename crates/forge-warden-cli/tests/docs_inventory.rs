@@ -799,12 +799,16 @@ fn first_rule_walkthrough_runs_its_documented_exercise_offline() {
         .iter()
         .map(|text| serde_json::from_str(text).unwrap())
         .collect();
-    for (record, expected) in records.iter().zip(["pass", "fail", "pass"]) {
-        assert_eq!(record["verdict"], expected);
+    for ((record, expected), level) in records
+        .iter()
+        .zip(["pass", "fail", "pass"])
+        .zip(["hold", "fail", "hold"])
+    {
+        assert_eq!(record["verdict"], level);
         assert_eq!(record["rules"][0]["id"], "first-rule-private-files");
         assert_eq!(record["rules"][0]["outcome"], expected);
-        assert_eq!(record["notes"], serde_json::json!([]));
-        assert_eq!(record["seals"]["provenance"], "produced");
+        assert_eq!(record["notes"][0]["code"], "rank_unverified");
+        assert_eq!(record["seals"]["provenance"], "supplied");
     }
     assert_eq!(records.len(), 3);
 }

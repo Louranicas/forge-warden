@@ -278,3 +278,46 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
         RankedBy::new(doc.tool_version().to_owned(), None)
     );
 }
+
+#[test]
+fn advisory_git_admission_note_is_composed_by_core() {
+    use forge_warden_core::verdict::GitOracle;
+    let supplied = Ranking::supplied(rank("m3-demo-real").unwrap());
+    let checked = check(&supplied, facts("m3-demo-real"));
+    let p = policy(PERMISSIVE);
+    let original =
+        "the ranking was supplied, not produced by forge-warden; it can inform, never approve";
+    for (git, suffix) in [
+        (None, ""),
+        (
+            Some(GitOracle::new(
+                "/usr/bin/git".to_owned(),
+                "git fixture".to_owned(),
+                HASH.to_owned(),
+                Some(HASH.to_owned()),
+            )),
+            "",
+        ),
+        (
+            Some(GitOracle::new(
+                "/usr/bin/git".to_owned(),
+                "git fixture".to_owned(),
+                HASH.to_owned(),
+                None,
+            )),
+            "; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved",
+        ),
+    ] {
+        let mut evidence = seals();
+        evidence.git = git;
+        let judged = evaluate_advisory(&p, &checked, evidence, today());
+        let note = judged
+            .verdict()
+            .notes
+            .iter()
+            .find(|note| note.code.name() == "rank_unverified")
+            .unwrap();
+        assert_eq!(note.detail, format!("{original}{suffix}"));
+        assert_ne!(judged.verdict().verdict, Outcome::Pass);
+    }
+}

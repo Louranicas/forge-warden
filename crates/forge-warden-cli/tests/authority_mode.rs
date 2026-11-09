@@ -581,3 +581,34 @@ fn one_claim_is_recorded_alone_and_the_text_summary_names_the_producer() {
         summary.stdout
     );
 }
+
+/// An admitted ranker cannot turn missing Git enrollment into authority.
+#[test]
+fn authority_requires_git_policy_before_producing_a_verdict() {
+    let (dir, policy, ranker) = setup("git-policy-required");
+    let patch = write(&dir, "change.patch", &docs_patch(&["more notes"]));
+    let out = common::run_without_git_policy(&[
+        "check",
+        "--policy",
+        text(&policy),
+        "--patch",
+        text(&patch),
+        "--ranker",
+        text(&ranker),
+        "--today",
+        TODAY,
+        "--json",
+    ]);
+    assert_eq!(out.code, 3, "stdout={} stderr={}", out.stdout, out.stderr);
+    assert!(
+        out.stderr
+            .contains("Git admission: no Git allowlist enrolled"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "refusal must not emit a verdict: {}",
+        out.stdout
+    );
+}

@@ -28,13 +28,15 @@ def main():
     policy = run(["git", "show", "HEAD:warden.toml"], ROOT, env).stdout
     source = run(["git", "show", "HEAD:" + SOURCE], ROOT, env).stdout
     current = (ROOT / GOLDEN).read_bytes()
-    run(["cargo", "build", "--quiet", "--bin", "forge-warden", "--locked", "--offline"], ROOT, env)
-    target = Path(env.get("CARGO_TARGET_DIR", ROOT / "target"))
-    if not target.is_absolute():
-        target = ROOT / target
-    binary = (target / "debug/forge-warden").resolve(strict=True)
+    run(["cargo", "test", "--quiet", "--locked", "--offline", "-p", "forge-warden-cli",
+         "--test", "oracle_contracts", "fixture_cli_artifact_receipt"], ROOT, env)
+    pointer = json.loads((ROOT / "target/fixture-cli.json").read_text())
+    binary = Path(pointer["binary"])
     with tempfile.TemporaryDirectory(prefix="fw-golden-policy-") as directory:
         work = Path(directory)
+        empty_policy = work / "empty-policy"
+        empty_policy.mkdir()
+        env["FORGE_WARDEN_TEST_POLICY_ROOT"] = str(empty_policy)
         candidate = work / "candidate"
         candidate.mkdir()
         for path, data in [(GOLDEN, original), (SOURCE, source), ("warden.toml", policy)]:

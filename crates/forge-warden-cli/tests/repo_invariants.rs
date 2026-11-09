@@ -756,3 +756,310 @@ fn suppression_and_ignore_scanners_match_the_shared_corpus() {
         );
     }
 }
+
+/// Reject fixture-only compiler switches in operational build surfaces. Normalize shell/YAML/
+/// TOML separators so split argv arrays and encoded rustflags cannot hide the two switches.
+fn fixture_compiler_switch(source: &str) -> bool {
+    let compact: String = source
+        .chars()
+        .filter(|ch| {
+            !ch.is_whitespace()
+                && !ch.is_control()
+                && !matches!(ch, '\'' | '"' | ',' | '[' | ']' | '\\')
+        })
+        .collect();
+    (compact.contains("--cfgfw_fixture_cli") || compact.contains("--cfg=fw_fixture_cli"))
+        || compact.contains("--cfgtest")
+        || compact.contains("--cfg=test")
+}
+
+#[test]
+fn production_build_routes_cannot_enable_fixture_cli() {
+    let mut paths = vec![root().join("justfile")];
+    for directory in ["scripts", ".github", ".cargo", ".githooks", ".claude"] {
+        if root().join(directory).exists() {
+            paths.extend(files_under(directory, ""));
+        }
+    }
+    for path in paths {
+        if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            if let Ok(source) = std::str::from_utf8(&bytes) {
+                assert!(
+                    !fixture_compiler_switch(source),
+                    "fixture compiler switch in operational build surface {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    for source in [
+        "cargo rustc -- --cfg test",
+        "rustflags = [\"--cfg\", \"test\"]",
+        "RUSTFLAGS='--cfg=test'",
+        "CARGO_ENCODED_RUSTFLAGS=--cfg\u{1f}test",
+        "cargo rustc -- --cfg fw_fixture_cli",
+        "RUSTFLAGS='--cfg=fw_fixture_cli'",
+    ] {
+        assert!(fixture_compiler_switch(source), "missed {source:?}");
+    }
+    assert!(!fixture_compiler_switch(
+        "cargo build --release\nRUSTFLAGS='-D warnings'"
+    ));
+}
+
+fn named_call(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Call(call)
+        if matches!(call.func.as_ref(), syn::Expr::Path(path)
+            if path.path.segments.last().is_some_and(|part| part.ident == expected)))
+}
+
+fn final_expression(block: &syn::Block) -> Option<&syn::Expr> {
+    if let syn::Stmt::Expr(expression, None) = block.stmts.last()? {
+        Some(expression)
+    } else {
+        None
+    }
+}
+
+/// Secondary shape check only: two immutable result holders feed one shared view and the
+/// immediately following report. Verdict's absent Clone implementation is the compiler rung
+/// against copying a judged view; Q-TYPES-2 separately makes all verdict fields private.
+fn read_only_judgement(source: &str) -> bool {
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    let Some(check) = file.items.iter().find_map(|item| {
+        if let syn::Item::Fn(function) = item {
+            (function.sig.ident == "check").then_some(function)
+        } else {
+            None
+        }
+    }) else {
+        return false;
+    };
+    let Some(syn::Stmt::Local(binding)) = check.block.stmts.iter().rev().nth(1) else {
+        return false;
+    };
+    if !matches!(&binding.pat, syn::Pat::Type(pattern)
+        if matches!(pattern.pat.as_ref(), syn::Pat::Ident(name) if name.ident == "verdict" && name.mutability.is_none())
+        && matches!(pattern.ty.as_ref(), syn::Type::Reference(reference) if reference.mutability.is_none()
+            && matches!(reference.elem.as_ref(), syn::Type::Path(path) if path.path.is_ident("Verdict"))))
+    {
+        return false;
+    }
+    let Some(initializer) = &binding.init else {
+        return false;
+    };
+    let syn::Expr::If(branches) = initializer.expr.as_ref() else {
+        return false;
+    };
+    if !matches!(final_expression(&branches.then_branch), Some(syn::Expr::Reference(reference))
+        if reference.mutability.is_none()
+            && matches!(reference.expr.as_ref(), syn::Expr::Path(path) if path.path.is_ident("authority")))
+        || !assigned_evaluation(&branches.then_branch, "authority", "evaluate_authority")
+    {
+        return false;
+    }
+    let Some((_, otherwise)) = &branches.else_branch else {
+        return false;
+    };
+    let syn::Expr::Block(block) = otherwise.as_ref() else {
+        return false;
+    };
+    if !matches!(final_expression(&block.block), Some(syn::Expr::MethodCall(borrow))
+        if borrow.method == "verdict" && borrow.args.is_empty()
+            && matches!(borrow.receiver.as_ref(), syn::Expr::Path(path) if path.path.is_ident("advisory")))
+        || !assigned_evaluation(&block.block, "advisory", "evaluate_advisory")
+    {
+        return false;
+    }
+    let Some(syn::Expr::Call(report)) = final_expression(&check.block) else {
+        return false;
+    };
+    if !matches!(report.func.as_ref(), syn::Expr::Path(path) if path.path.is_ident("report"))
+        || !matches!(report.args.first(), Some(syn::Expr::Path(path)) if path.path.is_ident("verdict"))
+    {
+        return false;
+    }
+    let mut visitor = JudgementReferences::default();
+    syn::visit::Visit::visit_file(&mut visitor, &file);
+    visitor.evaluators == 2 && !visitor.renamed
+}
+
+fn assigned_evaluation(block: &syn::Block, holder: &str, evaluator: &str) -> bool {
+    matches!(block.stmts.iter().rev().nth(1), Some(syn::Stmt::Expr(syn::Expr::Assign(assignment), Some(_)))
+        if matches!(assignment.left.as_ref(), syn::Expr::Path(path) if path.path.is_ident(holder))
+            && named_call(&assignment.right, evaluator))
+}
+
+#[derive(Default)]
+struct JudgementReferences {
+    evaluators: usize,
+    renamed: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for JudgementReferences {
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path.path.segments.last().is_some_and(|part| {
+            matches!(
+                part.ident.to_string().as_str(),
+                "evaluate_authority" | "evaluate_advisory"
+            )
+        }) {
+            self.evaluators = self.evaluators.saturating_add(1);
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+    fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+        self.renamed |= matches!(
+            rename.ident.to_string().as_str(),
+            "evaluate_authority" | "evaluate_advisory"
+        );
+        syn::visit::visit_use_rename(self, rename);
+    }
+}
+
+#[test]
+fn cli_borrows_judged_verdicts_directly_and_never_takes_ownership() {
+    let source = read("crates/forge-warden-cli/src/main.rs");
+    assert!(
+        read_only_judgement(&source),
+        "CLI evaluator results must be captured directly as &Verdict and reported by shared reference"
+    );
+    for broken in [
+        source.replace("let verdict: &Verdict = if", "let mut verdict = if"),
+        source.replace(
+            "let verdict: &Verdict = if",
+            "let verdict: &mut Verdict = if",
+        ),
+        source.replace(
+            "evaluate_authority(&policy, &checked, copy, seals, today)",
+            "rewrite(evaluate_authority(&policy, &checked, copy, seals, today))",
+        ),
+        format!("{source}\nfn extra() {{ let f = evaluate_authority; }}"),
+        format!("{source}\nuse forge_warden_core::authority::evaluate_authority as alias;"),
+        source.replace(
+            "report(verdict, args.json)",
+            "report(&rewritten, args.json)",
+        ),
+        source.replace("report(verdict, args.json)", "let mut rewritten = (*verdict).clone(); for note in &mut rewritten.notes { note.detail.push_str(\"; post-evaluation edit\"); } let verdict = &rewritten; report(verdict, args.json)"),
+
+    ] {
+        assert!(
+            !read_only_judgement(&broken),
+            "judged-value boundary regression escaped"
+        );
+    }
+}
+
+#[derive(Default)]
+struct ScratchOperations {
+    calls: Vec<String>,
+    methods: Vec<String>,
+    literals: Vec<String>,
+}
+impl<'ast> syn::visit::Visit<'ast> for ScratchOperations {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref()
+            && let Some(last) = path.path.segments.last()
+        {
+            self.calls.push(last.ident.unraw().to_string());
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.methods.push(call.method.unraw().to_string());
+        syn::visit::visit_expr_method_call(self, call);
+    }
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.literals.push(literal.value());
+    }
+}
+
+/// Raw temporary-root access is confined to reviewed allocators and production door bases.
+/// The runtime same-label/concurrency tests prove isolation; this is a structural backstop.
+#[test]
+fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
+    use syn::visit::Visit as _;
+
+    struct Helpers<'a> {
+        path: &'a str,
+        scratch_count: usize,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Helpers<'_> {
+        fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+            let name = function.sig.ident.unraw().to_string();
+            let mut operations = ScratchOperations::default();
+            operations.visit_block(&function.block);
+            let is_allocator = name == "scratch"
+                && matches!(
+                    self.path,
+                    "crates/forge-warden-cli/src/doors.rs"
+                        | "crates/forge-warden-cli/tests/common/runtime.rs"
+                );
+            if is_allocator {
+                self.scratch_count = self.scratch_count.checked_add(1).unwrap();
+                for required in ["temp_dir", "create_dir"] {
+                    assert!(
+                        operations.calls.iter().any(|call| call == required),
+                        "{}: scratch needs {required}",
+                        self.path
+                    );
+                }
+                assert!(
+                    operations
+                        .methods
+                        .iter()
+                        .any(|method| method == "fetch_add"),
+                    "{}: scratch needs a per-call atomic identity",
+                    self.path
+                );
+                for forbidden in ["remove_dir_all", "create_dir_all"] {
+                    assert!(
+                        !operations.calls.iter().any(|call| call == forbidden),
+                        "{}: scratch must reserve exclusively, never {forbidden}",
+                        self.path
+                    );
+                }
+            }
+            if operations.calls.iter().any(|call| call == "temp_dir") && !is_allocator {
+                // Production bases delegate to random/exclusive PrivateDir creation; the
+                // vocabulary test passes the root only as Git's discovery ceiling.
+                assert!(
+                    (self.path == "crates/forge-warden-cli/src/doors.rs"
+                        && matches!(
+                            name.as_str(),
+                            "git_facts" | "git_version" | "produce_ranking"
+                        ))
+                        || self.path == "crates/forge-warden-cli/tests/check_vocab.rs",
+                    "{}::{name}: raw temporary root requires a reviewed unique allocator",
+                    self.path
+                );
+            }
+            assert!(
+                !operations
+                    .literals
+                    .iter()
+                    .any(|value| value == "/tmp" || value.starts_with("/tmp/")),
+                "{}::{name}: fixed temporary paths bypass scratch ownership",
+                self.path
+            );
+            syn::visit::visit_item_fn(self, function);
+        }
+    }
+    let mut allocators = 0_usize;
+    for (path, text) in rust_sources() {
+        let parsed = syn::parse_file(&text).unwrap();
+        let mut helpers = Helpers {
+            path: &path,
+            scratch_count: 0,
+        };
+        helpers.visit_file(&parsed);
+        allocators = allocators.checked_add(helpers.scratch_count).unwrap();
+    }
+    assert_eq!(
+        allocators, 2,
+        "both reviewed scratch allocators must be checked"
+    );
+}

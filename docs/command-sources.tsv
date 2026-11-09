@@ -15,6 +15,7 @@ agents/managed/README.md	0
 agents/managed/REVIEW_CONTRACT.md	0
 docs/ADR_STATUS.md	0
 docs/CI_BOUNDS.md	0
+docs/GIT_RUNTIME.md	0
 docs/GLOSSARY.md	0
 docs/POLICY_REFERENCE.md	0
 docs/SCANNER_ROLES.md	0
@@ -34,3 +35,4 @@ docs/claude-project/INSTRUCTIONS.md	0
 docs/claude-project/README.md	0
 justfile	1
 plants/README.md	0
+schemas/README.md	0

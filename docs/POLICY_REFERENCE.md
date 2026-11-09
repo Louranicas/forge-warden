@@ -1,7 +1,7 @@
-# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v1`)
+# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v2`)
 
 The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v0.schema.json`
-gives editors the same rules as you type, and `schemas/verdict.v1.schema.json` describes every
+gives editors the same rules as you type, and `schemas/verdict.v2.schema.json` describes every
 verdict; tests keep both equal to the code, and keep the note and seal tables below complete.
 
 Contents: the policy file (top level, `[producer]`, rules, kinds, signals, globs, waivers), then
@@ -134,7 +134,7 @@ renewed or deleted. An active waiver that covered nothing is listed in `unused_w
 - `--base REV` / `--head REV` (4–64 lowercase hex) are recorded as `claims` with
   `verified: false`. They never change an outcome.
 
-## Verdict seals (`forge-warden.verdict.v1`)
+## Verdict seals (`forge-warden.verdict.v2`)
 
 | Member | Meaning |
 | --- | --- |
@@ -202,3 +202,12 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
 
 Canonical terminology and the distinction between a document and its level are in the
 [glossary](GLOSSARY.md).
+
+### Git executable admission
+
+The v2 `git` object records `path`, `version`, executable `sha256`, `admission`, and
+`allowlist_sha256`. Approved authority binds the exact external owner-policy bytes. Missing
+policy permits only unpinned advisory output with an explicit `rank_unverified` note; malformed
+or unsafe policy refuses both modes. See [Git runtime admission](GIT_RUNTIME.md) for owner
+enrollment, revision/revocation rules, and execution-boundary limitations. GitOracle in the
+pure core is serialized evidence, not a capability to open or execute an artifact.

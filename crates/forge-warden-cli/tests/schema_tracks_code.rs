@@ -78,7 +78,7 @@ fn rich_verdict() -> Value {
 
 #[test]
 fn verdict_schema_tracks_the_serialized_document() {
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v1.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
     let defs = &schema["$defs"];
     let v = rich_verdict();
 
@@ -173,7 +173,7 @@ fn policy_schema_tracks_the_reader() {
 fn schema_subcommand_prints_the_committed_files() {
     assert_eq!(
         run(&["schema", "verdict"], b"").stdout,
-        read("schemas/verdict.v1.schema.json")
+        read("schemas/verdict.v2.schema.json")
     );
     assert_eq!(
         run(&["schema", "policy"], b"").stdout,
@@ -190,7 +190,7 @@ fn schema_subcommand_prints_the_committed_files() {
 #[test]
 fn every_note_code_is_in_the_schema_and_nothing_else_is() {
     // B2 added `duplicate_paths` without the schema enum; the code list now drives this check.
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v1.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
     let enumerated = strings(&schema["$defs"]["note"]["properties"]["code"]["enum"]);
     let codes: BTreeSet<String> = forge_warden_core::verdict::NoteCode::ALL
         .iter()
@@ -237,7 +237,7 @@ fn the_reference_documents_every_note_code_and_seal_exactly_once() {
         "the Notes table lists every NoteCode once, in declaration order"
     );
 
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v1.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
     let seals: BTreeSet<String> = table_keys(&doc, "\n## Verdict seals").into_iter().collect();
     assert_eq!(seals, keys(&schema["properties"]["seals"]["properties"]));
     assert_eq!(

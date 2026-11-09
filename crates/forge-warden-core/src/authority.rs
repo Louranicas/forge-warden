@@ -285,17 +285,29 @@ pub fn evaluate_advisory(
     seals: Seals,
     today: Date,
 ) -> AdvisoryVerdict {
-    let unverified = Note {
-        code: NoteCode::RankUnverified,
-        path: None,
-        detail:
-            "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
-                .to_owned(),
-    };
+    let unverified = advisory_note(&seals);
     let seals = provenance(seals, checked.ranking, Provenance::Supplied);
     let mut verdict = judge(policy, checked, vec![unverified], seals, today);
     hold_at_least(&mut verdict);
     AdvisoryVerdict { verdict }
+}
+
+fn advisory_note(seals: &Seals) -> Note {
+    let mut detail =
+        "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
+            .to_owned();
+    if seals
+        .git
+        .as_ref()
+        .is_some_and(|git| git.admission == "unpinned")
+    {
+        detail.push_str("; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved");
+    }
+    Note {
+        code: NoteCode::RankUnverified,
+        path: None,
+        detail,
+    }
 }
 
 fn judge<P>(

@@ -159,7 +159,34 @@ pub(crate) fn run(args: &[&str], stdin: &[u8]) -> Run {
 
 /// [`run`] with explicit extra environment variables after clearing the ambient environment.
 pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) -> Run {
-    let mut child = command(env!("CARGO_BIN_EXE_forge-warden"))
+    let directory = scratch("git-policy");
+    if args.contains(&"--ranker") {
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
+        write(&directory, "allowlist.toml", format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n").as_bytes());
+    }
+    run_with_git_policy(args, stdin, env, &directory)
+}
+
+/// Explicit empty policy context for authority refusal controls; never reads host policy.
+pub(crate) fn run_without_git_policy(args: &[&str]) -> Run {
+    let directory = scratch("empty-git-policy");
+    run_with_git_policy(args, b"", &[], &directory)
+}
+
+fn run_with_git_policy(
+    args: &[&str],
+    stdin: &[u8],
+    env: &[(&str, &str)],
+    directory: &std::path::Path,
+) -> Run {
+    assert!(
+        !env.iter()
+            .any(|(key, _)| *key == "FORGE_WARDEN_TEST_POLICY_ROOT"),
+        "fixture policy context cannot be overridden by ambient test options"
+    );
+    let mut cmd = command(&fixture_cli().binary);
+    cmd.env("FORGE_WARDEN_TEST_POLICY_ROOT", directory.as_os_str());
+    let mut child = cmd
         .args(args)
         .envs(env.iter().copied())
         .current_dir(root())
@@ -176,6 +203,128 @@ pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) ->
         stdout: String::from_utf8(output.stdout).unwrap(),
         stderr: String::from_utf8(output.stderr).unwrap(),
     }
+}
+
+/// Compile a test-only executable in an isolated target directory. Cargo's artifact message
+/// identifies the exact result; no directory glob or timestamp can pick a stale binary.
+pub(crate) fn fixture_cli() -> &'static FixtureCli {
+    static BINARY: std::sync::OnceLock<FixtureCli> = std::sync::OnceLock::new();
+    BINARY.get_or_init(|| {
+        let target = PathBuf::from(env!("CARGO_BIN_EXE_forge-warden"))
+            .parent()
+            .unwrap()
+            .join("git-fixture-target");
+        let output = command(env!("CARGO"))
+            .current_dir(root())
+            .args([
+                "rustc",
+                "-p",
+                "forge-warden-cli",
+                "--bin",
+                "forge-warden",
+                "--locked",
+                "--offline",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .args([
+                "--message-format=json",
+                "--",
+                "--cfg",
+                "test",
+                "--cfg",
+                "fw_fixture_cli",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "fixture build: {}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let binary = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .find_map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                if value["reason"] == "compiler-artifact"
+                    && value["target"]["name"] == "forge-warden"
+                {
+                    value["executable"].as_str().map(PathBuf::from)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        fixture_receipt(binary)
+    })
+}
+
+/// A test-only artifact and its content-addressed build-input receipt; no commit identity is
+/// inferred from Git metadata (dirty and git-less source exports must work).
+pub(crate) struct FixtureCli {
+    pub(crate) binary: PathBuf,
+    pub(crate) receipt: PathBuf,
+    pub(crate) subject: String,
+}
+
+fn fixture_receipt(binary: PathBuf) -> FixtureCli {
+    let mut names = production_sources();
+    for name in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "clippy.toml",
+    ] {
+        names.insert(name.to_owned());
+    }
+    for directory in workspace_members().dirs {
+        for name in ["Cargo.toml", "clippy.toml"] {
+            let path = format!("{directory}/{name}");
+            if root().join(&path).is_file() {
+                names.insert(path);
+            }
+        }
+    }
+    names.extend(PRODUCTION_DATA.iter().map(|(name, _)| (*name).to_owned()));
+    let inputs: std::collections::BTreeMap<String, String> = names
+        .into_iter()
+        .map(|name| {
+            let digest = forge_warden_core::seal::sha256_hex(&read_bytes(&name));
+            (name, digest)
+        })
+        .collect();
+    let subject = format!(
+        "source-sha256:{}",
+        forge_warden_core::seal::sha256_hex(&serde_json::to_vec(&inputs).unwrap())
+    );
+    let receipt = binary.with_extension("fixture.json");
+    let record = serde_json::json!({"schema": "forge-warden.fixture-cli.v1",
+        "artifact_sha256": forge_warden_core::seal::sha256_hex(&std::fs::read(&binary).unwrap()),
+        "subject": subject, "cfg": ["fw_fixture_cli", "test"], "inputs": inputs});
+    let temporary = binary.with_extension(format!("fixture-{}.tmp", std::process::id()));
+    std::fs::write(&temporary, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    std::fs::rename(temporary, &receipt).unwrap();
+    FixtureCli {
+        binary,
+        receipt,
+        subject,
+    }
+}
+
+/// Explicit operator handoff: paths come from Cargo JSON; this stable receipt pointer is an
+/// output under ignored target/, never a guessed executable filename or a golden update.
+pub(crate) fn publish_fixture_cli() {
+    let artifact = fixture_cli();
+    let directory = root().join("target");
+    std::fs::create_dir_all(&directory).unwrap();
+    let pointer = serde_json::json!({"binary": artifact.binary, "receipt": artifact.receipt, "subject": artifact.subject});
+    std::fs::write(
+        directory.join("fixture-cli.json"),
+        serde_json::to_vec_pretty(&pointer).unwrap(),
+    )
+    .unwrap();
 }
 
 /// The fixture ranker (`tests/support/fixture_ranker.rs`), which `cargo test` builds as an example
@@ -343,8 +492,8 @@ pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
         "c519ee66ea998552723607a204926166963cfafa52231fb1848654d20ad59546",
     ),
     (
-        "schemas/verdict.v1.schema.json",
-        "215e5b0cd95a0af1f2008164780af7d464f1fcc1bc159e79ffba0ef0ff6316e2",
+        "schemas/verdict.v2.schema.json",
+        "e8972b06ec31b9c483d39259d7a9a495e9b112d2ac3f664a0787908aabbd73f9",
     ),
 ];
 /// The workspace's members, from `cargo metadata --no-deps`: their exact package IDs and their
@@ -626,7 +775,11 @@ pub(crate) fn check_golden_output(ci_write_probe: Option<&str>) -> std::process:
         "-I",
         "scripts/golden_output.py",
         "--binary",
-        env!("CARGO_BIN_EXE_forge-warden"),
+        text(&fixture_cli().binary),
+        "--receipt",
+        text(&fixture_cli().receipt),
+        "--subject",
+        &fixture_cli().subject,
     ]);
     if let Some(marker) = ci_write_probe {
         cmd.arg("--write").env(marker, "true");
@@ -656,7 +809,11 @@ pub(crate) fn probe_golden_controls() -> std::process::Output {
             "-I",
             "scripts/golden_probe.py",
             "--binary",
-            env!("CARGO_BIN_EXE_forge-warden"),
+            text(&fixture_cli().binary),
+            "--receipt",
+            text(&fixture_cli().receipt),
+            "--subject",
+            &fixture_cli().subject,
         ])
         .output()
         .unwrap()
@@ -751,7 +908,9 @@ pub(crate) fn run_first_rule_exercise(script: &str) -> (std::process::Output, Ve
 
 /// Exercise output resource failures with the real Linux ENOSPC device, without a mock writer.
 pub(crate) fn run_with_full_stdout(args: &[&str]) -> Run {
-    let output = command(env!("CARGO_BIN_EXE_forge-warden"))
+    let directory = scratch("stdout-policy");
+    let output = command(&fixture_cli().binary)
+        .env("FORGE_WARDEN_TEST_POLICY_ROOT", directory.as_os_str())
         .args(args)
         .current_dir(root())
         .stdin(Stdio::null())
@@ -787,7 +946,11 @@ pub(crate) fn check_stderr_golden(golden: &str, corrupt: bool) -> std::process::
             "-I",
             "scripts/golden_output.py",
             "--binary",
-            env!("CARGO_BIN_EXE_forge-warden"),
+            text(&fixture_cli().binary),
+            "--receipt",
+            text(&fixture_cli().receipt),
+            "--subject",
+            &fixture_cli().subject,
             "--golden",
             golden,
         ])

@@ -42,6 +42,11 @@ fn advisory(policy: &str, patch: &str, rank: &str, stdin: &[u8]) -> common::Run 
 /// Every input seal stays real, so it can be checked with `sha256sum` (B5's seal anchors).
 fn golden_form(stdout: &str) -> String {
     let mut v: Value = serde_json::from_str(stdout).unwrap();
+    assert_eq!(
+        v["seals"]["git"]["sha256"],
+        forge_warden_core::seal::sha256_hex(&read_bytes("/usr/bin/git"))
+    );
+    v["seals"]["git"]["sha256"] = "0".repeat(64).into();
     v["seals"]["git"]["version"] = "<git --version>".into();
     let mut out = serde_json::to_string_pretty(&v).unwrap();
     out.push('\n');
@@ -99,9 +104,20 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
     assert_eq!(produced["notes"], serde_json::json!([]));
     assert_eq!(
         golden["notes"],
-        serde_json::json!([{"code": "rank_unverified", "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve"}])
+        serde_json::json!([{"code": "rank_unverified", "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved"}])
     );
     produced["seals"]["policy_sha256"] = golden["seals"]["policy_sha256"].clone();
+    assert_eq!(produced["seals"]["git"]["admission"], "approved");
+    let digest = forge_warden_core::seal::sha256_hex(&read_bytes("/usr/bin/git"));
+    let git_policy = format!(
+        "schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n"
+    );
+    assert_eq!(
+        produced["seals"]["git"]["allowlist_sha256"],
+        forge_warden_core::seal::sha256_hex(git_policy.as_bytes())
+    );
+    produced["seals"]["git"]["admission"] = golden["seals"]["git"]["admission"].clone();
+    produced["seals"]["git"]["allowlist_sha256"] = Value::Null;
     produced["seals"]["provenance"] = "supplied".into();
     produced["seals"]["ranked_by"]["sha256"] = Value::Null;
     produced["notes"] = golden["notes"].clone();

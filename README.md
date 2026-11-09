@@ -74,7 +74,8 @@ forge-warden lint warden.toml       # lists every problem at once
 
 MSRV is Rust 1.88. At run time forge-warden needs Git (`/usr/bin/git` by default; choose another
 absolute path with `--git`), which reads the patch's facts. Authority mode also needs the
-deep-diff-forge binary that your policy admits.
+deep-diff-forge binary that your policy admits and [owner-enrolled Git](docs/GIT_RUNTIME.md).
+With no Git allowlist, only advisory mode runs, records unpinned identity, and cannot pass.
 
 ## The policy
 
@@ -147,8 +148,8 @@ the ranking reports, never remove them. Pass `git diff --binary --no-renames` ou
 
 ## Verdicts
 
-`forge-warden check --json` prints a `forge-warden.verdict.v1` document
-([schema](schemas/verdict.v1.schema.json)):
+`forge-warden check --json` prints a `forge-warden.verdict.v2` document
+([schema](schemas/verdict.v2.schema.json)):
 
 - `seals`:
   - `policy_sha256`, `rank_sha256` and `patch_sha256`;
@@ -156,7 +157,7 @@ the ranking reports, never remove them. Pass `git diff --binary --no-renames` ou
   - `provenance`: `produced` in authority mode, `supplied` in advisory mode;
   - `ranked_by`: `{version, sha256}`, where `sha256` is the ranker binary's digest, or `null` for a
     supplied ranking;
-  - `git`: the Git that read the patch, recorded for audit;
+  - `git`: path, version, executable SHA-256, admission state, and exact owner-policy digest;
   - optionally `claims`: `--base` and `--head` as given, always `verified: false` and never used.
 - `verdict`: the verdict level `pass`, `hold` or `fail`, the strictest of every rule, note and expired waiver.
 - `rules`: one rule outcome per rule in policy order, each with its violations in deep-diff-forge's

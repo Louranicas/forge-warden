@@ -7,7 +7,8 @@
       "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
       "G-15 authenticates exact producer binary, not version string.",
       "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
-      "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR."
+      "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
+      "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants."
     ]
   },
   "cases": [
@@ -848,6 +849,563 @@
       "diagnostic": "golden_verdict_for_the_demo_change.*FAILED",
       "required_tools": [
         "bash",
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-owner",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_metadata_requires_the_exact_owner_and_unwritable_ancestors.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_metadata_requires_the_exact_owner_and_unwritable_ancestors",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "meta.uid() != trust.owner ||",
+      "new": "(meta.uid() != trust.owner && false) ||",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-write-mode",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if meta.uid() != trust.owner || meta.mode() & 0o022 != 0 {",
+      "new": "if meta.uid() != trust.owner || (meta.mode() & 0o022 != 0 && false) {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-symlink",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "open_regular(path, Symlinks::Refuse, \"Git admission\")",
+      "new": "open_regular(path, Symlinks::Follow, \"Git admission\")",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-regular-file",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !meta.is_file() {",
+      "new": "if !meta.is_file() && meta.is_file() {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-byte-budget",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if meta.len() > u64::try_from(budget).map_err(git_refusal)? {",
+      "new": "if meta.len() > u64::try_from(budget).map_err(git_refusal)? && false {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-missing-policy",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) {",
+      "new": "if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) && false {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-unlisted-digest",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_binds_descriptor_and_exact_policy_bytes",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if digests.contains(&sha256) =>",
+      "new": "if digests.contains(&sha256) || !digests.contains(&sha256) =>",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-policy-snapshot",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_binds_descriptor_and_exact_policy_bytes",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "Ok(Some((parse_git_allowlist(&bytes)?, sha256_hex(&bytes))))",
+      "new": "Ok(Some((parse_git_allowlist(&bytes)?, sha256_hex(b\"\"))))",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-descriptor-version",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_binds_descriptor_and_exact_policy_bytes",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "program: Program::Pinned(&git.executable),\n            args: &[\"--version\"],",
+      "new": "program: Program::Pinned(&pin_executable(&git.path)?),\n            args: &[\"--version\"],",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-script",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !bytes.starts_with(b\"\\x7fELF\")",
+      "new": "if (!bytes.starts_with(b\"\\x7fELF\") && false)",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-ack-revocation",
+      "guardrail": "G-36",
+      "path": "scripts/hold_ack.py",
+      "diagnostic": "FAIL: test_git_policy_revocation_invalidates_receipt \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/hold_ack.py",
+        "BoundAck.test_git_policy_revocation_invalidates_receipt"
+      ],
+      "old": "    admitted_git(verdict)\n",
+      "new": "    # planted omission of current owner-policy check\n",
+      "required_tools": [
+        "python3",
+        "ssh-keygen"
+      ]
+    },
+    {
+      "id": "git-ack-downgrade",
+      "guardrail": "G-36",
+      "path": "scripts/hold_ack.py",
+      "diagnostic": "FAIL: test_unpinned_git_and_v1_are_refused \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/hold_ack.py",
+        "BoundAck.test_unpinned_git_and_v1_are_refused"
+      ],
+      "old": "verdict[\"schema\"] == \"forge-warden.verdict.v2\"",
+      "new": "verdict[\"schema\"] in (\"forge-warden.verdict.v1\", \"forge-warden.verdict.v2\")",
+      "required_tools": [
+        "python3",
+        "ssh-keygen"
+      ]
+    },
+    {
+      "id": "git-policy-exact-limit",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_policy_budget_is_exactly_64_kib.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_policy_budget_is_exactly_64_kib",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;",
+      "new": "const MAX_GIT_ALLOWLIST_BYTES: usize = 64 + 1024;",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-parent-traversal",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_paths_refuse_parent_traversal_before_metadata_walk.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_paths_refuse_parent_traversal_before_metadata_walk",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !path.is_absolute()\n            || path",
+      "new": "if !path.is_absolute()\n            && path",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-core-advisory-note",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "advisory_git_admission_note_is_composed_by_core.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "authority",
+        "advisory_git_admission_note_is_composed_by_core",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "git.admission == \"unpinned\"",
+      "new": "git.admission == \"approved\"",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-judged-verdict-capture",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "cli_borrows_judged_verdicts_directly_and_never_takes_ownership.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "cli_borrows_judged_verdicts_directly_and_never_takes_ownership",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let verdict: &Verdict = if",
+      "new": "let verdict = if",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-judged-verdict-clone",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "no method named .clone. found for struct .*Verdict",
+      "cargo": [
+        "check",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    report(verdict, args.json)\n",
+      "new": "    let mut rewritten = (*verdict).clone();\n    for note in &mut rewritten.notes {\n        note.detail.push_str(\"; post-evaluation edit\");\n    }\n    let verdict = &rewritten;\n    report(verdict, args.json)\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-parent-error-class",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_parent_absence_is_distinct_from_metadata_failure.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_parent_absence_is_distinct_from_metadata_failure",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),",
+      "new": "Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Ok(false),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-authority-mode-wiring",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "expected reference .&PinnedGit.",
+      "cargo": [
+        "check",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline"
+      ],
+      "old": "doors::child::admit_git_pinned(&args.git)",
+      "new": "doors::child::admit_git_advisory(&args.git)",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-test-scratch-identity",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "scratch_calls_never_replace_a_live_directory.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "scratch_calls_never_replace_a_live_directory",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)",
+      "new": "NEXT.fetch_add(0, std::sync::atomic::Ordering::Relaxed)",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-test-scratch-exclusive",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "scratch_helpers_require_per_call_identity_and_exclusive_creation.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "scratch_helpers_require_per_call_identity_and_exclusive_creation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "match std::fs::create_dir(&dir) {",
+      "new": "match std::fs::create_dir_all(&dir) {",
+      "required_tools": [
         "cargo",
         "git",
         "python3",
