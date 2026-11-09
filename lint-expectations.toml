@@ -431,3 +431,23 @@ review_reason = "Q-CLI-CONTRACT O1 #921 approved standalone CLI machine-output s
 file = "schemas/lint.v1.schema.json"
 sha256 = "c5f5f53f4bdc5e1f8f9fd4c24b13ed0d0293d7f495c2adb804269861d93f2f6b"
 review_reason = "Q-CLI-CONTRACT O1 #921 approved standalone CLI machine-output schema; reviewed JSON data embedded by include_str, not executable Rust."
+
+[[data_input]]
+file = "fixtures/public_api/control.rs.txt"
+sha256 = "d621b2b4a87684d6ab74321cdd83018077af75919f2052c069f855aa53ab9467"
+review_reason = "Q-TYPES-1.1 test-only Rust-text input to the public-API snapshot reader (parser controls), moved byte-exact out of a raw string literal in tests/public_api.rs. Parsed by syn as data; never compiled as source."
+
+[[data_input]]
+file = "fixtures/public_api/total.rs.txt"
+sha256 = "7a04831f3584cd0a264da1c4e8f84f7b0414ada4c4b888e73b28f3d2549669e0"
+review_reason = "Q-TYPES-1.1 test-only Rust-text input to the public-API snapshot reader (totality control, including the foreign-item unsafe extern block), moved byte-exact out of a raw string literal so a token-level ranker does not read fixture text as added code. Parsed by syn as data; never compiled as source."
+
+[[data_input]]
+file = "fixtures/public_api/probe-extern-before.rs.txt"
+sha256 = "efbf1467e7de59517e80704c58db0951ca7c1ebb6f7b8721d4cf85b84e43a209"
+review_reason = "Q-TYPES-1.1 test-only Rust-text input for the extern-block member probe (before side), moved byte-exact out of a string literal. Parsed by syn as data; never compiled as source."
+
+[[data_input]]
+file = "fixtures/public_api/probe-extern-after.rs.txt"
+sha256 = "bdd42d4c7be7b6288c674a4fedadec8f4237d0ad84df2c9155ec5294400e4f1b"
+review_reason = "Q-TYPES-1.1 test-only Rust-text input for the extern-block member probe (after side), moved byte-exact out of a string literal. Parsed by syn as data; never compiled as source."

@@ -916,85 +916,7 @@ fn the_core_public_api_matches_its_committed_snapshot() {
 }
 
 /// Parser controls: one of every public item kind, Bastion's probes, and test-only items.
-const CONTROL: &str = r#"
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct S {
-    pub a: u8,
-    b: u8,
-}
-pub enum E {
-    One,
-    Two(u8),
-}
-pub fn f(x: u8) -> u8 {
-    x
-}
-pub(crate) fn hidden() {}
-pub const C: u8 = 1;
-pub use std::fmt::Debug;
-impl S {
-    pub fn new() -> Self {
-        Self { a: 0, b: 0 }
-    }
-    fn private(&self) {}
-}
-impl std::fmt::Display for S {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
-    }
-}
-#[cfg(feature = "door")]
-pub mod door {
-    pub fn open() {}
-}
-#[cfg(test)]
-pub fn test_only() {}
-#[cfg(any(test, unix))]
-pub fn production_on_unix() {}
-macro_rules! make {
-    ($name:ident) => {
-        #[derive(PartialOrd, Ord)]
-        pub enum $name { A }
-    };
-}
-make!(Generated);
-pub extern crate std as stdx;
-pub union U {
-    pub a: u8,
-}
-extern "C" {}
-#[cfg(test)]
-macro_rules! test_only_macro {
-    () => {};
-}
-pub trait Pick<T> {
-    /// prose is not API
-    fn pick(self, d: T) -> T;
-    fn twice(self) -> u8 {
-        2
-    }
-}
-#[cfg_attr(all(), non_exhaustive)]
-pub enum Wide {
-    Struct {
-        a: u8,
-        b: Vec<(u8, u8)>,
-    },
-}
-pub struct Long {
-    pub f: std::collections::BTreeMap<
-        String,
-        Vec<u8>,
-    >,
-}
-impl Iterator for Long {
-    type Item = u8;
-    fn next(&mut self) -> Option<u8> {
-        None
-    }
-}
-"#;
+const CONTROL: &str = include_str!("../../../fixtures/public_api/control.rs.txt");
 
 /// What the reader must record for [`CONTROL`].
 const CONTROL_LINES: &[&str] = &[
@@ -1043,61 +965,7 @@ fn the_snapshot_reader_sees_every_kind_of_public_item_and_skips_tests() {
 
 /// Totality control (Q-TYPES-1 v4, Bastion B-QTYPES-01): one of every public item and member kind,
 /// in compact and multi-line forms, with every token that is not API named `hidden…`.
-const TOTAL: &str = r#"
-/// Doc prose is not API.
-#[derive(Debug)]
-pub struct Named<T: Clone> where T: Default {
-    /// Field prose is not API either.
-    pub field: Vec<T>,
-    hidden_field: hidden_t,
-}
-pub struct Tuple(pub u16, u8);
-pub enum Kind { Unit, Pair(u32, i8), Record { inner: i64 }, Valued = 7 }
-pub union Bits { pub word: u32, hidden_word: hidden_f }
-pub fn free<'life>(arg: &'life str) -> Option<&'life str> where 'life: 'static { hidden_body(hidden_local) }
-pub const LIMIT: usize = 64;
-pub static NAME: &str = "warden";
-pub type Alias = Result<u8, String>;
-pub use core::fmt::Write as WriteAlias;
-pub mod inner { pub fn nested() -> bool { hidden_value } }
-pub trait Compact { fn compact(&self) -> u8; }
-pub trait Wide<Param>: Sized {
-    const CAP: usize = 3;
-    type Out: Clone;
-    fn wide(self, by: Param) -> Self::Out;
-    fn defaulted(&self) -> i8 {
-        hidden_default
-    }
-}
-impl<T> Compact for Named<T> where T: Clone + Default {
-    fn compact(&self) -> u8 { hidden_impl_body }
-}
-impl Marker for Tuple {
-    // A plain comment.
-    #[inline]
-    const N: u8 = 1;
-    #[cfg(test)]
-    fn hidden_test_member() {}
-    type Assoc = u64;
-    fn inherited() {}
-}
-impl Kind {
-    pub fn make() -> Self { hidden_ctor }
-    pub const MAX: u8 = 9;
-    fn hidden_method() {}
-    const hidden_const: hidden_t = hidden_init;
-}
-unsafe extern "C" {
-    pub fn foreign(x: i32) -> i32;
-    pub static FOREIGN: u8;
-    fn hidden_foreign();
-}
-macro_rules! generate { ($name:ident) => { pub struct $name; }; }
-generate!(Generated);
-pub extern crate alloc as alloc_alias;
-#[cfg(test)]
-pub fn hidden_test_only(hidden_arg: hidden_ty) {}
-"#;
+const TOTAL: &str = include_str!("../../../fixtures/public_api/total.rs.txt");
 
 fn api_of(source: &str) -> Vec<String> {
     let file = syn::parse_file(source).unwrap();
@@ -1190,8 +1058,8 @@ const PROBES: &[(&str, &str, &str)] = &[
     ),
     (
         "a public item inside an existing extern block",
-        "unsafe extern \"C\" {\n    pub fn first();\n}\n",
-        "unsafe extern \"C\" {\n    pub fn changed();\n}\n",
+        include_str!("../../../fixtures/public_api/probe-extern-before.rs.txt"),
+        include_str!("../../../fixtures/public_api/probe-extern-after.rs.txt"),
     ),
     (
         "a compact one-line trait method",
