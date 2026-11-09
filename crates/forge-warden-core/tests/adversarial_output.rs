@@ -60,7 +60,7 @@ fn citations_follow_explicit_address_side_line_order() {
     let seals = Seals::new(seal.clone(), seal.clone(), seal, "0.7.0".to_owned());
     let verdict = evaluate(&policy, &rank, seals, Date::parse("2026-11-06").unwrap());
     let violation = verdict
-        .rules
+        .rules()
         .iter()
         .flat_map(|r| &r.violations)
         .next()
@@ -68,7 +68,7 @@ fn citations_follow_explicit_address_side_line_order() {
     assert_eq!(violation.signal.as_deref(), Some("secret_like"));
     assert!(violation.evidence_truncated);
     let actual: Vec<_> = verdict
-        .rules
+        .rules()
         .iter()
         .flat_map(|r| &r.violations)
         .flat_map(|v| &v.evidence)

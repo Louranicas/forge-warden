@@ -30,13 +30,16 @@ pub fn terminal_safe(text: &str) -> String {
 #[must_use]
 pub fn render_text(verdict: &Verdict) -> String {
     let mut out = String::new();
-    let label = verdict.verdict.label().to_ascii_uppercase();
+    let label = verdict.outcome().label().to_ascii_uppercase();
     let _ = writeln!(
         out,
         "forge-warden {}: {label} (exit {} {}, next: {})",
-        verdict.tool.version, verdict.exit.code, verdict.exit.name, verdict.exit.action
+        verdict.tool().version,
+        verdict.exit().code,
+        verdict.exit().name,
+        verdict.exit().action
     );
-    let ranker = match &verdict.seals.ranked_by.sha256 {
+    let ranker = match &verdict.seals().ranked_by.sha256 {
         Some(sha256) => format!(
             "produced by ranker {}",
             terminal_safe(&short(sha256.as_str()))
@@ -46,18 +49,18 @@ pub fn render_text(verdict: &Verdict) -> String {
     let _ = writeln!(
         out,
         "  patch {}, policy {}, ranked by deep-diff-forge {} ({ranker}), on {}",
-        short(verdict.seals.patch_sha256.as_str()),
-        short(verdict.seals.policy_sha256.as_str()),
-        terminal_safe(&verdict.seals.ranked_by.version),
-        verdict.evaluated_on,
+        short(verdict.seals().patch_sha256.as_str()),
+        short(verdict.seals().policy_sha256.as_str()),
+        terminal_safe(&verdict.seals().ranked_by.version),
+        verdict.evaluated_on(),
     );
-    let s = &verdict.summary;
+    let s = &verdict.summary();
     let _ = writeln!(
         out,
         "  {} file(s), {} rule(s): {} pass, {} waived, {} hold, {} fail",
         s.files, s.rules, s.passed, s.waived, s.held, s.failed
     );
-    for rule in &verdict.rules {
+    for rule in verdict.rules() {
         let mark = match rule.outcome {
             RuleOutcome::Pass => "PASS  ",
             RuleOutcome::Waived => "WAIVED",
@@ -99,7 +102,7 @@ pub fn render_text(verdict: &Verdict) -> String {
             }
         }
     }
-    for w in &verdict.expired_waivers {
+    for w in verdict.expired_waivers() {
         let _ = writeln!(
             out,
             "  [EXPIRED] waiver[{}] for {} (owner {}) expired {}: renew or delete it",
@@ -109,7 +112,7 @@ pub fn render_text(verdict: &Verdict) -> String {
             w.expires
         );
     }
-    for w in &verdict.unused_waivers {
+    for w in verdict.unused_waivers() {
         let _ = writeln!(
             out,
             "  [UNUSED] waiver[{}] for {} matched nothing in this change",
@@ -117,7 +120,7 @@ pub fn render_text(verdict: &Verdict) -> String {
             terminal_safe(&w.rule)
         );
     }
-    render_notes(&mut out, &verdict.notes);
+    render_notes(&mut out, verdict.notes());
     out
 }
 

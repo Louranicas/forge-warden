@@ -108,13 +108,13 @@ fn a_supplied_ranking_never_passes_anywhere_in_the_corpus() {
         let Some(doc) = rank(name) else { continue };
         let supplied = Ranking::supplied(doc);
         let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), seals(), today());
-        assert_ne!(advisory.verdict().verdict, Outcome::Pass, "{name}");
+        assert_ne!(advisory.verdict().outcome(), Outcome::Pass, "{name}");
         assert!(matches!(
             advisory.outcome(),
             AdvisoryOutcome::Hold | AdvisoryOutcome::Fail
         ));
         assert!(
-            codes(&advisory.verdict().notes).contains(&"rank_unverified"),
+            codes(advisory.verdict().notes()).contains(&"rank_unverified"),
             "{name}"
         );
         judged.push((name.to_owned(), read(&format!("{name}.rank.json"))));
@@ -129,7 +129,7 @@ fn a_forged_ranking_with_the_real_patch_holds_instead_of_passing() {
     let doc = rank(name).unwrap();
     let p = policy(PERMISSIVE);
     assert_eq!(
-        evaluate(&p, &doc, seals(), today()).verdict,
+        evaluate(&p, &doc, seals(), today()).outcome(),
         Outcome::Pass,
         "the parent passed it"
     );
@@ -137,9 +137,9 @@ fn a_forged_ranking_with_the_real_patch_holds_instead_of_passing() {
     let checked = check(&ranking, facts(name));
     assert!(!checked.is_covered());
     let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
-    assert_eq!(verdict.verdict, Outcome::Hold);
-    assert_eq!(verdict.exit.code, 8);
-    assert!(codes(&verdict.notes).contains(&"rank_incomplete"));
+    assert_eq!(verdict.outcome(), Outcome::Hold);
+    assert_eq!(verdict.exit().code, 8);
+    assert!(codes(verdict.notes()).contains(&"rank_incomplete"));
 }
 
 #[test]
@@ -149,16 +149,16 @@ fn git_adds_the_deletion_the_producer_omitted() {
     let doc = rank(name).unwrap();
     let p = policy(NO_DELETIONS);
     assert_eq!(
-        evaluate(&p, &doc, seals(), today()).verdict,
+        evaluate(&p, &doc, seals(), today()).outcome(),
         Outcome::Pass,
         "the parent missed it"
     );
     let ranking = produced(doc);
     let checked = check(&ranking, facts(name));
     let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
-    assert_eq!(verdict.verdict, Outcome::Fail);
-    assert_eq!(verdict.rules[0].violations.len(), 1);
-    assert!(codes(&verdict.notes).contains(&"status_mismatch"));
+    assert_eq!(verdict.outcome(), Outcome::Fail);
+    assert_eq!(verdict.rules()[0].violations.len(), 1);
+    assert!(codes(verdict.notes()).contains(&"status_mismatch"));
 }
 
 #[test]
@@ -192,9 +192,9 @@ fn an_unverifiable_patch_holds_with_the_reason() {
         seals(),
         today(),
     );
-    assert_eq!(verdict.verdict, Outcome::Hold);
+    assert_eq!(verdict.outcome(), Outcome::Hold);
     let note = verdict
-        .notes
+        .notes()
         .iter()
         .find(|n| n.code == "patch_unverifiable")
         .unwrap();
@@ -242,14 +242,15 @@ fn a_differing_supplied_copy_holds_and_an_identical_one_changes_nothing() {
     let checked = check(&ranking, facts(name));
     let judge = |copy| evaluate_authority(&p, &checked, copy, seals(), today());
     let absent = judge(SuppliedCopy::Absent);
-    assert_eq!(absent.verdict, Outcome::Pass);
+    assert_eq!(absent.outcome(), Outcome::Pass);
     assert_eq!(judge(SuppliedCopy::Identical), absent);
     let different = judge(SuppliedCopy::Different);
-    assert_eq!(different.verdict, Outcome::Hold);
-    assert_eq!(different.exit.code, 8);
-    assert_eq!(codes(&different.notes), ["rank_mismatch"]);
+    assert_eq!(different.outcome(), Outcome::Hold);
+    assert_eq!(different.exit().code, 8);
+    assert_eq!(codes(different.notes()), ["rank_mismatch"]);
     assert_eq!(
-        different.rules, absent.rules,
+        different.rules(),
+        absent.rules(),
         "the produced ranking is still the one judged"
     );
 }
@@ -271,15 +272,15 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
         lying.clone(),
         today(),
     );
-    assert_eq!(authority.seals.provenance, Provenance::Produced);
+    assert_eq!(authority.seals().provenance, Provenance::Produced);
     assert_eq!(
-        authority.seals.ranked_by,
+        authority.seals().ranked_by,
         RankedBy::new(doc.tool_version().to_owned(), Some(seal(HASH)))
     );
     let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), lying, today());
-    assert_eq!(advisory.verdict().seals.provenance, Provenance::Supplied);
+    assert_eq!(advisory.verdict().seals().provenance, Provenance::Supplied);
     assert_eq!(
-        advisory.verdict().seals.ranked_by,
+        advisory.verdict().seals().ranked_by,
         RankedBy::new(doc.tool_version().to_owned(), None)
     );
 }
@@ -318,11 +319,11 @@ fn advisory_git_admission_note_is_composed_by_core() {
         let judged = evaluate_advisory(&p, &checked, evidence, today());
         let note = judged
             .verdict()
-            .notes
+            .notes()
             .iter()
             .find(|note| note.code.name() == "rank_unverified")
             .unwrap();
         assert_eq!(note.detail, format!("{original}{suffix}"));
-        assert_ne!(judged.verdict().verdict, Outcome::Pass);
+        assert_ne!(judged.verdict().outcome(), Outcome::Pass);
     }
 }

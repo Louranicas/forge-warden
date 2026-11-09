@@ -18,8 +18,7 @@ use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
 use crate::rank::{RankDoc, RankedFile};
 use crate::verdict::{
-    Citation, ExitInfo, Note, NoteCode, RuleOutcome, RuleResult, Seals, Summary, Tool,
-    VERDICT_SCHEMA, Verdict, Violation, WaiverNote,
+    Citation, Note, NoteCode, RuleOutcome, RuleResult, Seals, Verdict, Violation, WaiverNote,
 };
 use crate::vocab::{is_known_signal, is_known_status};
 use std::collections::BTreeSet;
@@ -38,46 +37,16 @@ pub(crate) fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Dat
     let (expired, unused) = classify_waivers(policy.waivers(), today, &used_waivers);
     let notes = notes_for(rank);
 
-    // A policy always has a rule, so the strictest outcome starts from the first one: there is
-    // no empty case and no default.
-    let verdict = judged
-        .iter()
-        .map(|r| r.outcome.overall())
-        .chain(notes.iter().map(|_| Outcome::Hold))
-        .chain(expired.iter().map(|_| Outcome::Fail))
-        .fold(judged.first().outcome.overall(), Outcome::max);
-    let rules = judged.into_vec();
-    let entry = verdict.exit_entry();
-    let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
-    let summary = Summary {
-        files: rank.files().len(),
-        rules: rules.len(),
-        passed: count(RuleOutcome::Pass),
-        waived: count(RuleOutcome::Waived),
-        held: count(RuleOutcome::Hold),
-        failed: count(RuleOutcome::Fail),
-    };
-
-    Verdict {
-        schema: VERDICT_SCHEMA,
-        tool: Tool {
-            name: crate::TOOL_NAME,
-            version: crate::TOOL_VERSION,
-        },
-        evaluated_on: today.to_string(),
+    // A policy always has a rule; the outcome, exit and summary are derived in Verdict::assemble.
+    Verdict::assemble(
+        today.to_string(),
         seals,
-        verdict,
-        exit: ExitInfo {
-            code: entry.code,
-            name: entry.name,
-            action: entry.action,
-        },
-        summary,
-        rules,
-        expired_waivers: expired,
-        unused_waivers: unused,
+        rank.files().len(),
+        judged,
+        expired,
+        unused,
         notes,
-    }
+    )
 }
 
 fn judge_rule(

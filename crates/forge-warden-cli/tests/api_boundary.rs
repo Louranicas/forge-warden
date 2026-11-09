@@ -25,7 +25,7 @@ use forge_warden_core::verdict::{Seals, Verdict};
 ";
 
 /// `(what, source, the rustc error code it must fail with)`.
-const REFUSED: [(&str, &str, &str); 7] = [
+const REFUSED: [(&str, &str, &str); 8] = [
     (
         "attest with a bare string instead of an admitted producer",
         "pub fn f(doc: RankDoc) -> Ranking<Produced> { Ranking::attest(doc, String::new()) }",
@@ -46,6 +46,11 @@ const REFUSED: [(&str, &str, &str); 7] = [
         "pub fn f() -> forge_warden_core::policy::AdmittedProducer { forge_warden_core::policy::AdmittedProducer { sha256: String::new() } }",
         // non_exhaustive (E0639) is reported first; the private field (E0451) refuses it too.
         "E0639",
+    ),
+    (
+        "a verdict's outcome rewritten after judging (Q-TYPES-2: fields are private, derived once)",
+        "pub fn f(mut v: Verdict) -> Verdict { v.verdict = forge_warden_core::Outcome::Pass; v }",
+        "E0616",
     ),
     (
         "a seal built by hand (Q-TYPES-2: only Sha256Hex::of and ::parse make one)",

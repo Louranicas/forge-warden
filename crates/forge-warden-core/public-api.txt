@@ -310,17 +310,7 @@ crate::seal Sha256Hex::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fm
 crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex
 crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
-crate::verdict Verdict.pub schema: &'static str,
-crate::verdict Verdict.pub tool: Tool,
-crate::verdict Verdict.pub evaluated_on: String,
-crate::verdict Verdict.pub seals: Seals,
-crate::verdict Verdict.#[expect( clippy::struct_field_names, reason = "the document member is named `verdict`; renaming it would break the schema" )] pub verdict: Outcome,
-crate::verdict Verdict.pub exit: ExitInfo,
-crate::verdict Verdict.pub summary: Summary,
-crate::verdict Verdict.pub rules: Vec<RuleResult>,
-crate::verdict Verdict.pub expired_waivers: Vec<WaiverNote>,
-crate::verdict Verdict.pub unused_waivers: Vec<WaiverNote>,
-crate::verdict Verdict.pub notes: Vec<Note>,
+crate::verdict Verdict.<11 private field(s)>
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Tool
 crate::verdict Tool.pub name: &'static str,
 crate::verdict Tool.pub version: &'static str,
@@ -413,7 +403,20 @@ crate::verdict impl Serialize for NoteCode
 crate::verdict NoteCode::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::verdict impl PartialEq<&str> for NoteCode
 crate::verdict NoteCode::fn eq(&self, other: &&str) -> bool
+crate::verdict impl From<Outcome> for ExitInfo
+crate::verdict ExitInfo::fn from(outcome: Outcome) -> Self
 crate::verdict impl Verdict
+crate::verdict Verdict::#[must_use] pub const fn schema(&self) -> &'static str
+crate::verdict Verdict::#[must_use] pub const fn tool(&self) -> &Tool
+crate::verdict Verdict::#[must_use] pub fn evaluated_on(&self) -> &str
+crate::verdict Verdict::#[must_use] pub const fn seals(&self) -> &Seals
+crate::verdict Verdict::#[must_use] pub const fn outcome(&self) -> Outcome
+crate::verdict Verdict::#[must_use] pub const fn exit(&self) -> &ExitInfo
+crate::verdict Verdict::#[must_use] pub const fn summary(&self) -> &Summary
+crate::verdict Verdict::#[must_use] pub fn rules(&self) -> &[RuleResult]
+crate::verdict Verdict::#[must_use] pub fn expired_waivers(&self) -> &[WaiverNote]
+crate::verdict Verdict::#[must_use] pub fn unused_waivers(&self) -> &[WaiverNote]
+crate::verdict Verdict::#[must_use] pub fn notes(&self) -> &[Note]
 crate::verdict Verdict::#[must_use] pub fn to_json(&self) -> String
 crate::vocab pub const KNOWN_SIGNALS: [&str; 21] = [ // Path and shape signals (`risk.rs`). "public_api_surface", "new_file", "deleted_file", "binary_change", "large_change", "many_hunks", "config_or_lockfile", "test_only", "generated_or_vendored", "hazardous_text", "symlink_change", "executable_bit", // Code-evidence signals (`evidence.rs`). "unsafe_added", "process_spawn", "network_fetch", "dynamic_eval", "ci_privilege", "build_hook", "secret_like", "check_suppressed", "test_removed", ];
 crate::vocab pub const KNOWN_STATUSES: [&str; 8] = [ "added", "modified", "deleted", "renamed", "copied", "type_changed", "mode_changed", "binary_changed", ];

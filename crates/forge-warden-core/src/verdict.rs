@@ -10,6 +10,7 @@
 
 use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
+use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
 use serde::Serialize;
 
@@ -17,35 +18,30 @@ use serde::Serialize;
 pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 
 /// A sealed, deterministic verdict. It cannot be cloned out of a shared judged view.
+///
+/// Q-TYPES-2 (Q1-03): every field is private. A verdict is assembled once, by
+/// [`Verdict::assemble`], which derives the outcome (one strictest-wins fold over rules, notes and
+/// expired waivers), the exit status (from the outcome) and the summary (from the rules), so no
+/// holder can make them disagree (`verdict = pass` with `exit = 8` is unrepresentable). Serialized
+/// member names and order are unchanged.
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct Verdict {
-    /// Always [`VERDICT_SCHEMA`].
-    pub schema: &'static str,
-    /// The tool that wrote it.
-    pub tool: Tool,
-    /// The date waivers were judged against (`YYYY-MM-DD`).
-    pub evaluated_on: String,
-    /// Exactly which bytes this verdict is about.
-    pub seals: Seals,
-    /// The overall outcome: the strictest of every rule, note and waiver.
+    schema: &'static str,
+    tool: Tool,
+    evaluated_on: String,
+    seals: Seals,
     #[expect(
         clippy::struct_field_names,
         reason = "the document member is named `verdict`; renaming it would break the schema"
     )]
-    pub verdict: Outcome,
-    /// The exit status this verdict produces, and what to do next.
-    pub exit: ExitInfo,
-    /// Counts, for dashboards and one-line summaries.
-    pub summary: Summary,
-    /// One result per rule, in policy order.
-    pub rules: Vec<RuleResult>,
-    /// Waivers past their date. Each one fails the verdict until it is renewed or removed.
-    pub expired_waivers: Vec<WaiverNote>,
-    /// Active waivers that matched no violation: candidates for deletion.
-    pub unused_waivers: Vec<WaiverNote>,
-    /// Things the policy cannot judge. Each one holds the verdict.
-    pub notes: Vec<Note>,
+    verdict: Outcome,
+    exit: ExitInfo,
+    summary: Summary,
+    rules: Vec<RuleResult>,
+    expired_waivers: Vec<WaiverNote>,
+    unused_waivers: Vec<WaiverNote>,
+    notes: Vec<Note>,
 }
 
 /// Tool identity.
@@ -437,7 +433,158 @@ impl PartialEq<&str> for NoteCode {
     }
 }
 
+/// The strictest outcome of a judgement: every rule's own outcome, a hold for every note and a fail
+/// for every expired waiver. The single place the verdict lattice is folded (Q1-03); there is no
+/// empty case, because a judgement always has at least one rule.
+pub(crate) fn strictest(
+    rules: &NonEmpty<RuleResult>,
+    notes: &[Note],
+    expired: &[WaiverNote],
+) -> Outcome {
+    rules
+        .iter()
+        .map(|r| r.outcome.overall())
+        .chain(notes.iter().map(|_| Outcome::Hold))
+        .chain(expired.iter().map(|_| Outcome::Fail))
+        .fold(rules.first().outcome.overall(), Outcome::max)
+}
+
+impl From<Outcome> for ExitInfo {
+    fn from(outcome: Outcome) -> Self {
+        let entry = outcome.exit_entry();
+        Self {
+            code: entry.code,
+            name: entry.name,
+            action: entry.action,
+        }
+    }
+}
+
 impl Verdict {
+    /// The only way to make a verdict: the outcome, exit status and summary are derived here from
+    /// the parts, never supplied.
+    pub(crate) fn assemble(
+        evaluated_on: String,
+        seals: Seals,
+        files: usize,
+        rules: NonEmpty<RuleResult>,
+        expired_waivers: Vec<WaiverNote>,
+        unused_waivers: Vec<WaiverNote>,
+        notes: Vec<Note>,
+    ) -> Self {
+        let verdict = strictest(&rules, &notes, &expired_waivers);
+        let rules = rules.into_vec();
+        let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
+        let summary = Summary {
+            files,
+            rules: rules.len(),
+            passed: count(RuleOutcome::Pass),
+            waived: count(RuleOutcome::Waived),
+            held: count(RuleOutcome::Hold),
+            failed: count(RuleOutcome::Fail),
+        };
+        Self {
+            schema: VERDICT_SCHEMA,
+            tool: Tool {
+                name: crate::TOOL_NAME,
+                version: crate::TOOL_VERSION,
+            },
+            evaluated_on,
+            seals,
+            verdict,
+            exit: ExitInfo::from(verdict),
+            summary,
+            rules,
+            expired_waivers,
+            unused_waivers,
+            notes,
+        }
+    }
+
+    /// This verdict with `extra` notes appended, re-derived through the same fold: a note can only
+    /// hold, never loosen (the outcome and exit follow from the parts, not from a patch).
+    #[must_use]
+    pub(crate) fn with_notes(mut self, extra: Vec<Note>) -> Self {
+        if extra.is_empty() {
+            return self;
+        }
+        self.notes.extend(extra);
+        let verdict = self
+            .notes
+            .iter()
+            .map(|_| Outcome::Hold)
+            .fold(self.verdict, Outcome::max);
+        self.verdict = verdict;
+        self.exit = ExitInfo::from(verdict);
+        self
+    }
+
+    /// Always [`VERDICT_SCHEMA`].
+    #[must_use]
+    pub const fn schema(&self) -> &'static str {
+        self.schema
+    }
+
+    /// The tool that wrote it.
+    #[must_use]
+    pub const fn tool(&self) -> &Tool {
+        &self.tool
+    }
+
+    /// The date waivers were judged against (`YYYY-MM-DD`).
+    #[must_use]
+    pub fn evaluated_on(&self) -> &str {
+        &self.evaluated_on
+    }
+
+    /// Exactly which bytes this verdict is about.
+    #[must_use]
+    pub const fn seals(&self) -> &Seals {
+        &self.seals
+    }
+
+    /// The overall outcome: the strictest of every rule, note and waiver.
+    #[must_use]
+    pub const fn outcome(&self) -> Outcome {
+        self.verdict
+    }
+
+    /// The exit status this verdict produces, and what to do next (derived from the outcome).
+    #[must_use]
+    pub const fn exit(&self) -> &ExitInfo {
+        &self.exit
+    }
+
+    /// Counts, for dashboards and one-line summaries (derived from the rules).
+    #[must_use]
+    pub const fn summary(&self) -> &Summary {
+        &self.summary
+    }
+
+    /// One result per rule, in policy order.
+    #[must_use]
+    pub fn rules(&self) -> &[RuleResult] {
+        &self.rules
+    }
+
+    /// Waivers past their date. Each one fails the verdict until it is renewed or removed.
+    #[must_use]
+    pub fn expired_waivers(&self) -> &[WaiverNote] {
+        &self.expired_waivers
+    }
+
+    /// Active waivers that matched no violation: candidates for deletion.
+    #[must_use]
+    pub fn unused_waivers(&self) -> &[WaiverNote] {
+        &self.unused_waivers
+    }
+
+    /// Things the policy cannot judge. Each one holds the verdict.
+    #[must_use]
+    pub fn notes(&self) -> &[Note] {
+        &self.notes
+    }
+
     /// The verdict as pretty JSON with a trailing newline. Serializing plain data to a `String`
     /// cannot fail, so this does not return a `Result`.
     #[must_use]

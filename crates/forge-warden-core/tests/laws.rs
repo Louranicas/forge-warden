@@ -82,15 +82,15 @@ fn actual(case: &Case) -> (u8, Vec<ResultSpec>) {
     let policy = parse_policy(&policy(case)).unwrap();
     let seals = Seals::new(seal(HASH), seal(HASH), seal(HASH), "0.7.0".to_owned());
     let verdict = evaluate(&policy, &rank, seals, Date::parse("2026-11-06").unwrap());
-    assert_eq!(verdict.summary.rules, case.rules.len());
+    assert_eq!(verdict.summary().rules, case.rules.len());
     (
-        match verdict.verdict {
+        match verdict.outcome() {
             Outcome::Pass => 0,
             Outcome::Hold => 1,
             Outcome::Fail => 2,
         },
         verdict
-            .rules
+            .rules()
             .iter()
             .map(|r| match r.outcome {
                 RuleOutcome::Pass => ResultSpec::Clear,

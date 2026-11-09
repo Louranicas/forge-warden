@@ -382,7 +382,7 @@ fn report(verdict: &Verdict, json: bool) -> Result<Exit, Failure> {
         render_text(verdict)
     };
     doors::emit(&text).map_err(Failure::from_door)?;
-    Ok(verdict.verdict.exit())
+    Ok(verdict.outcome().exit())
 }
 
 /// A ranking file, or stdin for `-`.
