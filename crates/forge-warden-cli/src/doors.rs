@@ -1520,8 +1520,8 @@ mod child_tests {
         let owner = std::fs::metadata(&root).unwrap().uid();
         let executable = Path::new("/usr/bin/git");
         let missing = root.join("missing-parent").join("allowlist.toml");
-        let advisory = fixture_git(executable, &missing, &root, owner, true).unwrap();
-        assert_eq!(advisory.allowlist_sha256(), None);
+        let unpinned = fixture_git(executable, &missing, &root, owner, true).unwrap();
+        assert_eq!(unpinned.allowlist_sha256(), None);
         assert!(
             fixture_git(executable, &missing, &root, owner, false)
                 .unwrap_err()
@@ -1531,8 +1531,8 @@ mod child_tests {
 
         // ENAMETOOLONG is reproducible even as root; permission-denial fixtures are not.
         let impossible_parent = root.join("x".repeat(4096));
-        let error = std::fs::symlink_metadata(&impossible_parent).unwrap_err();
-        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
+        let metadata_error = std::fs::symlink_metadata(&impossible_parent).unwrap_err();
+        assert_ne!(metadata_error.kind(), std::io::ErrorKind::NotFound);
         let unreadable = impossible_parent.join("allowlist.toml");
         for advisory in [false, true] {
             let error = fixture_git(executable, &unreadable, &root, owner, advisory).unwrap_err();
