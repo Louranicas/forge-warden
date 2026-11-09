@@ -132,7 +132,10 @@ fn a_patch_that_is_not_the_ranked_one_is_refused() {
         "{}",
         out.stderr
     );
-    assert!(out.stderr.contains("next: change_input"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&out.stderr).unwrap()["next"],
+        "change_input"
+    );
 }
 
 #[test]
@@ -174,7 +177,10 @@ fn over_budget_input_is_invalid_input_not_an_io_error() {
     let out = advisory(POLICY, PATCH, "-", &over);
     assert_eq!(out.code, 4, "{}", out.stderr);
     assert!(out.stderr.contains("byte budget"), "{}", out.stderr);
-    assert!(out.stderr.contains("next: change_input"), "{}", out.stderr);
+    assert_eq!(
+        serde_json::from_str::<Value>(&out.stderr).unwrap()["next"],
+        "reduce_input_size"
+    );
     assert_eq!(out.stdout, "");
 }
 
@@ -264,7 +270,7 @@ fn usage_errors_exit_2_and_io_errors_exit_3() {
         b"",
     );
     assert_eq!(missing.code, 3);
-    assert!(missing.stderr.contains("next: check_environment"));
+    assert!(missing.stderr.contains("next: check_input_output"));
     let no_git = run(
         &[
             "check",
@@ -386,4 +392,216 @@ proptest::proptest! {
             proptest::prop_assert!(out.stderr.bytes().all(|b| b == b'\n' || (0x20..=0x7e).contains(&b)), "{:?}", out.stderr);
         }
     }
+}
+
+#[test]
+fn machine_contract_lint_json_is_a_versioned_document() {
+    let out = run(&["lint", POLICY, "--json"], b"");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stderr, "");
+    let value: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(value["schema"], "forge-warden.lint.v1");
+    assert_eq!(
+        value["policy_sha256"],
+        forge_warden_core::seal::sha256_hex(&read_bytes(POLICY))
+    );
+    assert!(value["rules"].as_u64().unwrap() > 0);
+    assert!(value["waivers"].is_u64());
+}
+
+#[test]
+fn machine_contract_errors_are_one_json_line_including_clap_failures() {
+    for args in [
+        vec!["lint", "missing-\"quoted\"-policy", "--json"],
+        vec!["lint", "--json"],
+        vec!["check", "--json", "--unknown"],
+        vec!["explain", "unknown-code", "--json"],
+        vec!["schema", "unknown-schema", "--json"],
+    ] {
+        let out = run(&args, b"");
+        assert!(out.code != 0, "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        assert_eq!(out.stderr.lines().count(), 1, "{args:?}: {}", out.stderr);
+        let error: Value = serde_json::from_str(&out.stderr).unwrap();
+        assert_eq!(error["exit"], out.code);
+        assert!(error["name"].is_string());
+        assert_ne!(error["message"].as_str().unwrap(), "");
+        assert!(error["next"].is_string());
+    }
+}
+
+#[test]
+fn machine_contract_patch_stdin_is_explicitly_refused_before_io() {
+    let out = run(
+        &[
+            "check",
+            "--policy",
+            "missing-policy",
+            "--patch",
+            "-",
+            "--advisory",
+            "--rank",
+            "-",
+            "--json",
+        ],
+        b"unused",
+    );
+    assert_eq!(out.code, 4, "{}", out.stderr);
+    assert_eq!(out.stdout, "");
+    let error: Value = serde_json::from_str(&out.stderr).unwrap();
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("patch_stdin_unsupported")
+    );
+    let help = run(&["check", "--help"], b"");
+    assert!(help.stdout.contains("--patch -"));
+    assert!(help.stdout.contains("--rank -"));
+}
+
+#[test]
+fn machine_contract_every_subcommand_has_json_or_an_explicit_exception() {
+    // Discover the public command list from clap's actual help so a new command cannot disappear.
+    let help = run(&["--help"], b"");
+    let commands = help
+        .stdout
+        .split_once("Commands:\n")
+        .unwrap()
+        .1
+        .split_once("\nOptions:")
+        .unwrap()
+        .0;
+    let mut seen = std::collections::BTreeSet::new();
+    for line in commands.lines().filter(|line| !line.trim().is_empty()) {
+        let name = line.split_whitespace().next().unwrap();
+        seen.insert(name);
+        match name {
+            "init" => {
+                // Init is the explicit TOML producer; --json is refused rather than silently ignored.
+                assert_eq!(run(&[name, "--json"], b"").code, 2);
+            }
+            "help" => {} // clap's documentation command is human text, as are --help/--version.
+            other => assert!(
+                run(&[other, "--help"], b"").stdout.contains("--json"),
+                "{other} lacks a machine-output contract"
+            ),
+        }
+    }
+    assert!(seen.contains("lint"));
+    assert!(seen.contains("check"));
+}
+
+#[test]
+fn machine_contract_io_resources_are_not_environment_retries() {
+    let out = common::run_with_full_stdout(&["lint", POLICY, "--json"]);
+    assert_eq!(out.code, 3);
+    let value: Value = serde_json::from_str(&out.stderr).unwrap();
+    assert_eq!(value["name"], "io");
+    assert_eq!(value["next"], "check_input_output");
+    assert!(
+        value["message"]
+            .as_str()
+            .unwrap()
+            .contains("No space left on device")
+    );
+}
+
+#[test]
+fn machine_contract_git_setup_preserves_environment_vs_io_kind() {
+    for (base, expected) in [
+        ("relative", "check_environment"),
+        (
+            "/forge-warden-missing-cli-contract-base",
+            "check_input_output",
+        ),
+    ] {
+        let out = common::run_with_env(
+            &[
+                "check",
+                "--policy",
+                POLICY,
+                "--patch",
+                PATCH,
+                "--advisory",
+                "--rank",
+                RANK,
+                "--today",
+                TODAY,
+                "--json",
+            ],
+            b"",
+            &[("TMPDIR", base)],
+        );
+        assert_eq!(out.code, 3, "{}", out.stderr);
+        let value: Value = serde_json::from_str(&out.stderr).unwrap();
+        assert_eq!(value["next"], expected, "{}", out.stderr);
+    }
+}
+
+#[test]
+fn machine_contract_option_terminator_preserves_literal_json_filename() {
+    let out = run(&["lint", "--", "--json"], b"");
+    assert_eq!(out.code, 3);
+    assert!(out.stderr.starts_with("forge-warden: reading --json:"));
+    assert!(serde_json::from_str::<Value>(&out.stderr).is_err());
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config { cases: 16, max_shrink_iters: 0, failure_persistence: None, ..proptest::test_runner::Config::default() })]
+    #[test]
+    fn machine_contract_json_errors_are_valid_and_ascii(bytes in proptest::collection::vec(proptest::num::u8::ANY, 0..64)) {
+        let dir = scratch("json-errors");
+        let mut hostile = b"context\x1b\0\n\xe2\x80\xae\"\\".to_vec();
+        hostile.extend_from_slice(&bytes);
+        let ranker = fixture_ranker();
+        let policy = policy_admitting(&dir, POLICY, &[fixture_ranker_sha256()]);
+        let hex = hostile.iter().fold(String::new(), |mut out, b| { write!(out, "{b:02x}").unwrap(); out });
+        for mode in ["stderr-hex", "schema-hex"] {
+            let patch = write(&dir, mode, format!("+fixture-ranker: {mode} {hex}\n").as_bytes());
+            let out = run(&["check", "--policy", text(&policy), "--patch", text(&patch), "--ranker", text(&ranker), "--today", TODAY, "--json"], b"");
+            proptest::prop_assert_ne!(out.code, 0);
+            proptest::prop_assert_eq!(out.stdout, "");
+            proptest::prop_assert_eq!(out.stderr.lines().count(), 1);
+            let value: Value = serde_json::from_str(&out.stderr).unwrap();
+            proptest::prop_assert!(value["message"].as_str().unwrap().contains("context"));
+            proptest::prop_assert!(out.stderr.bytes().all(|b| b == b'\n' || (0x20..=0x7e).contains(&b)));
+        }
+    }
+}
+
+#[test]
+fn golden_stderr_io_resources() {
+    let out = common::run_with_full_stdout(&["init"]);
+    assert_eq!(out.code, 3);
+    common::assert_golden("fixtures/cli-stderr/io.txt", &out.stderr);
+}
+
+#[test]
+fn golden_stderr_refused_file() {
+    let out = run(&["lint", "."], b"");
+    assert_eq!(out.code, 4);
+    common::assert_golden("fixtures/cli-stderr/refused.txt", &out.stderr);
+}
+
+#[test]
+fn golden_stderr_over_budget() {
+    let bytes = vec![b' '; forge_warden_core::MAX_INPUT_BYTES.saturating_add(1)];
+    let out = run(
+        &[
+            "check",
+            "--policy",
+            POLICY,
+            "--patch",
+            PATCH,
+            "--advisory",
+            "--rank",
+            "-",
+            "--today",
+            TODAY,
+        ],
+        &bytes,
+    );
+    assert_eq!(out.code, 4);
+    common::assert_golden("fixtures/cli-stderr/over-budget.txt", &out.stderr);
 }

@@ -14,7 +14,7 @@ use std::path::Path;
 /// (`Failure::from_door` in main.rs), so a new kind cannot ship unmapped (Q2-05).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DoorErrorKind {
-    /// Reading or writing failed (exit 3, `check_environment`).
+    /// Reading or writing failed (exit 3, `check_input_output`).
     Io,
     /// The host is not set up as the door requires: an unsafe temporary directory, an unusable
     /// clock (exit 3, `check_environment`).
@@ -204,6 +204,27 @@ impl std::process::Termination for Status {
 pub(crate) fn diagnose(text: &str) {
     let mut err = std::io::stderr().lock();
     let _ignored = writeln!(err, "{}", forge_warden_core::render::terminal_safe(text));
+}
+
+/// Capture OS arguments once; parsing and machine-output selection remain pure in main.rs.
+#[expect(clippy::disallowed_methods, reason = "door: arguments")]
+pub(crate) fn arguments() -> Vec<std::ffi::OsString> {
+    std::env::args_os().collect()
+}
+
+/// Write exactly one JSON error envelope. Fields are terminal-safe before encoding, so JSON
+/// escapes are not double-escaped by the human diagnostic door. Stderr write failure is final.
+#[expect(clippy::disallowed_methods, reason = "door: diagnose_json")]
+pub(crate) fn diagnose_json(exit: Exit, message: &str, next: &str) {
+    let entry = exit.entry();
+    let value = serde_json::json!({
+        "exit": entry.code,
+        "name": entry.name,
+        "message": forge_warden_core::render::terminal_safe(message),
+        "next": forge_warden_core::render::terminal_safe(next),
+    });
+    let mut err = std::io::stderr().lock();
+    let _ignored = writeln!(err, "{value}");
 }
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
@@ -620,6 +641,8 @@ pub(crate) mod child {
     /// Why Git's facts could not be read.
     #[derive(Debug, PartialEq, Eq)]
     pub(crate) enum GitFactsFailure {
+        /// A setup door failed; preserve its kind for the CLI action hint.
+        Door(DoorError),
         /// Git ran and refused the patch (a fact about the patch: HOLD).
         Refused(String),
         /// Git could not be run within its bounds (an environment problem: no verdict).
@@ -708,8 +731,7 @@ pub(crate) mod child {
         patch: &[u8],
         base: &Path,
     ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
-        let isolation =
-            Isolation::create_in(base).map_err(|e| GitFactsFailure::Unavailable(e.message))?;
+        let isolation = Isolation::create_in(base).map_err(GitFactsFailure::Door)?;
         let env = isolation.env();
         let dir = &isolation.dir;
         let run = |mode: &[&str]| {

@@ -540,39 +540,80 @@ fn registered_golden_consumers_cannot_move_or_inline_their_expectations() {
     assert_eq!(consumers[0]["path"], "crates/forge-warden-cli/tests/cli.rs");
     let tests = consumers[0]["tests"].as_array().unwrap();
     let required = [
-        ("golden_verdict_for_the_demo_change", "assert_golden"),
+        (
+            "golden_verdict_for_the_demo_change",
+            "assert_golden",
+            "fixtures/demo.verdict.json",
+        ),
         (
             "authority_mode_on_the_demo_reaches_the_golden_judgement",
             "assert_golden_json",
+            "fixtures/demo.verdict.json",
+        ),
+        (
+            "golden_stderr_io_resources",
+            "assert_golden",
+            "fixtures/cli-stderr/io.txt",
+        ),
+        (
+            "golden_stderr_refused_file",
+            "assert_golden",
+            "fixtures/cli-stderr/refused.txt",
+        ),
+        (
+            "golden_stderr_over_budget",
+            "assert_golden",
+            "fixtures/cli-stderr/over-budget.txt",
         ),
     ];
     assert_eq!(tests.len(), required.len());
     let source = common::read_repository_regular(consumers[0]["path"].as_str().unwrap()).unwrap();
-    for (name, assertion) in required {
+    for (name, assertion, golden) in required {
         assert!(
-            tests.iter().any(|t| t["name"] == name
-                && t["assertion"] == assertion
-                && t["golden"] == "fixtures/demo.verdict.json"),
+            tests
+                .iter()
+                .any(|t| t["name"] == name && t["assertion"] == assertion && t["golden"] == golden),
             "GOLDEN_CONSUMER_BINDING: undeclared required consumer"
         );
         assert!(
-            consumer_bound(&source, name, assertion, "fixtures/demo.verdict.json"),
+            consumer_bound(&source, name, assertion, golden),
             "GOLDEN_CONSUMER_BINDING: {name} moved or inlined its expectation"
         );
     }
     // The same attacks that escaped fixtures/** must be rejected even with the original intact.
-    let moved = source.replace("fixtures/demo.verdict.json", "outside/demo.verdict.json");
+    let moved = source.replace("fixtures/", "outside/");
     let inlined = source
         .replace("common::assert_golden(", "assert_inlined(")
         .replace("common::assert_golden_json(", "assert_inlined_json(");
     for candidate in [&moved, &inlined] {
-        for (name, assertion) in required {
-            assert!(!consumer_bound(
-                candidate,
-                name,
-                assertion,
-                "fixtures/demo.verdict.json"
-            ));
+        for (name, assertion, golden) in required {
+            assert!(!consumer_bound(candidate, name, assertion, golden));
         }
+    }
+}
+
+#[test]
+fn stderr_golden_producers_catch_each_corrupted_expectation() {
+    for golden in [
+        "fixtures/cli-stderr/io.txt",
+        "fixtures/cli-stderr/refused.txt",
+        "fixtures/cli-stderr/over-budget.txt",
+    ] {
+        let before = common::read_bytes(golden);
+        let valid = common::check_stderr_golden(golden, false);
+        assert!(valid.status.success(), "{golden}: {valid:?}");
+        let record: serde_json::Value = serde_json::from_slice(&valid.stdout).unwrap();
+        assert_eq!(record["golden"], golden);
+        assert_eq!(record["mode"], "check");
+        let changed = common::check_stderr_golden(golden, true);
+        assert!(
+            !changed.status.success(),
+            "{golden}: corrupted bytes accepted"
+        );
+        assert!(
+            String::from_utf8_lossy(&changed.stderr).contains("GOLDEN_BYTES_DIFFER"),
+            "{changed:?}"
+        );
+        assert_eq!(common::read_bytes(golden), before);
     }
 }

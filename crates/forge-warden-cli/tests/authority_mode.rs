@@ -288,7 +288,14 @@ fn a_ranker_failure_gives_exit_3_and_no_verdict() {
         assert_eq!(out.code, 3, "{name}: {}", out.stderr);
         assert_eq!(out.stdout, "", "{name}");
         assert!(out.stderr.contains(needle), "{name}: {}", out.stderr);
-        assert!(out.stderr.contains("next: check_environment"), "{name}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&out.stderr)
+                .unwrap()
+                .get("next")
+                .unwrap(),
+            "check_environment",
+            "{name}"
+        );
     }
 }
 
@@ -334,7 +341,7 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
         ("symlink", link, 4, "Too many levels of symbolic links"),
         ("fifo", fifo, 4, "not a regular file"),
         ("group-writable", writable, 4, "writable by group or others"),
-        ("script", script, 3, "forge-warden: the ranker exited "),
+        ("script", script, 3, "the ranker exited "),
         (
             "missing",
             dir.join("missing"),
@@ -345,21 +352,22 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
         let out = authority(&policy, &patch, &candidate, &[]);
         assert_eq!(out.code, code, "{what}: {}", out.stderr);
         let next = if code == 4 {
-            "next: change_input (forge-warden explain 4)\n"
+            "change_input"
+        } else if what == "missing" {
+            "check_input_output"
         } else {
-            "next: check_environment (forge-warden explain 3)\n"
+            "check_environment"
         };
-        assert!(out.stderr.ends_with(next), "{what}: {}", out.stderr);
+        let error: Value = serde_json::from_str(&out.stderr).unwrap();
+        assert_eq!(error.get("next").unwrap(), next, "{what}");
         if what == "fifo" || what == "group-writable" {
-            // Q2-15: the whole stderr is the stable text an agent parses, hint included.
-            assert_eq!(
-                out.stderr,
-                format!(
-                    "forge-warden: pinning {}: {reason}\n{next}",
-                    candidate.display()
-                ),
-                "{what}"
-            );
+            // Q2-15: compare the complete JSON envelope and the sole trailing newline.
+            let expected = serde_json::json!({
+                "exit": 4, "name": "invalid_input",
+                "message": format!("pinning {}: {reason}", candidate.display()),
+                "next": next,
+            });
+            assert_eq!(out.stderr, format!("{expected}\n"), "{what}");
         }
         assert_eq!(out.stdout, "", "{what}");
         assert!(out.stderr.contains(reason), "{what}: {}", out.stderr);
@@ -433,11 +441,13 @@ fn a_fifo_given_as_any_input_file_is_refused_at_once_with_exit_4() {
             "{flag} FIFO: {}",
             out.stderr
         );
-        assert!(
-            out.stderr
-                .ends_with("next: change_input (forge-warden explain 4)\n"),
-            "{flag} FIFO: {}",
-            out.stderr
+        assert_eq!(
+            serde_json::from_str::<Value>(&out.stderr)
+                .unwrap()
+                .get("next")
+                .unwrap(),
+            "change_input",
+            "{flag}"
         );
     }
     let _cleaned = std::fs::remove_dir_all(&dir);
@@ -514,15 +524,20 @@ fn a_poisoned_parent_environment_changes_nothing() {
 
     // A TMPDIR that cannot bound Git's discovery (relative, or with ':') is refused, never used
     // (Bastion B-C1b-01, ADR 0010).
-    for tmpdir in ["relative/tmp", "/tmp:/x"] {
+    for (tmpdir, next) in [
+        ("relative/tmp", "check_environment"),
+        ("/tmp:/x", "check_input_output"),
+    ] {
         let out = run_with_env(&args, b"", &[("TMPDIR", tmpdir)]);
         assert_eq!(out.code, 3, "{tmpdir}: {}", out.stderr);
         assert_eq!(out.stdout, "", "{tmpdir}");
-        assert!(
-            out.stderr
-                .ends_with("next: check_environment (forge-warden explain 3)\n"),
-            "{tmpdir}: {}",
-            out.stderr
+        assert_eq!(
+            serde_json::from_str::<Value>(&out.stderr)
+                .unwrap()
+                .get("next")
+                .unwrap(),
+            next,
+            "{tmpdir}"
         );
         assert!(
             out.stderr.contains("temporary directory"),

@@ -317,10 +317,26 @@ pub(crate) struct Sources {
 /// by path: reviewed data (`include_str!` of a schema or the starter policy). Production code may not
 /// `include!` anything (`tests/door_lints.rs`), so these can only ever be data, and a changed byte
 /// fails until the pin is updated in a reviewed diff (B-C1c-04, Lodestar's v4.2 ruling).
-pub(crate) const PRODUCTION_DATA: [(&str, &str); 3] = [
+pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
     (
         "examples/starter.warden.toml",
         "9a08b3feaf2b72d14908b774f50d45cb605ea0518bd667f15fb9ba89d85fa731",
+    ),
+    (
+        "schemas/error.v1.schema.json",
+        "3ce0f06cf1ea9eae0239d42ad09900206f853d3f2f0e01c4fbb55c86e664d3f6",
+    ),
+    (
+        "schemas/exit-codes.v1.schema.json",
+        "64a26cb3559593d58a043d6276d6e8a5a183690d524e36d7d18a6442e2d8949c",
+    ),
+    (
+        "schemas/exit-entry.v1.schema.json",
+        "98a28956772fa0bdf3f70e3a56c1198838cd58683809b08f796d53fd7be4779d",
+    ),
+    (
+        "schemas/lint.v1.schema.json",
+        "c5f5f53f4bdc5e1f8f9fd4c24b13ed0d0293d7f495c2adb804269861d93f2f6b",
     ),
     (
         "schemas/policy.v0.schema.json",
@@ -731,4 +747,50 @@ pub(crate) fn run_first_rule_exercise(script: &str) -> (std::process::Output, Ve
         Vec::new()
     };
     (output, records)
+}
+
+/// Exercise output resource failures with the real Linux ENOSPC device, without a mock writer.
+pub(crate) fn run_with_full_stdout(args: &[&str]) -> Run {
+    let output = command(env!("CARGO_BIN_EXE_forge-warden"))
+        .args(args)
+        .current_dir(root())
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create("/dev/full").unwrap())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    Run {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::new(),
+        stderr: String::from_utf8(output.stderr).unwrap(),
+    }
+}
+
+/// Check a named stderr golden in a disposable copy, optionally corrupting only its expected bytes.
+pub(crate) fn check_stderr_golden(golden: &str, corrupt: bool) -> std::process::Output {
+    let copy = scratch("stderr-golden-producer");
+    for name in [
+        "scripts/golden_output.py",
+        "fixtures/quality-contract.json",
+        "fixtures/demo.patch",
+        "examples/starter.warden.toml",
+        golden,
+    ] {
+        write(&copy, name, &read_bytes(name));
+    }
+    if corrupt {
+        write(&copy, golden, b"not the reviewed diagnostic\n");
+    }
+    command("python3")
+        .current_dir(&copy)
+        .args([
+            "-I",
+            "scripts/golden_output.py",
+            "--binary",
+            env!("CARGO_BIN_EXE_forge-warden"),
+            "--golden",
+            golden,
+        ])
+        .output()
+        .unwrap()
 }

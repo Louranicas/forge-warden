@@ -1,0 +1,2 @@
+forge-warden: reading stdin: over the 67108864 byte budget
+next: reduce_input_size (forge-warden explain 4)

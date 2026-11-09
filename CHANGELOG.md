@@ -8,6 +8,19 @@ listed, because consumers parse them.
 
 ## [Unreleased]
 
+### CLI machine contract
+
+- `lint --json` emits `forge-warden.lint.v1`; `check`, `lint`, `explain` and `schema` with
+  `--json` emit one error envelope on stderr (`exit`, `name`, `message`, `next`) on failure,
+  including command-line parse failures. Messages are printable ASCII before JSON encoding.
+  Failed stdout writes can leave partial bytes; consumers must reject output on an error exit.
+  `init` remains a TOML producer; help/version remain human text. Schema commands `lint`,
+  `error`, `exit-entry` and `exit-codes-schema` expose the corresponding v1 schemas.
+- `--patch -` now fails explicitly as `patch_stdin_unsupported`; help documents that stdin
+  is reserved for `--rank -`. Save patches to a file. Door hints distinguish I/O resources,
+  host environment, input size and refused input; numeric registry exits are unchanged.
+- `today_source` is deferred to verdict v2 and ADR 0011 A1 sequencing; verdict v1 is unchanged.
+
 ### Changed (breaking)
 
 - **The verdict schema is now `forge-warden.verdict.v1`** (`schemas/verdict.v1.schema.json`;

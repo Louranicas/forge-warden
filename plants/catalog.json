@@ -227,8 +227,8 @@
         "--locked",
         "--offline"
       ],
-      "old": "DoorErrorKind::Refused => Exit::InvalidInput,",
-      "new": "DoorErrorKind::Refused => Exit::InvalidInptu,",
+      "old": "DoorErrorKind::Refused => (Exit::InvalidInput, \"change_input\"),",
+      "new": "DoorErrorKind::Refused => (Exit::InvalidInptu, \"change_input\"),",
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
@@ -637,8 +637,8 @@
       "guardrail": "G-13",
       "path": "crates/forge-warden-cli/src/main.rs",
       "diagnostic": "omitting_the_patch_requires_review_or_refusal.*FAILED",
-      "old": "doors::diagnose(&text);\n                Exit::Usage",
-      "new": "doors::diagnose(&text);\n                Exit::Pass",
+      "old": "finish(Err(Failure::new(Exit::Usage, text)), true)",
+      "new": "finish(Err(Failure::new(Exit::Pass, text)), true)",
       "cargo": [
         "test",
         "-p",

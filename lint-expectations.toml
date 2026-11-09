@@ -375,3 +375,35 @@ file = "crates/forge-warden-cli/tests/public_api.rs"
 lint = "clippy::wildcard_enum_match_arm"
 source_reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is refused as UNSUPPORTED, which fails the snapshot test"
 review_reason = "Reviewed on Q-TYPES-1 v7 cf7eef5: test-only non-exhaustive syn::Item fallback emits UNSUPPORTED; unvouched() refuses it before snapshot comparison. This admits the required fallback, not general semantic API equivalence or macro expansion completeness."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: arguments"
+review_reason = "WP-Q-CLI-CONTRACT: one OS argv capture; pure clap parsing and exact flag classification remain in main.rs (O1 #921)."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: diagnose_json"
+review_reason = "WP-Q-CLI-CONTRACT: fixed error-envelope stderr sink; fields terminal-sanitized before JSON encoding, one line, no raw stderr bypass (O1 #921)."
+
+[[data_input]]
+file = "schemas/error.v1.schema.json"
+sha256 = "3ce0f06cf1ea9eae0239d42ad09900206f853d3f2f0e01c4fbb55c86e664d3f6"
+review_reason = "Q-CLI-CONTRACT O1 #921 approved standalone CLI machine-output schema; reviewed JSON data embedded by include_str, not executable Rust."
+
+[[data_input]]
+file = "schemas/exit-codes.v1.schema.json"
+sha256 = "64a26cb3559593d58a043d6276d6e8a5a183690d524e36d7d18a6442e2d8949c"
+review_reason = "Q-CLI-CONTRACT O1 #921 approved standalone CLI machine-output schema; reviewed JSON data embedded by include_str, not executable Rust."
+
+[[data_input]]
+file = "schemas/exit-entry.v1.schema.json"
+sha256 = "98a28956772fa0bdf3f70e3a56c1198838cd58683809b08f796d53fd7be4779d"
+review_reason = "Q-CLI-CONTRACT O1 #921 approved standalone CLI machine-output schema; reviewed JSON data embedded by include_str, not executable Rust."
+
+[[data_input]]
+file = "schemas/lint.v1.schema.json"
+sha256 = "c5f5f53f4bdc5e1f8f9fd4c24b13ed0d0293d7f495c2adb804269861d93f2f6b"
+review_reason = "Q-CLI-CONTRACT O1 #921 approved standalone CLI machine-output schema; reviewed JSON data embedded by include_str, not executable Rust."

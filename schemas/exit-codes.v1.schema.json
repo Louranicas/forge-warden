@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Louranicas/forge-warden/schemas/exit-codes.v1.schema.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "code",
+      "name",
+      "meaning",
+      "action",
+      "may_be_transient"
+    ],
+    "properties": {
+      "code": {
+        "type": "integer",
+        "enum": [
+          0,
+          2,
+          3,
+          4,
+          7,
+          8,
+          101
+        ]
+      },
+      "name": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "usage",
+          "io",
+          "invalid_input",
+          "policy_fail",
+          "policy_hold",
+          "internal"
+        ]
+      },
+      "meaning": {
+        "type": "string"
+      },
+      "action": {
+        "type": "string"
+      },
+      "may_be_transient": {
+        "type": "boolean"
+      }
+    }
+  }
+}
