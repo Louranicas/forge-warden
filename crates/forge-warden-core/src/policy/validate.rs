@@ -10,7 +10,7 @@ use crate::date::Date;
 use crate::defaults::NamedDefault as _;
 use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
-use crate::vocab::{is_known_signal, suggest_signal};
+use crate::vocab::{Signal, is_known_signal, suggest_signal};
 use std::collections::BTreeSet;
 
 /// The only policy schema this version reads.
@@ -212,7 +212,7 @@ fn build_check(
                 }
             }
             Ok(Check::ForbidSignal {
-                signals: signals.clone(),
+                signals: signals.iter().map(|s| Signal::parse(s)).collect(),
                 scope: scope(optional_paths(issues)?),
             })
         }

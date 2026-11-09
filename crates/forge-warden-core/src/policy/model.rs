@@ -6,6 +6,7 @@ use crate::date::Date;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
+use crate::vocab::Signal;
 
 /// A validated policy.
 #[derive(Debug, Clone)]
@@ -141,8 +142,8 @@ impl Severity {
 pub enum Check {
     /// [`Kind::ForbidSignal`]: no file in scope may carry any of `signals`.
     ForbidSignal {
-        /// Signals that are not allowed.
-        signals: Vec<String>,
+        /// Signals that are not allowed (each a known vocabulary value: the policy refuses others).
+        signals: Vec<Signal>,
         /// Files the rule looks at.
         scope: Scope,
     },

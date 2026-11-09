@@ -37,9 +37,12 @@ fn file_with(
 ) -> RankedFile {
     RankedFile::new(
         RepoPath::parse(path).unwrap(),
-        status.to_owned(),
+        forge_warden_core::vocab::Status::parse(status),
         score,
-        signals.iter().map(|s| (*s).to_owned()).collect(),
+        signals
+            .iter()
+            .map(|s| forge_warden_core::vocab::Signal::parse(s))
+            .collect(),
         evidence,
         evidence_truncated,
     )
@@ -47,7 +50,13 @@ fn file_with(
 }
 
 fn evidence(signal: &str, side: &str, line: u64) -> Evidence {
-    Evidence::new(signal.to_owned(), seal(SEAL), side.to_owned(), line).unwrap()
+    Evidence::new(
+        forge_warden_core::vocab::Signal::parse(signal),
+        seal(SEAL),
+        forge_warden_core::vocab::Side::parse(side).unwrap(),
+        line,
+    )
+    .unwrap()
 }
 
 fn rank(files: Vec<RankedFile>) -> RankDoc {

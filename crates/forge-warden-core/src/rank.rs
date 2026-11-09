@@ -7,6 +7,7 @@
 
 use crate::path::RepoPath;
 use crate::seal::Sha256Hex;
+use crate::vocab::{Side, Signal, Status};
 use serde::Deserialize;
 
 /// The only ranking schema this version reads.
@@ -26,9 +27,9 @@ pub struct RankDoc {
 #[non_exhaustive]
 pub struct RankedFile {
     path: RepoPath,
-    status: String,
+    status: Status,
     score: u32,
-    signals: Vec<String>,
+    signals: Vec<Signal>,
     evidence: Vec<Evidence>,
     evidence_truncated: bool,
 }
@@ -37,9 +38,9 @@ pub struct RankedFile {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub struct Evidence {
-    signal: String,
+    signal: Signal,
     address: Sha256Hex,
-    side: String,
+    side: Side,
     line: u64,
 }
 
@@ -103,7 +104,7 @@ impl RankDoc {
 
 /// A change-kind signal Git's facts imply (`new_file`, `deleted_file`, `binary_change`,
 /// `symlink_change`, `mode_change`, …): a `&'static str` from the core's own vocabulary, never empty.
-pub(crate) type DerivedSignal = &'static str;
+pub(crate) type DerivedSignal = Signal;
 
 impl RankedFile {
     /// A ranked file, if its status and signals are non-empty and every piece of evidence cites a
@@ -114,16 +115,16 @@ impl RankedFile {
     /// [`RankError::Invalid`] naming the problem.
     pub fn new(
         path: RepoPath,
-        status: String,
+        status: Status,
         score: u32,
-        signals: Vec<String>,
+        signals: Vec<Signal>,
         evidence: Vec<Evidence>,
         evidence_truncated: bool,
     ) -> Result<Self, RankError> {
-        if status.is_empty() {
+        if status.name().is_empty() {
             return Err(RankError::Invalid("status is empty".to_owned()));
         }
-        if signals.iter().any(String::is_empty) {
+        if signals.iter().any(|s| s.name().is_empty()) {
             return Err(RankError::Invalid("a signal is empty".to_owned()));
         }
         if let Some((index, item)) = evidence
@@ -133,7 +134,7 @@ impl RankedFile {
         {
             return Err(RankError::Invalid(format!(
                 "evidence[{index}]: cites signal {:?}, which the file does not carry",
-                item.signal
+                item.signal.name()
             )));
         }
         Ok(Self {
@@ -156,8 +157,8 @@ impl RankedFile {
     ) -> Self {
         let mut signals = self.signals.clone();
         for signal in added {
-            if !signals.iter().any(|s| s == signal) {
-                signals.push((*signal).to_owned());
+            if !signals.contains(signal) {
+                signals.push(signal.clone());
             }
         }
         Self {
@@ -178,7 +179,7 @@ impl RankedFile {
 
     /// The file status, such as `modified`.
     #[must_use]
-    pub fn status(&self) -> &str {
+    pub const fn status(&self) -> &Status {
         &self.status
     }
 
@@ -190,7 +191,7 @@ impl RankedFile {
 
     /// Every signal that contributed to the score.
     #[must_use]
-    pub fn signals(&self) -> &[String] {
+    pub fn signals(&self) -> &[Signal] {
         &self.signals
     }
 
@@ -208,22 +209,17 @@ impl RankedFile {
 }
 
 impl Evidence {
-    /// Evidence, if the side is `new` or `old` and the line is 1-based (the address is a [`Sha256Hex`]).
+    /// Evidence, if the line is 1-based (the address is a [`Sha256Hex`] and the side a [`Side`]).
     ///
     /// # Errors
     ///
     /// [`RankError::Invalid`] naming the problem.
     pub fn new(
-        signal: String,
+        signal: Signal,
         address: Sha256Hex,
-        side: String,
+        side: Side,
         line: u64,
     ) -> Result<Self, RankError> {
-        if side != "new" && side != "old" {
-            return Err(RankError::Invalid(format!(
-                "side is {side:?}; expected \"new\" or \"old\""
-            )));
-        }
         if line == 0 {
             return Err(RankError::Invalid(
                 "line is 0; lines are 1-based".to_owned(),
@@ -239,7 +235,7 @@ impl Evidence {
 
     /// The signal it supports.
     #[must_use]
-    pub fn signal(&self) -> &str {
+    pub const fn signal(&self) -> &Signal {
         &self.signal
     }
 
@@ -251,8 +247,8 @@ impl Evidence {
 
     /// `new` (an added line) or `old` (a removed line).
     #[must_use]
-    pub fn side(&self) -> &str {
-        &self.side
+    pub const fn side(&self) -> Side {
+        self.side
     }
 
     /// The line number on that side.
@@ -361,15 +357,21 @@ fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
                     "evidence[{e_index}]: address is not 64 lowercase hex digits"
                 ))
             })?;
-            Evidence::new(item.signal, address, item.side, item.line)
+            let side = Side::parse(&item.side).ok_or_else(|| {
+                at(&format!(
+                    "evidence[{e_index}]: side is {:?}; expected \"new\" or \"old\"",
+                    item.side
+                ))
+            })?;
+            Evidence::new(Signal::parse(&item.signal), address, side, item.line)
                 .map_err(|e| at(&format!("evidence[{e_index}]: {}", reason(&e))))
         })
         .collect::<Result<Vec<_>, _>>()?;
     RankedFile::new(
         path,
-        raw.status,
+        Status::parse(&raw.status),
         raw.score,
-        raw.signals,
+        raw.signals.iter().map(|s| Signal::parse(s)).collect(),
         evidence,
         raw.evidence_truncated,
     )
@@ -406,9 +408,11 @@ mod tests {
         ));
         let rank = parse_rank(text.as_bytes()).unwrap();
         let file = &rank.files[0];
-        let wide = file.with_added_signals(&["binary_change", "deleted_file", "mode_change"]);
+        let wide = file.with_added_signals(
+            &["binary_change", "deleted_file", "mode_change"].map(Signal::parse),
+        );
         assert_eq!(
-            wide.signals,
+            wide.signals.iter().map(Signal::name).collect::<Vec<_>>(),
             [
                 "unsafe_added",
                 "binary_change",
@@ -427,12 +431,16 @@ mod tests {
             "adding nothing changes nothing"
         );
 
-        let mapped = rank.map_files(|f| f.with_added_signals(&["new_file"]));
+        let mapped = rank.map_files(|f| f.with_added_signals(&[Signal::NewFile]));
         assert_eq!(mapped.input_sha256(), rank.input_sha256());
         assert_eq!(mapped.tool_version(), rank.tool_version());
         assert_eq!(mapped.files.len(), 1);
         assert_eq!(
-            mapped.files[0].signals,
+            mapped.files[0]
+                .signals
+                .iter()
+                .map(Signal::name)
+                .collect::<Vec<_>>(),
             ["unsafe_added", "binary_change", "new_file"]
         );
     }

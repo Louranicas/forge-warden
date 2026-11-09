@@ -121,7 +121,7 @@ crate::facts Disagreement::Status(RepoPath),
 crate::facts impl PatchFacts
 crate::facts PatchFacts::pub fn from_git(numstat_z: &[u8], summary: &[u8], patch: &[u8]) -> Result<Self, Unverifiable>
 crate::facts PatchFacts::pub fn files(&self) -> impl Iterator<Item = &FileChange>
-crate::facts #[must_use] pub fn derived_signals(change: &FileChange) -> BTreeSet<&'static str>
+crate::facts #[must_use] pub fn derived_signals(change: &FileChange) -> BTreeSet<Signal>
 crate::facts #[must_use] pub fn compare(rank: &RankDoc, facts: &PatchFacts) -> Vec<Disagreement>
 crate::facts impl FileChange
 crate::facts FileChange::#[must_use] pub const fn path(&self) -> &RepoPath
@@ -234,7 +234,7 @@ crate::policy::model impl Severity
 crate::policy::model Severity::#[must_use] pub const fn outcome(self) -> Outcome
 crate::policy::model Severity::#[must_use] pub const fn label(self) -> &'static str
 crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub enum Check
-crate::policy::model Check::ForbidSignal { /// Signals that are not allowed. signals: Vec<String>, /// Files the rule looks at. scope: Scope, },
+crate::policy::model Check::ForbidSignal { /// Signals that are not allowed (each a known vocabulary value: the policy refuses others). signals: Vec<Signal>, /// Files the rule looks at. scope: Scope, },
 crate::policy::model Check::RequireCompanion { /// Files whose change triggers the rule. when: Scope, /// Files of which at least one must also be in the change. require: PathSet, },
 crate::policy::model Check::ProtectPaths { /// Files that are protected. scope: Scope, },
 crate::policy::model Check::MaxScore { /// The largest allowed score. limit: u32, /// Per file, or summed over the change. per: ScorePer, /// Files the rule looks at. scope: Scope, },
@@ -277,18 +277,18 @@ crate::rank RankDoc::#[must_use] pub const fn input_sha256(&self) -> &Sha256Hex
 crate::rank RankDoc::#[must_use] pub fn tool_version(&self) -> &str
 crate::rank RankDoc::#[must_use] pub fn files(&self) -> &[RankedFile]
 crate::rank impl RankedFile
-crate::rank RankedFile::pub fn new( path: RepoPath, status: String, score: u32, signals: Vec<String>, evidence: Vec<Evidence>, evidence_truncated: bool, ) -> Result<Self, RankError>
+crate::rank RankedFile::pub fn new( path: RepoPath, status: Status, score: u32, signals: Vec<Signal>, evidence: Vec<Evidence>, evidence_truncated: bool, ) -> Result<Self, RankError>
 crate::rank RankedFile::#[must_use] pub const fn path(&self) -> &RepoPath
-crate::rank RankedFile::#[must_use] pub fn status(&self) -> &str
+crate::rank RankedFile::#[must_use] pub const fn status(&self) -> &Status
 crate::rank RankedFile::#[must_use] pub const fn score(&self) -> u32
-crate::rank RankedFile::#[must_use] pub fn signals(&self) -> &[String]
+crate::rank RankedFile::#[must_use] pub fn signals(&self) -> &[Signal]
 crate::rank RankedFile::#[must_use] pub fn evidence(&self) -> &[Evidence]
 crate::rank RankedFile::#[must_use] pub const fn evidence_truncated(&self) -> bool
 crate::rank impl Evidence
-crate::rank Evidence::pub fn new( signal: String, address: Sha256Hex, side: String, line: u64, ) -> Result<Self, RankError>
-crate::rank Evidence::#[must_use] pub fn signal(&self) -> &str
+crate::rank Evidence::pub fn new( signal: Signal, address: Sha256Hex, side: Side, line: u64, ) -> Result<Self, RankError>
+crate::rank Evidence::#[must_use] pub const fn signal(&self) -> &Signal
 crate::rank Evidence::#[must_use] pub const fn address(&self) -> &Sha256Hex
-crate::rank Evidence::#[must_use] pub fn side(&self) -> &str
+crate::rank Evidence::#[must_use] pub const fn side(&self) -> Side
 crate::rank Evidence::#[must_use] pub const fn line(&self) -> u64
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum RankError
 crate::rank RankError::#[error("ranking is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
@@ -420,6 +420,75 @@ crate::verdict Verdict::#[must_use] pub fn notes(&self) -> &[Note]
 crate::verdict Verdict::#[must_use] pub fn to_json(&self) -> String
 crate::vocab pub const KNOWN_SIGNALS: [&str; 21] = [ // Path and shape signals (`risk.rs`). "public_api_surface", "new_file", "deleted_file", "binary_change", "large_change", "many_hunks", "config_or_lockfile", "test_only", "generated_or_vendored", "hazardous_text", "symlink_change", "executable_bit", // Code-evidence signals (`evidence.rs`). "unsafe_added", "process_spawn", "network_fetch", "dynamic_eval", "ci_privilege", "build_hook", "secret_like", "check_suppressed", "test_removed", ];
 crate::vocab pub const KNOWN_STATUSES: [&str; 8] = [ "added", "modified", "deleted", "renamed", "copied", "type_changed", "mode_changed", "binary_changed", ];
+crate::vocab #[derive(Debug, Clone, PartialEq, Eq)] pub enum Signal
+crate::vocab Signal::PublicApiSurface,
+crate::vocab Signal::NewFile,
+crate::vocab Signal::DeletedFile,
+crate::vocab Signal::BinaryChange,
+crate::vocab Signal::LargeChange,
+crate::vocab Signal::ManyHunks,
+crate::vocab Signal::ConfigOrLockfile,
+crate::vocab Signal::TestOnly,
+crate::vocab Signal::GeneratedOrVendored,
+crate::vocab Signal::HazardousText,
+crate::vocab Signal::SymlinkChange,
+crate::vocab Signal::ExecutableBit,
+crate::vocab Signal::UnsafeAdded,
+crate::vocab Signal::ProcessSpawn,
+crate::vocab Signal::NetworkFetch,
+crate::vocab Signal::DynamicEval,
+crate::vocab Signal::CiPrivilege,
+crate::vocab Signal::BuildHook,
+crate::vocab Signal::SecretLike,
+crate::vocab Signal::CheckSuppressed,
+crate::vocab Signal::TestRemoved,
+crate::vocab Signal::Unknown(String),
+crate::vocab impl Signal
+crate::vocab Signal::pub const KNOWN: [Self; 21] = [ Self::PublicApiSurface, Self::NewFile, Self::DeletedFile, Self::BinaryChange, Self::LargeChange, Self::ManyHunks, Self::ConfigOrLockfile, Self::TestOnly, Self::GeneratedOrVendored, Self::HazardousText, Self::SymlinkChange, Self::ExecutableBit, Self::UnsafeAdded, Self::ProcessSpawn, Self::NetworkFetch, Self::DynamicEval, Self::CiPrivilege, Self::BuildHook, Self::SecretLike, Self::CheckSuppressed, Self::TestRemoved, ];
+crate::vocab Signal::#[must_use] pub fn parse(name: &str) -> Self
+crate::vocab Signal::#[must_use] pub fn name(&self) -> &str
+crate::vocab Signal::#[must_use] pub const fn is_known(&self) -> bool
+crate::vocab impl PartialOrd for Signal
+crate::vocab Signal::fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+crate::vocab impl Ord for Signal
+crate::vocab Signal::fn cmp(&self, other: &Self) -> std::cmp::Ordering
+crate::vocab impl std::fmt::Display for Signal
+crate::vocab Signal::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl serde::Serialize for Signal
+crate::vocab Signal::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::vocab #[derive(Debug, Clone, PartialEq, Eq)] pub enum Status
+crate::vocab Status::Added,
+crate::vocab Status::Modified,
+crate::vocab Status::Deleted,
+crate::vocab Status::Renamed,
+crate::vocab Status::Copied,
+crate::vocab Status::TypeChanged,
+crate::vocab Status::ModeChanged,
+crate::vocab Status::BinaryChanged,
+crate::vocab Status::Unknown(String),
+crate::vocab impl Status
+crate::vocab Status::pub const KNOWN: [Self; 8] = [ Self::Added, Self::Modified, Self::Deleted, Self::Renamed, Self::Copied, Self::TypeChanged, Self::ModeChanged, Self::BinaryChanged, ];
+crate::vocab Status::#[must_use] pub fn parse(name: &str) -> Self
+crate::vocab Status::#[must_use] pub fn name(&self) -> &str
+crate::vocab Status::#[must_use] pub const fn is_known(&self) -> bool
+crate::vocab impl PartialOrd for Status
+crate::vocab Status::fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+crate::vocab impl Ord for Status
+crate::vocab Status::fn cmp(&self, other: &Self) -> std::cmp::Ordering
+crate::vocab impl std::fmt::Display for Status
+crate::vocab Status::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl serde::Serialize for Status
+crate::vocab Status::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::vocab #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum Side
+crate::vocab Side::New,
+crate::vocab Side::Old,
+crate::vocab impl Side
+crate::vocab Side::#[must_use] pub fn parse(name: &str) -> Option<Self>
+crate::vocab Side::#[must_use] pub const fn name(self) -> &'static str
+crate::vocab impl std::fmt::Display for Side
+crate::vocab Side::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl serde::Serialize for Side
+crate::vocab Side::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::vocab #[must_use] pub fn is_known_signal(name: &str) -> bool
 crate::vocab #[must_use] pub fn is_known_status(name: &str) -> bool
 crate::vocab #[must_use] pub fn suggest_signal(name: &str) -> Option<&'static str>
