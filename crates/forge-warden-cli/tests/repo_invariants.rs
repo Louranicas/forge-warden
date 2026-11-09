@@ -756,3 +756,54 @@ fn suppression_and_ignore_scanners_match_the_shared_corpus() {
         );
     }
 }
+
+/// Reject fixture-only compiler switches in operational build surfaces. Normalize shell/YAML/
+/// TOML separators so split argv arrays and encoded rustflags cannot hide the two switches.
+fn fixture_compiler_switch(source: &str) -> bool {
+    let compact: String = source
+        .chars()
+        .filter(|ch| {
+            !ch.is_whitespace()
+                && !ch.is_control()
+                && !matches!(ch, '\'' | '"' | ',' | '[' | ']' | '\\')
+        })
+        .collect();
+    compact.contains("fw_fixture_cli")
+        || compact.contains("--cfgtest")
+        || compact.contains("--cfg=test")
+}
+
+#[test]
+fn production_build_routes_cannot_enable_fixture_cli() {
+    let mut paths = vec![root().join("justfile")];
+    for directory in ["scripts", ".github", ".cargo", ".githooks", ".claude"] {
+        if root().join(directory).exists() {
+            paths.extend(files_under(directory, ""));
+        }
+    }
+    for path in paths {
+        if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            if let Ok(source) = std::str::from_utf8(&bytes) {
+                assert!(
+                    !fixture_compiler_switch(source),
+                    "fixture compiler switch in operational build surface {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    for source in [
+        "cargo rustc -- --cfg test",
+        "rustflags = [\"--cfg\", \"test\"]",
+        "RUSTFLAGS='--cfg=test'",
+        "CARGO_ENCODED_RUSTFLAGS=--cfg\u{1f}test",
+        "cargo rustc -- --cfg fw_fixture_cli",
+        "RUSTFLAGS='--cfg=fw_fixture_cli'",
+    ] {
+        assert!(fixture_compiler_switch(source), "missed {source:?}");
+    }
+    assert!(!fixture_compiler_switch(
+        "cargo build --release\nRUSTFLAGS='-D warnings'"
+    ));
+}

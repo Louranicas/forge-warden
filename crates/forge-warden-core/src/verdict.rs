@@ -1,9 +1,9 @@
-//! The verdict document, `forge-warden.verdict.v1`.
+//! The verdict document, `forge-warden.verdict.v2`.
 //!
 //! Field order is the serialization order, and every list is in a defined order (rules in policy
 //! order, violations in deep-diff-forge's risk order), so the same inputs always serialize to the
 //! same bytes. `forge-warden schema verdict` prints the JSON Schema, which is committed at
-//! `schemas/verdict.v1.schema.json` and checked against the code by a test.
+//! `schemas/verdict.v2.schema.json` and checked against the code by a test.
 //!
 //! v1 (ADR 0005 §5) seals where the ranking came from (`provenance`, `ranked_by.sha256`), what Git
 //! saw in the patch (`patch_facts_sha256`, `git`), and any unverified `claims` about the change.
@@ -13,7 +13,7 @@ use crate::exit::Outcome;
 use serde::Serialize;
 
 /// The schema name every verdict carries.
-pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v1";
+pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 
 /// A sealed, deterministic verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -154,6 +154,12 @@ pub struct GitOracle {
     pub path: String,
     /// What `git --version` printed, trimmed.
     pub version: String,
+    /// SHA-256 of the executable read through the descriptor used for every Git invocation.
+    pub sha256: String,
+    /// `approved` when the executable digest occurs in the owner policy; `unpinned` otherwise.
+    pub admission: &'static str,
+    /// SHA-256 of the exact admitted owner policy bytes; absent only for unpinned advisory Git.
+    pub allowlist_sha256: Option<String>,
 }
 
 /// What the caller claimed about the change. Recorded, never checked, never used.
@@ -181,8 +187,24 @@ impl RankedBy {
 impl GitOracle {
     /// The Git at the absolute `path` that printed `version` for `git --version`.
     #[must_use]
-    pub const fn new(path: String, version: String) -> Self {
-        Self { path, version }
+    pub fn new(
+        path: String,
+        version: String,
+        sha256: String,
+        allowlist_sha256: Option<String>,
+    ) -> Self {
+        let admission = if allowlist_sha256.is_some() {
+            "approved"
+        } else {
+            "unpinned"
+        };
+        Self {
+            path,
+            version,
+            sha256,
+            admission,
+            allowlist_sha256,
+        }
     }
 }
 

@@ -10,12 +10,17 @@ import subprocess
 import sys
 import time
 import tempfile
+import stat
+import tomllib
 from pathlib import Path
 
 LIMIT = 64 * 1024 * 1024
 ROOT = Path(__file__).resolve().parent.parent
 ENV = {"LC_ALL": "C", "PATH": "/usr/bin:/bin"}
 NAMESPACE = "forge-warden-ack"
+GIT_POLICY = Path("/etc/forge-warden/git-allowlist.toml")
+GIT_POLICY_ROOT = Path("/")
+GIT_POLICY_UID = 0
 
 
 def require(condition, message):
@@ -43,6 +48,44 @@ def decode(data):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON")))
 
 
+def current_git_policy():
+    """Read one bounded snapshot from the fixed owner-controlled policy, never candidate data."""
+    current = GIT_POLICY_ROOT
+    for part in ("", *GIT_POLICY.parent.relative_to(GIT_POLICY_ROOT).parts):
+        current = current / part
+        info = current.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == GIT_POLICY_UID
+                and not info.st_mode & 0o022, "unsafe Git policy parent")
+    descriptor = os.open(GIT_POLICY, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == GIT_POLICY_UID
+                and not info.st_mode & 0o022 and info.st_size <= 65536,
+                "unsafe Git policy file")
+        raw = stream.read(65537)
+    require(len(raw) <= 65536, "Git policy exceeds byte limit")
+    policy = tomllib.loads(raw.decode("utf-8"))
+    require(set(policy) == {"schema", "revision", "sha256"}
+            and policy["schema"] == "forge-warden.git-allowlist.v1"
+            and type(policy["revision"]) is int and policy["revision"] > 0,
+            "invalid Git policy structure")
+    digests = policy["sha256"]
+    require(isinstance(digests, list) and digests
+            and all(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
+                    for digest in digests) and len(digests) == len(set(digests)),
+            "invalid Git policy digests")
+    return set(digests), hashlib.sha256(raw).hexdigest()
+
+
+def admitted_git(verdict):
+    git = verdict["seals"]["git"]
+    require(isinstance(git, dict) and git.get("admission") == "approved",
+            "only owner-approved Git may authorize acknowledgement")
+    digests, policy_sha256 = current_git_policy()
+    require(git.get("sha256") in digests and git.get("allowlist_sha256") == policy_sha256,
+            "Git admission no longer matches the current owner policy")
+
+
 def expected(args, signer, expires_at):
     require(type(expires_at) is int and expires_at > int(time.time()), "acknowledgement expired or invalid expiry")
     require(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", signer), "invalid signer ID")
@@ -50,12 +93,13 @@ def expected(args, signer, expires_at):
         require(re.fullmatch(r"[0-9a-f]{40}", commit), "full lowercase commit IDs required")
     raw = read(args.verdict, LIMIT)
     verdict = decode(raw)
-    require(verdict["schema"] == "forge-warden.verdict.v1", "unsupported verdict schema")
+    require(verdict["schema"] == "forge-warden.verdict.v2", "unsupported verdict schema")
+    admitted_git(verdict)
     require(verdict["verdict"] == "hold" and verdict["exit"]["code"] == 8,
             "only HOLD may be acknowledged")
     require(verdict["notes"] == [] and verdict["expired_waivers"] == [],
             "unknown evidence or expired waivers cannot be acknowledged")
-    # v1 (ADR 0005): only a ranking forge-warden produced itself, from an allowlisted ranker, can
+    # v2 (ADR 0005 and ADR 0011): only a ranking forge-warden produced itself, from an allowlisted ranker, can
     # be acknowledged; a supplied ranking (advisory mode) is never authority.
     require(verdict["seals"]["provenance"] == "produced"
             and isinstance(verdict["seals"]["ranked_by"]["sha256"], str)

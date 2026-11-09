@@ -15,6 +15,7 @@
 mod doors;
 
 #[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
 mod docs_contract;
 
 use clap::{ArgGroup, Parser, Subcommand};
@@ -33,8 +34,8 @@ use forge_warden_core::verdict::{Claims, GitOracle, Seals, Verdict};
 use forge_warden_core::{Date, EXIT_REGISTRY};
 use std::path::{Path, PathBuf};
 
-/// The JSON Schema of `forge-warden.verdict.v1`, committed and checked against the code.
-const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v1.schema.json");
+/// The JSON Schema of `forge-warden.verdict.v2`, committed and checked against the code.
+const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v2.schema.json");
 /// The JSON Schema of `forge-warden.policy.v0` (TOML editors can validate against it).
 const POLICY_SCHEMA_JSON: &str = include_str!("../../../schemas/policy.v0.schema.json");
 /// The starter policy `forge-warden init` prints.
@@ -94,7 +95,7 @@ enum Command {
         /// Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC).
         #[arg(long, value_name = "DATE")]
         today: Option<String>,
-        /// Print the forge-warden.verdict.v1 document instead of the human summary.
+        /// Print the forge-warden.verdict.v2 document instead of the human summary.
         #[arg(long)]
         json: bool,
     },
@@ -161,6 +162,10 @@ impl Failure {
 }
 
 fn main() -> doors::Status {
+    #[cfg(test)]
+    if !doors::fixture_cli_requested() {
+        return doors::Status(Exit::Pass);
+    }
     doors::Status(run_cli())
 }
 
@@ -303,13 +308,17 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
     let patch_sha256 = sha256_hex(&patch);
     let supplied = args.rank.as_deref().map(read_rank).transpose()?;
 
-    let (facts, facts_sha256) = git_facts(&args.git, &patch)?;
+    let admitted_git =
+        doors::child::admit_git(&args.git, args.ranker.is_none()).map_err(Failure::from_door)?;
+    let (facts, facts_sha256) = git_facts(&admitted_git, &patch)?;
     let git = GitOracle::new(
         git_path,
-        doors::child::git_version(&args.git).map_err(Failure::from_door)?,
+        doors::child::git_version(&admitted_git).map_err(Failure::from_door)?,
+        admitted_git.sha256().to_owned(),
+        admitted_git.allowlist_sha256().map(str::to_owned),
     );
 
-    let verdict = if let Some(ranker) = &args.ranker {
+    let mut verdict = if let Some(ranker) = &args.ranker {
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
             |failure| match failure {
                 RankerFailure::NotAdmitted(why) => Failure::new(Exit::InvalidInput, why),
@@ -358,6 +367,13 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             .verdict()
             .clone()
     };
+    if admitted_git.allowlist_sha256().is_none() {
+        for note in &mut verdict.notes {
+            if note.code == forge_warden_core::verdict::NoteCode::RankUnverified {
+                note.detail.push_str("; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved");
+            }
+        }
+    }
     report(&verdict, args.json)
 }
 
@@ -397,7 +413,7 @@ fn git_path(git: &Path) -> Result<String, Failure> {
 /// Git's facts about the patch, and their digest. A refusal is a fact about the patch (it holds
 /// the verdict); Git that cannot run gives no verdict.
 fn git_facts(
-    git: &Path,
+    git: &doors::child::AdmittedGit,
     patch: &[u8],
 ) -> Result<(Result<PatchFacts, Unverifiable>, Option<String>), Failure> {
     match doors::child::git_facts(git, patch) {

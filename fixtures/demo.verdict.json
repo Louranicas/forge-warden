@@ -1,5 +1,5 @@
 {
-  "schema": "forge-warden.verdict.v1",
+  "schema": "forge-warden.verdict.v2",
   "tool": {
     "name": "forge-warden",
     "version": "0.1.0"
@@ -17,7 +17,10 @@
     },
     "git": {
       "path": "/usr/bin/git",
-      "version": "<git --version>"
+      "version": "<git --version>",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "admission": "unpinned",
+      "allowlist_sha256": null
     }
   },
   "verdict": "fail",
@@ -175,7 +178,7 @@
   "notes": [
     {
       "code": "rank_unverified",
-      "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve"
+      "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved"
     }
   ]
 }

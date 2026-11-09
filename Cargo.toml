@@ -19,6 +19,7 @@ categories = ["development-tools", "command-line-utilities"]
 # Rule of thumb: anything a reviewer would have to *remember* to check is a lint here instead.
 # ---------------------------------------------------------------------------------------------
 [workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fw_fixture_cli)'] }
 warnings = "deny"
 unsafe_code = "forbid"
 missing_docs = "deny"

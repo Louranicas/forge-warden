@@ -87,6 +87,14 @@ fn read_within(
     Ok(bytes)
 }
 
+/// A harness=false target runs as a no-op during ordinary cargo test discovery. Only fixture
+/// commands explicitly supply this test-build-only marker; release builds do not read it.
+#[cfg(test)]
+#[expect(clippy::disallowed_methods, reason = "test door: fixture CLI dispatch")]
+pub(crate) fn fixture_cli_requested() -> bool {
+    std::env::var_os("FORGE_WARDEN_TEST_POLICY_ROOT").is_some()
+}
+
 /// Whether [`open_regular`] follows a symbolic link in the final path component.
 #[derive(Clone, Copy)]
 enum Symlinks {
@@ -242,7 +250,7 @@ pub(crate) mod child {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// `O_NOFOLLOW` on Linux (`x86_64`, `aarch64`): open refuses a symlink in the final path component.
-    #[cfg(all(target_os = "linux", test))]
+    #[cfg(all(target_os = "linux", test, not(fw_fixture_cli)))]
     pub(super) const O_NOFOLLOW: i32 = 0o400_000;
 
     /// The largest executable forge-warden will pin (hash) before running it.
@@ -258,6 +266,301 @@ pub(crate) mod child {
         file: std::fs::File,
         /// SHA-256 of the bytes read through the descriptor.
         pub(crate) sha256: String,
+    }
+
+    const GIT_ALLOWLIST: &str = "/etc/forge-warden/git-allowlist.toml";
+    const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;
+
+    /// One open executable and one admission snapshot. No path-based Git execution is exposed.
+    /// An open descriptor pins the inode, not immutable bytes: the owner must not modify it.
+    #[derive(Debug)]
+    pub(crate) struct AdmittedGit {
+        executable: PinnedExecutable,
+        path: std::path::PathBuf,
+        allowlist_sha256: Option<String>,
+    }
+
+    impl AdmittedGit {
+        pub(crate) fn sha256(&self) -> &str {
+            &self.executable.sha256
+        }
+
+        pub(crate) fn allowlist_sha256(&self) -> Option<&str> {
+            self.allowlist_sha256.as_deref()
+        }
+    }
+
+    /// Ownership boundary for a protected filesystem tree. Production always uses root at `/`.
+    struct GitTrust<'a> {
+        root: &'a Path,
+        owner: u32,
+    }
+
+    fn git_refusal(why: impl std::fmt::Display) -> DoorError {
+        DoorError::environment(format!("Git admission: {why}"))
+    }
+
+    /// A closed policy document. TOML rejects duplicate keys; the digest set rejects duplicates.
+    pub(super) fn parse_git_allowlist(
+        bytes: &[u8],
+    ) -> Result<std::collections::BTreeSet<String>, DoorError> {
+        let text = std::str::from_utf8(bytes).map_err(git_refusal)?;
+        let value: toml::Value = toml::from_str(text).map_err(git_refusal)?;
+        let table = value
+            .as_table()
+            .ok_or_else(|| git_refusal("policy must be a table"))?;
+        if table.len() != 3
+            || table.get("schema").and_then(toml::Value::as_str)
+                != Some("forge-warden.git-allowlist.v1")
+            || table
+                .get("revision")
+                .and_then(toml::Value::as_integer)
+                .is_none_or(|r| r <= 0)
+        {
+            return Err(git_refusal(
+                "expected schema, positive revision, and sha256 only",
+            ));
+        }
+        let list = table
+            .get("sha256")
+            .and_then(toml::Value::as_array)
+            .filter(|list| !list.is_empty())
+            .ok_or_else(|| git_refusal("sha256 must be a nonempty list"))?;
+        let mut digests = std::collections::BTreeSet::new();
+        for entry in list {
+            let digest = entry
+                .as_str()
+                .ok_or_else(|| git_refusal("digest must be a string"))?;
+            if digest.len() != 64
+                || !digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || !digests.insert(digest.to_owned())
+            {
+                return Err(git_refusal("digests must be unique lowercase SHA-256"));
+            }
+        }
+        Ok(digests)
+    }
+
+    fn git_metadata(meta: &std::fs::Metadata, trust: &GitTrust<'_>) -> Result<(), DoorError> {
+        use std::os::unix::fs::MetadataExt as _;
+        if meta.uid() != trust.owner || meta.mode() & 0o022 != 0 {
+            return Err(git_refusal("wrong owner or group/other writable mode"));
+        }
+        Ok(())
+    }
+
+    /// Inspect each lexical parent, including the trust root. Missing protected descendants are
+    /// reported separately from unsafe ones; symlinked or writable ancestors never mean absent.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: git_parents (protected ancestors)"
+    )]
+    fn git_parents(path: &Path, trust: &GitTrust<'_>) -> Result<bool, DoorError> {
+        use std::path::Component;
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+        {
+            return Err(git_refusal(
+                "path must be absolute without relative components",
+            ));
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| git_refusal("path has no parent"))?;
+        let relative = parent.strip_prefix(trust.root).map_err(git_refusal)?;
+        let mut current = trust.root.to_path_buf();
+        let mut directories = vec![current.clone()];
+        for component in relative.components() {
+            current.push(component);
+            directories.push(current.clone());
+        }
+        for directory in directories {
+            let meta = match std::fs::symlink_metadata(&directory) {
+                Ok(meta) => meta,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(git_refusal(e)),
+            };
+            if !meta.is_dir() {
+                return Err(git_refusal("parent is not a real directory"));
+            }
+            git_metadata(&meta, trust)?;
+        }
+        Ok(true)
+    }
+
+    fn git_file(
+        path: &Path,
+        trust: &GitTrust<'_>,
+        budget: usize,
+    ) -> Result<(std::fs::File, Vec<u8>), DoorError> {
+        if !git_parents(path, trust)? {
+            return Err(git_refusal("file parent does not exist"));
+        }
+        let (mut file, meta) = open_regular(path, Symlinks::Refuse, "Git admission")
+            .map_err(|e| git_refusal(e.message))?;
+        git_metadata(&meta, trust)?;
+        if meta.len() > u64::try_from(budget).map_err(git_refusal)? {
+            return Err(git_refusal("file exceeds byte budget"));
+        }
+        let bytes =
+            read_within(&mut file, "Git admission", budget).map_err(|e| git_refusal(e.message))?;
+        Ok((file, bytes))
+    }
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: git_policy (distinguish absent policy)"
+    )]
+    fn git_policy(
+        path: &Path,
+        trust: &GitTrust<'_>,
+    ) -> Result<Option<(std::collections::BTreeSet<String>, String)>, DoorError> {
+        if !git_parents(path, trust)? {
+            return Ok(None);
+        }
+        match std::fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(git_refusal(e)),
+            Ok(_) => {}
+        }
+        let (_file, bytes) = git_file(path, trust, MAX_GIT_ALLOWLIST_BYTES)?;
+        Ok(Some((parse_git_allowlist(&bytes)?, sha256_hex(&bytes))))
+    }
+
+    fn admit_git_with(
+        path: &Path,
+        policy: &Path,
+        trust: &GitTrust<'_>,
+        executable_trust: &GitTrust<'_>,
+        advisory: bool,
+    ) -> Result<AdmittedGit, DoorError> {
+        use std::os::unix::fs::MetadataExt as _;
+        let snapshot = git_policy(policy, trust)?;
+        if snapshot.is_none() && !advisory {
+            return Err(git_refusal("no Git allowlist enrolled"));
+        }
+        let (file, bytes) = git_file(path, executable_trust, MAX_EXECUTABLE_BYTES)?;
+        if !bytes.starts_with(b"\x7fELF")
+            || file.metadata().map_err(git_refusal)?.mode() & 0o111 == 0
+        {
+            return Err(git_refusal(
+                "only executable ELF artifacts support descriptor execution",
+            ));
+        }
+        let sha256 = sha256_hex(&bytes);
+        let allowlist_sha256 = match snapshot {
+            Some((digests, hash)) if digests.contains(&sha256) => Some(hash),
+            Some(_) => return Err(git_refusal("executable digest is not enrolled")),
+            None => None,
+        };
+        Ok(AdmittedGit {
+            executable: PinnedExecutable { file, sha256 },
+            path: path.to_path_buf(),
+            allowlist_sha256,
+        })
+    }
+
+    /// The production admission boundary. Its policy path, owner, and trust root are fixed.
+    pub(crate) fn admit_git(path: &Path, advisory: bool) -> Result<AdmittedGit, DoorError> {
+        #[cfg(test)]
+        if let Some(result) = fixture_git_from_environment(path, advisory) {
+            return result;
+        }
+        let trust = GitTrust {
+            root: Path::new("/"),
+            owner: 0,
+        };
+        admit_git_with(path, Path::new(GIT_ALLOWLIST), &trust, &trust, advisory)
+    }
+
+    #[cfg(test)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test door: fixture Git policy context"
+    )]
+    fn fixture_git_from_environment(
+        path: &Path,
+        advisory: bool,
+    ) -> Option<Result<AdmittedGit, DoorError>> {
+        use std::os::unix::fs::MetadataExt as _;
+        let root = std::path::PathBuf::from(std::env::var_os("FORGE_WARDEN_TEST_POLICY_ROOT")?);
+        Some(
+            std::fs::metadata(&root)
+                .map_err(git_refusal)
+                .and_then(|meta| {
+                    fixture_git(
+                        path,
+                        &root.join("allowlist.toml"),
+                        &root,
+                        meta.uid(),
+                        advisory,
+                    )
+                }),
+        )
+    }
+
+    /// Only test compilations can supply a policy boundary. No production caller has this seam.
+    #[cfg(test)]
+    pub(super) fn fixture_git(
+        path: &Path,
+        policy: &Path,
+        root: &Path,
+        owner: u32,
+        advisory: bool,
+    ) -> Result<AdmittedGit, DoorError> {
+        let trust = GitTrust { root, owner };
+        let executable_trust = if path.starts_with(root) {
+            GitTrust { root, owner }
+        } else {
+            GitTrust {
+                root: Path::new("/"),
+                owner: 0,
+            }
+        };
+        admit_git_with(path, policy, &trust, &executable_trust, advisory)
+    }
+
+    #[test]
+    fn git_metadata_requires_the_exact_owner_and_unwritable_ancestors() {
+        use std::os::unix::fs::MetadataExt as _;
+        let (_file, meta) = open_regular(
+            Path::new("/usr/bin/git"),
+            Symlinks::Refuse,
+            "metadata fixture",
+        )
+        .unwrap();
+        let wrong = GitTrust {
+            root: Path::new("/"),
+            owner: meta.uid().checked_add(1).unwrap(),
+        };
+        assert!(git_metadata(&meta, &wrong).is_err());
+        let right = GitTrust {
+            root: Path::new("/"),
+            owner: meta.uid(),
+        };
+        assert!(git_metadata(&meta, &right).is_ok());
+    }
+
+    #[test]
+    fn git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading() {
+        let path = Path::new("/usr/bin/git");
+        let (_file, meta) = open_regular(path, Symlinks::Refuse, "budget fixture").unwrap();
+        let budget = usize::try_from(meta.len()).unwrap();
+        let trust = GitTrust {
+            root: Path::new("/"),
+            owner: 0,
+        };
+        assert!(git_file(path, &trust, budget).is_ok());
+        assert!(
+            git_file(path, &trust, budget.saturating_sub(1))
+                .unwrap_err()
+                .message
+                .contains("file exceeds byte budget")
+        );
     }
 
     /// How a child ended, or why it was refused.
@@ -308,6 +611,8 @@ pub(crate) mod child {
     /// The program a child runs.
     pub(crate) enum Program<'a> {
         /// A system tool named by an absolute path (e.g. `/usr/bin/git`).
+        #[cfg(test)]
+        #[cfg(not(fw_fixture_cli))]
         Absolute(&'a Path),
         /// An executable pinned by content.
         Pinned(&'a PinnedExecutable),
@@ -347,6 +652,18 @@ pub(crate) mod child {
         })
     }
 
+    fn program_path(program: &Program<'_>) -> std::path::PathBuf {
+        use std::os::fd::AsRawFd as _;
+        match program {
+            #[cfg(test)]
+            #[cfg(not(fw_fixture_cli))]
+            Program::Absolute(path) => path.to_path_buf(),
+            Program::Pinned(pinned) => {
+                std::path::PathBuf::from(format!("/proc/self/fd/{}", pinned.file.as_raw_fd()))
+            }
+        }
+    }
+
     /// Run one child within its bounds. The child gets its own process group; on every way out
     /// (exit, timeout, overflow, error) the whole group is killed and reaped, so a grandchild that
     /// holds the pipes cannot outlive the call. This bounds children that stay in the group: it is
@@ -364,22 +681,16 @@ pub(crate) mod child {
         spec: &ChildSpec<'_>,
         kill: &Path,
     ) -> Result<ChildOutput, ChildFailure> {
-        use std::os::fd::AsRawFd as _;
         use std::os::unix::process::CommandExt as _;
         use std::process::{Command, Stdio};
 
-        let program = match spec.program {
-            Program::Absolute(path) if path.is_absolute() => path.to_path_buf(),
-            Program::Absolute(path) => {
-                return Err(ChildFailure::Spawn(format!(
-                    "{} is not an absolute path",
-                    path.display()
-                )));
-            }
-            Program::Pinned(pinned) => {
-                std::path::PathBuf::from(format!("/proc/self/fd/{}", pinned.file.as_raw_fd()))
-            }
-        };
+        let program = program_path(&spec.program);
+        if !program.is_absolute() {
+            return Err(ChildFailure::Spawn(format!(
+                "{} is not an absolute path",
+                program.display()
+            )));
+        }
         let mut child = Command::new(&program)
             .args(spec.args)
             .env_clear()
@@ -657,7 +968,7 @@ pub(crate) mod child {
         reason = "door: git_facts (the system temp dir)"
     )]
     pub(crate) fn git_facts(
-        git: &Path,
+        git: &AdmittedGit,
         patch: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
         git_facts_in(git, patch, &std::env::temp_dir())
@@ -727,7 +1038,7 @@ pub(crate) mod child {
     /// [`git_facts`] with an explicit temporary base (tests use this; `git_facts` passes the
     /// system temp dir).
     pub(super) fn git_facts_in(
-        git: &Path,
+        git: &AdmittedGit,
         patch: &[u8],
         base: &Path,
     ) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
@@ -747,7 +1058,7 @@ pub(crate) mod child {
             args.extend_from_slice(mode);
             args.push("-");
             run_child(&ChildSpec {
-                program: Program::Absolute(git),
+                program: Program::Pinned(&git.executable),
                 args: &args,
                 stdin: patch,
                 env: &env,
@@ -789,15 +1100,15 @@ pub(crate) mod child {
         clippy::disallowed_methods,
         reason = "door: git_version (the system temp dir)"
     )]
-    pub(crate) fn git_version(git: &Path) -> Result<String, DoorError> {
+    pub(crate) fn git_version(git: &AdmittedGit) -> Result<String, DoorError> {
         let isolation = Isolation::create_in(&std::env::temp_dir())?;
         let env = isolation.env();
         let refuse = |why: String| DoorError {
-            message: format!("{} --version {why}", git.display()),
+            message: format!("{} --version {why}", git.path.display()),
             kind: super::DoorErrorKind::Io,
         };
         let out = run_child(&ChildSpec {
-            program: Program::Absolute(git),
+            program: Program::Pinned(&git.executable),
             args: &["--version"],
             stdin: b"",
             env: &env,
@@ -977,10 +1288,12 @@ pub(crate) mod child {
 }
 
 #[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
 #[path = "../tests/support/process_env.rs"]
 mod test_environment;
 
 #[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
 #[expect(
     clippy::disallowed_methods,
     clippy::disallowed_types,
@@ -993,6 +1306,187 @@ mod child_tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn git_allowlist_is_closed_nonempty_and_canonical() {
+        let digest = "a".repeat(64);
+        let valid = format!(
+            "schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n"
+        );
+        assert!(super::child::parse_git_allowlist(valid.as_bytes()).is_ok());
+        for bad in [
+            valid.replace("revision = 1", "revision = 0"),
+            valid.replace("revision = 1", "revision = -1"),
+            valid.replace("revision = 1", "revision = 1.0"),
+            valid.replace("git-allowlist.v1", "git-allowlist.v2"),
+            valid.replace(&digest, &"A".repeat(64)),
+            valid.replace(&digest, "abcd"),
+            valid.replace(&format!("[\"{digest}\"]"), "[]"),
+            valid.replace(
+                &format!("[\"{digest}\"]"),
+                &format!("[\"{digest}\", \"{digest}\"]"),
+            ),
+            format!("{valid}unexpected = true\n"),
+            format!("{valid}revision = 2\n"),
+            String::new(),
+        ] {
+            assert!(
+                super::child::parse_git_allowlist(bad.as_bytes()).is_err(),
+                "accepted {bad:?}"
+            );
+        }
+        assert!(super::child::parse_git_allowlist(&[255]).is_err());
+    }
+
+    fn test_git() -> super::child::AdmittedGit {
+        use std::os::unix::fs::MetadataExt as _;
+        let root = scratch("git-policy");
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let policy = root.join("allowlist.toml");
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
+        std::fs::write(&policy, format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n")).unwrap();
+        super::child::fixture_git(Path::new("/usr/bin/git"), &policy, &root, owner, false).unwrap()
+    }
+
+    #[test]
+    fn git_admission_binds_descriptor_and_exact_policy_bytes() {
+        use super::child::{fixture_git, git_version};
+        use std::os::unix::fs::MetadataExt as _;
+        let root = scratch("git-admission");
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let executable = root.join("git");
+        std::fs::copy("/usr/bin/git", &executable).unwrap();
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read(&executable).unwrap());
+        let policy = root.join("allowlist.toml");
+        let bytes = format!(
+            "schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n"
+        );
+        std::fs::write(&policy, &bytes).unwrap();
+        let git = fixture_git(&executable, &policy, &root, owner, false).unwrap();
+        assert_eq!(git.sha256(), digest);
+        assert_eq!(
+            git.allowlist_sha256(),
+            Some(forge_warden_core::seal::sha256_hex(bytes.as_bytes()).as_str())
+        );
+        let version = git_version(&git).unwrap();
+        std::fs::rename(&executable, root.join("old-git")).unwrap();
+        std::fs::copy("/usr/bin/false", &executable).unwrap();
+        std::fs::write(&policy, bytes.replace(&digest, &"0".repeat(64))).unwrap();
+        assert_eq!(git_version(&git).unwrap(), version);
+        assert!(fixture_git(&executable, &policy, &root, owner, false).is_err());
+        // Restoring the executable does not undo owner-policy revocation.
+        std::fs::copy("/usr/bin/git", &executable).unwrap();
+        assert!(fixture_git(&executable, &policy, &root, owner, false).is_err());
+    }
+
+    #[test]
+    fn git_admission_refuses_unsafe_inputs_and_authority_never_falls_back() {
+        use super::child::fixture_git;
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
+        let root = scratch("git-refusals");
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let policy = root.join("allowlist.toml");
+        let git = Path::new("/usr/bin/git");
+        assert!(
+            fixture_git(git, &policy, &root, owner, false)
+                .unwrap_err()
+                .message
+                .contains("no Git allowlist enrolled")
+        );
+        assert!(
+            fixture_git(git, &policy, &root, owner, true)
+                .unwrap()
+                .allowlist_sha256()
+                .is_none()
+        );
+        std::fs::write(&policy, b"not a policy").unwrap();
+        assert!(fixture_git(git, &policy, &root, owner, true).is_err());
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read(git).unwrap());
+        let bytes = format!(
+            "schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n"
+        );
+        std::fs::write(&policy, &bytes).unwrap();
+        assert!(fixture_git(git, &policy, &root, owner.checked_add(1).unwrap(), false).is_err());
+        std::fs::set_permissions(&policy, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(fixture_git(git, &policy, &root, owner, true).is_err());
+        std::fs::set_permissions(&policy, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let linked = root.join("linked.toml");
+        symlink(&policy, &linked).unwrap();
+        assert!(fixture_git(git, &linked, &root, owner, true).is_err());
+        std::fs::write(&policy, vec![b' '; 65 * 1024]).unwrap();
+        assert!(fixture_git(git, &policy, &root, owner, true).is_err());
+        std::fs::write(&policy, bytes.replace(&digest, &"0".repeat(64))).unwrap();
+        assert!(fixture_git(git, &policy, &root, owner, true).is_err());
+        let script = root.join("script");
+        std::fs::write(&script, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_file(&policy).unwrap();
+        assert!(fixture_git(&script, &policy, &root, owner, true).is_err());
+    }
+
+    #[test]
+    fn git_admission_refuses_fifo_parent_links_writable_executable_and_oversize() {
+        use super::child::{MAX_EXECUTABLE_BYTES, fixture_git};
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
+        let root = scratch("git-special-files");
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let absent = root.join("absent.toml");
+        let fifo = root.join("fifo");
+        assert!(
+            command("/usr/bin/mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let started = Instant::now();
+        assert!(fixture_git(Path::new("/usr/bin/git"), &fifo, &root, owner, true).is_err());
+        assert!(
+            fixture_git(&fifo, &absent, &root, owner, true)
+                .unwrap_err()
+                .message
+                .contains("not a regular file")
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let executable = root.join("git");
+        std::fs::copy("/usr/bin/git", &executable).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(fixture_git(&executable, &absent, &root, owner, true).is_err());
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(fixture_git(&executable, &absent, &root, owner, true).is_err());
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let linked = root.join("linked-git");
+        symlink(&executable, &linked).unwrap();
+        assert!(fixture_git(&linked, &absent, &root, owner, true).is_err());
+        let parent = root.join("linked-parent");
+        symlink(&root, &parent).unwrap();
+        assert!(
+            fixture_git(&parent.join("git"), &absent, &root, owner, true)
+                .unwrap_err()
+                .message
+                .contains("parent is not a real directory")
+        );
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&executable)
+            .unwrap();
+        file.set_len(
+            u64::try_from(MAX_EXECUTABLE_BYTES)
+                .unwrap()
+                .saturating_add(1),
+        )
+        .unwrap();
+        drop(file);
+        assert!(
+            fixture_git(&executable, &absent, &root, owner, true)
+                .unwrap_err()
+                .message
+                .contains("file exceeds byte budget")
+        );
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(fixture_git(Path::new("/usr/bin/git"), &absent, &root, owner, true).is_err());
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
 
     fn spec<'a>(program: Program<'a>, args: &'a [&'a str], stdin: &'a [u8]) -> ChildSpec<'a> {
         ChildSpec {
@@ -1223,7 +1717,7 @@ mod child_tests {
         for case in cases {
             let name = case["name"].as_str().unwrap();
             let patch = std::fs::read(root.join(format!("{name}.patch"))).unwrap();
-            let got = git_facts(Path::new("/usr/bin/git"), &patch);
+            let got = git_facts(&test_git(), &patch);
             if case["git_rc"] == serde_json::json!([0, 0]) {
                 let (numstat, summary) = got.unwrap_or_else(|e| panic!("{name}: {e:?}"));
                 assert_eq!(
@@ -1247,7 +1741,7 @@ mod child_tests {
 
     #[test]
     fn a_private_dir_is_empty_0700_and_removed_on_drop_and_a_missing_git_is_unavailable() {
-        use super::child::{GitFactsFailure, PrivateDir, git_facts};
+        use super::child::{PrivateDir, git_facts};
         use std::os::unix::fs::PermissionsExt as _;
         // An exclusive base: in the shared temp dir another test's private dir may legitimately
         // reuse this process-scoped name after the drop (Bastion, C1c v4.2 receipt).
@@ -1261,11 +1755,8 @@ mod child_tests {
         drop(dir);
         assert!(!path.exists(), "{}", path.display());
         let tiny_patch = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
-        assert!(git_facts(Path::new("/usr/bin/git"), tiny_patch).is_ok());
-        assert!(matches!(
-            git_facts(Path::new("/nonexistent/git"), tiny_patch),
-            Err(GitFactsFailure::Unavailable(_))
-        ));
+        assert!(git_facts(&test_git(), tiny_patch).is_ok());
+        assert!(super::child::admit_git(Path::new("/nonexistent/git"), true).is_err());
     }
 
     #[test]
@@ -1530,7 +2021,7 @@ mod child_tests {
             "the candidate config must break an unguarded git apply"
         );
         // Through the door, with the private base inside the candidate, the ceiling holds.
-        let (numstat, _summary) = git_facts_in(Path::new("/usr/bin/git"), patch, &inner).unwrap();
+        let (numstat, _summary) = git_facts_in(&test_git(), patch, &inner).unwrap();
         assert_eq!(numstat, b"1\t1\tx\0");
         let _cleaned = std::fs::remove_dir_all(&candidate);
     }
@@ -1705,6 +2196,7 @@ mod child_tests {
 }
 
 #[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
 mod tests {
     use super::*;
     use std::io::{Cursor, ErrorKind};

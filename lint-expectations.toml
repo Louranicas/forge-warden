@@ -283,9 +283,9 @@ source_reason = "test helpers read committed fixtures; a panic is a failed test"
 review_reason = "C1c core authority corpus tests read committed fixtures and unwrap setup results; production core remains effect-free."
 
 [[data_input]]
-file = "schemas/verdict.v1.schema.json"
-sha256 = "215e5b0cd95a0af1f2008164780af7d464f1fcc1bc159e79ffba0ef0ff6316e2"
-review_reason = "C1c embedded v1 JSON schema records provenance and seals; E3a adds only the existing duplicate_paths note to its enum. Reviewed JSON data, not executable Rust."
+file = "schemas/verdict.v2.schema.json"
+sha256 = "e8972b06ec31b9c483d39259d7a9a495e9b112d2ac3f664a0787908aabbd73f9"
+review_reason = "GIT-PIN v2 schema adds descriptor identity and approved/unpinned admission constraints. Historical v1 remains byte-exact and is no longer compiled."
 
 [[data_input]]
 file = "schemas/policy.v0.schema.json"
@@ -310,8 +310,8 @@ review_reason = "E3a test-only external SHA256 reference object, parsed as JSON 
 
 [[data_input]]
 file = "fixtures/demo.verdict.json"
-sha256 = "c3ea2847aba85cde1436c07abd14c43485b1fa73f698ace9f0068e6e1d73a2ba"
-review_reason = "E3a test-only existing verdict JSON anchor supplies seal fields for comparison; pinning these unchanged fixture bytes does not bless or approve the pending golden."
+sha256 = "c26dc675160c1af03a523c2eaee78bf4fc31b1767a0da1b205ed3aa996a14434"
+review_reason = "GIT-PIN v2 demo proposal preserves input seals and records unpinned advisory Git; measured executable identity is checked before normalization. Golden and producer/consumer changes remain subject to independent trusted-HOLD review."
 
 [[data_input]]
 file = "fixtures/demo.rank.json"
@@ -375,6 +375,30 @@ file = "crates/forge-warden-cli/tests/public_api.rs"
 lint = "clippy::wildcard_enum_match_arm"
 source_reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is refused as UNSUPPORTED, which fails the snapshot test"
 review_reason = "Reviewed on Q-TYPES-1 v7 cf7eef5: test-only non-exhaustive syn::Item fallback emits UNSUPPORTED; unvouched() refuses it before snapshot comparison. This admits the required fallback, not general semantic API equivalence or macro expansion completeness."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: git_parents (protected ancestors)"
+review_reason = "Metadata-only walk checks every parent against the fixed root owner and write-mode policy, refusing symlinks."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: git_policy (distinguish absent policy)"
+review_reason = "lstat distinguishes genuine absence from an unsafe policy; authority never accepts absence."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test door: fixture CLI dispatch"
+review_reason = "cfg(test)-only marker dispatch for the isolated fixture executable; omitted from release."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test door: fixture Git policy context"
+review_reason = "cfg(test)-only owner and path context for disposable policies; no production override."
 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors.rs"

@@ -14,9 +14,13 @@ GOLDENS = ("fixtures/demo.verdict.json", "fixtures/cli-stderr/io.txt",
 
 
 def normalize(stdout):
-    """Preserve every input seal; only the machine-specific Git version is normalized."""
+    """Preserve every input seal; only machine-specific Git version and executable digest are normalized."""
     value = json.loads(stdout)
-    value["seals"]["git"]["version"] = "<git --version>"
+    git = value["seals"]["git"]
+    if git["sha256"] != hashlib.sha256(Path(git["path"]).read_bytes()).hexdigest():
+        raise ValueError("Git executable identity differs from the actual producer tool")
+    git["sha256"] = "0" * 64
+    git["version"] = "<git --version>"
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
 
 

@@ -19,11 +19,20 @@ listed, because consumers parse them.
 - `--patch -` now fails explicitly as `patch_stdin_unsupported`; help documents that stdin
   is reserved for `--rank -`. Save patches to a file. Door hints distinguish I/O resources,
   host environment, input size and refused input; numeric registry exits are unchanged.
-- `today_source` is deferred to verdict v2 and ADR 0011 A1 sequencing; verdict v1 is unchanged.
+- `today_source` remains deferred; the CLI-contract change itself did not change verdict fields.
+
+### Git runtime identity (WP-GIT-PIN)
+
+- Verdict v2 records the executable SHA-256, admission state, and exact Git owner-policy
+  snapshot digest. Historical v1 is no longer produced or accepted for acknowledgements.
+- Authority requires a root-owned external Git allowlist; absent policy only permits
+  explicitly unpinned advisory evidence. Every Git call uses one admitted descriptor.
+- The acknowledgement controller checks current policy and refuses revoked or stale Git
+  admission. See [operator enrollment and limits](docs/GIT_RUNTIME.md).
 
 ### Changed (breaking)
 
-- **The verdict schema is now `forge-warden.verdict.v1`** (`schemas/verdict.v1.schema.json`;
+- **Earlier unreleased v1 transition (superseded above by v2)** (`schemas/verdict.v1.schema.json`;
   the v0 schema is withdrawn). The `seals` object changes shape:
   - `patch_verified` is removed;
   - `patch_facts_sha256` (SHA-256 of Git's own reading of the patch), `provenance`

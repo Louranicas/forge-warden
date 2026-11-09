@@ -606,7 +606,7 @@ fn serialization_is_deterministic_and_round_trips_as_json() {
     let b = evaluate(&p, &r, seals(), today()).to_json();
     assert_eq!(a, b);
     let value: serde_json::Value = serde_json::from_str(&a).unwrap();
-    assert_eq!(value["schema"], "forge-warden.verdict.v1");
+    assert_eq!(value["schema"], "forge-warden.verdict.v2");
     assert_eq!(value["rules"][1]["violations"][0]["path"], "src/lib.rs");
 }
 

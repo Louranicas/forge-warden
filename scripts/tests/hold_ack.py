@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline acknowledgement attacks using disposable fixture keys, never deployment keys."""
 import json
+import hashlib
 import os
 from unittest.mock import patch
 import shutil
@@ -44,9 +45,21 @@ class BoundAck(unittest.TestCase):
         self.keys.mkdir(parents=True)
         self.helper = self.root / "scripts/hold_ack.py"
         shutil.copyfile(ROOT / "scripts/hold_ack.py", self.helper)
+        # Only this disposable source copy changes trust roots; the production controller has
+        # no argument or environment override for these constants.
+        self.git_policy = self.root / "git-allowlist.toml"
+        self.git_policy.write_text('schema = "forge-warden.git-allowlist.v1"\nrevision = 1\nsha256 = ["' + "d" * 64 + '"]\n')
+        source = self.helper.read_text()
+        source = source.replace('Path("/etc/forge-warden/git-allowlist.toml")', repr(self.git_policy).replace('PosixPath', 'Path'))
+        source = source.replace('GIT_POLICY_ROOT = Path("/")', 'GIT_POLICY_ROOT = ' + repr(self.root).replace('PosixPath', 'Path'))
+        source = source.replace('GIT_POLICY_UID = 0', 'GIT_POLICY_UID = ' + str(os.getuid()))
+        self.helper.write_text(source)
         self.base, self.head = "a" * 40, "b" * 40
         self.verdict = json.loads((ROOT / "fixtures/demo.verdict.json").read_bytes())
         # The golden is advisory (supplied ranking); an acknowledgeable HOLD is authority mode.
+        self.verdict["schema"] = "forge-warden.verdict.v2"
+        self.verdict["seals"]["git"].update({"admission": "approved", "sha256": "d" * 64,
+            "allowlist_sha256": hashlib.sha256(self.git_policy.read_bytes()).hexdigest()})
         self.verdict["seals"]["provenance"] = "produced"
         self.verdict["seals"]["ranked_by"]["sha256"] = "c" * 64
         self.verdict["notes"] = []
@@ -91,6 +104,29 @@ class BoundAck(unittest.TestCase):
         self.assertEqual(out.returncode, 0 if success else 8, out.stderr)
         if not success:
             self.assertEqual(out.stdout, b"")
+
+    def test_git_policy_revocation_invalidates_receipt(self):
+        self.git_policy.write_text(self.git_policy.read_text().replace("d" * 64, "e" * 64))
+        self.verify()
+
+    def test_git_policy_bytes_change_invalidates_receipt(self):
+        self.git_policy.write_text(self.git_policy.read_text() + "# owner changed snapshot\n")
+        self.verify()
+
+    def test_unpinned_git_and_v1_are_refused(self):
+        self.verdict["seals"]["git"]["admission"] = "unpinned"
+        self.write_verdict()
+        self.assertEqual(self.run_helper("prepare", "--signer", "fixture").returncode, 8)
+        self.verdict["seals"]["git"]["admission"] = "approved"
+        self.verdict["schema"] = "forge-warden.verdict.v1"
+        self.write_verdict()
+        self.assertEqual(self.run_helper("prepare", "--signer", "fixture").returncode, 8)
+
+    def test_missing_or_writable_git_policy_refuses(self):
+        self.git_policy.chmod(0o666)
+        self.verify()
+        self.git_policy.unlink()
+        self.verify()
 
     def test_valid_receipt_and_new_push(self):
         self.verify(True)

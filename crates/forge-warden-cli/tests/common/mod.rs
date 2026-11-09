@@ -159,7 +159,17 @@ pub(crate) fn run(args: &[&str], stdin: &[u8]) -> Run {
 
 /// [`run`] with explicit extra environment variables after clearing the ambient environment.
 pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) -> Run {
-    let mut child = command(env!("CARGO_BIN_EXE_forge-warden"))
+    let fixture = args.contains(&"--ranker").then(|| scratch("git-policy"));
+    let mut cmd = if let Some(directory) = &fixture {
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
+        write(directory, "allowlist.toml", format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n").as_bytes());
+        let mut cmd = command(fixture_cli());
+        cmd.env("FORGE_WARDEN_TEST_POLICY_ROOT", directory.as_os_str());
+        cmd
+    } else {
+        command(env!("CARGO_BIN_EXE_forge-warden"))
+    };
+    let mut child = cmd
         .args(args)
         .envs(env.iter().copied())
         .current_dir(root())
@@ -176,6 +186,61 @@ pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) ->
         stdout: String::from_utf8(output.stdout).unwrap(),
         stderr: String::from_utf8(output.stderr).unwrap(),
     }
+}
+
+/// Compile a test-only executable in an isolated target directory. Cargo's artifact message
+/// identifies the exact result; no directory glob or timestamp can pick a stale binary.
+fn fixture_cli() -> &'static PathBuf {
+    static BINARY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BINARY.get_or_init(|| {
+        let target = PathBuf::from(env!("CARGO_BIN_EXE_forge-warden"))
+            .parent()
+            .unwrap()
+            .join("git-fixture-target");
+        let output = command(env!("CARGO"))
+            .current_dir(root())
+            .args([
+                "rustc",
+                "-p",
+                "forge-warden-cli",
+                "--bin",
+                "forge-warden",
+                "--locked",
+                "--offline",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .args([
+                "--message-format=json",
+                "--",
+                "--cfg",
+                "test",
+                "--cfg",
+                "fw_fixture_cli",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "fixture build: {}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .find_map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                if value["reason"] == "compiler-artifact"
+                    && value["target"]["name"] == "forge-warden"
+                {
+                    value["executable"].as_str().map(PathBuf::from)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    })
 }
 
 /// The fixture ranker (`tests/support/fixture_ranker.rs`), which `cargo test` builds as an example
@@ -343,8 +408,8 @@ pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
         "c519ee66ea998552723607a204926166963cfafa52231fb1848654d20ad59546",
     ),
     (
-        "schemas/verdict.v1.schema.json",
-        "215e5b0cd95a0af1f2008164780af7d464f1fcc1bc159e79ffba0ef0ff6316e2",
+        "schemas/verdict.v2.schema.json",
+        "e8972b06ec31b9c483d39259d7a9a495e9b112d2ac3f664a0787908aabbd73f9",
     ),
 ];
 /// The workspace's members, from `cargo metadata --no-deps`: their exact package IDs and their

@@ -299,7 +299,7 @@ crate::render #[must_use] pub fn terminal_safe(text: &str) -> String
 crate::render #[must_use] pub fn render_text(verdict: &Verdict) -> String
 crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> String
 crate::seal #[must_use] pub fn is_sha256_hex(text: &str) -> bool
-crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v1";
+crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
 crate::verdict Verdict.pub schema: &'static str,
 crate::verdict Verdict.pub tool: Tool,
@@ -337,6 +337,9 @@ crate::verdict RankedBy.pub sha256: Option<String>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct GitOracle
 crate::verdict GitOracle.pub path: String,
 crate::verdict GitOracle.pub version: String,
+crate::verdict GitOracle.pub sha256: String,
+crate::verdict GitOracle.pub admission: &'static str,
+crate::verdict GitOracle.pub allowlist_sha256: Option<String>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Claims
 crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub base: Option<String>,
 crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub head: Option<String>,
@@ -344,7 +347,7 @@ crate::verdict Claims.pub verified: Unverified,
 crate::verdict impl RankedBy
 crate::verdict RankedBy::#[must_use] pub const fn new(version: String, sha256: Option<String>) -> Self
 crate::verdict impl GitOracle
-crate::verdict GitOracle::#[must_use] pub const fn new(path: String, version: String) -> Self
+crate::verdict GitOracle::#[must_use] pub fn new( path: String, version: String, sha256: String, allowlist_sha256: Option<String>, ) -> Self
 crate::verdict impl Claims
 crate::verdict Claims::#[must_use] pub const fn new(base: Option<String>, head: Option<String>) -> Self
 crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified;
