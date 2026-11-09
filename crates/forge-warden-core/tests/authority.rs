@@ -296,20 +296,19 @@ fn advisory_git_admission_note_is_composed_by_core() {
     for (git, suffix) in [
         (None, ""),
         (
-            Some(GitOracle::new(
+            Some(GitOracle::approved(
                 "/usr/bin/git".to_owned(),
                 "git fixture".to_owned(),
                 seal(HASH),
-                Some(seal(HASH)),
+                seal(HASH),
             )),
             "",
         ),
         (
-            Some(GitOracle::new(
+            Some(GitOracle::unpinned(
                 "/usr/bin/git".to_owned(),
                 "git fixture".to_owned(),
                 seal(HASH),
-                None,
             )),
             "; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved",
         ),

@@ -282,12 +282,29 @@ pub(crate) mod child {
     }
 
     impl AdmittedGit {
-        pub(crate) const fn sha256(&self) -> &Sha256Hex {
+        #[cfg(all(test, not(fw_fixture_cli)))]
+        pub(crate) fn sha256(&self) -> &Sha256Hex {
             &self.executable.sha256
         }
 
-        pub(crate) const fn allowlist_sha256(&self) -> Option<&Sha256Hex> {
+        #[cfg(all(test, not(fw_fixture_cli)))]
+        pub(crate) fn allowlist_sha256(&self) -> Option<&Sha256Hex> {
             self.allowlist_sha256.as_ref()
+        }
+
+        /// The verdict's record of this Git: built only here, from this admission and the version
+        /// its own descriptor printed (Q-TYPES-2, B2).
+        pub(crate) fn oracle(
+            &self,
+            path: String,
+        ) -> Result<forge_warden_core::verdict::GitOracle, DoorError> {
+            use forge_warden_core::verdict::GitOracle;
+            let version = git_version(self)?;
+            let sha256 = self.executable.sha256.clone();
+            Ok(match &self.allowlist_sha256 {
+                Some(policy) => GitOracle::approved(path, version, sha256, policy.clone()),
+                None => GitOracle::unpinned(path, version, sha256),
+            })
         }
     }
 

@@ -143,21 +143,36 @@ pub struct RankedBy {
     pub sha256: Option<Sha256Hex>,
 }
 
-/// The Git whose facts the verdict used. Recorded for audit, not attested (ADR 0005 §2.4). Build
-/// one with [`GitOracle::new`].
+/// The Git whose facts the verdict used. Recorded for audit, not attested (ADR 0005 §2.4).
+///
+/// Q-TYPES-2 (B2 of the GIT-PIN boundary review): every field is private. The only constructors
+/// are [`GitOracle::approved`] and [`GitOracle::unpinned`], so `admission` and `allowlist_sha256`
+/// cannot disagree, and a recorded identity cannot be relabelled after it is built. The CLI builds
+/// one only at its Git admission door, from the admitted descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct GitOracle {
     /// The absolute path that was run.
-    pub path: String,
+    path: String,
     /// What `git --version` printed, trimmed.
-    pub version: String,
+    version: String,
     /// SHA-256 of the executable read through the descriptor used for every Git invocation.
-    pub sha256: Sha256Hex,
+    sha256: Sha256Hex,
     /// `approved` when the executable digest occurs in the owner policy; `unpinned` otherwise.
-    pub admission: &'static str,
+    admission: Admission,
     /// SHA-256 of the exact admitted owner policy bytes; absent only for unpinned advisory Git.
-    pub allowlist_sha256: Option<Sha256Hex>,
+    allowlist_sha256: Option<Sha256Hex>,
+}
+
+/// How the recorded Git was admitted. Serialized as `approved` or `unpinned`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum Admission {
+    /// The executable digest occurs in the owner's Git allowlist.
+    Approved,
+    /// No owner allowlist was enrolled (advisory output only).
+    Unpinned,
 }
 
 /// What the caller claimed about the change. Recorded, never checked, never used.
@@ -183,26 +198,64 @@ impl RankedBy {
 }
 
 impl GitOracle {
-    /// The Git at the absolute `path` that printed `version` for `git --version`.
+    /// Git at the absolute `path`, whose executable `sha256` occurs in the owner policy whose exact
+    /// bytes hash to `allowlist_sha256`, and which printed `version` for `git --version`.
     #[must_use]
-    pub fn new(
+    pub const fn approved(
         path: String,
         version: String,
         sha256: Sha256Hex,
-        allowlist_sha256: Option<Sha256Hex>,
+        allowlist_sha256: Sha256Hex,
     ) -> Self {
-        let admission = if allowlist_sha256.is_some() {
-            "approved"
-        } else {
-            "unpinned"
-        };
         Self {
             path,
             version,
             sha256,
-            admission,
-            allowlist_sha256,
+            admission: Admission::Approved,
+            allowlist_sha256: Some(allowlist_sha256),
         }
+    }
+
+    /// Git at the absolute `path`, measured as `sha256` but admitted with no owner policy enrolled.
+    #[must_use]
+    pub const fn unpinned(path: String, version: String, sha256: Sha256Hex) -> Self {
+        Self {
+            path,
+            version,
+            sha256,
+            admission: Admission::Unpinned,
+            allowlist_sha256: None,
+        }
+    }
+
+    /// The absolute path that was run.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// What `git --version` printed, trimmed.
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// SHA-256 of the executable read through the admitted descriptor.
+    #[must_use]
+    pub const fn sha256(&self) -> &Sha256Hex {
+        &self.sha256
+    }
+
+    /// How this Git was admitted.
+    #[must_use]
+    pub const fn admission(&self) -> Admission {
+        self.admission
+    }
+
+    /// SHA-256 of the exact owner policy bytes; `None` exactly when [`Admission::Unpinned`].
+    #[must_use]
+    pub const fn allowlist_sha256(&self) -> Option<&Sha256Hex> {
+        self.allowlist_sha256.as_ref()
     }
 }
 

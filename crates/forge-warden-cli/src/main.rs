@@ -417,12 +417,7 @@ fn authority_git_facts(
 }
 
 fn git_oracle(git: &doors::child::AdmittedGit, path: String) -> Result<GitOracle, Failure> {
-    Ok(GitOracle::new(
-        path,
-        doors::child::git_version(git).map_err(Failure::from_door)?,
-        git.sha256().clone(),
-        git.allowlist_sha256().cloned(),
-    ))
+    git.oracle(path).map_err(Failure::from_door)
 }
 
 /// Git's facts about the patch, and their digest. A refusal is a fact about the patch (it holds

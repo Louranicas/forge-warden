@@ -355,11 +355,10 @@ crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustiv
 crate::verdict RankedBy.pub version: String,
 crate::verdict RankedBy.pub sha256: Option<Sha256Hex>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct GitOracle
-crate::verdict GitOracle.pub path: String,
-crate::verdict GitOracle.pub version: String,
-crate::verdict GitOracle.pub sha256: Sha256Hex,
-crate::verdict GitOracle.pub admission: &'static str,
-crate::verdict GitOracle.pub allowlist_sha256: Option<Sha256Hex>,
+crate::verdict GitOracle.<5 private field(s)>
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "lowercase")] #[non_exhaustive] pub enum Admission
+crate::verdict Admission::Approved,
+crate::verdict Admission::Unpinned,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Claims
 crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub base: Option<String>,
 crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub head: Option<String>,
@@ -367,7 +366,13 @@ crate::verdict Claims.pub verified: Unverified,
 crate::verdict impl RankedBy
 crate::verdict RankedBy::#[must_use] pub const fn new(version: String, sha256: Option<Sha256Hex>) -> Self
 crate::verdict impl GitOracle
-crate::verdict GitOracle::#[must_use] pub fn new( path: String, version: String, sha256: Sha256Hex, allowlist_sha256: Option<Sha256Hex>, ) -> Self
+crate::verdict GitOracle::#[must_use] pub const fn approved( path: String, version: String, sha256: Sha256Hex, allowlist_sha256: Sha256Hex, ) -> Self
+crate::verdict GitOracle::#[must_use] pub const fn unpinned(path: String, version: String, sha256: Sha256Hex) -> Self
+crate::verdict GitOracle::#[must_use] pub fn path(&self) -> &str
+crate::verdict GitOracle::#[must_use] pub fn version(&self) -> &str
+crate::verdict GitOracle::#[must_use] pub const fn sha256(&self) -> &Sha256Hex
+crate::verdict GitOracle::#[must_use] pub const fn admission(&self) -> Admission
+crate::verdict GitOracle::#[must_use] pub const fn allowlist_sha256(&self) -> Option<&Sha256Hex>
 crate::verdict impl Claims
 crate::verdict Claims::#[must_use] pub const fn new(base: Option<String>, head: Option<String>) -> Self
 crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified;

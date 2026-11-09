@@ -25,7 +25,7 @@ use forge_warden_core::verdict::{Seals, Verdict};
 ";
 
 /// `(what, source, the rustc error code it must fail with)`.
-const REFUSED: [(&str, &str, &str); 10] = [
+const REFUSED: [(&str, &str, &str); 12] = [
     (
         "attest with a bare string instead of an admitted producer",
         "pub fn f(doc: RankDoc) -> Ranking<Produced> { Ranking::attest(doc, String::new()) }",
@@ -61,6 +61,19 @@ const REFUSED: [(&str, &str, &str); 10] = [
         "T-GITPIN-01: a note's detail rewritten on an owned verdict",
         "pub fn f(mut v: Verdict) -> Verdict { for n in &mut v.notes { n.detail.push_str(\"x\"); } v }",
         "E0616",
+    ),
+    (
+        "GIT-PIN B2: a recorded Git relabelled approved after it was built",
+        "pub fn f(mut g: forge_warden_core::verdict::GitOracle) -> forge_warden_core::verdict::GitOracle { \
+         g.admission = forge_warden_core::verdict::Admission::Approved; g }",
+        "E0616",
+    ),
+    (
+        "GIT-PIN B2: a recorded Git built by hand with a forged admission",
+        "pub fn f(s: forge_warden_core::seal::Sha256Hex) -> forge_warden_core::verdict::GitOracle { \
+         forge_warden_core::verdict::GitOracle { path: String::new(), version: String::new(), sha256: s, \
+         admission: forge_warden_core::verdict::Admission::Approved, allowlist_sha256: None } }",
+        "E0639",
     ),
     (
         "a seal built by hand (Q-TYPES-2: only Sha256Hex::of and ::parse make one)",

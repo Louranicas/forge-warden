@@ -300,7 +300,7 @@ fn advisory_note(seals: &Seals) -> Note {
     if seals
         .git
         .as_ref()
-        .is_some_and(|git| git.admission == "unpinned")
+        .is_some_and(|git| git.admission() == crate::verdict::Admission::Unpinned)
     {
         detail.push_str("; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved");
     }
