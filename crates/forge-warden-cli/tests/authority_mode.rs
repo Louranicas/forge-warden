@@ -381,6 +381,9 @@ fn a_ranker_that_cannot_be_pinned_or_executed_is_refused() {
 
 #[test]
 fn a_fifo_given_as_any_input_file_is_refused_at_once_with_exit_4() {
+    // First use compiles the fixture CLI, including on a cold cargo-mutants target. Complete
+    // that prerequisite before starting any watchdog: only input refusal belongs in its budget.
+    let _fixture = common::fixture_cli();
     // Q-DOOR.1 (Q2-02 at the binary): `--policy`, `--patch` and `--rank` pointed at a FIFO with no
     // writer must be refused as an input to change (exit 4, change_input), not block the gate
     // forever. A watchdog releases a blocked open (a child opens the FIFO for writing and closes
