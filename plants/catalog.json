@@ -296,6 +296,22 @@
       "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
+      "id": "git-oracle-outside-door",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `forge_warden_core::verdict::GitOracle::approved`",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "fn main() -> doors::Status {",
+      "new": "fn main() -> doors::Status {\n    let _planted_oracle = GitOracle::approved(String::new(), String::new(), sha256_hex(b\"\"), sha256_hex(b\"\"));",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
+    },
+    {
       "id": "unknown-signal-pass",
       "guardrail": "G-08",
       "path": "crates/forge-warden-core/src/eval.rs",
