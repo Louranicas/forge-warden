@@ -69,8 +69,14 @@ pub enum Unverifiable {
     NonUtf8Path,
     /// A path contains a newline (the summary could not be read unambiguously).
     NewlineInPath,
-    /// A path is not canonical (`./x`, `/x`, `a//b`, `..`).
-    NonCanonicalPath(String),
+    /// A path is not canonical (`./x`, `/x`, `a//b`, `..`), and why (Q-TYPES-2, Q1-05: the reason is
+    /// kept as data, not dropped).
+    NonCanonicalPath {
+        /// The path as Git wrote it.
+        path: String,
+        /// What makes it non-canonical.
+        why: crate::path::PathError,
+    },
     /// Git lists one path twice (repeated operations; `--no-prefix` folding).
     RepeatedPath(String),
     /// A summary record names a path the numstat does not.
@@ -98,7 +104,7 @@ impl fmt::Display for Unverifiable {
             Self::Empty => f.write_str("git found no file in the patch"),
             Self::NonUtf8Path => f.write_str("a path is not UTF-8"),
             Self::NewlineInPath => f.write_str("a path contains a newline"),
-            Self::NonCanonicalPath(p) => write!(f, "path {p:?} is not canonical"),
+            Self::NonCanonicalPath { path, .. } => write!(f, "path {path:?} is not canonical"),
             Self::RepeatedPath(p) => write!(f, "git lists {p:?} more than once"),
             Self::SummaryPathUnknown(p) => {
                 write!(f, "git's summary names {p:?}, which its numstat does not")
@@ -231,8 +237,11 @@ impl PatchFacts {
             if text.contains('\n') {
                 return Err(Unverifiable::NewlineInPath);
             }
-            let repo_path = RepoPath::parse(text)
-                .map_err(|_| Unverifiable::NonCanonicalPath(text.to_owned()))?;
+            let repo_path =
+                RepoPath::parse(text).map_err(|why| Unverifiable::NonCanonicalPath {
+                    path: text.to_owned(),
+                    why,
+                })?;
             let binary = added == b"-" && deleted == b"-";
             let change = FileChange {
                 path: repo_path.clone(),
@@ -510,6 +519,25 @@ mod tests {
     }
 
     #[test]
+    fn a_non_canonical_git_path_keeps_its_reason() {
+        // Q-TYPES-2 (Q1-05): the PathError is data, not dropped; the message is unchanged.
+        for (path, why) in [
+            ("/a", crate::path::PathError::Absolute),
+            ("./a", crate::path::PathError::NonCanonical),
+        ] {
+            let error = facts(&format!("1\t0\t{path}\0"), "").unwrap_err();
+            assert_eq!(
+                error,
+                Unverifiable::NonCanonicalPath {
+                    path: path.to_owned(),
+                    why
+                }
+            );
+            assert_eq!(error.to_string(), format!("path {path:?} is not canonical"));
+        }
+    }
+
+    #[test]
     fn derived_signals_follow_git() {
         let symlink = one("1\t0\tlink\0", " create mode 120000 link\n");
         assert_eq!(
@@ -630,7 +658,10 @@ mod tests {
             (Unverifiable::NonUtf8Path, "a path is not UTF-8"),
             (Unverifiable::NewlineInPath, "a path contains a newline"),
             (
-                Unverifiable::NonCanonicalPath("./a".to_owned()),
+                Unverifiable::NonCanonicalPath {
+                    path: "./a".to_owned(),
+                    why: crate::path::PathError::NonCanonical,
+                },
                 "path \"./a\" is not canonical",
             ),
             (
