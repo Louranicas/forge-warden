@@ -49,7 +49,10 @@ fn matching_patch_and_known_ranking_hold_in_advisory_mode() {
     assert_eq!(v["notes"][0]["code"], "rank_unverified");
     assert_eq!(v["notes"].as_array().unwrap().len(), 1);
     assert_eq!(v["seals"]["provenance"], "supplied");
-    assert_eq!(v["seals"]["patch_sha256"], sha256_hex(&read_bytes(PATCH)));
+    assert_eq!(
+        v["seals"]["patch_sha256"],
+        sha256_hex(&read_bytes(PATCH)).as_str()
+    );
 }
 
 #[test]

@@ -20,6 +20,11 @@ use forge_warden_core::verdict::{Provenance, RankedBy, Seals};
 use forge_warden_core::{Date, Outcome, Policy};
 use std::path::PathBuf;
 
+/// A test seal from a known-good constant.
+fn seal(text: &str) -> forge_warden_core::seal::Sha256Hex {
+    forge_warden_core::seal::Sha256Hex::parse(text).unwrap()
+}
+
 const HASH: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
 
 fn read(name: &str) -> Vec<u8> {
@@ -48,19 +53,14 @@ fn policy(body: &str) -> Policy {
 }
 
 fn seals() -> Seals {
-    Seals::new(
-        HASH.to_owned(),
-        HASH.to_owned(),
-        HASH.to_owned(),
-        "0.7.0".to_owned(),
-    )
+    Seals::new(seal(HASH), seal(HASH), seal(HASH), "0.7.0".to_owned())
 }
 
 /// The seals an authority verdict carries for a ranking attested with `HASH`.
 fn produced_seals() -> Seals {
     let mut seals = seals();
     seals.provenance = Provenance::Produced;
-    seals.ranked_by.sha256 = Some(HASH.to_owned());
+    seals.ranked_by.sha256 = Some(seal(HASH));
     seals
 }
 
@@ -68,7 +68,7 @@ fn produced_seals() -> Seals {
 /// way to obtain the token (Q-TYPES-1).
 fn produced(doc: RankDoc) -> Ranking<Produced> {
     let admitting = policy(&format!("[producer]\nsha256 = [\"{HASH}\"]\n{PERMISSIVE}"));
-    Ranking::attest(doc, admitting.admit_producer(HASH).unwrap())
+    Ranking::attest(doc, admitting.admit_producer(&seal(HASH)).unwrap())
 }
 
 fn today() -> Date {
@@ -108,13 +108,13 @@ fn a_supplied_ranking_never_passes_anywhere_in_the_corpus() {
         let Some(doc) = rank(name) else { continue };
         let supplied = Ranking::supplied(doc);
         let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), seals(), today());
-        assert_ne!(advisory.verdict().verdict, Outcome::Pass, "{name}");
+        assert_ne!(advisory.verdict().outcome(), Outcome::Pass, "{name}");
         assert!(matches!(
             advisory.outcome(),
             AdvisoryOutcome::Hold | AdvisoryOutcome::Fail
         ));
         assert!(
-            codes(&advisory.verdict().notes).contains(&"rank_unverified"),
+            codes(advisory.verdict().notes()).contains(&"rank_unverified"),
             "{name}"
         );
         judged.push((name.to_owned(), read(&format!("{name}.rank.json"))));
@@ -129,7 +129,7 @@ fn a_forged_ranking_with_the_real_patch_holds_instead_of_passing() {
     let doc = rank(name).unwrap();
     let p = policy(PERMISSIVE);
     assert_eq!(
-        evaluate(&p, &doc, seals(), today()).verdict,
+        evaluate(&p, &doc, seals(), today()).outcome(),
         Outcome::Pass,
         "the parent passed it"
     );
@@ -137,9 +137,9 @@ fn a_forged_ranking_with_the_real_patch_holds_instead_of_passing() {
     let checked = check(&ranking, facts(name));
     assert!(!checked.is_covered());
     let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
-    assert_eq!(verdict.verdict, Outcome::Hold);
-    assert_eq!(verdict.exit.code, 8);
-    assert!(codes(&verdict.notes).contains(&"rank_incomplete"));
+    assert_eq!(verdict.outcome(), Outcome::Hold);
+    assert_eq!(verdict.exit().code, 8);
+    assert!(codes(verdict.notes()).contains(&"rank_incomplete"));
 }
 
 #[test]
@@ -149,16 +149,16 @@ fn git_adds_the_deletion_the_producer_omitted() {
     let doc = rank(name).unwrap();
     let p = policy(NO_DELETIONS);
     assert_eq!(
-        evaluate(&p, &doc, seals(), today()).verdict,
+        evaluate(&p, &doc, seals(), today()).outcome(),
         Outcome::Pass,
         "the parent missed it"
     );
     let ranking = produced(doc);
     let checked = check(&ranking, facts(name));
     let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
-    assert_eq!(verdict.verdict, Outcome::Fail);
-    assert_eq!(verdict.rules[0].violations.len(), 1);
-    assert!(codes(&verdict.notes).contains(&"status_mismatch"));
+    assert_eq!(verdict.outcome(), Outcome::Fail);
+    assert_eq!(verdict.rules()[0].violations.len(), 1);
+    assert!(codes(verdict.notes()).contains(&"status_mismatch"));
 }
 
 #[test]
@@ -192,9 +192,9 @@ fn an_unverifiable_patch_holds_with_the_reason() {
         seals(),
         today(),
     );
-    assert_eq!(verdict.verdict, Outcome::Hold);
+    assert_eq!(verdict.outcome(), Outcome::Hold);
     let note = verdict
-        .notes
+        .notes()
         .iter()
         .find(|n| n.code == "patch_unverifiable")
         .unwrap();
@@ -210,7 +210,12 @@ fn only_a_produced_ranking_names_its_producer() {
     let doc = rank("new-mode").unwrap();
     assert_eq!(Ranking::supplied(doc.clone()).producer_sha256(), None);
     let ranking = produced(doc.clone());
-    assert_eq!(ranking.producer_sha256(), Some(HASH));
+    assert_eq!(
+        ranking
+            .producer_sha256()
+            .map(forge_warden_core::seal::Sha256Hex::as_str),
+        Some(HASH)
+    );
     assert_eq!(ranking.doc(), &doc);
 }
 
@@ -237,14 +242,15 @@ fn a_differing_supplied_copy_holds_and_an_identical_one_changes_nothing() {
     let checked = check(&ranking, facts(name));
     let judge = |copy| evaluate_authority(&p, &checked, copy, seals(), today());
     let absent = judge(SuppliedCopy::Absent);
-    assert_eq!(absent.verdict, Outcome::Pass);
+    assert_eq!(absent.outcome(), Outcome::Pass);
     assert_eq!(judge(SuppliedCopy::Identical), absent);
     let different = judge(SuppliedCopy::Different);
-    assert_eq!(different.verdict, Outcome::Hold);
-    assert_eq!(different.exit.code, 8);
-    assert_eq!(codes(&different.notes), ["rank_mismatch"]);
+    assert_eq!(different.outcome(), Outcome::Hold);
+    assert_eq!(different.exit().code, 8);
+    assert_eq!(codes(different.notes()), ["rank_mismatch"]);
     assert_eq!(
-        different.rules, absent.rules,
+        different.rules(),
+        absent.rules(),
         "the produced ranking is still the one judged"
     );
 }
@@ -258,7 +264,7 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
     let supplied = Ranking::supplied(doc.clone());
     let mut lying = seals();
     lying.provenance = Provenance::Produced;
-    lying.ranked_by = RankedBy::new("9.9.9".to_owned(), Some("f".repeat(64)));
+    lying.ranked_by = RankedBy::new("9.9.9".to_owned(), Some(seal(&"f".repeat(64))));
     let authority = evaluate_authority(
         &p,
         &check(&ranking, facts(name)),
@@ -266,17 +272,44 @@ fn provenance_and_the_ranker_are_sealed_from_the_ranking_not_the_caller() {
         lying.clone(),
         today(),
     );
-    assert_eq!(authority.seals.provenance, Provenance::Produced);
+    assert_eq!(authority.seals().provenance, Provenance::Produced);
     assert_eq!(
-        authority.seals.ranked_by,
-        RankedBy::new(doc.tool_version().to_owned(), Some(HASH.to_owned()))
+        authority.seals().ranked_by,
+        RankedBy::new(doc.tool_version().to_owned(), Some(seal(HASH)))
     );
     let advisory = evaluate_advisory(&p, &check(&supplied, facts(name)), lying, today());
-    assert_eq!(advisory.verdict().seals.provenance, Provenance::Supplied);
+    assert_eq!(advisory.verdict().seals().provenance, Provenance::Supplied);
     assert_eq!(
-        advisory.verdict().seals.ranked_by,
+        advisory.verdict().seals().ranked_by,
         RankedBy::new(doc.tool_version().to_owned(), None)
     );
+}
+
+#[test]
+fn a_recorded_git_and_the_verdict_report_exactly_what_was_recorded() {
+    use forge_warden_core::seal::sha256_hex;
+    use forge_warden_core::verdict::{Admission, GitOracle, VERDICT_SCHEMA};
+    let (binary, allowlist) = (sha256_hex(b"git binary"), sha256_hex(b"owner policy"));
+    let approved = GitOracle::approved(
+        "/usr/bin/git".to_owned(),
+        "git version 2.51.0".to_owned(),
+        binary.clone(),
+        allowlist.clone(),
+    );
+    assert_eq!(approved.path(), "/usr/bin/git");
+    assert_eq!(approved.version(), "git version 2.51.0");
+    assert_eq!(approved.sha256(), &binary);
+    assert_eq!(approved.admission(), Admission::Approved);
+    assert_eq!(approved.allowlist_sha256(), Some(&allowlist));
+    let unpinned = GitOracle::unpinned("/bin/git".to_owned(), "v".to_owned(), binary);
+    assert_eq!(unpinned.admission(), Admission::Unpinned);
+    assert_eq!(unpinned.allowlist_sha256(), None);
+
+    let supplied = Ranking::supplied(rank("m3-demo-real").unwrap());
+    let checked = check(&supplied, facts("m3-demo-real"));
+    let judged = evaluate_advisory(&policy(PERMISSIVE), &checked, seals(), today());
+    assert_eq!(judged.verdict().schema(), VERDICT_SCHEMA);
+    assert_eq!(VERDICT_SCHEMA, "forge-warden.verdict.v2");
 }
 
 #[test]
@@ -290,20 +323,19 @@ fn advisory_git_admission_note_is_composed_by_core() {
     for (git, suffix) in [
         (None, ""),
         (
-            Some(GitOracle::new(
+            Some(GitOracle::approved(
                 "/usr/bin/git".to_owned(),
                 "git fixture".to_owned(),
-                HASH.to_owned(),
-                Some(HASH.to_owned()),
+                seal(HASH),
+                seal(HASH),
             )),
             "",
         ),
         (
-            Some(GitOracle::new(
+            Some(GitOracle::unpinned(
                 "/usr/bin/git".to_owned(),
                 "git fixture".to_owned(),
-                HASH.to_owned(),
-                None,
+                seal(HASH),
             )),
             "; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved",
         ),
@@ -313,11 +345,11 @@ fn advisory_git_admission_note_is_composed_by_core() {
         let judged = evaluate_advisory(&p, &checked, evidence, today());
         let note = judged
             .verdict()
-            .notes
+            .notes()
             .iter()
             .find(|note| note.code.name() == "rank_unverified")
             .unwrap();
         assert_eq!(note.detail, format!("{original}{suffix}"));
-        assert_ne!(judged.verdict().verdict, Outcome::Pass);
+        assert_ne!(judged.verdict().outcome(), Outcome::Pass);
     }
 }

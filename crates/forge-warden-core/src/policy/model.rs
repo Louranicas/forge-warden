@@ -5,6 +5,8 @@ use super::paths::{PathSet, Scope};
 use crate::date::Date;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
+use crate::seal::Sha256Hex;
+use crate::vocab::Signal;
 
 /// A validated policy.
 #[derive(Debug, Clone)]
@@ -12,7 +14,7 @@ use crate::nonempty::NonEmpty;
 pub struct Policy {
     rules: NonEmpty<Rule>,
     waivers: Vec<Waiver>,
-    producers: Vec<String>,
+    producers: Vec<Sha256Hex>,
 }
 
 impl Policy {
@@ -20,7 +22,7 @@ impl Policy {
     pub(super) const fn new(
         rules: NonEmpty<Rule>,
         waivers: Vec<Waiver>,
-        producers: Vec<String>,
+        producers: Vec<Sha256Hex>,
     ) -> Self {
         Self {
             rules,
@@ -45,23 +47,23 @@ impl Policy {
     /// lowercase hex digits, in file order. Empty when the policy has no `[producer]` table: such a
     /// policy can only be used in advisory mode (ADR 0005 §2.4).
     #[must_use]
-    pub fn producers(&self) -> &[String] {
+    pub fn producers(&self) -> &[Sha256Hex] {
         &self.producers
     }
 
     /// Whether `sha256` is on the producer allowlist.
     #[must_use]
-    pub fn admits_producer(&self, sha256: &str) -> bool {
-        self.producers.iter().any(|p| p == sha256)
+    pub fn admits_producer(&self, sha256: &Sha256Hex) -> bool {
+        self.producers.contains(sha256)
     }
 
     /// The token that lets a ranking be attested as produced by the ranker whose bytes hash to
     /// `sha256`, if and only if this policy's `[producer] sha256` allowlist lists it. This is the
     /// only way to obtain an [`AdmittedProducer`] (Q-TYPES-1).
     #[must_use]
-    pub fn admit_producer(&self, sha256: &str) -> Option<AdmittedProducer> {
+    pub fn admit_producer(&self, sha256: &Sha256Hex) -> Option<AdmittedProducer> {
         self.admits_producer(sha256).then(|| AdmittedProducer {
-            sha256: sha256.to_owned(),
+            sha256: sha256.clone(),
         })
     }
 }
@@ -73,18 +75,18 @@ impl Policy {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct AdmittedProducer {
-    sha256: String,
+    sha256: Sha256Hex,
 }
 
 impl AdmittedProducer {
     /// The admitted ranker's SHA-256 (64 lowercase hex digits, as the allowlist holds it).
     #[must_use]
-    pub fn sha256(&self) -> &str {
+    pub const fn sha256(&self) -> &Sha256Hex {
         &self.sha256
     }
 
     /// The SHA-256, consuming the token (an attestation uses it up).
-    pub(crate) fn into_sha256(self) -> String {
+    pub(crate) fn into_sha256(self) -> Sha256Hex {
         self.sha256
     }
 }
@@ -140,8 +142,8 @@ impl Severity {
 pub enum Check {
     /// [`Kind::ForbidSignal`]: no file in scope may carry any of `signals`.
     ForbidSignal {
-        /// Signals that are not allowed.
-        signals: Vec<String>,
+        /// Signals that are not allowed (each a known vocabulary value: the policy refuses others).
+        signals: Vec<Signal>,
         /// Files the rule looks at.
         scope: Scope,
     },

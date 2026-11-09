@@ -29,7 +29,7 @@ use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::{PolicyError, parse_policy};
 use forge_warden_core::rank::{RankError, parse_rank};
 use forge_warden_core::render::render_text;
-use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::seal::{Sha256Hex, sha256_hex};
 use forge_warden_core::verdict::{Claims, GitOracle, Seals, Verdict};
 use forge_warden_core::{Date, EXIT_REGISTRY};
 use std::path::{Path, PathBuf};
@@ -297,7 +297,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         ));
     }
     let today = match &args.today {
-        Some(text) => Date::parse(text).ok_or_else(|| {
+        Some(text) => Date::parse(text).map_err(|_| {
             Failure::new(
                 Exit::Usage,
                 format!("--today {text:?} is not a YYYY-MM-DD date"),
@@ -348,7 +348,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         // clap admits advisory mode only with `--rank`.
         let bytes = supplied.ok_or_else(|| Failure::new(Exit::Usage, "--advisory needs --rank"))?;
         let doc = parse_rank(&bytes).map_err(|e| rank_failure(&e))?;
-        if doc.input_sha256() != patch_sha256 {
+        if *doc.input_sha256() != patch_sha256 {
             return Err(Failure::new(
                 Exit::InvalidInput,
                 format!(
@@ -382,7 +382,7 @@ fn report(verdict: &Verdict, json: bool) -> Result<Exit, Failure> {
         render_text(verdict)
     };
     doors::emit(&text).map_err(Failure::from_door)?;
-    Ok(verdict.verdict.exit())
+    Ok(verdict.outcome().exit())
 }
 
 /// A ranking file, or stdin for `-`.
@@ -412,17 +412,12 @@ fn git_path(git: &Path) -> Result<String, Failure> {
 fn authority_git_facts(
     git: &doors::child::PinnedGit,
     patch: &[u8],
-) -> Result<(Result<PatchFacts, Unverifiable>, Option<String>), Failure> {
+) -> Result<(Result<PatchFacts, Unverifiable>, Option<Sha256Hex>), Failure> {
     git_facts(git.admitted(), patch)
 }
 
 fn git_oracle(git: &doors::child::AdmittedGit, path: String) -> Result<GitOracle, Failure> {
-    Ok(GitOracle::new(
-        path,
-        doors::child::git_version(git).map_err(Failure::from_door)?,
-        git.sha256().to_owned(),
-        git.allowlist_sha256().map(str::to_owned),
-    ))
+    git.oracle(path).map_err(Failure::from_door)
 }
 
 /// Git's facts about the patch, and their digest. A refusal is a fact about the patch (it holds
@@ -430,7 +425,7 @@ fn git_oracle(git: &doors::child::AdmittedGit, path: String) -> Result<GitOracle
 fn git_facts(
     git: &doors::child::AdmittedGit,
     patch: &[u8],
-) -> Result<(Result<PatchFacts, Unverifiable>, Option<String>), Failure> {
+) -> Result<(Result<PatchFacts, Unverifiable>, Option<Sha256Hex>), Failure> {
     match doors::child::git_facts(git, patch) {
         Ok((numstat, summary)) => {
             let mut sealed = numstat.clone();
@@ -477,9 +472,9 @@ fn claims(base: Option<&str>, head: Option<&str>) -> Result<Option<Claims>, Fail
 fn seals<P>(
     policy_bytes: &[u8],
     rank_bytes: &[u8],
-    patch_sha256: String,
+    patch_sha256: Sha256Hex,
     ranking: &Ranking<P>,
-    facts_sha256: Option<String>,
+    facts_sha256: Option<Sha256Hex>,
     git: GitOracle,
     claims: Option<Claims>,
 ) -> Seals {

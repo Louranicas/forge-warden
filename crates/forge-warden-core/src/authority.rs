@@ -22,7 +22,8 @@ use crate::exit::Outcome;
 use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_signals};
 use crate::policy::{AdmittedProducer, Policy};
 use crate::rank::RankDoc;
-use crate::verdict::{ExitInfo, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
+use crate::seal::Sha256Hex;
+use crate::verdict::{Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
@@ -39,7 +40,7 @@ pub enum Supplied {}
 #[non_exhaustive]
 pub struct Ranking<P> {
     doc: RankDoc,
-    producer_sha256: Option<String>,
+    producer_sha256: Option<Sha256Hex>,
     provenance: PhantomData<P>,
 }
 
@@ -78,8 +79,8 @@ impl<P> Ranking<P> {
 
     /// The pinned ranker's SHA-256, for a produced ranking.
     #[must_use]
-    pub fn producer_sha256(&self) -> Option<&str> {
-        self.producer_sha256.as_deref()
+    pub const fn producer_sha256(&self) -> Option<&Sha256Hex> {
+        self.producer_sha256.as_ref()
     }
 }
 
@@ -199,7 +200,7 @@ impl AdvisoryVerdict {
     /// The outcome: hold or fail, never pass.
     #[must_use]
     pub const fn outcome(&self) -> AdvisoryOutcome {
-        match self.verdict.verdict {
+        match self.verdict.outcome() {
             Outcome::Fail => AdvisoryOutcome::Fail,
             // The `rank_unverified` note already holds every advisory verdict; were it ever
             // missing, the type still reads a pass as a hold (fails closed).
@@ -287,8 +288,8 @@ pub fn evaluate_advisory(
 ) -> AdvisoryVerdict {
     let unverified = advisory_note(&seals);
     let seals = provenance(seals, checked.ranking, Provenance::Supplied);
-    let mut verdict = judge(policy, checked, vec![unverified], seals, today);
-    hold_at_least(&mut verdict);
+    // `judge` re-derives the outcome through the one fold: the note makes it at least a hold.
+    let verdict = judge(policy, checked, vec![unverified], seals, today);
     AdvisoryVerdict { verdict }
 }
 
@@ -299,7 +300,7 @@ fn advisory_note(seals: &Seals) -> Note {
     if seals
         .git
         .as_ref()
-        .is_some_and(|git| git.admission == "unpinned")
+        .is_some_and(|git| git.admission() == crate::verdict::Admission::Unpinned)
     {
         detail.push_str("; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved");
     }
@@ -317,22 +318,6 @@ fn judge<P>(
     seals: Seals,
     today: Date,
 ) -> Verdict {
-    let mut verdict = evaluate(policy, &checked.effective(), seals, today);
     extra.extend(checked.notes());
-    if !extra.is_empty() {
-        verdict.notes.extend(extra);
-        hold_at_least(&mut verdict);
-    }
-    verdict
-}
-
-/// A verdict with notes is at least a hold.
-fn hold_at_least(verdict: &mut Verdict) {
-    verdict.verdict = verdict.verdict.max(Outcome::Hold);
-    let entry = verdict.verdict.exit_entry();
-    verdict.exit = ExitInfo {
-        code: entry.code,
-        name: entry.name,
-        action: entry.action,
-    };
+    evaluate(policy, &checked.effective(), seals, today).with_notes(extra)
 }

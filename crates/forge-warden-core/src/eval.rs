@@ -18,10 +18,9 @@ use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
 use crate::rank::{RankDoc, RankedFile};
 use crate::verdict::{
-    Citation, ExitInfo, Note, NoteCode, RuleOutcome, RuleResult, Seals, Summary, Tool,
-    VERDICT_SCHEMA, Verdict, Violation, WaiverNote,
+    Citation, Note, NoteCode, RuleOutcome, RuleResult, Seals, Verdict, Violation, WaiverNote,
 };
-use crate::vocab::{is_known_signal, is_known_status};
+use crate::vocab::{Signal, Status};
 use std::collections::BTreeSet;
 
 /// Evaluate `policy` over `rank`, judging waivers as of `today`. The raw rule engine: it knows
@@ -38,46 +37,16 @@ pub(crate) fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Dat
     let (expired, unused) = classify_waivers(policy.waivers(), today, &used_waivers);
     let notes = notes_for(rank);
 
-    // A policy always has a rule, so the strictest outcome starts from the first one: there is
-    // no empty case and no default.
-    let verdict = judged
-        .iter()
-        .map(|r| r.outcome.overall())
-        .chain(notes.iter().map(|_| Outcome::Hold))
-        .chain(expired.iter().map(|_| Outcome::Fail))
-        .fold(judged.first().outcome.overall(), Outcome::max);
-    let rules = judged.into_vec();
-    let entry = verdict.exit_entry();
-    let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
-    let summary = Summary {
-        files: rank.files().len(),
-        rules: rules.len(),
-        passed: count(RuleOutcome::Pass),
-        waived: count(RuleOutcome::Waived),
-        held: count(RuleOutcome::Hold),
-        failed: count(RuleOutcome::Fail),
-    };
-
-    Verdict {
-        schema: VERDICT_SCHEMA,
-        tool: Tool {
-            name: crate::TOOL_NAME,
-            version: crate::TOOL_VERSION,
-        },
-        evaluated_on: today.to_string(),
+    // A policy always has a rule; the outcome, exit and summary are derived in Verdict::assemble.
+    Verdict::assemble(
+        today,
         seals,
-        verdict,
-        exit: ExitInfo {
-            code: entry.code,
-            name: entry.name,
-            action: entry.action,
-        },
-        summary,
-        rules,
-        expired_waivers: expired,
-        unused_waivers: unused,
+        rank.files().len(),
+        judged,
+        expired,
+        unused,
         notes,
-    }
+    )
 }
 
 fn judge_rule(
@@ -195,7 +164,7 @@ fn over_budget(value: u64, limit: u32, message: impl FnOnce(u64) -> String) -> V
     }
 }
 
-fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) -> Vec<Violation> {
+fn forbidden_signals(signals: &[Signal], scope: &Scope, files: &[RankedFile]) -> Vec<Violation> {
     let mut out = Vec::new();
     for file in files.iter().filter(|f| scope.contains(f.path().as_str())) {
         for signal in signals.iter().filter(|s| file.signals().contains(s)) {
@@ -205,14 +174,14 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
                 .filter(|e| e.signal() == signal)
                 .map(|e| Citation {
                     address: e.address().to_owned(),
-                    side: e.side().to_owned(),
+                    side: e.side().name().to_owned(),
                     line: e.line(),
                 })
                 .collect();
             evidence.sort();
             let message = format!("carries forbidden signal `{signal}`");
             out.push(Violation {
-                signal: Some(signal.clone()),
+                signal: Some(signal.name().to_owned()),
                 evidence,
                 evidence_truncated: file.evidence_truncated(),
                 ..violation(Some(file.path().as_str()), message)
@@ -226,7 +195,7 @@ fn forbidden_signals(signals: &[String], scope: &Scope, files: &[RankedFile]) ->
 /// `binary_changed` and marks the deletion only with the `deleted_file` signal, so the status
 /// alone is not enough.
 fn is_deleted(file: &RankedFile) -> bool {
-    file.status() == "deleted" || file.signals().iter().any(|s| s == "deleted_file")
+    *file.status() == Status::Deleted || file.signals().contains(&Signal::DeletedFile)
 }
 
 /// Whether a file can stand as a companion: it must exist after the change, and its change must be
@@ -234,7 +203,7 @@ fn is_deleted(file: &RankedFile) -> bool {
 /// label, so it does not count.
 fn is_live_companion(file: &RankedFile) -> bool {
     !is_deleted(file)
-        && (file.status() != "binary_changed" || file.signals().iter().any(|s| s == "new_file"))
+        && (*file.status() != Status::BinaryChanged || file.signals().contains(&Signal::NewFile))
 }
 
 fn missing_companions(when: &Scope, require: &PathSet, files: &[RankedFile]) -> Vec<Violation> {
@@ -266,7 +235,7 @@ fn classify_waivers(
         index,
         rule: w.rule.clone(),
         owner: w.owner.clone(),
-        expires: w.expires.to_string(),
+        expires: w.expires,
     };
     let expired = waivers
         .iter()
@@ -309,7 +278,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
         });
     }
     for file in rank.files() {
-        for signal in file.signals().iter().filter(|s| !is_known_signal(s)) {
+        for signal in file.signals().iter().filter(|s| !s.is_known()) {
             notes.push(Note {
                 code: NoteCode::UnknownSignal,
                 path: Some(file.path().to_string()),
@@ -318,7 +287,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
                 ),
             });
         }
-        if file.status() == "renamed" || file.status() == "copied" {
+        if matches!(file.status(), Status::Renamed | Status::Copied) {
             notes.push(Note {
                 code: NoteCode::SourcePathUnknown,
                 path: Some(file.path().to_string()),
@@ -328,7 +297,7 @@ fn notes_for(rank: &RankDoc) -> Vec<Note> {
                     file.status()
                 ),
             });
-        } else if !is_known_status(file.status()) {
+        } else if !file.status().is_known() {
             notes.push(Note {
                 code: NoteCode::UnknownStatus,
                 path: Some(file.path().to_string()),

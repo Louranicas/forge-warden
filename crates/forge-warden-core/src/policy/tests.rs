@@ -2,6 +2,7 @@
 
 use super::validate::is_kebab_id;
 use super::*;
+use crate::seal::Sha256Hex;
 
 fn rule(body: &str) -> String {
     format!("schema = \"forge-warden.policy.v0\"\n[[rule]]\n{body}\n")
@@ -31,7 +32,7 @@ fn a_good_rule_loads() {
 fn unknown_keys_are_refused_not_ignored() {
     let text = rule(&format!("{GOOD}\nsignal = [\"unsafe_added\"]"));
     assert!(
-        matches!(parse_policy(text.as_bytes()), Err(PolicyError::Malformed(m)) if m.contains("signal"))
+        matches!(parse_policy(text.as_bytes()), Err(PolicyError::Malformed { message: m, .. }) if m.contains("signal"))
     );
 }
 
@@ -233,7 +234,7 @@ fn the_policy_budget_is_enforced_before_parsing() {
     );
     let at = vec![b' '; crate::MAX_INPUT_BYTES];
     assert!(
-        matches!(parse_policy(&at), Err(PolicyError::Malformed(_))),
+        matches!(parse_policy(&at), Err(PolicyError::Malformed { .. })),
         "at the budget it is parsed"
     );
 }
@@ -260,7 +261,7 @@ fn invalid_policies_print_one_issue_per_line() {
 fn non_utf8_is_malformed() {
     assert!(matches!(
         parse_policy(b"\xff"),
-        Err(PolicyError::Malformed(_))
+        Err(PolicyError::Malformed { .. })
     ));
 }
 
@@ -271,18 +272,20 @@ fn the_producer_allowlist_is_read_and_checked_entry_by_entry() {
     let policy =
         parse_policy(format!("{}[producer]\nsha256 = [\"{a}\", \"{b}\"]\n", rule(GOOD)).as_bytes())
             .unwrap();
-    assert_eq!(policy.producers(), [a.clone(), b.clone()]);
-    assert!(policy.admits_producer(&a) && policy.admits_producer(&b));
-    assert!(!policy.admits_producer(&"f".repeat(64)));
+    let (sa, sb) = (Sha256Hex::parse(&a).unwrap(), Sha256Hex::parse(&b).unwrap());
+    let unlisted = Sha256Hex::parse(&"f".repeat(64)).unwrap();
+    assert_eq!(policy.producers(), [sa.clone(), sb.clone()]);
+    assert!(policy.admits_producer(&sa) && policy.admits_producer(&sb));
+    assert!(!policy.admits_producer(&unlisted));
     // The token names exactly the ranker it admits (Q-TYPES-1 v4: the accessor was unchecked).
-    let admitted = policy.admit_producer(&b).unwrap();
-    assert_eq!(admitted.sha256(), b);
-    assert_eq!(admitted.into_sha256(), b);
-    assert!(policy.admit_producer(&"f".repeat(64)).is_none());
+    let admitted = policy.admit_producer(&sb).unwrap();
+    assert_eq!(admitted.sha256(), &sb);
+    assert_eq!(admitted.into_sha256(), sb);
+    assert!(policy.admit_producer(&unlisted).is_none());
 
     let none = parse_policy(rule(GOOD).as_bytes()).unwrap();
-    assert_eq!(none.producers(), Vec::<String>::new());
-    assert!(!none.admits_producer(&a));
+    assert_eq!(none.producers(), Vec::<Sha256Hex>::new());
+    assert!(!none.admits_producer(&sa));
 
     let issues = issues_of(&format!(
         "{}[producer]\nsha256 = [\"{}\", \"{a}\", \"{a}\", \"{}\"]\n",
@@ -311,6 +314,24 @@ fn the_producer_allowlist_is_read_and_checked_entry_by_entry() {
     );
     assert!(matches!(
         parse_policy(format!("{}[producer]\nsha256 = [\"{a}\"]\nbinary = \"x\"\n", rule(GOOD)).as_bytes()),
-        Err(PolicyError::Malformed(m)) if m.contains("binary")
+        Err(PolicyError::Malformed { message: m, .. }) if m.contains("binary")
+    ));
+}
+
+#[test]
+fn a_toml_syntax_error_keeps_its_line_and_column() {
+    // Q-TYPES-2 (Q1-05): the parser's span is kept as (line, column); the message is unchanged.
+    let text = "schema = \"forge-warden.policy.v0\"\n\n[[rule]\nid = \"x\"\n";
+    match parse_policy(text.as_bytes()) {
+        Err(PolicyError::Malformed { message, at }) => {
+            assert_ne!(message, "");
+            assert_eq!(at.map(|(line, _)| line), Some(3), "{message}");
+            assert!(at.is_some_and(|(_, column)| column >= 1));
+        }
+        other => panic!("expected a located Malformed, got {other:?}"),
+    }
+    assert!(matches!(
+        parse_policy(b"\xff"),
+        Err(PolicyError::Malformed { at: None, .. })
     ));
 }

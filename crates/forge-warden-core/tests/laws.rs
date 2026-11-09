@@ -17,6 +17,11 @@ use serde_json::json;
 
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+/// A test seal from a known-good constant.
+fn seal(text: &str) -> forge_warden_core::seal::Sha256Hex {
+    forge_warden_core::seal::Sha256Hex::parse(text).unwrap()
+}
+
 #[path = "../../../fixtures/adversarial/reference_model.rs"]
 mod model;
 use model::{Case, CheckSpec, File, ResultSpec, Rule, reference};
@@ -75,22 +80,17 @@ fn actual(case: &Case) -> (u8, Vec<ResultSpec>) {
         "tool":{"name":"deep-diff-forge","version":"0.7.0"},"ranked":ranked});
     let rank = parse_rank(&serde_json::to_vec(&rank).unwrap()).unwrap();
     let policy = parse_policy(&policy(case)).unwrap();
-    let seals = Seals::new(
-        HASH.to_owned(),
-        HASH.to_owned(),
-        HASH.to_owned(),
-        "0.7.0".to_owned(),
-    );
+    let seals = Seals::new(seal(HASH), seal(HASH), seal(HASH), "0.7.0".to_owned());
     let verdict = evaluate(&policy, &rank, seals, Date::parse("2026-11-06").unwrap());
-    assert_eq!(verdict.summary.rules, case.rules.len());
+    assert_eq!(verdict.summary().rules, case.rules.len());
     (
-        match verdict.verdict {
+        match verdict.outcome() {
             Outcome::Pass => 0,
             Outcome::Hold => 1,
             Outcome::Fail => 2,
         },
         verdict
-            .rules
+            .rules()
             .iter()
             .map(|r| match r.outcome {
                 RuleOutcome::Pass => ResultSpec::Clear,

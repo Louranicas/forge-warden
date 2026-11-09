@@ -25,7 +25,7 @@ use forge_warden_core::verdict::{Seals, Verdict};
 ";
 
 /// `(what, source, the rustc error code it must fail with)`.
-const REFUSED: [(&str, &str, &str); 6] = [
+const REFUSED: [(&str, &str, &str); 12] = [
     (
         "attest with a bare string instead of an admitted producer",
         "pub fn f(doc: RankDoc) -> Ranking<Produced> { Ranking::attest(doc, String::new()) }",
@@ -48,6 +48,39 @@ const REFUSED: [(&str, &str, &str); 6] = [
         "E0639",
     ),
     (
+        "a verdict's outcome rewritten after judging (Q-TYPES-2: fields are private, derived once)",
+        "pub fn f(mut v: Verdict) -> Verdict { v.verdict = forge_warden_core::Outcome::Pass; v }",
+        "E0616",
+    ),
+    (
+        "T-GITPIN-01: a judged verdict cloned, then its outcome rewritten",
+        "pub fn f(v: &Verdict) -> Verdict { let mut w = v.clone(); w.verdict = forge_warden_core::Outcome::Pass; w }",
+        "E0616",
+    ),
+    (
+        "T-GITPIN-01: a note's detail rewritten on an owned verdict",
+        "pub fn f(mut v: Verdict) -> Verdict { for n in &mut v.notes { n.detail.push_str(\"x\"); } v }",
+        "E0616",
+    ),
+    (
+        "GIT-PIN B2: a recorded Git relabelled approved after it was built",
+        "pub fn f(mut g: forge_warden_core::verdict::GitOracle) -> forge_warden_core::verdict::GitOracle { \
+         g.admission = forge_warden_core::verdict::Admission::Approved; g }",
+        "E0616",
+    ),
+    (
+        "GIT-PIN B2: a recorded Git built by hand with a forged admission",
+        "pub fn f(s: forge_warden_core::seal::Sha256Hex) -> forge_warden_core::verdict::GitOracle { \
+         forge_warden_core::verdict::GitOracle { path: String::new(), version: String::new(), sha256: s, \
+         admission: forge_warden_core::verdict::Admission::Approved, allowlist_sha256: None } }",
+        "E0639",
+    ),
+    (
+        "a seal built by hand (Q-TYPES-2: only Sha256Hex::of and ::parse make one)",
+        "pub fn f() -> forge_warden_core::seal::Sha256Hex { forge_warden_core::seal::Sha256Hex(String::new()) }",
+        "E0603",
+    ),
+    (
         "one ranking judged with another ranking's coverage proof (the old separate argument)",
         "pub fn f(p: &Policy, a: &Ranking<Produced>, b: &Ranking<Produced>, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Verdict { \
          let checked = check(a, x); evaluate_authority(p, b, &checked, SuppliedCopy::Absent, s, t) }",
@@ -65,7 +98,7 @@ const REFUSED: [(&str, &str, &str); 6] = [
 const ADMITTED: [(&str, &str); 2] = [
     (
         "admit, attest, check, judge",
-        "pub fn f(p: &Policy, doc: RankDoc, pin: &str, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Option<Verdict> { \
+        "pub fn f(p: &Policy, doc: RankDoc, pin: &forge_warden_core::seal::Sha256Hex, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Option<Verdict> { \
          let admitted = p.admit_producer(pin)?; let ranking = Ranking::attest(doc, admitted); \
          let checked = check(&ranking, x); Some(evaluate_authority(p, &checked, SuppliedCopy::Absent, s, t)) }",
     ),

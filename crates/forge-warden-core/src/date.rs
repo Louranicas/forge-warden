@@ -5,6 +5,22 @@
 
 use std::fmt;
 
+/// Why text or numbers are not a [`Date`] (Q-TYPES-2, Q1-12: a caller learns the reason instead of
+/// inventing one for a bare `None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DateError {
+    /// Not exactly `YYYY-MM-DD` (a time, an offset, a short or non-digit field).
+    #[error("is not YYYY-MM-DD")]
+    BadShape,
+    /// The year is outside 1970..=9999.
+    #[error("is outside 1970-01-01..=9999-12-31")]
+    OutOfRange,
+    /// The month or day does not exist (month 13, day 0, February 30, ...).
+    #[error("is not a calendar date")]
+    NotACalendarDate,
+}
+
 /// A calendar date between 1970-01-01 and 9999-12-31.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -16,20 +32,30 @@ pub struct Date {
 
 impl Date {
     /// The date, if it exists in the calendar and lies within the supported range.
-    #[must_use]
-    pub fn new(year: u16, month: u8, day: u8) -> Option<Self> {
-        if !(1970..=9999).contains(&year) || !(1..=12).contains(&month) || day == 0 {
-            return None;
+    ///
+    /// # Errors
+    ///
+    /// [`DateError::OutOfRange`] for a year outside 1970..=9999, [`DateError::NotACalendarDate`]
+    /// for a month or day that does not exist.
+    pub fn new(year: u16, month: u8, day: u8) -> Result<Self, DateError> {
+        if !(1970..=9999).contains(&year) {
+            return Err(DateError::OutOfRange);
         }
-        (day <= days_in_month(year, month)).then_some(Self { year, month, day })
+        if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+            return Err(DateError::NotACalendarDate);
+        }
+        Ok(Self { year, month, day })
     }
 
     /// Parse exactly `YYYY-MM-DD`. Anything else (a time, an offset, a short field) is refused.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
+    ///
+    /// # Errors
+    ///
+    /// [`DateError::BadShape`] for anything not `YYYY-MM-DD`, otherwise as [`Date::new`].
+    pub fn parse(text: &str) -> Result<Self, DateError> {
         let bytes = text.as_bytes();
         if bytes.len() != 10 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
-            return None;
+            return Err(DateError::BadShape);
         }
         let field = |range: std::ops::Range<usize>| -> Option<u16> {
             let part = text.get(range)?;
@@ -38,9 +64,10 @@ impl Date {
             }
             part.parse().ok()
         };
-        let year = field(0..4)?;
-        let month = u8::try_from(field(5..7)?).ok()?;
-        let day = u8::try_from(field(8..10)?).ok()?;
+        let shape = |value: Option<u16>| value.ok_or(DateError::BadShape);
+        let year = shape(field(0..4))?;
+        let month = u8::try_from(shape(field(5..7))?).map_err(|_| DateError::NotACalendarDate)?;
+        let day = u8::try_from(shape(field(8..10))?).map_err(|_| DateError::NotACalendarDate)?;
         Self::new(year, month, day)
     }
 
@@ -82,6 +109,7 @@ impl Date {
             u8::try_from(month).ok()?,
             u8::try_from(day).ok()?,
         )
+        .ok()
     }
 
     /// Days since 1970-01-01 (Hinnant's `days_from_civil`); the inverse of
@@ -121,6 +149,13 @@ impl Date {
     }
 }
 
+// Serialized as `YYYY-MM-DD` (its Display), so a typed date writes the same bytes the string did.
+impl serde::Serialize for Date {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 impl fmt::Display for Date {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:04}-{:02}-{:02}", self.year, self.month, self.day)
@@ -143,14 +178,32 @@ const fn days_in_month(year: u16, month: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refused_date_names_its_reason() {
+        // Q-TYPES-2 (Q1-12): the caller gets the reason, not a bare None.
+        for (text, why) in [
+            ("2026-11-5", DateError::BadShape),
+            ("2026-11-05T00:00", DateError::BadShape),
+            ("2026/11/05", DateError::BadShape),
+            ("2026-1x-05", DateError::BadShape),
+            ("1969-12-31", DateError::OutOfRange),
+            ("2026-13-01", DateError::NotACalendarDate),
+            ("2026-02-30", DateError::NotACalendarDate),
+            ("2026-11-00", DateError::NotACalendarDate),
+        ] {
+            assert_eq!(Date::parse(text), Err(why), "{text}");
+        }
+        assert_eq!(Date::new(10_000, 1, 1), Err(DateError::OutOfRange));
+    }
     use proptest::prelude::*;
 
     #[test]
     fn epoch_and_known_dates() {
-        assert_eq!(Date::from_unix_days(0), Date::new(1970, 1, 1));
+        assert_eq!(Date::from_unix_days(0), Date::new(1970, 1, 1).ok());
         // 2026-11-05 is day 20_762 (python: (date(2026,11,5) - date(1970,1,1)).days).
-        assert_eq!(Date::from_unix_days(20_762), Date::new(2026, 11, 5));
-        assert_eq!(Date::from_unix_days(11_016), Date::new(2000, 2, 29));
+        assert_eq!(Date::from_unix_days(20_762), Date::new(2026, 11, 5).ok());
+        assert_eq!(Date::from_unix_days(11_016), Date::new(2000, 2, 29).ok());
     }
 
     #[test]
@@ -170,7 +223,7 @@ mod tests {
             "2026-11/05",
             "2026/11-05",
         ] {
-            assert_eq!(Date::parse(bad), None, "{bad:?} must be refused");
+            assert!(Date::parse(bad).is_err(), "{bad:?} must be refused");
         }
     }
 
@@ -194,7 +247,7 @@ mod tests {
             ("2026-01-31", true),
             ("9999-12-31", true),
         ] {
-            assert_eq!(Date::parse(text).is_some(), exists, "{text}");
+            assert_eq!(Date::parse(text).is_ok(), exists, "{text}");
         }
     }
 
@@ -202,7 +255,7 @@ mod tests {
     fn display_round_trips() {
         let date = Date::new(2027, 3, 9).unwrap();
         assert_eq!(date.to_string(), "2027-03-09");
-        assert_eq!(Date::parse(&date.to_string()), Some(date));
+        assert_eq!(Date::parse(&date.to_string()), Ok(date));
     }
 
     proptest! {
@@ -210,7 +263,7 @@ mod tests {
         fn unix_days_round_trip(days in 0_u64..2_932_896) {
             let date = Date::from_unix_days(days).expect("in range");
             prop_assert_eq!(date.to_unix_days(), days);
-            prop_assert_eq!(Date::parse(&date.to_string()), Some(date));
+            prop_assert_eq!(Date::parse(&date.to_string()), Ok(date));
         }
 
         #[test]

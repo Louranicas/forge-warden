@@ -7,6 +7,7 @@ now refuses a literal by itself, which would hide a field made public):
 - fields: writing each of the three fields of an existing RankDoc must fail with E0616 (private
   field) exactly once per field. This is the field-privacy cause, independent of non_exhaustive.
 Any other outcome is a probe error, never a pass: an arbitrary compile failure proves nothing.
+Both probes use type-correct values (a Sha256Hex seal since Q-TYPES-2), so privacy alone decides.
 """
 import json
 from pathlib import Path
@@ -15,9 +16,10 @@ import tempfile
 
 FIELDS = ('input_sha256', 'tool_version', 'files')
 LITERAL = ('fn main() { let _invalid = forge_warden_core::rank::RankDoc { '
-           'input_sha256: "invalid".to_owned(), tool_version: String::new(), files: vec![] }; }\n')
+           'input_sha256: forge_warden_core::seal::sha256_hex(b"x"), tool_version: String::new(), '
+           'files: vec![] }; }\n')
 WRITES = ('pub fn forge(doc: &mut forge_warden_core::rank::RankDoc) { '
-          'doc.input_sha256 = String::new(); doc.tool_version = String::new(); '
+          'doc.input_sha256 = forge_warden_core::seal::sha256_hex(b""); doc.tool_version = String::new(); '
           'doc.files = Vec::new(); }\nfn main() {}\n')
 
 

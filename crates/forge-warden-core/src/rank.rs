@@ -5,8 +5,9 @@
 //! relies on is checked: the schema name, the seal, the tool, and each file's path, status, score,
 //! signals and evidence. A document that fails any check is refused as a whole.
 
-use crate::path::RepoPath;
-use crate::seal::is_sha256_hex;
+use crate::path::{PathError, RepoPath};
+use crate::seal::Sha256Hex;
+use crate::vocab::{Side, Signal, Status};
 use serde::Deserialize;
 
 /// The only ranking schema this version reads.
@@ -16,7 +17,7 @@ pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RankDoc {
-    input_sha256: String,
+    input_sha256: Sha256Hex,
     tool_version: String,
     files: Vec<RankedFile>,
 }
@@ -26,9 +27,9 @@ pub struct RankDoc {
 #[non_exhaustive]
 pub struct RankedFile {
     path: RepoPath,
-    status: String,
+    status: Status,
     score: u32,
-    signals: Vec<String>,
+    signals: Vec<Signal>,
     evidence: Vec<Evidence>,
     evidence_truncated: bool,
 }
@@ -37,37 +38,30 @@ pub struct RankedFile {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub struct Evidence {
-    signal: String,
-    address: String,
-    side: String,
+    signal: Signal,
+    address: Sha256Hex,
+    side: Side,
     line: u64,
 }
 
 impl RankDoc {
-    /// A ranking, if the seal is a well-formed SHA-256 and the producer version is exact.
+    /// A ranking, if the producer version is exact (the seal is a [`Sha256Hex`], so already well formed).
     ///
     /// # Errors
     ///
-    /// [`RankError::Invalid`] naming the problem.
+    /// [`RankInvalid`] naming the problem.
     pub fn new(
-        input_sha256: String,
+        input_sha256: Sha256Hex,
         tool_version: String,
         files: Vec<RankedFile>,
-    ) -> Result<Self, RankError> {
-        if !is_sha256_hex(&input_sha256) {
-            return Err(RankError::Invalid(
-                "input_sha256 is not 64 lowercase hex digits".to_owned(),
-            ));
-        }
+    ) -> Result<Self, RankInvalid> {
         if tool_version.trim().is_empty() {
-            return Err(RankError::Invalid(
-                "tool.version is empty or whitespace".to_owned(),
-            ));
+            return Err(RankInvalid::ToolVersionEmpty);
         }
         if tool_version.trim() != tool_version {
-            return Err(RankError::Invalid(format!(
-                "tool.version {tool_version:?} has surrounding whitespace"
-            )));
+            return Err(RankInvalid::ToolVersionWhitespace {
+                version: tool_version,
+            });
         }
         Ok(Self {
             input_sha256,
@@ -78,7 +72,7 @@ impl RankDoc {
 
     /// deep-diff-forge's seal: SHA-256 of the patch bytes it ranked.
     #[must_use]
-    pub fn input_sha256(&self) -> &str {
+    pub const fn input_sha256(&self) -> &Sha256Hex {
         &self.input_sha256
     }
 
@@ -108,7 +102,7 @@ impl RankDoc {
 
 /// A change-kind signal Git's facts imply (`new_file`, `deleted_file`, `binary_change`,
 /// `symlink_change`, `mode_change`, …): a `&'static str` from the core's own vocabulary, never empty.
-pub(crate) type DerivedSignal = &'static str;
+pub(crate) type DerivedSignal = Signal;
 
 impl RankedFile {
     /// A ranked file, if its status and signals are non-empty and every piece of evidence cites a
@@ -116,30 +110,30 @@ impl RankedFile {
     ///
     /// # Errors
     ///
-    /// [`RankError::Invalid`] naming the problem.
+    /// [`RankInvalid`] naming the problem.
     pub fn new(
         path: RepoPath,
-        status: String,
+        status: Status,
         score: u32,
-        signals: Vec<String>,
+        signals: Vec<Signal>,
         evidence: Vec<Evidence>,
         evidence_truncated: bool,
-    ) -> Result<Self, RankError> {
-        if status.is_empty() {
-            return Err(RankError::Invalid("status is empty".to_owned()));
+    ) -> Result<Self, RankInvalid> {
+        if status.name().is_empty() {
+            return Err(RankInvalid::EmptyStatus);
         }
-        if signals.iter().any(String::is_empty) {
-            return Err(RankError::Invalid("a signal is empty".to_owned()));
+        if signals.iter().any(|s| s.name().is_empty()) {
+            return Err(RankInvalid::EmptySignal);
         }
         if let Some((index, item)) = evidence
             .iter()
             .enumerate()
             .find(|(_, e)| !signals.contains(&e.signal))
         {
-            return Err(RankError::Invalid(format!(
-                "evidence[{index}]: cites signal {:?}, which the file does not carry",
-                item.signal
-            )));
+            return Err(RankInvalid::EvidenceSignalMissing {
+                index,
+                signal: item.signal.name().to_owned(),
+            });
         }
         Ok(Self {
             path,
@@ -161,8 +155,8 @@ impl RankedFile {
     ) -> Self {
         let mut signals = self.signals.clone();
         for signal in added {
-            if !signals.iter().any(|s| s == signal) {
-                signals.push((*signal).to_owned());
+            if !signals.contains(signal) {
+                signals.push(signal.clone());
             }
         }
         Self {
@@ -183,7 +177,7 @@ impl RankedFile {
 
     /// The file status, such as `modified`.
     #[must_use]
-    pub fn status(&self) -> &str {
+    pub const fn status(&self) -> &Status {
         &self.status
     }
 
@@ -195,7 +189,7 @@ impl RankedFile {
 
     /// Every signal that contributed to the score.
     #[must_use]
-    pub fn signals(&self) -> &[String] {
+    pub fn signals(&self) -> &[Signal] {
         &self.signals
     }
 
@@ -213,31 +207,19 @@ impl RankedFile {
 }
 
 impl Evidence {
-    /// Evidence, if the address is a hunk seal, the side is `new` or `old` and the line is 1-based.
+    /// Evidence, if the line is 1-based (the address is a [`Sha256Hex`] and the side a [`Side`]).
     ///
     /// # Errors
     ///
-    /// [`RankError::Invalid`] naming the problem.
+    /// [`RankInvalid`] naming the problem.
     pub fn new(
-        signal: String,
-        address: String,
-        side: String,
+        signal: Signal,
+        address: Sha256Hex,
+        side: Side,
         line: u64,
-    ) -> Result<Self, RankError> {
-        if !is_sha256_hex(&address) {
-            return Err(RankError::Invalid(
-                "address is not 64 lowercase hex digits".to_owned(),
-            ));
-        }
-        if side != "new" && side != "old" {
-            return Err(RankError::Invalid(format!(
-                "side is {side:?}; expected \"new\" or \"old\""
-            )));
-        }
+    ) -> Result<Self, RankInvalid> {
         if line == 0 {
-            return Err(RankError::Invalid(
-                "line is 0; lines are 1-based".to_owned(),
-            ));
+            return Err(RankInvalid::ZeroLine);
         }
         Ok(Self {
             signal,
@@ -249,20 +231,20 @@ impl Evidence {
 
     /// The signal it supports.
     #[must_use]
-    pub fn signal(&self) -> &str {
+    pub const fn signal(&self) -> &Signal {
         &self.signal
     }
 
     /// The hunk's content address.
     #[must_use]
-    pub fn address(&self) -> &str {
+    pub const fn address(&self) -> &Sha256Hex {
         &self.address
     }
 
     /// `new` (an added line) or `old` (a removed line).
     #[must_use]
-    pub fn side(&self) -> &str {
-        &self.side
+    pub const fn side(&self) -> Side {
+        self.side
     }
 
     /// The line number on that side.
@@ -284,7 +266,86 @@ pub enum RankError {
     Malformed(String),
     /// Well-formed JSON whose content breaks the contract.
     #[error("ranking refused: {0}")]
-    Invalid(String),
+    Invalid(RankInvalid),
+}
+
+/// What breaks the `rank.v0` contract, typed so a caller (or a test, or the CLI's exit mapping) can
+/// match on it instead of reading prose (Q-TYPES-2, Q1-05). Each variant's message is exactly the
+/// text the reader has always printed; locations are fields, not string prefixes.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RankInvalid {
+    /// `schema` names another document type.
+    #[error(
+        "schema is {found:?}; expected {RANK_SCHEMA:?} (pipe `deep-diff-forge --stdin-patch --rank --json`)"
+    )]
+    Schema {
+        /// The schema name found.
+        found: String,
+    },
+    /// `tool.name` is not `deep-diff-forge`.
+    #[error("tool.name is {found:?}; expected \"deep-diff-forge\"")]
+    ToolName {
+        /// The tool name found.
+        found: String,
+    },
+    /// `tool.version` is empty or only whitespace.
+    #[error("tool.version is empty or whitespace")]
+    ToolVersionEmpty,
+    /// `tool.version` has leading or trailing whitespace.
+    #[error("tool.version {version:?} has surrounding whitespace")]
+    ToolVersionWhitespace {
+        /// The version as written.
+        version: String,
+    },
+    /// `input_sha256` is not a seal.
+    #[error("input_sha256 is not 64 lowercase hex digits")]
+    BadSeal,
+    /// A file's path is not a canonical repository path.
+    #[error("path {0}")]
+    Path(PathError),
+    /// A file's status is empty.
+    #[error("status is empty")]
+    EmptyStatus,
+    /// A file carries an empty signal.
+    #[error("a signal is empty")]
+    EmptySignal,
+    /// Evidence cites a signal its file does not carry.
+    #[error("evidence[{index}]: cites signal {signal:?}, which the file does not carry")]
+    EvidenceSignalMissing {
+        /// The evidence item's index.
+        index: usize,
+        /// The cited signal's name.
+        signal: String,
+    },
+    /// An evidence address is not a hunk seal.
+    #[error("address is not 64 lowercase hex digits")]
+    BadAddress,
+    /// An evidence side is not `new` or `old`.
+    #[error("side is {side:?}; expected \"new\" or \"old\"")]
+    BadSide {
+        /// The side as written.
+        side: String,
+    },
+    /// An evidence line is 0 (lines are 1-based).
+    #[error("line is 0; lines are 1-based")]
+    ZeroLine,
+    /// A problem in one evidence item of a file.
+    #[error("evidence[{index}]: {problem}")]
+    InEvidence {
+        /// The evidence item's index.
+        index: usize,
+        /// What is wrong with it.
+        problem: Box<RankInvalid>,
+    },
+    /// A problem in one ranked file.
+    #[error("ranked[{index}]: {problem}")]
+    InFile {
+        /// The file's index in `ranked`.
+        index: usize,
+        /// What is wrong with it.
+        problem: Box<RankInvalid>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -335,16 +396,14 @@ pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError> {
     let raw: RawRank =
         serde_json::from_slice(bytes).map_err(|e| RankError::Malformed(e.to_string()))?;
     if raw.schema != RANK_SCHEMA {
-        return Err(RankError::Invalid(format!(
-            "schema is {:?}; expected {RANK_SCHEMA:?} (pipe `deep-diff-forge --stdin-patch --rank --json`)",
-            raw.schema
-        )));
+        return Err(RankError::Invalid(RankInvalid::Schema {
+            found: raw.schema,
+        }));
     }
     if raw.tool.name != "deep-diff-forge" {
-        return Err(RankError::Invalid(format!(
-            "tool.name is {:?}; expected \"deep-diff-forge\"",
-            raw.tool.name
-        )));
+        return Err(RankError::Invalid(RankInvalid::ToolName {
+            found: raw.tool.name,
+        }));
     }
     let files = raw
         .ranked
@@ -352,38 +411,50 @@ pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError> {
         .enumerate()
         .map(|(index, file)| validate_file(index, file))
         .collect::<Result<Vec<_>, _>>()?;
-    RankDoc::new(raw.input_sha256, raw.tool.version, files)
+    let input_sha256 = Sha256Hex::parse(&raw.input_sha256)
+        .map_err(|_| RankError::Invalid(RankInvalid::BadSeal))?;
+    RankDoc::new(input_sha256, raw.tool.version, files).map_err(RankError::Invalid)
 }
 
 fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
-    let at = |what: &str| RankError::Invalid(format!("ranked[{index}]: {what}"));
-    let path = RepoPath::parse(&raw.path).map_err(|e| at(&format!("path {e}")))?;
+    let in_file = |problem: RankInvalid| {
+        RankError::Invalid(RankInvalid::InFile {
+            index,
+            problem: Box::new(problem),
+        })
+    };
+    let path = RepoPath::parse(&raw.path).map_err(|e| in_file(RankInvalid::Path(e)))?;
     let evidence = raw
         .evidence
         .into_iter()
         .enumerate()
         .map(|(e_index, item)| {
-            Evidence::new(item.signal, item.address, item.side, item.line)
-                .map_err(|e| at(&format!("evidence[{e_index}]: {}", reason(&e))))
+            let in_evidence = |problem: RankInvalid| {
+                in_file(RankInvalid::InEvidence {
+                    index: e_index,
+                    problem: Box::new(problem),
+                })
+            };
+            let address = Sha256Hex::parse(&item.address)
+                .map_err(|_| in_evidence(RankInvalid::BadAddress))?;
+            let side = Side::parse(&item.side).ok_or_else(|| {
+                in_evidence(RankInvalid::BadSide {
+                    side: item.side.clone(),
+                })
+            })?;
+            Evidence::new(Signal::parse(&item.signal), address, side, item.line)
+                .map_err(in_evidence)
         })
         .collect::<Result<Vec<_>, _>>()?;
     RankedFile::new(
         path,
-        raw.status,
+        Status::parse(&raw.status),
         raw.score,
-        raw.signals,
+        raw.signals.iter().map(|s| Signal::parse(s)).collect(),
         evidence,
         raw.evidence_truncated,
     )
-    .map_err(|e| at(&reason(&e)))
-}
-
-/// The message inside a refusal, without its prefix, so a caller can add a location.
-fn reason(error: &RankError) -> String {
-    match error {
-        RankError::Invalid(message) | RankError::Malformed(message) => message.clone(),
-        RankError::TooLarge(bytes) => format!("{bytes} bytes"),
-    }
+    .map_err(in_file)
 }
 
 #[cfg(test)]
@@ -399,6 +470,37 @@ mod tests {
     }
 
     #[test]
+    fn a_contract_refusal_is_typed_with_its_location_and_keeps_its_message() {
+        // Q-TYPES-2 (Q1-05): a caller matches on the problem and its indices, not on prose.
+        let text = doc(&format!(
+            r#"{{"path":"a","status":"added","score":1,"signals":["secret_like"],"evidence":[{{"signal":"secret_like","address":"{SEAL}","side":"new","line":1}},{{"signal":"secret_like","address":"{SEAL}","side":"both","line":1}}]}}"#
+        ));
+        let error = parse_rank(text.as_bytes()).unwrap_err();
+        assert_eq!(
+            error,
+            RankError::Invalid(RankInvalid::InFile {
+                index: 0,
+                problem: Box::new(RankInvalid::InEvidence {
+                    index: 1,
+                    problem: Box::new(RankInvalid::BadSide {
+                        side: "both".to_owned()
+                    }),
+                }),
+            })
+        );
+        assert_eq!(
+            error.to_string(),
+            "ranking refused: ranked[0]: evidence[1]: side is \"both\"; expected \"new\" or \"old\""
+        );
+        let bad_path = doc(r#"{"path":"a//b","status":"added","score":1,"signals":[]}"#);
+        assert!(matches!(
+            parse_rank(bad_path.as_bytes()),
+            Err(RankError::Invalid(RankInvalid::InFile { index: 0, problem }))
+                if *problem == RankInvalid::Path(PathError::NonCanonical)
+        ));
+    }
+
+    #[test]
     fn added_signals_are_appended_once_in_order_and_nothing_is_lost() {
         // Zen B4: widening keeps every original signal, evidence item and field, adds only the
         // missing signals in the order given, and never duplicates one.
@@ -408,9 +510,11 @@ mod tests {
         ));
         let rank = parse_rank(text.as_bytes()).unwrap();
         let file = &rank.files[0];
-        let wide = file.with_added_signals(&["binary_change", "deleted_file", "mode_change"]);
+        let wide = file.with_added_signals(
+            &["binary_change", "deleted_file", "mode_change"].map(Signal::parse),
+        );
         assert_eq!(
-            wide.signals,
+            wide.signals.iter().map(Signal::name).collect::<Vec<_>>(),
             [
                 "unsafe_added",
                 "binary_change",
@@ -429,12 +533,16 @@ mod tests {
             "adding nothing changes nothing"
         );
 
-        let mapped = rank.map_files(|f| f.with_added_signals(&["new_file"]));
+        let mapped = rank.map_files(|f| f.with_added_signals(&[Signal::NewFile]));
         assert_eq!(mapped.input_sha256(), rank.input_sha256());
         assert_eq!(mapped.tool_version(), rank.tool_version());
         assert_eq!(mapped.files.len(), 1);
         assert_eq!(
-            mapped.files[0].signals,
+            mapped.files[0]
+                .signals
+                .iter()
+                .map(Signal::name)
+                .collect::<Vec<_>>(),
             ["unsafe_added", "binary_change", "new_file"]
         );
     }
@@ -449,7 +557,7 @@ mod tests {
         assert_eq!(rank.files.len(), 1);
         assert_eq!(rank.files[0].evidence[0].line, 3);
         assert_eq!(rank.tool_version(), "0.7.0");
-        assert_eq!(rank.input_sha256(), SEAL);
+        assert_eq!(rank.input_sha256().as_str(), SEAL);
     }
 
     #[test]

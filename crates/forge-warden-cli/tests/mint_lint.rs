@@ -38,7 +38,7 @@ fn apply<A, B, T>(f: impl Fn(A, B) -> T, a: A, b: B) -> T {
 /// A token, as the door gets one: from the policy's allowlist. (Raw `evaluate` and a bare-string
 /// `attest` no longer compile downstream at all; tests/api_boundary.rs measures that, Q-TYPES-1.)
 fn token(policy: &Policy) -> AdmittedProducer {
-    policy.admit_producer("0").unwrap()
+    policy.admit_producer(&forge_warden_core::seal::sha256_hex(b"0")).unwrap()
 }
 
 pub fn forms(doc: RankDoc, policy: &Policy) -> usize {
@@ -56,13 +56,13 @@ pub fn forms(doc: RankDoc, policy: &Policy) -> usize {
     let _i = std::hint::black_box(Ranking::<Produced>::attest); // FORM: attest through black_box
     let _y = p(doc.clone(), token(policy));
     n += door(doc.clone(), policy);
-    n += forge_warden_core::seal::sha256_hex(b"").len(); // CONTROL: an allowed function
+    n += forge_warden_core::seal::sha256_hex(b"").as_str().len(); // CONTROL: an allowed function
     n
 }
 
 #[expect(clippy::disallowed_methods, reason = "door: the positive control")]
 fn door(doc: RankDoc, policy: &Policy) -> usize {
-    Ranking::attest(doc, token(policy)).producer_sha256().map_or(0, str::len) // CONTROL: the door's expect
+    Ranking::attest(doc, token(policy)).producer_sha256().map_or(0, |seal| seal.as_str().len()) // CONTROL: the door's expect
 }
 "#;
 

@@ -36,11 +36,11 @@ fn every_real_ranking_parses_with_known_vocabulary() {
         for file in rank.files() {
             for signal in file.signals() {
                 assert!(
-                    is_known_signal(signal),
+                    is_known_signal(signal.name()),
                     "{}: unknown signal {signal}",
                     path.display()
                 );
-                signals.insert(signal.clone());
+                signals.insert(signal.name().to_owned());
             }
         }
     }
