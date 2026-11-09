@@ -272,12 +272,12 @@ crate::rank RankedFile.<6 private field(s)>
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct Evidence
 crate::rank Evidence.<4 private field(s)>
 crate::rank impl RankDoc
-crate::rank RankDoc::pub fn new( input_sha256: Sha256Hex, tool_version: String, files: Vec<RankedFile>, ) -> Result<Self, RankError>
+crate::rank RankDoc::pub fn new( input_sha256: Sha256Hex, tool_version: String, files: Vec<RankedFile>, ) -> Result<Self, RankInvalid>
 crate::rank RankDoc::#[must_use] pub const fn input_sha256(&self) -> &Sha256Hex
 crate::rank RankDoc::#[must_use] pub fn tool_version(&self) -> &str
 crate::rank RankDoc::#[must_use] pub fn files(&self) -> &[RankedFile]
 crate::rank impl RankedFile
-crate::rank RankedFile::pub fn new( path: RepoPath, status: Status, score: u32, signals: Vec<Signal>, evidence: Vec<Evidence>, evidence_truncated: bool, ) -> Result<Self, RankError>
+crate::rank RankedFile::pub fn new( path: RepoPath, status: Status, score: u32, signals: Vec<Signal>, evidence: Vec<Evidence>, evidence_truncated: bool, ) -> Result<Self, RankInvalid>
 crate::rank RankedFile::#[must_use] pub const fn path(&self) -> &RepoPath
 crate::rank RankedFile::#[must_use] pub const fn status(&self) -> &Status
 crate::rank RankedFile::#[must_use] pub const fn score(&self) -> u32
@@ -285,7 +285,7 @@ crate::rank RankedFile::#[must_use] pub fn signals(&self) -> &[Signal]
 crate::rank RankedFile::#[must_use] pub fn evidence(&self) -> &[Evidence]
 crate::rank RankedFile::#[must_use] pub const fn evidence_truncated(&self) -> bool
 crate::rank impl Evidence
-crate::rank Evidence::pub fn new( signal: Signal, address: Sha256Hex, side: Side, line: u64, ) -> Result<Self, RankError>
+crate::rank Evidence::pub fn new( signal: Signal, address: Sha256Hex, side: Side, line: u64, ) -> Result<Self, RankInvalid>
 crate::rank Evidence::#[must_use] pub const fn signal(&self) -> &Signal
 crate::rank Evidence::#[must_use] pub const fn address(&self) -> &Sha256Hex
 crate::rank Evidence::#[must_use] pub const fn side(&self) -> Side
@@ -293,7 +293,22 @@ crate::rank Evidence::#[must_use] pub const fn line(&self) -> u64
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum RankError
 crate::rank RankError::#[error("ranking is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
 crate::rank RankError::#[error("ranking is not a valid deep-diff-forge.rank.v0 document: {0}")] Malformed(String),
-crate::rank RankError::#[error("ranking refused: {0}")] Invalid(String),
+crate::rank RankError::#[error("ranking refused: {0}")] Invalid(RankInvalid),
+crate::rank #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum RankInvalid
+crate::rank RankInvalid::#[error( "schema is {found:?}; expected {RANK_SCHEMA:?} (pipe `deep-diff-forge --stdin-patch --rank --json`)" )] Schema { /// The schema name found. found: String, },
+crate::rank RankInvalid::#[error("tool.name is {found:?}; expected \\"deep-diff-forge\\"")] ToolName { /// The tool name found. found: String, },
+crate::rank RankInvalid::#[error("tool.version is empty or whitespace")] ToolVersionEmpty,
+crate::rank RankInvalid::#[error("tool.version {version:?} has surrounding whitespace")] ToolVersionWhitespace { /// The version as written. version: String, },
+crate::rank RankInvalid::#[error("input_sha256 is not 64 lowercase hex digits")] BadSeal,
+crate::rank RankInvalid::#[error("path {0}")] Path(PathError),
+crate::rank RankInvalid::#[error("status is empty")] EmptyStatus,
+crate::rank RankInvalid::#[error("a signal is empty")] EmptySignal,
+crate::rank RankInvalid::#[error("evidence[{index}]: cites signal {signal:?}, which the file does not carry")] EvidenceSignalMissing { /// The evidence item's index. index: usize, /// The cited signal's name. signal: String, },
+crate::rank RankInvalid::#[error("address is not 64 lowercase hex digits")] BadAddress,
+crate::rank RankInvalid::#[error("side is {side:?}; expected \\"new\\" or \\"old\\"")] BadSide { /// The side as written. side: String, },
+crate::rank RankInvalid::#[error("line is 0; lines are 1-based")] ZeroLine,
+crate::rank RankInvalid::#[error("evidence[{index}]: {problem}")] InEvidence { /// The evidence item's index. index: usize, /// What is wrong with it. problem: Box<RankInvalid>, },
+crate::rank RankInvalid::#[error("ranked[{index}]: {problem}")] InFile { /// The file's index in `ranked`. index: usize, /// What is wrong with it. problem: Box<RankInvalid>, },
 crate::rank pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError>
 crate::render #[must_use] pub fn terminal_safe(text: &str) -> String
 crate::render #[must_use] pub fn render_text(verdict: &Verdict) -> String
