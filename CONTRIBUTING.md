@@ -183,6 +183,10 @@ checks: `gate (fmt, clippy, test, doc)`, `declared Rust 1.88 compatibility`,
 `dogfood (trusted base judges candidate data)`, `vocabulary tracks deep-diff-forge`; require
 review from code owners; disallow bypass.
 
+The internal `plan mutation shards` and `mutation shard ${{ matrix.index }}` jobs feed the
+single required `diff mutation (cargo-mutants)` aggregate; they are not extra ruleset checks.
+Planning and every shard must succeed. See [measured budgets](docs/CI_BOUNDS.md).
+
 A `hold` is accepted only with an OpenSSH-signed acknowledgement from a reviewer enrolled in
 `.github/hold-reviewers/allowed_signers` on the base branch (ADR 0007). A label grants nothing.
 Until reviewer keys are enrolled and an external trust root enforces the check (ADR 0006), CI
@@ -197,7 +201,7 @@ it selects the full workspace with no diff filter or repository mutation config.
 by `scripts/tool_versions.py`. Tests run for each mutated package (no `--test-workspace`).
 
 Any MISSED mutant makes the job fail; there is no survivor budget or automatic waiver. The
-always-uploaded artifact contains `mutants.out` and exact-subject/tool provenance, including failed
+always-uploaded per-shard artifact contains `mutants.out` and exact-subject/tool provenance, including failed
 runs. Review caught, missed, unviable and timeout counts separately. An interrupted run is partial
 evidence, not a completed baseline. The weekly job does not replace diff mutation on pull requests.
 

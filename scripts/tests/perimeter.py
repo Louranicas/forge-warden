@@ -28,16 +28,18 @@ CAPS = load("plant_tools")
 # Independent reviewed expectations, not values imported from the validator.
 TIMEOUTS = {
     "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10,
-               "workflow-audit": 10, "mutation": 60, "dogfood": 10,
+               "workflow-audit": 10, "mutation": 5, "mutation-plan": 10,
+               "mutation-shards": "${{ matrix.minutes }}", "dogfood": 10,
                "vocabulary": 10},
     # Provisional budget; hosted full-workspace baseline is not yet available.
-    "mutation-baseline.yml": {"full-workspace": 120},
+    "mutation-baseline.yml": {"full-workspace": 5, "mutation-plan": 10,
+                              "mutation-shards": "${{ matrix.minutes }}"},
 }
 
 
 class Contracts(unittest.TestCase):
     def copy_ci_fixture(self, root):
-        for file in ("plants/catalog.json", "scripts/tool-versions.toml",
+        for file in ("plants/catalog.json", "scripts/tool-versions.toml", "scripts/mutation_ci.py",
                      ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
             (root / file).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / file, root / file)
@@ -82,7 +84,7 @@ class Contracts(unittest.TestCase):
                         "expression": "    timeout-minutes: ${{ 20 }}\n",
                         "duplicate": timeout + timeout,
                         "duplicate-conflicting": timeout + "    timeout-minutes: 0\n",
-                        "unreviewed-positive": f"    timeout-minutes: {minutes + 1}\n",
+                        "unreviewed-positive": f"    timeout-minutes: {minutes + 1 if isinstance(minutes, int) else 111}\n",
                     }
                     for case, replacement in cases.items():
                         with self.subTest(workflow=workflow, job=job, case=case):
@@ -119,13 +121,42 @@ class Contracts(unittest.TestCase):
                             finally:
                                 path.write_text(original)
 
+    def test_shard_and_aggregate_weakening_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            self.copy_ci_fixture(root)
+            for workflow in ("ci.yml", "mutation-baseline.yml"):
+                path=root / ".github/workflows" / workflow
+                original=path.read_text()
+                plants=[("fail-fast: false","fail-fast: true"),
+                        ("needs: [mutation-plan, mutation-shards]","needs: [mutation-plan]"),
+                        ("if: always()","if: success()"),
+                        ("${{ matrix.minutes }}","${{ 110 }}"),
+                        ("        run: python3 -I scripts/mutation_ci.py aggregate", "        run: true"),
+                        ("          SHARD_COUNT: ${{ matrix.shards }}", "          SHARD_COUNT: 16"),
+                        ("      - name: Verify inventory", "      - if: false\n        name: Verify inventory")]
+                for old,new in plants:
+                    self.assertIn(old,original)
+                    with self.subTest(workflow=workflow,plant=old):
+                        path.write_text(original.replace(old,new))
+                        with self.assertRaises(ValueError): CAPS.check_ci(root)
+                        path.write_text(original)
+            path=root / ".github/workflows/ci.yml"
+            original=path.read_text()
+            path.write_text(original.replace("  gate:\n", "  gate:\n    strategy:\n      fail-fast: false\n",1))
+            with self.assertRaises(ValueError): CAPS.check_ci(root)
+            path.write_text(original)
+            driver=root / "scripts/mutation_ci.py"
+            driver.write_text(driver.read_text().replace("MAX_PER_SHARD = 20","MAX_PER_SHARD = 200"))
+            with self.assertRaises(ValueError): CAPS.check_ci(root)
+
     def test_version_copies_match_canonical_inputs(self):
         TOOLS.check(ROOT)
 
     def test_each_tool_or_compiler_drift_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for file in ("scripts/tool-versions.toml", "scripts/plant_tools.py", "plants/catalog.json", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
+            for file in ("scripts/tool-versions.toml", "scripts/plant_tools.py", "scripts/mutation_ci.py", "plants/catalog.json", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
                 (root / file).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / file, root / file)
             workflow = root / ".github/workflows/ci.yml"
@@ -213,7 +244,7 @@ class Contracts(unittest.TestCase):
 
     def test_merge_queue_jobs_bind_both_subjects(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        for job, end in (("mutation", "dogfood"), ("dogfood", "vocabulary")):
+        for job, end in (("mutation-plan", "dogfood"), ("dogfood", "vocabulary")):
             body = workflow.split("\n  " + job + ":\n", 1)[1].split("\n  " + end + ":\n", 1)[0]
             self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'merge_group'", body)
             self.assertIn("github.event.pull_request.base.sha || github.event.merge_group.base_sha", body)
