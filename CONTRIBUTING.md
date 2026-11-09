@@ -33,7 +33,7 @@ Optional tools the full gate uses when present: `cargo-deny`, `cargo-mutants`, `
 
 This adds a policy rule using the existing `protect_paths` kind; adding a new Rust rule kind
 is a separate change. Build and test the clean checkout first (or use an already provisioned
-checkout/cache). The exercise builds the binary explicitly before using it.
+checkout/cache). The exercise builds an explicitly marked test fixture before using it.
 Default Cargo output location `target/` is assumed; unset a custom CARGO_TARGET_DIR for these examples. No installed forge-warden or live ranker is required.
 
 ```bash
@@ -48,10 +48,11 @@ Use the same copied patch bytes for both evaluations. All files stay under ignor
 <!-- first-rule-exercise:start -->
 ```bash
 set -eu
-cargo build --workspace --bins --locked --offline
-test -x target/debug/forge-warden
-export PATH="$PWD/target/debug:$PATH"
-mkdir -p target/first-rule
+cargo test --locked --offline -p forge-warden-cli --test oracle_contracts fixture_cli_artifact_receipt
+fixture_cli=$(python3 -c 'import json; print(json.load(open("target/fixture-cli.json"))["binary"])')
+mkdir -p target/first-rule/empty-policy
+export FORGE_WARDEN_TEST_POLICY_ROOT="$PWD/target/first-rule/empty-policy"
+forge-warden() { "$fixture_cli" "$@"; }
 cp fixtures/demo.patch target/first-rule/change.patch
 cat > target/first-rule/warden.toml <<EOF
 schema = "forge-warden.policy.v0"
@@ -91,6 +92,7 @@ fi
 The lint exits 0. Both green **rule outcomes** pass, but the advisory verdicts remain HOLD
 (exit 8); the intentionally tighter `src/` control exits 7 with verdict level `fail` and rule id
 `first-rule-private-files`. Returning to the original policy restores the passing rule outcome.
+The test fixture requires an explicit empty policy root and cannot become a production CLI.
 The documentation test runs this exact exercise offline in a fresh source copy, checking the
 rule outcomes, advisory notes and verdict levels. E3d parses all four CLI invocations using
 the real grammar. Production authority requires an independently admitted real ranker, the
@@ -151,9 +153,18 @@ standard-library macros use explicit `std::` or `core::` paths. This detects str
 it does not prove that two independently written algorithms cannot share the same conceptual bug.
 
 Ordinary golden tests never write expected output, even if `FORGE_WARDEN_BLESS` is inherited.
-An independent verifier builds the reviewed subject and checks its output with
-`python3 -I scripts/golden_output.py --binary target/debug/forge-warden`.
-The explicit operator-only `scripts/bless.sh` entrypoint can regenerate after intended changes;
+An independent verifier builds the reviewed source using
+`cargo test --locked --offline -p forge-warden-cli --test oracle_contracts fixture_cli_artifact_receipt`.
+The helper publishes exact Cargo artifact paths and a content-addressed build-input subject in
+`target/fixture-cli.json`. Pass those three values explicitly to
+`python3 -I scripts/golden_output.py --binary PATH --receipt PATH --subject source-sha256:HEX`.
+The receipt binds the artifact SHA-256, source-input subject and test cfg set. Missing or
+mismatching receipts refuse before execution; the producer executes the verified descriptor
+with an explicit empty policy root. The subject works in dirty and Git-less source copies;
+it is not a Git commit or a signed attestation. Reviewers still bind the source to the reviewed commit.
+Admission state is never normalized away.
+The explicit operator-only `scripts/bless.sh --binary PATH --receipt PATH --subject source-sha256:HEX`
+entrypoint uses the same artifact receipt and can regenerate after intended changes;
 it refuses CI and records binary/output hashes plus an outside-repository backup. The verifier
 must compare exact bytes; the builder's own re-blessing is not independent evidence.
 

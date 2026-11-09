@@ -79,3 +79,18 @@ Why this mechanism: `harness=false` omits test functions while retaining their h
 which correctly fails the deny-warnings build. The explicit fixture compilation preserves
 the lint wall and gives integration tests a disposable owner policy without a production
 feature or effective-host enrollment. See ADR 0011 and the Mission 6 GIT-PIN R3 refinement.
+
+
+Every check-mode integration test supplies a fresh policy root: empty for advisory,
+explicitly populated for authority. The fixture refuses a missing root rather than reading
+the host policy. The tutorial and golden producer use that same test-only artifact.
+The Rust helper publishes an artifact SHA-256, exact cfg set and a content-addressed
+source-input subject. The operator passes all three artifact-pointer fields explicitly;
+the producer verifies the receipt before descriptor execution. This is local reproducibility
+evidence, not a signature or a production admission mechanism. Production absence and override
+refusal probes remain separate from the fixture suite.
+
+Why a source-input subject: dirty checkouts, Git-less exports and cargo-mutants copies must
+remain testable. The source digest does not assert a commit; the verifier separately binds
+the checkout to the frozen subject. Admission and the policy hash remain visible in golden
+output; only the measured executable digest and version are normalized.

@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--subject", required=True)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(dir="/tmp", prefix="fw-golden-probe-") as work:
         workspace = Path(work)
@@ -30,11 +32,42 @@ def main():
         inner.mkdir(mode=0o700)
         env = {"PATH": os.defpath, "HOME": work, "TMPDIR": str(inner), "LC_ALL": "C"}
         command = ["python3", "-I", str(copied / "scripts/golden_output.py"),
-                   "--binary", str(args.binary.resolve()), "--write"]
+                   "--binary", str(args.binary.resolve()), "--receipt", str(args.receipt.resolve()), "--subject", args.subject, "--write"]
 
         def run(arguments, environment):
             return subprocess.run(arguments, env=environment, cwd=copied, stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True, timeout=40, check=False)
+
+        # Receipts are explicit local build evidence, not a signature. A mismatch must
+        # refuse before running the supplied executable or touching an expected output.
+        check = command[:-1]
+        receipt_path = workspace / "changed-receipt.json"
+        original_receipt = json.loads(args.receipt.read_bytes())
+        for field, value, diagnostic in [
+            ("artifact_sha256", "0" * 64, "artifact digest mismatch"),
+            ("subject", "source-sha256:" + "0" * 64, "wrong build-input subject"),
+            ("cfg", ["test"], "wrong fixture cfg set"),
+        ]:
+            changed = dict(original_receipt, **{field: value})
+            receipt_path.write_text(json.dumps(changed))
+            trial = list(check)
+            trial[trial.index("--receipt") + 1] = str(receipt_path)
+            out = run(trial, env)
+            assert out.returncode != 0 and diagnostic in out.stderr, out
+        trial = list(check)
+        trial[trial.index("--subject") + 1] = "source-sha256:" + "0" * 64
+        out = run(trial, env)
+        assert out.returncode != 0 and "wrong build-input subject" in out.stderr, out
+        trial = list(check)
+        position = trial.index("--receipt")
+        del trial[position:position + 2]
+        out = run(trial, env)
+        assert out.returncode == 2 and "--receipt" in out.stderr, out
+        receipt_path.write_text('{"schema":"one","schema":"two"}')
+        trial = list(check)
+        trial[trial.index("--receipt") + 1] = str(receipt_path)
+        out = run(trial, env)
+        assert out.returncode != 0 and "duplicate receipt key" in out.stderr, out
 
         for marker in ["CI", "GITHUB_ACTIONS"]:
             marked = dict(env, **{marker: "true"})

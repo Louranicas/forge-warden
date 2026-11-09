@@ -164,7 +164,13 @@ impl Failure {
 fn main() -> doors::Status {
     #[cfg(test)]
     if !doors::fixture_cli_requested() {
-        return doors::Status(Exit::Pass);
+        return doors::Status(finish(
+            Err(Failure::new(
+                Exit::Io,
+                "test fixture policy root is required",
+            )),
+            false,
+        ));
     }
     doors::Status(run_cli())
 }
@@ -318,7 +324,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         admitted_git.allowlist_sha256().map(str::to_owned),
     );
 
-    let mut verdict = if let Some(ranker) = &args.ranker {
+    let verdict: &Verdict = &if let Some(ranker) = &args.ranker {
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
             |failure| match failure {
                 RankerFailure::NotAdmitted(why) => Failure::new(Exit::InvalidInput, why),
@@ -367,14 +373,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
             .verdict()
             .clone()
     };
-    if admitted_git.allowlist_sha256().is_none() {
-        for note in &mut verdict.notes {
-            if note.code == forge_warden_core::verdict::NoteCode::RankUnverified {
-                note.detail.push_str("; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved");
-            }
-        }
-    }
-    report(&verdict, args.json)
+    report(verdict, args.json)
 }
 
 fn report(verdict: &Verdict, json: bool) -> Result<Exit, Failure> {

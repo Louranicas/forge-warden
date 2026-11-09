@@ -268,6 +268,7 @@ pub(crate) mod child {
         pub(crate) sha256: String,
     }
 
+    #[cfg(not(test))]
     const GIT_ALLOWLIST: &str = "/etc/forge-warden/git-allowlist.toml";
     const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;
 
@@ -467,14 +468,20 @@ pub(crate) mod child {
     /// The production admission boundary. Its policy path, owner, and trust root are fixed.
     pub(crate) fn admit_git(path: &Path, advisory: bool) -> Result<AdmittedGit, DoorError> {
         #[cfg(test)]
-        if let Some(result) = fixture_git_from_environment(path, advisory) {
-            return result;
+        {
+            match fixture_git_from_environment(path, advisory) {
+                Some(result) => result,
+                None => Err(git_refusal("test fixture policy root is required")),
+            }
         }
-        let trust = GitTrust {
-            root: Path::new("/"),
-            owner: 0,
-        };
-        admit_git_with(path, Path::new(GIT_ALLOWLIST), &trust, &trust, advisory)
+        #[cfg(not(test))]
+        {
+            let trust = GitTrust {
+                root: Path::new("/"),
+                owner: 0,
+            };
+            admit_git_with(path, Path::new(GIT_ALLOWLIST), &trust, &trust, advisory)
+        }
     }
 
     #[cfg(test)]
@@ -561,6 +568,23 @@ pub(crate) mod child {
                 .message
                 .contains("file exceeds byte budget")
         );
+    }
+
+    #[test]
+    fn git_paths_refuse_parent_traversal_before_metadata_walk() {
+        let trust = GitTrust {
+            root: Path::new("/"),
+            owner: 0,
+        };
+        for path in [Path::new("/usr/bin/../bin/git"), Path::new("git")] {
+            let error = git_parents(path, &trust).unwrap_err();
+            assert!(
+                error
+                    .message
+                    .contains("path must be absolute without relative components")
+            );
+        }
+        assert_eq!(git_parents(Path::new("/usr/bin/git"), &trust), Ok(true));
     }
 
     /// How a child ended, or why it was refused.
@@ -1488,6 +1512,32 @@ mod child_tests {
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 
+    #[test]
+    fn git_policy_budget_is_exactly_64_kib() {
+        use super::child::fixture_git;
+        use std::os::unix::fs::MetadataExt as _;
+        let root = scratch("git-policy-budget");
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let path = root.join("allowlist.toml");
+        let executable = Path::new("/usr/bin/git");
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read(executable).unwrap());
+        let mut bytes = format!(
+            "schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n#"
+        )
+        .into_bytes();
+        bytes.resize(65536, b' ');
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(fixture_git(executable, &path, &root, owner, false).is_ok());
+        bytes.push(b' ');
+        std::fs::write(&path, bytes).unwrap();
+        assert!(
+            fixture_git(executable, &path, &root, owner, false)
+                .unwrap_err()
+                .message
+                .contains("file exceeds byte budget")
+        );
+    }
+
     fn spec<'a>(program: Program<'a>, args: &'a [&'a str], stdin: &'a [u8]) -> ChildSpec<'a> {
         ChildSpec {
             program,
@@ -1756,7 +1806,12 @@ mod child_tests {
         assert!(!path.exists(), "{}", path.display());
         let tiny_patch = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n";
         assert!(git_facts(&test_git(), tiny_patch).is_ok());
-        assert!(super::child::admit_git(Path::new("/nonexistent/git"), true).is_err());
+        assert!(
+            super::child::admit_git(Path::new("/nonexistent/git"), true)
+                .unwrap_err()
+                .message
+                .contains("test fixture policy root is required")
+        );
     }
 
     #[test]

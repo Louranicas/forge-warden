@@ -617,3 +617,8 @@ fn stderr_golden_producers_catch_each_corrupted_expectation() {
         assert_eq!(common::read_bytes(golden), before);
     }
 }
+
+#[test]
+fn fixture_cli_artifact_receipt() {
+    common::publish_fixture_cli();
+}

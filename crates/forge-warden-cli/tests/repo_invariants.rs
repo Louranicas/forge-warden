@@ -768,7 +768,7 @@ fn fixture_compiler_switch(source: &str) -> bool {
                 && !matches!(ch, '\'' | '"' | ',' | '[' | ']' | '\\')
         })
         .collect();
-    compact.contains("fw_fixture_cli")
+    (compact.contains("--cfgfw_fixture_cli") || compact.contains("--cfg=fw_fixture_cli"))
         || compact.contains("--cfgtest")
         || compact.contains("--cfg=test")
 }
@@ -806,4 +806,150 @@ fn production_build_routes_cannot_enable_fixture_cli() {
     assert!(!fixture_compiler_switch(
         "cargo build --release\nRUSTFLAGS='-D warnings'"
     ));
+}
+
+fn named_call(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Call(call)
+        if matches!(call.func.as_ref(), syn::Expr::Path(path)
+            if path.path.segments.last().is_some_and(|part| part.ident == expected)))
+}
+
+fn final_expression(block: &syn::Block) -> Option<&syn::Expr> {
+    if let syn::Stmt::Expr(expression, None) = block.stmts.last()? {
+        Some(expression)
+    } else {
+        None
+    }
+}
+
+/// An interim rung before Q-TYPES-2 private fields: the CLI captures the two evaluator results
+/// directly behind a shared reference. Rust then refuses mutable borrowing of the judged value.
+/// The exact call shape excludes wrappers that edit an owned result before borrowing it.
+fn read_only_judgement(source: &str) -> bool {
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    let Some(check) = file.items.iter().find_map(|item| {
+        if let syn::Item::Fn(function) = item {
+            (function.sig.ident == "check").then_some(function)
+        } else {
+            None
+        }
+    }) else {
+        return false;
+    };
+    let Some(binding) = check.block.stmts.iter().find_map(|statement| match statement {
+        syn::Stmt::Local(local) if matches!(&local.pat, syn::Pat::Type(pattern)
+            if matches!(pattern.pat.as_ref(), syn::Pat::Ident(name) if name.ident == "verdict" && name.mutability.is_none())
+            && matches!(pattern.ty.as_ref(), syn::Type::Reference(reference) if reference.mutability.is_none()
+                && matches!(reference.elem.as_ref(), syn::Type::Path(path) if path.path.is_ident("Verdict")))) => Some(local),
+        syn::Stmt::Local(_) | syn::Stmt::Item(_) | syn::Stmt::Expr(..) | syn::Stmt::Macro(_) => None,
+    }) else { return false };
+    let Some(initializer) = &binding.init else {
+        return false;
+    };
+    let syn::Expr::Reference(reference) = initializer.expr.as_ref() else {
+        return false;
+    };
+    if reference.mutability.is_some() {
+        return false;
+    }
+    let syn::Expr::If(branches) = reference.expr.as_ref() else {
+        return false;
+    };
+    let Some(authority) = final_expression(&branches.then_branch) else {
+        return false;
+    };
+    if !named_call(authority, "evaluate_authority") {
+        return false;
+    }
+    let Some((_, otherwise)) = &branches.else_branch else {
+        return false;
+    };
+    let syn::Expr::Block(block) = otherwise.as_ref() else {
+        return false;
+    };
+    let Some(syn::Expr::MethodCall(clone)) = final_expression(&block.block) else {
+        return false;
+    };
+    let syn::Expr::MethodCall(borrow) = clone.receiver.as_ref() else {
+        return false;
+    };
+    if clone.method != "clone"
+        || !clone.args.is_empty()
+        || borrow.method != "verdict"
+        || !borrow.args.is_empty()
+        || !named_call(&borrow.receiver, "evaluate_advisory")
+    {
+        return false;
+    }
+    let Some(syn::Expr::Call(report)) = final_expression(&check.block) else {
+        return false;
+    };
+    if !matches!(report.func.as_ref(), syn::Expr::Path(path) if path.path.is_ident("report"))
+        || !matches!(report.args.first(), Some(syn::Expr::Path(path)) if path.path.is_ident("verdict"))
+    {
+        return false;
+    }
+    let mut visitor = JudgementReferences::default();
+    syn::visit::Visit::visit_file(&mut visitor, &file);
+    visitor.evaluators == 2 && !visitor.renamed
+}
+
+#[derive(Default)]
+struct JudgementReferences {
+    evaluators: usize,
+    renamed: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for JudgementReferences {
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path.path.segments.last().is_some_and(|part| {
+            matches!(
+                part.ident.to_string().as_str(),
+                "evaluate_authority" | "evaluate_advisory"
+            )
+        }) {
+            self.evaluators = self.evaluators.saturating_add(1);
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+    fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+        self.renamed |= matches!(
+            rename.ident.to_string().as_str(),
+            "evaluate_authority" | "evaluate_advisory"
+        );
+        syn::visit::visit_use_rename(self, rename);
+    }
+}
+
+#[test]
+fn cli_borrows_judged_verdicts_directly_and_never_takes_ownership() {
+    let source = read("crates/forge-warden-cli/src/main.rs");
+    assert!(
+        read_only_judgement(&source),
+        "CLI evaluator results must be captured directly as &Verdict and reported by shared reference"
+    );
+    for broken in [
+        source.replace("let verdict: &Verdict = &if", "let mut verdict = if"),
+        source.replace(
+            "let verdict: &Verdict = &if",
+            "let verdict: &mut Verdict = &mut if",
+        ),
+        source.replace(
+            "evaluate_authority(&policy, &checked, copy, seals, today)",
+            "rewrite(evaluate_authority(&policy, &checked, copy, seals, today))",
+        ),
+        format!("{source}\nfn extra() {{ let f = evaluate_authority; }}"),
+        format!("{source}\nuse forge_warden_core::authority::evaluate_authority as alias;"),
+        source.replace(
+            "report(verdict, args.json)",
+            "report(&rewritten, args.json)",
+        ),
+    ] {
+        assert!(
+            !read_only_judgement(&broken),
+            "judged-value boundary regression escaped"
+        );
+    }
 }

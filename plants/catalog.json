@@ -1171,6 +1171,118 @@
         "python3",
         "ssh-keygen"
       ]
+    },
+    {
+      "id": "git-policy-exact-limit",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_policy_budget_is_exactly_64_kib.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_policy_budget_is_exactly_64_kib",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;",
+      "new": "const MAX_GIT_ALLOWLIST_BYTES: usize = 64 + 1024;",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-parent-traversal",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_paths_refuse_parent_traversal_before_metadata_walk.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_paths_refuse_parent_traversal_before_metadata_walk",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !path.is_absolute()\n            || path",
+      "new": "if !path.is_absolute()\n            && path",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-core-advisory-note",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "advisory_git_admission_note_is_composed_by_core.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "authority",
+        "advisory_git_admission_note_is_composed_by_core",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "git.admission == \"unpinned\"",
+      "new": "git.admission == \"approved\"",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-judged-verdict-capture",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "cli_borrows_judged_verdicts_directly_and_never_takes_ownership.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "cli_borrows_judged_verdicts_directly_and_never_takes_ownership",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let verdict: &Verdict = &if",
+      "new": "let verdict: &mut Verdict = &mut if",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
