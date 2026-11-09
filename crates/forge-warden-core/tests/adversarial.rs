@@ -325,9 +325,9 @@ fn waiver_expiry_is_inclusive_and_expired_unused_waivers_fail() {
         "2026-11-06+11:00",
         "2026-1-06",
     ] {
-        assert_eq!(Date::parse(bad), None);
+        assert!(Date::parse(bad).is_err());
     }
-    assert!(Date::parse("2028-02-29").is_some());
+    assert!(Date::parse("2028-02-29").is_ok());
 }
 
 #[test]

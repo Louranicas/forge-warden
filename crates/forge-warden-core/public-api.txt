@@ -31,11 +31,15 @@ crate::authority impl SuppliedCopy
 crate::authority SuppliedCopy::#[must_use] pub fn compare(supplied: Option<&[u8]>, produced: &[u8]) -> Self
 crate::authority #[must_use] pub fn evaluate_authority( policy: &Policy, checked: &Checked<'_, Produced>, supplied: SuppliedCopy, seals: Seals, today: Date, ) -> Verdict
 crate::authority #[must_use] pub fn evaluate_advisory( policy: &Policy, checked: &Checked<'_, Supplied>, seals: Seals, today: Date, ) -> AdvisoryVerdict
+crate::date #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum DateError
+crate::date DateError::#[error("is not YYYY-MM-DD")] BadShape,
+crate::date DateError::#[error("is outside 1970-01-01..=9999-12-31")] OutOfRange,
+crate::date DateError::#[error("is not a calendar date")] NotACalendarDate,
 crate::date #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)] #[non_exhaustive] pub struct Date
 crate::date Date.<3 private field(s)>
 crate::date impl Date
-crate::date Date::#[must_use] pub fn new(year: u16, month: u8, day: u8) -> Option<Self>
-crate::date Date::#[must_use] pub fn parse(text: &str) -> Option<Self>
+crate::date Date::pub fn new(year: u16, month: u8, day: u8) -> Result<Self, DateError>
+crate::date Date::pub fn parse(text: &str) -> Result<Self, DateError>
 crate::date Date::#[must_use] pub fn from_unix_days(days: u64) -> Option<Self>
 crate::date Date::#[must_use] pub fn to_unix_days(self) -> u64
 crate::date impl fmt::Display for Date

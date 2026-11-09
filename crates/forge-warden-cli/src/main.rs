@@ -297,7 +297,7 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         ));
     }
     let today = match &args.today {
-        Some(text) => Date::parse(text).ok_or_else(|| {
+        Some(text) => Date::parse(text).map_err(|_| {
             Failure::new(
                 Exit::Usage,
                 format!("--today {text:?} is not a YYYY-MM-DD date"),
