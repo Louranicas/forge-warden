@@ -519,8 +519,11 @@ paths = ["warden.toml"]
     );
 }
 
-/// deep-diff-forge labels a deleted binary file `binary_changed` (with the `deleted_file`
-/// signal), so status alone let a binary test deletion stand as the companion change.
+/// The raw engine on **effective-ranking shapes**, not on producer output: deep-diff-forge ranks an
+/// added or deleted binary file as `binary_changed` with only `binary_change`, and Git's facts add
+/// `new_file` or `deleted_file` before the rules run (ADR 0005 §2.8). Status alone once let a
+/// binary test deletion stand as the companion change. The same rule on real producer output and
+/// Git's facts is pinned in `tests/authority.rs`.
 #[test]
 fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
     let p = policy(TESTS_WITH_SOURCE);
