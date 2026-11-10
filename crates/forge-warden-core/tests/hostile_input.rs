@@ -11,7 +11,8 @@
 //! one such file the same day.
 //!
 //! Budget (recorded here and in `fixtures/hostile/README.md`): [`CASES`] cases per property,
-//! with proptest's default seeding; `HOSTILE_CASES=<n>` raises it for a longer campaign. A parse
+//! with proptest's default seeding; `HOSTILE_CASES=<n>` raises it for a longer campaign (a value
+//! below the budget is ignored). A parse
 //! that does not return within the bound fails the test from a watchdog thread instead of hanging
 //! it, and shrinking is capped at [`SHRINK_MS`] so a slow input still ends the run.
 #![expect(
@@ -39,13 +40,17 @@ const TIME_BOUND: Duration = Duration::from_secs(2);
 /// The longest proptest may spend shrinking one failure.
 const SHRINK_MS: u32 = 60_000;
 
+/// The case count: `HOSTILE_CASES` may raise it for a campaign, never lower it, so the environment
+/// cannot switch the harness off (Keel R1: `HOSTILE_CASES=0` made every property vacuous).
+fn cases(requested: Option<&str>) -> u32 {
+    requested
+        .and_then(|n| n.parse::<u32>().ok())
+        .map_or(CASES, |n| n.max(CASES))
+}
+
 fn config() -> ProptestConfig {
-    let cases = std::env::var("HOSTILE_CASES")
-        .ok()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(CASES);
     ProptestConfig {
-        cases,
+        cases: cases(std::env::var("HOSTILE_CASES").ok().as_deref()),
         max_shrink_time: SHRINK_MS,
         // A failure is turned into a corpus file by hand, with a ledger row: nothing is written
         // into the source tree by the test itself.
@@ -167,6 +172,89 @@ fn apply(mut bytes: Vec<u8>, edits: &[Edit]) -> Vec<u8> {
     bytes
 }
 
+/// A field value: mostly a value the parser knows, otherwise arbitrary Unicode, a short string with
+/// non-ASCII and path punctuation, or a very long one. Keel R3: a bug behind valid JSON (a panic
+/// on a non-ASCII path) was missed at the default budget by byte edits alone.
+fn field(known: &'static [&'static str]) -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => proptest::sample::select(known).prop_map(str::to_owned),
+        1 => any::<String>(),
+        1 => "[a-z0-9/._ \\x{80}-\\x{10FFFF}-]{0,40}",
+        1 => (1usize..20_000).prop_map(|n| "é/".repeat(n)),
+    ]
+}
+
+/// A number field: small, at the edges of the parser's integer types, or past them.
+fn number() -> impl Strategy<Value = serde_json::Value> {
+    prop_oneof![
+        3 => (0u64..100).prop_map(serde_json::Value::from),
+        1 => prop_oneof![
+            Just(u64::from(u32::MAX)),
+            Just(u64::from(u32::MAX).saturating_add(1)),
+            Just(u64::MAX),
+        ]
+        .prop_map(serde_json::Value::from),
+        1 => any::<i64>().prop_map(serde_json::Value::from),
+        1 => any::<f64>().prop_map(serde_json::Value::from),
+    ]
+}
+
+const PATHS: &[&str] = &["src/lib.rs", "a", "tests/it.rs", "a//b", "../a", "/a", ""];
+const SIDES: &[&str] = &["new", "old", "both", ""];
+const SEAL: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
+
+fn evidence() -> impl Strategy<Value = serde_json::Value> {
+    (
+        field(&forge_warden_core::vocab::KNOWN_SIGNALS),
+        field(&[SEAL]),
+        field(SIDES),
+        number(),
+    )
+        .prop_map(|(signal, address, side, line)| {
+            serde_json::json!({"signal": signal, "address": address, "side": side, "line": line})
+        })
+}
+
+fn ranked_file() -> impl Strategy<Value = serde_json::Value> {
+    (
+        field(PATHS),
+        field(&forge_warden_core::vocab::KNOWN_STATUSES),
+        number(),
+        proptest::collection::vec(field(&forge_warden_core::vocab::KNOWN_SIGNALS), 0..6),
+        proptest::collection::vec(evidence(), 0..4),
+        any::<bool>(),
+    )
+        .prop_map(|(path, status, score, signals, evidence, truncated)| {
+            serde_json::json!({
+                "path": path, "status": status, "score": score, "signals": signals,
+                "evidence": evidence, "evidence_truncated": truncated,
+            })
+        })
+}
+
+/// A ranking that is valid JSON with the right schema and tool name, so the parser reaches its
+/// field validation, with hostile values in the fields (repeated entries included).
+fn valid_shaped_ranking() -> impl Strategy<Value = Vec<u8>> {
+    (
+        field(&[SEAL]),
+        field(&["0.8.2"]),
+        proptest::collection::vec(ranked_file(), 0..12),
+        any::<bool>(),
+    )
+        .prop_map(|(seal, version, mut ranked, repeat)| {
+            if repeat && let Some(first) = ranked.first().cloned() {
+                ranked.push(first);
+            }
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "deep-diff-forge.rank.v0",
+                "input_sha256": seal,
+                "tool": {"name": "deep-diff-forge", "version": version},
+                "ranked": ranked,
+            }))
+            .unwrap()
+        })
+}
+
 /// Run `parse` twice on its own input, on a watchdog thread: it must return within the bound and
 /// agree with itself. A parse that never returns fails here instead of hanging the test run.
 fn holds<T>(what: &str, parse: impl Fn() -> T + Send + 'static) -> T
@@ -181,11 +269,14 @@ where
         let second = parse();
         drop(send.send((took, format!("{first:?}") == format!("{second:?}"), first)));
     });
-    let Ok((took, same, first)) = receive.recv_timeout(TIME_BOUND.saturating_mul(3)) else {
-        panic!(
+    let (took, same, first) = match receive.recv_timeout(TIME_BOUND.saturating_mul(3)) {
+        Ok(result) => result,
+        // The parse thread ended without sending: it panicked (its message is printed above).
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("{what}: panicked"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!(
             "{what}: did not return within {:?}: a hang",
             TIME_BOUND.saturating_mul(3)
-        );
+        ),
     };
     assert!(took < TIME_BOUND, "{what}: took {took:?}");
     assert!(same, "{what}: not deterministic");
@@ -237,6 +328,11 @@ proptest! {
         let seeds = rank_seeds();
         let seed = seeds.get(pick.checked_rem(seeds.len()).unwrap_or(0)).unwrap().clone();
         rank_holds(&apply(seed, &edits));
+    }
+
+    #[test]
+    fn rank_survives_hostile_values_in_valid_rankings(bytes in valid_shaped_ranking()) {
+        rank_holds(&bytes);
     }
 
     #[test]
@@ -297,6 +393,15 @@ fn deep_nesting_and_size_edges_are_refused_not_crashed() {
         parse_policy(&over),
         Err(forge_warden_core::policy::PolicyError::TooLarge(_))
     ));
+}
+
+#[test]
+fn the_environment_may_raise_the_budget_but_never_lower_it() {
+    assert_eq!(cases(None), CASES);
+    assert_eq!(cases(Some("0")), CASES);
+    assert_eq!(cases(Some("1")), CASES);
+    assert_eq!(cases(Some("not a number")), CASES);
+    assert_eq!(cases(Some("20000")), 20_000);
 }
 
 /// Every committed corpus file is replayed: a past crash, hang or wrong refusal stays fixed.
