@@ -1923,6 +1923,24 @@
         "coreutils",
         "python3"
       ]
+    },
+    {
+      "id": "route-repeated-job",
+      "guardrail": "G-52",
+      "path": ".github/workflows/ci.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_pinned_whole",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "\njobs:\n",
+      "new": "\njobs:\n  sneak:\n    name: \"a\n    runs-on: ubuntu-latest\n  vocabulary:\n    env: \"\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
     }
   ],
   "pending_guardrails": [

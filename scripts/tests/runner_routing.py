@@ -15,11 +15,13 @@ RUNNER-ROUTING.1: the route job is pinned line for line (ROUTE_JOB_LINES), so it
 event, ref and protected; the truth table also holds under a hostile ambient environment (every
 documented GITHUB_*/RUNNER_* variable, every workflow env key and every other name the script
 mentions). v3: every workflow file is listed and of a pinned shape (top level, workflow env, plain
-job keys, exactly one runs-on per job).
+job keys, exactly one runs-on per job). v5: every workflow file is pinned whole by sha256
+(WORKFLOW_SHA256); any workflow edit edits the pin in the same reviewed diff.
 
 This is routing only: anyone who can push a branch can also edit `runs-on` on it, so the trust
 boundary is repository write access plus runner-up's fork guard (docs/runner-up.md).
 """
+import hashlib
 import os
 import re
 import subprocess
@@ -428,6 +430,9 @@ def workflow_shape_problems(path, text):
             problems.append(path + ": a job key must be a plain `  name:` line: " + line.strip())
         elif indent == 4 and not JOB_FIELD.match(line):
             problems.append(path + ": a job field must be a plain `    key:` line: " + line.strip())
+    keys = [line[2:-1] for line in jobs if JOB_KEY.match(line)]
+    if len(keys) != len(set(keys)):
+        problems.append(path + ": a job id occurs twice (Keel H1)")
     for job, body in job_bodies(text).items():
         runs = [line for line in body.splitlines() if line.startswith("    runs-on:")]
         if len(runs) != 1:
@@ -441,6 +446,19 @@ def listed_workflow_problems(names):
     """Workflow files that are in neither ROUTED nor HOSTED_ONLY."""
     listed = set(ROUTED) | set(HOSTED_ONLY)
     return sorted(name for name in names if name not in listed)
+
+
+# RUNNER-ROUTING.1 v5 (Bastion's design note after v2-v4 each fell to a YAML spelling the line
+# checks read differently; Keel H1 on f14d9169, a repeated job id): line-level checks of YAML stay
+# open, and this repository's Python is standard-library only, so there is no YAML parser to
+# compare with. The control is therefore closed by content: every workflow file is pinned whole.
+# Editing a workflow means editing its pin here, in the same reviewed diff, and the truth table,
+# the hostile environment and the shape checks below then run on the new text. The shape checks
+# are kept as diagnostics that explain what a reviewer should look at, not as the control.
+WORKFLOW_SHA256 = {
+    ".github/workflows/ci.yml": "e01b95c7f60bb2bc30249101ff6a9f330e2b26ac6f347d3db724c08fb492c8f6",
+    ".github/workflows/mutation-baseline.yml": "9d34b3fd261b45dbd340245da6a023c32e7d09e825a1199c6823a1e614f8d9d0",
+}
 
 
 DECOY = "        run: |\n          echo x\n          #    runs-on: ubuntu-latest\n"
@@ -478,6 +496,9 @@ SHAPE_EDITS = {
         "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n"
         "      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n"),
     "trailing top-level key in ci.yml": (CI, None, "run-name: x\n"),
+    "H1 repeated job id behind a quoted multi-line name (Keel)": (
+        CI, "\njobs:\n", '\njobs:\n  sneak:\n    name: "a\n    runs-on: ubuntu-latest\n  vocabulary:\n'
+                         '    env: "\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n'),
     "three-space job body": (
         CI, "\njobs:\n", "\njobs:\n  extra:\n   runs-on: self-hosted\n   steps:\n     - run: echo x\n"),
 }
@@ -586,6 +607,16 @@ class Routing(unittest.TestCase):
         for name in names:
             with self.subTest(path=name):
                 self.assertEqual(workflow_shape_problems(name, (ROOT / name).read_text()), [])
+
+    def test_every_workflow_file_is_pinned_whole(self):
+        names = sorted(path.relative_to(ROOT).as_posix()
+                       for path in (ROOT / ".github/workflows").iterdir())
+        self.assertEqual(names, sorted(WORKFLOW_SHA256), "every workflow file has a pin")
+        for name in names:
+            with self.subTest(path=name):
+                digest = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+                self.assertEqual(digest, WORKFLOW_SHA256[name],
+                                 "a workflow changed: review it, then update WORKFLOW_SHA256")
 
     def test_each_shape_edit_is_refused(self):
         self.assertNotEqual(listed_workflow_problems([".github/workflows/new.yml"]), [])
