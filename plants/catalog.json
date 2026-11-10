@@ -1906,6 +1906,23 @@
         "coreutils",
         "python3"
       ]
+    },
+    {
+      "id": "route-indented-job",
+      "guardrail": "G-52",
+      "path": ".github/workflows/ci.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "append": "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
     }
   ],
   "pending_guardrails": [

@@ -373,10 +373,13 @@ def routed_job_problems(text, routed):
 # and its workflow env, are exactly the reviewed ones, so no `defaults:` shell template and no
 # BASH_ENV can wrap the pinned route script. (F2/F3) In every workflow, each job key is a plain
 # `  name:` line, each job-level key is a plain `    key:` line, and a job has exactly one
-# `runs-on:`. (F4) Every workflow file is listed in ROUTED or HOSTED_ONLY.
+# `runs-on:`. (F4) Every workflow file is listed in ROUTED or HOSTED_ONLY. v4: every listed
+# workflow's top level is pinned, and a job's first field sits at indent 4.
 TOP_LEVEL = {
     ".github/workflows/mutation-baseline.yml": (
         "name: mutation-baseline", "on:", "permissions:", "concurrency:", "env:", "jobs:"),
+    # v4 (Bastion R1 on 1022927f): every listed workflow's top level is pinned, and `jobs:` is last.
+    ".github/workflows/ci.yml": ("name: ci", "on:", "permissions:", "concurrency:", "env:", "jobs:"),
 }
 WORKFLOW_ENV = {
     ".github/workflows/mutation-baseline.yml": ('  CARGO_INCREMENTAL: "0"', "  CARGO_TERM_COLOR: always"),
@@ -393,10 +396,10 @@ def workflow_shape_problems(path, text):
     """Why a workflow file is not of the reviewed shape (empty when it is)."""
     problems = []
     lines = content_lines(text)
-    if path in TOP_LEVEL:
-        top = tuple(line for line in lines if not line.startswith(" "))
-        if top != TOP_LEVEL[path]:
-            problems.append(path + ": top-level keys must be exactly " + repr(TOP_LEVEL[path]))
+    top = tuple(line for line in lines if not line.startswith(" "))
+    if top != TOP_LEVEL.get(path):
+        problems.append(path + ": top-level keys must be exactly " + repr(TOP_LEVEL.get(path)))
+    if path in WORKFLOW_ENV:
         env = []
         if "\nenv:\n" in text:
             for line in text.split("\nenv:\n", 1)[1].splitlines():
@@ -408,9 +411,17 @@ def workflow_shape_problems(path, text):
             problems.append(path + ": workflow env must be exactly " + repr(WORKFLOW_ENV[path]))
     if "\njobs:\n" not in text:
         return problems + [path + ": no jobs section"]
-    jobs = content_lines(text.split("\njobs:\n", 1)[1])
+    jobs = []
+    for line in content_lines(text.split("\njobs:\n", 1)[1]):
+        if not line.startswith(" "):
+            break  # the pinned top level makes `jobs:` last; this keeps a fold out regardless
+        jobs.append(line)
+    previous = 0
     for line in jobs:
         indent = len(line) - len(line.lstrip(" "))
+        if previous == 2 and indent != 4:
+            problems.append(path + ": a job's first field must be at indent 4: " + line.strip())
+        previous = indent
         if indent in (1, 3, 5) or "\t" in line[:indent + 1]:
             problems.append(path + ": odd indentation: " + line.strip())
         elif indent == 2 and not JOB_KEY.match(line):
@@ -462,6 +473,11 @@ SHAPE_EDITS = {
         CI, "\njobs:\n", '\njobs:\n  extra:\n    runs-on: ubuntu-latest\n    "runs-on": self-hosted\n    steps:\n'
                          "      - run: echo x\n"),
     "flow-mapping job": (CI, "\njobs:\n", "\njobs:\n  extra:\n    {runs-on: self-hosted}\n"),
+    "six-space job body, pool by format(), decoy in a trailing run-name (Bastion R1 v3)": (
+        CI, None,
+        "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n"
+        "      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n"),
+    "trailing top-level key in ci.yml": (CI, None, "run-name: x\n"),
     "three-space job body": (
         CI, "\njobs:\n", "\njobs:\n  extra:\n   runs-on: self-hosted\n   steps:\n     - run: echo x\n"),
 }
@@ -576,8 +592,11 @@ class Routing(unittest.TestCase):
         for name, (path, old, new) in SHAPE_EDITS.items():
             with self.subTest(edit=name):
                 text = (ROOT / path).read_text()
-                self.assertEqual(text.count(old), 1, "anchor must be unique")
-                edited = text.replace(old, new, 1)
+                if old is None:  # appended at the end of the file
+                    edited = text + new
+                else:
+                    self.assertEqual(text.count(old), 1, "anchor must be unique")
+                    edited = text.replace(old, new, 1)
                 self.assertNotEqual(workflow_shape_problems(path, edited), [], name)
 
     def test_a_routed_job_falls_back_to_hosted_without_a_route_output(self):
