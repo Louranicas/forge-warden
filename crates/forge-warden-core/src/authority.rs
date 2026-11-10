@@ -90,22 +90,33 @@ impl<P> Ranking<P> {
 #[non_exhaustive]
 pub struct Checked<'r, P> {
     ranking: &'r Ranking<P>,
-    facts: Result<PatchFacts, Unverifiable>,
-    disagreements: Vec<Disagreement>,
+    proof: Proof,
+}
+
+/// What [`check`] found. One value, so the judge cannot read Git's answer in one place and the
+/// consequence of having none in another (Q25).
+#[derive(Debug)]
+enum Proof {
+    /// Git described the patch; these are the places the ranking disagrees with it.
+    Compared {
+        facts: PatchFacts,
+        disagreements: Vec<Disagreement>,
+    },
+    /// Git's view is unavailable, so coverage cannot be verified.
+    Refused(Unverifiable),
 }
 
 /// Compare `ranking` with Git's view of the patch (or the reason Git's view is unavailable).
 #[must_use]
 pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P> {
-    let disagreements = match &facts {
-        Ok(facts) => compare(&ranking.doc, facts),
-        Err(_) => Vec::new(),
+    let proof = match facts {
+        Ok(facts) => Proof::Compared {
+            disagreements: compare(&ranking.doc, &facts),
+            facts,
+        },
+        Err(why) => Proof::Refused(why),
     };
-    Checked {
-        ranking,
-        facts,
-        disagreements,
-    }
+    Checked { ranking, proof }
 }
 
 impl<P> Checked<'_, P> {
@@ -118,67 +129,57 @@ impl<P> Checked<'_, P> {
     /// Whether the ranking covers the patch exactly and agrees with Git on every file.
     #[must_use]
     pub const fn is_covered(&self) -> bool {
-        self.facts.is_ok() && self.disagreements.is_empty()
-    }
-
-    /// One note per disagreement, or the refusal; each holds the verdict.
-    fn notes(&self) -> Vec<Note> {
-        let note = |code: NoteCode, path: &crate::path::RepoPath, detail: &str| Note {
-            code,
-            path: Some(path.to_string()),
-            detail: detail.to_owned(),
-        };
-        match &self.facts {
-            Err(why) => vec![Note {
-                code: NoteCode::PatchUnverifiable,
-                path: None,
-                detail: format!("{why}; coverage cannot be verified, so nothing passes by default"),
-            }],
-            Ok(_) => self
-                .disagreements
-                .iter()
-                .map(|d| match d {
-                    Disagreement::Missing(path) => note(
-                        NoteCode::RankIncomplete,
-                        path,
-                        "git sees this file in the patch, but the ranking does not list it",
-                    ),
-                    Disagreement::Extraneous(path) => note(
-                        NoteCode::RankExtraneous,
-                        path,
-                        "the ranking lists this file, but the patch does not change it",
-                    ),
-                    Disagreement::Status(path) => note(
-                        NoteCode::StatusMismatch,
-                        path,
-                        "the ranking's status or change-kind signals contradict git",
-                    ),
-                })
-                .collect(),
+        match &self.proof {
+            Proof::Compared { disagreements, .. } => disagreements.is_empty(),
+            Proof::Refused(_) => false,
         }
     }
+}
 
-    /// The checked ranking with each file's signals widened by Git's change-kind facts (T2: Git
-    /// only adds). Infallible (Zen B4): `RankDoc::map_files` and `RankedFile::with_added_signals`
-    /// keep every constructor invariant by construction, so widening itself has no failure path.
-    ///
-    /// When Git's facts are unavailable there is nothing to widen with, and the rules do read the
-    /// ranking as the producer wrote it. That verdict cannot pass: [`Self::notes`] returns a
-    /// `patch_unverifiable` note for the same `Err`, `judge` attaches it, and a note holds the
-    /// verdict (`a_facts_error_never_passes_anywhere_in_the_corpus`).
-    fn effective(&self) -> RankDoc {
-        let rank = &self.ranking.doc;
-        let Ok(facts) = &self.facts else {
-            return rank.clone();
-        };
-        let derived: BTreeMap<&crate::path::RepoPath, _> = facts
-            .files()
-            .map(|change| (change.path(), derived_signals(change)))
-            .collect();
-        rank.map_files(|file| {
-            file.with_added_signals(derived.get(file.path()).into_iter().flatten())
-        })
+/// The note a disagreement with Git becomes; it holds the verdict.
+fn disagreement_note(disagreement: &Disagreement) -> Note {
+    let (code, path, detail) = match disagreement {
+        Disagreement::Missing(path) => (
+            NoteCode::RankIncomplete,
+            path,
+            "git sees this file in the patch, but the ranking does not list it",
+        ),
+        Disagreement::Extraneous(path) => (
+            NoteCode::RankExtraneous,
+            path,
+            "the ranking lists this file, but the patch does not change it",
+        ),
+        Disagreement::Status(path) => (
+            NoteCode::StatusMismatch,
+            path,
+            "the ranking's status or change-kind signals contradict git",
+        ),
+    };
+    Note {
+        code,
+        path: Some(path.to_string()),
+        detail: detail.to_owned(),
     }
+}
+
+/// The note Git's refusal becomes; it holds the verdict.
+fn refusal_note(why: &Unverifiable) -> Note {
+    Note {
+        code: NoteCode::PatchUnverifiable,
+        path: None,
+        detail: format!("{why}; coverage cannot be verified, so nothing passes by default"),
+    }
+}
+
+/// `rank` with each file's signals widened by Git's change-kind facts (T2: Git only adds).
+/// Infallible (Zen B4): `RankDoc::map_files` and `RankedFile::with_added_signals` keep every
+/// constructor invariant by construction, so widening itself has no failure path.
+fn widened(rank: &RankDoc, facts: &PatchFacts) -> RankDoc {
+    let derived: BTreeMap<&crate::path::RepoPath, _> = facts
+        .files()
+        .map(|change| (change.path(), derived_signals(change)))
+        .collect();
+    rank.map_files(|file| file.with_added_signals(derived.get(file.path()).into_iter().flatten()))
 }
 
 /// A verdict on a supplied ranking. Its outcome type has no pass: a supplied ranking can at best
@@ -322,6 +323,20 @@ fn judge<P>(
     seals: Seals,
     today: Date,
 ) -> Verdict {
-    extra.extend(checked.notes());
-    evaluate(policy, &checked.effective(), seals, today).with_notes(extra)
+    let rank = &checked.ranking.doc;
+    match &checked.proof {
+        Proof::Compared {
+            facts,
+            disagreements,
+        } => {
+            extra.extend(disagreements.iter().map(disagreement_note));
+            evaluate(policy, &widened(rank, facts), seals, today).with_notes(extra)
+        }
+        // Git gave nothing to widen with, so the rules read the ranking as the producer wrote
+        // it: a FAIL stays a FAIL (ADR 0005 section 2.5). `held_by` cannot be called without the
+        // note, and a verdict that carries a note is at least a hold, so this arm cannot pass.
+        Proof::Refused(why) => {
+            evaluate(policy, rank, seals, today).held_by(extra, refusal_note(why))
+        }
+    }
 }
