@@ -81,7 +81,7 @@ Fields: `limit` (required, at least 1), `paths`, `except`.
 
 ## Signals
 
-deep-diff-forge 0.7.0's vocabulary. Path and shape: `public_api_surface`, `new_file`,
+deep-diff-forge 0.8.2's vocabulary (the same 21 signals as 0.7.0). Path and shape: `public_api_surface`, `new_file`,
 `deleted_file`, `binary_change`, `large_change`, `many_hunks`, `config_or_lockfile`, `test_only`,
 `generated_or_vendored`, `hazardous_text`, `symlink_change`, `executable_bit`. Code evidence:
 `unsafe_added`, `process_spawn`, `network_fetch`, `dynamic_eval`, `ci_privilege`, `build_hook`,

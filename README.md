@@ -112,7 +112,7 @@ Every rule also needs `id` (kebab-case, unique), `why` (12+ characters), `kind` 
 no defaults for these: a rule says what it means.
 
 Globs are relative to the repository root. `*` stays within one path segment and `**` crosses
-segments. The signal vocabulary is deep-diff-forge 0.7.0's risk and code-evidence signals;
+segments. The signal vocabulary is deep-diff-forge 0.8.2's risk and code-evidence signals;
 naming one that does not exist is refused with a suggestion (`"secrets_like"`: *did you mean
 `"secret_like"`?*). The full reference is [`docs/POLICY_REFERENCE.md`](docs/POLICY_REFERENCE.md).
 
@@ -271,7 +271,7 @@ one. It hashes the patch to check the ranking's seal. An isolated Git reads the 
 forge-warden itself reads only the patch's mode-bearing header lines, with a total grammar, to
 cross-check those facts. It does not interpret hunks.
 Its vocabulary tracks
-deep-diff-forge 0.7.0 (`crates/forge-warden-core/src/vocab.rs`); a newer deep-diff-forge that
+deep-diff-forge 0.8.2 (`crates/forge-warden-core/src/vocab.rs`; unchanged since 0.7.0); a newer deep-diff-forge that
 adds a signal makes verdicts hold, not pass, until forge-warden learns it. Its exit codes reuse
 deep-diff-forge's action names.
 
