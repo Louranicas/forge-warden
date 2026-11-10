@@ -97,11 +97,11 @@ def recipe_kind(recipe):
     if not all(isinstance(text, str) for text in texts) or not isinstance(recipe.get('path'), str):
         raise ValueError('recipe path and text must be strings')
     try:
-        for text in texts:
+        for text in [*texts, recipe['path']]:
             text.encode('utf-8')
     except UnicodeEncodeError:
         # A text the write cannot encode is refused before any checkout or file exists.
-        raise ValueError('recipe text must be UTF-8 encodable') from None
+        raise ValueError('recipe path and text must be UTF-8 encodable') from None
     return kinds[0]
 
 
@@ -152,7 +152,10 @@ def restore(path, before):
     if before is not None:
         path.write_bytes(before)
         return
-    path.unlink(missing_ok=True)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        raise RestoreError('created plant file could not be removed: ' + str(error)) from error
     if os.path.lexists(path):
         raise RestoreError('created plant file still present: ' + str(path))
 

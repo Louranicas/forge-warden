@@ -131,7 +131,9 @@ class Runner(unittest.TestCase):
                         dict(create='a'), dict(path=None, create='a'), dict(path=['f'], create='a'),
                         # F1: text the write cannot encode is refused before any file exists.
                         dict(path='f', create='\ud800'), dict(path='f', old='a', new='\ud800'),
-                        dict(path='f', old='a', new=None)):
+                        dict(path='f', old='a', new=None),
+                        # N5: so is a path the filesystem call could not encode.
+                        dict(path='\ud800', create='x')):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'recipe'):
                 RUN.recipe_kind(invalid)
         for valid, kind in ((dict(path='f', old='a', new='b'), 'old'), (dict(path='f', append='a'), 'append'),
@@ -174,9 +176,10 @@ class Runner(unittest.TestCase):
             RUN.restore(path, before)
             self.assertFalse(os.path.lexists(path))
             self.assertEqual(sorted(p.name for p in (source / 'dir').iterdir()), ['kept'])
-            # Something that cannot be unlinked as a file is a restore error, never silent.
+            # Something that cannot be unlinked as a file is a RestoreError (main() aborts on it),
+            # never a plain OSError that would read as a recipe error (Keel R1).
             (source / 'dir' / 'blocker').mkdir()
-            with self.assertRaises(OSError):
+            with self.assertRaisesRegex(RUN.RestoreError, 'could not be removed'):
                 RUN.restore(source / 'dir' / 'blocker', None)
 
     def test_create_case_is_caught_and_restored_even_when_ignored(self):
@@ -214,9 +217,9 @@ class Runner(unittest.TestCase):
             # one; the existence check must still report ERROR_RESTORE and stop the run.
             program = root / 'run.py'
             original = program.read_text()
-            self.assertEqual(original.count('path.unlink(missing_ok=True)\n    if os.path.lexists'), 1)
-            program.write_text(original.replace('path.unlink(missing_ok=True)\n    if os.path.lexists',
-                                                'pass  # planted missing unlink\n    if os.path.lexists'))
+            unlink = '        path.unlink(missing_ok=True)\n'
+            self.assertEqual(original.count(unlink), 1)
+            program.write_text(original.replace(unlink, '        pass  # planted missing unlink\n'))
             result = subprocess.run([*common, '--output', str(root / 'broken'), '--case', 'ignored'],
                                     capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 1, result.stderr)
@@ -277,10 +280,10 @@ class Runner(unittest.TestCase):
             self.assertEqual(result.returncode, 1)  # one case is an ERROR, never counted as caught
             # (3) Plant both: no encoding check and a cleanup that cannot remove the file. The run
             # must report ERROR_RESTORE and stop, not carry a hidden plant into the next case.
-            unlink = 'path.unlink(missing_ok=True)\n    if os.path.lexists'
+            unlink = '        path.unlink(missing_ok=True)\n'
             self.assertEqual(original.count(unlink), 1)
             program.write_text(original.replace(check, '            pass  # planted: no encoding check\n')
-                               .replace(unlink, 'pass  # planted: no unlink\n    if os.path.lexists'))
+                               .replace(unlink, '        pass  # planted: no unlink\n'))
             result = subprocess.run([*common, '--output', str(root / 'stuck')], capture_output=True, timeout=20)
             report = json.loads((root / 'stuck' / 'report.json').read_text())
             self.assertEqual([r['status'] for r in report['results']], ['ERROR_RESTORE'])
