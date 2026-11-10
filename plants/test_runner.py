@@ -14,6 +14,9 @@ sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location('plants_runner', Path(__file__).with_name('run.py'))
 RUN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN)
+ANCHOR_SPEC = importlib.util.spec_from_file_location('plants_anchors', Path(__file__).with_name('anchors.py'))
+ANCHORS = importlib.util.module_from_spec(ANCHOR_SPEC)
+ANCHOR_SPEC.loader.exec_module(ANCHORS)
 
 
 class Runner(unittest.TestCase):
@@ -417,6 +420,55 @@ class Runner(unittest.TestCase):
                 self.assertEqual(len(report['pending_guardrails']), 1)
             self.assertEqual((source / 'fixture').read_text(), 'clean\n')
             self.assertEqual(git('status', '--porcelain'), b'')
+
+
+
+class Anchors(unittest.TestCase):
+    """WP-PLANT-ANCHORS: the fast-gate check that every catalogue recipe still applies."""
+
+    def tree(self):
+        root = Path(tempfile.mkdtemp())
+        (root / 'src').mkdir()
+        (root / 'src/a.rs').write_text('fn once() {}\nfn twice() {}\nfn twice() {}\n')
+        return root
+
+    def test_a_recipe_that_applies_has_no_problem(self):
+        root = self.tree()
+        cases = [dict(id='old', path='src/a.rs', old='fn once()', new='x'),
+                 dict(id='append', path='src/a.rs', append='y'),
+                 dict(id='create', path='src/new.rs', create='z')]
+        self.assertEqual(ANCHORS.problems(root, cases), [])
+
+    def test_each_way_a_recipe_stops_applying_is_named(self):
+        root = self.tree()
+        (root / 'real').mkdir()
+        (root / 'link').symlink_to(root / 'real')
+        (root / 'real/b.rs').write_text('fn once() {}\n')
+        (root / 'src/alias.rs').symlink_to(root / 'src/a.rs')
+        bad = {
+            'anchor gone (Q25 and G-14)': dict(path='src/a.rs', old='fn removed()', new='x'),
+            'anchor twice': dict(path='src/a.rs', old='fn twice()', new='x'),
+            'empty anchor': dict(path='src/a.rs', old='', new='x'),
+            'file gone': dict(path='src/gone.rs', old='fn once()', new='x'),
+            'append target gone': dict(path='src/gone.rs', append='y'),
+            'create path taken': dict(path='src/a.rs', create='z'),
+            'create under a missing directory': dict(path='nowhere/new.rs', create='z'),
+            'symlinked file': dict(path='src/alias.rs', old='fn once()', new='x'),
+            'symlinked parent': dict(path='link/b.rs', old='fn once()', new='x'),
+            'absolute path': dict(path=str(root / 'src/a.rs'), old='fn once()', new='x'),
+            'climbs out': dict(path='src/../src/a.rs', old='fn once()', new='x'),
+            'inside .git': dict(path='.git/config', append='y'),
+            'two recipe kinds': dict(path='src/a.rs', old='fn once()', new='x', append='y'),
+        }
+        for name, case in bad.items():
+            with self.subTest(case=name):
+                found = ANCHORS.problems(root, [dict(id=name, **case)])
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith(name + ': '), found)
+
+    def test_the_catalogue_applies_to_this_tree(self):
+        cases = json.loads(Path(__file__).with_name('catalog.json').read_text())['cases']
+        self.assertEqual(ANCHORS.problems(Path(__file__).resolve().parents[1], cases), [])
 
 
 if __name__ == '__main__':
