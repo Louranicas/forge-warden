@@ -226,8 +226,8 @@ site. A tuple match over selected fields would not give this guarantee and is no
   `--git`). Goldens change (Luke L1). CHANGELOG/README are Lodestar's.
 - Two new doors (`rank_patch`, `git_facts`), each with the bounds of §2.5. The core stays pure; `PatchFacts`,
   `Covered` and the matrix are core types.
-- `binary_deletions_and_unknowable_binary_changes_are_not_companions` is replaced by a test on a real binary
-  deletion ranked by the real producer (MATRIX row).
+- `binary_deletions_and_unknowable_binary_changes_are_not_companions` is joined by tests on real producer output
+  (`tests/authority.rs`, WP-Q-RANK-BINARY). [Corrected 2026-11-10; §9 quotes the original plan.]
 - **WP-B2 change:** duplicate ranked paths are a real producer output (type change), so the rank parser must not
   refuse them as malformed (exit 4). The coverage check turns them into `patch_unverifiable` HOLD. A3's
   `duplicate_ranked_paths_hold` should expect HOLD, not refusal (Touchstone owns it). [Renamed 2026-11-10;
@@ -310,7 +310,7 @@ On `e1d74bc` (before) the first four of those bypasses compiled.
 | A library caller cannot judge without provenance | **2, visibility** (`evaluate` crate-private; test feature off by default) |
 | Only `doors.rs` mints in the binary | 4, clippy `disallowed-methods` (unchanged) |
 
-## 9. Amendment (Q-RANK-BINARY G4, 2026-11-10): §2.9's required-signals column
+## 9. Amendment (ADR-0005-G4, 2026-11-10): §2.9's required-signals column
 
 **What was wrong.** From ADR v2 (2f65891, 2026-11-06) until this amendment, §2.9's "required signals" column listed
 only `new_file`/`deleted_file` (+ `symlink_change` if Symlink) for text adds and deletes, and "—" for every other
@@ -341,10 +341,14 @@ the current name or a description, with a pointer here; the original names are q
   asked for was carried out.
 - §7 cited `repeated_operation_on_path`, the refusal string of the C0 prototype
   (`mission4/lanes/keel/C0/oracle_proto_v4.py`), not a test. The implementation refuses the case with
-  `Unverifiable::RepeatedPath` (`facts.rs`). No test pins that `--no-prefix` input yields that variant specifically:
-  - the corpus case `ts-no-prefix`, in `every_case_in_the_coverage_corpus_classifies_as_expected`
-    (`tests/coverage.rs`), pins only that the patch is refused as unverifiable;
-  - `every_refusal_says_why` (`facts.rs`) pins only the variant's message.
+  `Unverifiable::RepeatedPath` (`facts.rs`). Until WP-Q-RANK-BINARY (2026-11-10) no test pinned that variant: the
+  corpus case `ts-no-prefix` pins only the class, and `every_refusal_says_why` only the message.
+  `a_no_prefix_patch_is_refused_as_a_repeated_path` (`tests/authority.rs`) now pins the variant and the path it names.
+
+**A consequence that was not carried out as written.** §5 said
+`binary_deletions_and_unknowable_binary_changes_are_not_companions` "is replaced by a test on a real binary deletion
+ranked by the real producer (MATRIX row)". It was not replaced: the test still exists (`tests/eval.rs`), and
+WP-Q-RANK-BINARY adds real-producer tests beside it in `tests/authority.rs`. §5 now says so.
 
 **Pinned record.** The JEV Z3 frozen record (`fixtures/adversarial/z3_oracle.rs` `SOURCE_IDENTITY`, emitted into
 `fixtures/z3/manifest.json`) pins this file's pre-amendment bytes, sha256
