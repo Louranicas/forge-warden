@@ -20,12 +20,14 @@ cat > "$sandbox/bin/git" <<'STUB'
 case "$1" in
  rev-parse) echo "$TEST_ROOT" ;;
  merge-base) echo base ;;
- diff) if [[ "$*" == *--binary* ]]; then printf 'fixture patch\n'; fi ;;
+ diff) if [[ "$*" == *--binary* ]]; then printf 'fixture patch\n'; else printf 'source fixture\n'; fi ;;
  *) exit 90 ;;
 esac
 STUB
 cat > "$sandbox/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
+# Every subcommand is recorded, so a test can require that a gate step actually ran (G-18 F1).
+printf '%s\n' "$*" >> "$TEST_ROOT/cargo-calls"
 if [ "$1" = run ]; then
  if [ "${EXPECTED_MODE:-advisory}" = authority ]; then
   [[ " $* " == *' --ranker '* && " $* " != *' --advisory '* && " $* " != *' --rank '* ]] || exit 97
@@ -41,6 +43,10 @@ if [ "$1" = run ]; then
  fi
  exit "$JUDGE_EXIT"
 fi
+case "$1" in
+ deny) exit "${DENY_EXIT:-$GATE_EXIT}" ;;
+ mutants) exit "${MUTANTS_EXIT:-$GATE_EXIT}" ;;
+esac
 exit "$GATE_EXIT"
 STUB
 cat > "$sandbox/bin/deep-diff-forge" <<'STUB'
@@ -149,3 +155,26 @@ if [ -n "$absent" ]; then
 else
  echo "NOTE hosted-only naming not exercised: zizmor and deep-diff-forge are both installed on this machine"
 fi
+
+# G-18 F1: a required step must RUN, and its failure must reach ci_local's exit status. Static
+# checks refuse a skippable form; this proves the unconditional step is reached and not swallowed.
+printf 'schema = "forge-warden.policy.v0"\n' > "$TEST_ROOT/warden.toml"
+export GUARDRAIL_EXIT=0 PLANTS_EXIT=0 GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0 EXPECTED_MODE=advisory
+: > "$TEST_ROOT/cargo-calls"
+set +e
+bash "$sandbox/repo/scripts/ci_local.sh" > "$sandbox/output" 2>&1
+actual=$?
+set -e
+[ "$actual" -eq 0 ] || { cat "$sandbox/output"; exit 1; }
+grep -qx 'deny check' "$TEST_ROOT/cargo-calls" || { echo 'FAIL required step did not run: cargo deny check'; cat "$TEST_ROOT/cargo-calls"; exit 1; }
+grep -qx 'mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace' "$TEST_ROOT/cargo-calls" || { echo 'FAIL required step did not run: cargo mutants --in-diff'; cat "$TEST_ROOT/cargo-calls"; exit 1; }
+echo 'PASS required steps ran: deny check, mutants --in-diff'
+for row in 'DENY_EXIT 5' 'MUTANTS_EXIT 7'; do
+ read -r name code <<< "$row"
+ set +e
+ env "$name=$code" bash "$sandbox/repo/scripts/ci_local.sh" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ [ "$actual" -eq "$code" ] || { echo "FAIL $name=$code was swallowed: ci_local exited $actual"; exit 1; }
+ echo "PASS $name=$code propagates"
+done

@@ -94,6 +94,16 @@ def local_gate(root):
     return required, hosted
 
 
+# G-18: each required tool's step, as one unconditional line of fixed form. A guard, a `|| true` or a
+# moved command changes the line and is refused here; scripts/tests/ci_local.sh proves the lines run.
+REQUIRED_STEP_LINES = (
+    "step deny; cargo deny check",
+    "step mutation",
+    'if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true '
+    '--in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi',
+)
+
+
 def check_ci_local(root):
     """ci_local probes only hosted-only tools, runs the local-tools step, and never claims a pass it skipped."""
     _, hosted = local_gate(root)
@@ -107,6 +117,10 @@ def check_ci_local(root):
         raise ValueError("ci_local echoes a skip instead of refusing or naming a hosted-only step (G-18)")
     if text.count("step local-tools; python3 -I scripts/tool_versions.py --check-local-tools\n") != 1:
         raise ValueError("ci_local must run the local-tools step exactly once (G-18)")
+    lines = text.splitlines()
+    for required in REQUIRED_STEP_LINES:
+        if lines.count(required) != 1:
+            raise ValueError(f"required step must appear exactly once as an unconditional line (G-18): {required}")
     if "all available gates passed" in text:
         raise ValueError("ci_local must not claim that all available gates passed (G-18)")
 
