@@ -1,4 +1,5 @@
-//! Nothing outside doors.rs can switch off the door lints (ADR 0005 §2.7, Bastion B-C1c-01/02).
+//! Nothing outside the door modules (`common::DOOR_FILES`, formerly the single file doors.rs) can
+//! switch off the door lints (ADR 0005 §2.7, Bastion B-C1c-01/02).
 //!
 //! `clippy.toml` makes `Ranking::attest`, the raw-engine test door and the effect doors disallowed methods;
 //! clippy resolves every way of naming them (`tests/mint_lint.rs`). What remains is a lint attribute
@@ -302,7 +303,6 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
     // Scanned: every source compiled into production (whatever crate or directory it lives in, B-C1c-04)
     // and every Rust file of the CLI crate. Production is decided by the compiler (B-C1c-03).
     let production = common::production_sources();
-    let doors = "crates/forge-warden-cli/src/doors.rs";
     let mut scanned: std::collections::BTreeSet<String> = production.clone();
     scanned.extend(
         files_under("crates/forge-warden-cli", ".rs")
@@ -312,7 +312,7 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
     );
     assert!(scanned.len() >= 10, "found only {} files", scanned.len());
     for name in scanned {
-        if name == doors {
+        if common::is_door_file(&name) {
             continue;
         }
         let source = std::fs::read_to_string(root().join(&name)).unwrap();
@@ -371,7 +371,8 @@ fn raw_attribute_names_and_paths_cannot_suppress_doors() {
     }
 }
 
-/// Inside doors.rs, two narrower rules than "doors live here" (Q-DOOR). Q2-02: only
+/// Inside the door modules, two narrower rules than "doors live here" (Q-DOOR), judged over all of
+/// them together. Q2-02: only
 /// `open_regular` may open a named file, so it is the only production item under which any lint
 /// attribute names `clippy::disallowed_types` (`std::fs::OpenOptions`). Q2-03: production code
 /// joins no thread (a zero-argument `.join()` call, or any path ending in `join`, which covers
@@ -627,19 +628,78 @@ fn only_a_predicate_that_implies_test_is_test_only() {
 
 #[test]
 fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
-    let source =
-        std::fs::read_to_string(root().join("crates/forge-warden-cli/src/doors.rs")).unwrap();
-    let shape = door_shape(&source);
+    let mut types_doors = Vec::new();
+    let mut joins = Vec::new();
+    for door in common::DOOR_FILES {
+        let source = std::fs::read_to_string(root().join(door)).unwrap();
+        let shape = door_shape(&source);
+        types_doors.extend(shape.types_doors);
+        joins.extend(
+            shape
+                .joins
+                .into_iter()
+                .map(|join| format!("{door}: {join}")),
+        );
+    }
     assert_eq!(
-        shape.types_doors,
+        types_doors,
         ["open_regular"],
         "Q2-02: only open_regular may open a named file (and expect clippy::disallowed_types)"
     );
     assert!(
-        shape.joins.is_empty(),
-        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {:?}",
-        shape.joins
+        joins.is_empty(),
+        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {joins:?}"
     );
+}
+
+/// Q-DOOR-SPLIT: door rights are granted by exact listing, never by location. Every file under the
+/// door directory, of any kind, must be a listed door module, and every listed module must exist
+/// there. A file added under `src/doors/` therefore fails here until the protected list names it.
+///
+/// Nothing under the door directory may be a symlink. The listing below compares canonical paths,
+/// so a link `doors/alias.rs -> file.rs` would collapse onto the listed `file.rs` and pass as if it
+/// were not there (Touchstone F1): one module's rights under a second name. A linked directory is
+/// refused here by name as well, before any path is resolved.
+#[test]
+fn door_files_are_exactly_the_listed_modules() {
+    let mut links = Vec::new();
+    let mut pending = vec![root().join(common::DOOR_DIR)];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let kind = std::fs::symlink_metadata(&path).unwrap().file_type();
+            if kind.is_symlink() {
+                links.push(path.display().to_string());
+            } else if kind.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    links.sort();
+    assert!(
+        links.is_empty(),
+        "a door module is a real file and a door directory a real directory, never a symlink: {links:?}"
+    );
+    let present: std::collections::BTreeSet<String> = files_under(common::DOOR_DIR, "")
+        .iter()
+        .map(|p| common::relative(p))
+        .collect();
+    let listed: std::collections::BTreeSet<String> =
+        common::DOOR_FILES.iter().map(|p| (*p).to_owned()).collect();
+    assert_eq!(
+        present,
+        listed,
+        "files under {} must be exactly DOOR_FILES",
+        common::DOOR_DIR
+    );
+    for door in common::DOOR_FILES {
+        assert!(
+            door.starts_with(common::DOOR_DIR)
+                && std::path::Path::new(door).extension() == Some("rs".as_ref()),
+            "{door}: a door module lives under {} and is Rust",
+            common::DOOR_DIR
+        );
+    }
 }
 
 #[test]

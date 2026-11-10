@@ -19,7 +19,7 @@ names. A semicolon separates forbidden phrases; a dash means no forbidden phrase
 | document | verdict | result document; outcome document | Complete sealed evaluation document, including its level, rules, notes and seals. |
 | level | verdict level | outcome tier; verdict tier; result type | The overall pass, hold or fail value serialized in the verdict field. |
 | rule | rule outcome | rule verdict | One rule's pass, hold, fail or waived result; it is not the complete verdict. |
-| effect | effect door | lint door; lint doors; minting door | A reviewed function in doors.rs that performs an external effect; lint guards enforce that boundary. |
+| effect | effect door | lint door; lint doors; minting door | A reviewed function in a door module (`src/doors/`) that performs an external effect; lint guards enforce that boundary. |
 | review | hold | soft pass; conditional pass | A level requiring review evidence; it grants no approval. A hold rule's severity and exit policy_hold are distinct fields. |
 | uncertainty | note | warning-only note | Structured uncertainty that makes the overall level at least hold; it cannot loosen fail. |
 | digest | seal | signed seal | Recorded input digest or runtime metadata; a seal is not a digital signature. |

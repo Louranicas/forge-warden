@@ -17,7 +17,7 @@ in the repository under review and is owned (CODEOWNERS, `protect_paths`).
 | Panics as denial of service | No `unwrap`/`expect`/`panic`/indexing in production code (lint wall); a panic exits 101 and is a bug. |
 
 forge-warden has no `unsafe` code (forbidden) and opens no network connections. Every child
-process it starts goes through `doors.rs`. Two run inside the bounded wrapper, with a cleared
+process it starts goes through the door modules (`src/doors/`). Two run inside the bounded wrapper, with a cleared
 environment, a timeout and capped output:
 - in authority mode, the deep-diff-forge binary the policy admits by SHA-256;
 - Git, which reads the patch's facts inside a private 0700 temporary directory that it removes

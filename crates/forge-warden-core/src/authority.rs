@@ -6,7 +6,7 @@
 //!   only by [`Ranking::attest`], which takes an [`AdmittedProducer`] that only
 //!   [`Policy::admit_producer`] makes, so every produced ranking names a ranker some policy's
 //!   allowlist admits (Q-TYPES-1). That a door actually ran it is the binary's guarantee (the
-//!   CLI's clippy.toml lets only `doors.rs` call `attest`); the core cannot observe a process.
+//!   CLI's clippy.toml lets only its door modules call `attest`); the core cannot observe a process.
 //! - [`check`] compares a ranking with Git's facts about the patch and keeps a borrow of that exact
 //!   ranking: a [`Checked`] is the only thing the judges accept, so a coverage proof cannot be
 //!   paired with another ranking (Zen B1). Every disagreement or refusal becomes a note, and a note
@@ -59,7 +59,7 @@ impl Ranking<Supplied> {
 impl Ranking<Produced> {
     /// A ranking forge-warden produced by running the ranker `producer`, which a policy's
     /// `[producer] sha256` allowlist admitted ([`Policy::admit_producer`]). The binary calls this
-    /// only from `doors.rs`, right after the run.
+    /// only from the CLI's door modules, right after the run.
     #[must_use]
     pub fn attest(doc: RankDoc, producer: AdmittedProducer) -> Self {
         Self {
@@ -160,8 +160,12 @@ impl<P> Checked<'_, P> {
 
     /// The checked ranking with each file's signals widened by Git's change-kind facts (T2: Git
     /// only adds). Infallible (Zen B4): `RankDoc::map_files` and `RankedFile::with_added_signals`
-    /// keep every constructor invariant by construction, so there is no fallback that could judge
-    /// an unwidened ranking.
+    /// keep every constructor invariant by construction, so widening itself has no failure path.
+    ///
+    /// When Git's facts are unavailable there is nothing to widen with, and the rules do read the
+    /// ranking as the producer wrote it. That verdict cannot pass: [`Self::notes`] returns a
+    /// `patch_unverifiable` note for the same `Err`, `judge` attaches it, and a note holds the
+    /// verdict (`a_facts_error_never_passes_anywhere_in_the_corpus`).
     fn effective(&self) -> RankDoc {
         let rank = &self.ranking.doc;
         let Ok(facts) = &self.facts else {

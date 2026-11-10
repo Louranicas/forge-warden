@@ -18,9 +18,11 @@ def versions(root):
     values["msrv"] = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["rust-version"]
     if not re.fullmatch(r"[0-9a-f]{40}", values["ddf_rev"]):
         raise ValueError("invalid pinned DDF revision")
-    for name in ("rust", "zizmor", "cargo_mutants", "cargo_deny"):
+    for name in ("rust", "zizmor", "cargo_mutants", "cargo_deny", "rustup"):
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values[name]):
             raise ValueError("invalid exact tool version: " + name)
+    if not re.fullmatch(r"[0-9a-f]{64}", values["rustup_sha256"]):
+        raise ValueError("invalid rustup-init sha256")
     return values
 
 

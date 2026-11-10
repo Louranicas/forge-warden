@@ -1,7 +1,7 @@
 # Effect doors (ADR 0001). Outside the pure core, a method below may be called only inside a
 # function that carries `#[expect(clippy::disallowed_methods, reason = "door: <name>")]`, and the
-# doors live in one module (`crates/forge-warden-cli/src/doors.rs`). A new effect is therefore a
-# reviewed diff to that one file, never a line anywhere. `repo_invariants.rs` checks that no other
+# doors live in the door modules (`crates/forge-warden-cli/src/doors/`, an exact list in the CLI's
+# tests/common `DOOR_FILES`). A new effect is therefore a reviewed diff to those files, never a line anywhere. `repo_invariants.rs` checks that no other
 # file names a door.
 avoid-breaking-exported-api = false
 allow-unwrap-in-tests = true
@@ -34,7 +34,7 @@ disallowed-methods = [
     { path = "std::io::stderr", reason = "write stderr only through doors::diagnose" },
     { path = "std::env::var", reason = "forge-warden reads no environment; configuration is explicit" },
     { path = "std::env::var_os", reason = "forge-warden reads no environment; configuration is explicit" },
-    { path = "std::process::Command::new", reason = "children (the pinned ranker, Git, and /usr/bin/kill for cleanup) start only in doors.rs" },
+    { path = "std::process::Command::new", reason = "children (the pinned ranker, Git, and /usr/bin/kill for cleanup) start only in the door modules (src/doors/)" },
     { path = "std::time::SystemTime::now", reason = "read the clock only through doors::today" },
     { path = "std::time::Instant::now", reason = "only the child door measures time, for its deadline" },
     { path = "std::thread::sleep", reason = "only the child door waits, polling a bounded child" },
