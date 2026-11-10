@@ -102,12 +102,15 @@ class Runner(unittest.TestCase):
             (source / 'dangling').symlink_to(root / 'nowhere')
             outside = root / 'outside'; outside.mkdir()
             (source / 'linkdir').symlink_to(outside)
+            # N2: a nested .git is refused by name, even where it exists (parent check alone would pass).
+            (source / 'nested' / '.git').mkdir(parents=True)
             refusals = {
                 '../escape': 'relative and normalised', str(root / 'abs'): 'relative and normalised',
                 './dot': 'relative and normalised', 'dir//double': 'relative and normalised',
                 'dir/../up': 'relative and normalised', 'dir/': 'relative and normalised',
                 '': 'relative and normalised', '.git/hooks/x': 'inside .git',
                 'existing': 'already exists', 'dangling': 'already exists',
+                'nested/.git/x': 'inside .git',
                 'linkdir/x': 'missing or symlink parent', 'missing/x': 'missing or symlink parent',
             }
             before = sorted(p.name for p in source.iterdir())
@@ -120,14 +123,47 @@ class Runner(unittest.TestCase):
             self.assertFalse((root / 'nowhere').exists())
 
     def test_recipe_has_exactly_one_kind(self):
-        for invalid in (dict(), dict(new='x'), dict(old='a'), dict(create='a', new='b'),
-                        dict(old='a', new='b', create='c'), dict(append='a', create='b'),
-                        dict(create=None), dict(append=['x'])):
+        for invalid in (dict(path='f'), dict(path='f', new='x'), dict(path='f', old='a'),
+                        dict(path='f', create='a', new='b'), dict(path='f', old='a', new='b', create='c'),
+                        dict(path='f', append='a', create='b'), dict(path='f', create=None),
+                        dict(path='f', append=['x']),
+                        # N1: a missing or non-string path is a named refusal, not a KeyError later.
+                        dict(create='a'), dict(path=None, create='a'), dict(path=['f'], create='a'),
+                        # F1: text the write cannot encode is refused before any file exists.
+                        dict(path='f', create='\ud800'), dict(path='f', old='a', new='\ud800'),
+                        dict(path='f', old='a', new=None)):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'recipe'):
                 RUN.recipe_kind(invalid)
-        for valid, kind in ((dict(old='a', new='b'), 'old'), (dict(append='a'), 'append'),
-                            (dict(create=''), 'create')):
+        for valid, kind in ((dict(path='f', old='a', new='b'), 'old'), (dict(path='f', append='a'), 'append'),
+                            (dict(path='f', create=''), 'create')):
             self.assertEqual(RUN.recipe_kind(valid), kind)
+
+    def test_create_under_a_symlinked_ancestor_of_the_root_still_works(self):
+        # N3: /home -> /var/home is normal here. Only components below the root are judged.
+        with tempfile.TemporaryDirectory() as directory:
+            real = Path(directory) / 'real'; (real / 'source' / 'dir').mkdir(parents=True)
+            alias = Path(directory) / 'alias'; alias.symlink_to(real)
+            (real / 'source' / 'linkdir').symlink_to(real / 'source' / 'dir')
+            path, before = RUN.edit(alias / 'source', dict(path='dir/new', create='x\n'))
+            self.assertEqual((real / 'source' / 'dir' / 'new').read_text(), 'x\n')
+            RUN.restore(path, before)
+            with self.assertRaisesRegex(ValueError, 'missing or symlink parent'):
+                RUN.edit(alias / 'source', dict(path='linkdir/new', create='x\n'))
+            self.assertEqual(sorted(p.name for p in (real / 'source' / 'dir').iterdir()), [])
+
+    def test_a_failed_create_write_leaves_no_file(self):
+        # F1: the file exists from the open on; a write that fails must not leave it behind.
+        class Broken:
+            def __init__(self, handle, *args, **kwargs): os.close(handle)
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+            def write(self, text): raise OSError('disk full (simulated)')
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            with patch.object(RUN.os, 'fdopen', Broken), \
+                    self.assertRaisesRegex(ValueError, 'create plant write failed'):
+                RUN.edit(source, dict(path='new', create='x\n'))
+            self.assertFalse(os.path.lexists(source / 'new'))
 
     def test_create_then_restore_removes_exactly_that_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -189,6 +225,67 @@ class Runner(unittest.TestCase):
             self.assertIn('created plant file still present', report['results'][0]['detail'])
             self.assertTrue(report['aborted_after_restore_error'])
             self.assertEqual(git('status', '--porcelain'), b'')
+
+    def test_no_create_outlives_its_case_even_when_its_write_fails(self):
+        # F1 (Keel): a create whose write fails, at an ignored path git status cannot see, must not
+        # leave its file for the next case. Pinned through run.py main, case after case.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'; source.mkdir()
+            (source / 'Cargo.lock').write_text('fixture lock\n')
+            (source / '.gitignore').write_text('*.plant\n')
+            (source / 'check.py').write_text(
+                'from pathlib import Path\nimport sys\n'
+                'bad=sorted(str(p) for p in Path(".").glob("*.plant"))\n'
+                'print("named create breach", bad) if bad else print("clean create baseline")\n'
+                'sys.exit(101 if bad else 0)\n')
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null',
+                    '-C', str(source), *args], env=RUN.environment(), stderr=subprocess.PIPE)
+            git('init', '-q'); git('add', '--', 'Cargo.lock', '.gitignore', 'check.py')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            revision = git('rev-parse', 'HEAD').decode().strip()
+            program = root / 'run.py'
+            original = Path(__file__).with_name('run.py').read_text()
+            program.write_text(original)
+            command = [sys.executable, '-I', 'check.py']
+            (root / 'catalog.json').write_text(json.dumps(dict(register={}, pending_guardrails=[], cases=[
+                dict(id='unwritable', guardrail='G-06', path='first.plant', create='\ud800', command=command,
+                     diagnostic='named create breach'),
+                dict(id='next', guardrail='G-06', path='second.plant', create='x\n', command=command,
+                     diagnostic='named create breach')])))
+            common = [sys.executable, '-I', str(program), '--source', str(source), '--revision', revision]
+            # (1) Refused before any checkout: nothing runs, no output directory.
+            result = subprocess.run([*common, '--output', str(root / 'refused')], capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(b'UTF-8 encodable', result.stderr)
+            self.assertFalse((root / 'refused').exists())
+            # (2) Plant: the up-front encoding check is removed, so the write itself fails inside
+            # create(). The file must be gone before the next case's baseline runs.
+            check = "            text.encode('utf-8')\n"
+            self.assertEqual(original.count(check), 1)
+            program.write_text(original.replace(check, '            pass  # planted: no encoding check\n'))
+            result = subprocess.run([*common, '--output', str(root / 'planted')], capture_output=True, timeout=20)
+            report = json.loads((root / 'planted' / 'report.json').read_text())
+            rows = {r['id']: r for r in report['results']}
+            self.assertEqual(rows['unwritable']['status'], 'ERROR_RECIPE', rows['unwritable'])
+            self.assertIn('create plant write failed', rows['unwritable']['detail'])
+            self.assertEqual(rows['next']['status'], 'CAUGHT', rows['next'])
+            self.assertNotIn('first.plant', (root / 'planted' / 'next-planted.log').read_text())
+            self.assertNotIn('aborted_after_restore_error', report)
+            self.assertEqual(result.returncode, 1)  # one case is an ERROR, never counted as caught
+            # (3) Plant both: no encoding check and a cleanup that cannot remove the file. The run
+            # must report ERROR_RESTORE and stop, not carry a hidden plant into the next case.
+            unlink = 'path.unlink(missing_ok=True)\n    if os.path.lexists'
+            self.assertEqual(original.count(unlink), 1)
+            program.write_text(original.replace(check, '            pass  # planted: no encoding check\n')
+                               .replace(unlink, 'pass  # planted: no unlink\n    if os.path.lexists'))
+            result = subprocess.run([*common, '--output', str(root / 'stuck')], capture_output=True, timeout=20)
+            report = json.loads((root / 'stuck' / 'report.json').read_text())
+            self.assertEqual([r['status'] for r in report['results']], ['ERROR_RESTORE'])
+            self.assertTrue(report['aborted_after_restore_error'])
+            self.assertEqual(result.returncode, 1)
 
     def test_commands_timeout_instead_of_counting_red(self):
         with tempfile.TemporaryDirectory() as directory:

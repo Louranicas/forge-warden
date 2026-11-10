@@ -93,8 +93,15 @@ def recipe_kind(recipe):
     kinds = [k for k in ('old', 'append', 'create') if k in recipe]
     if len(kinds) != 1 or ('new' in recipe) != (kinds == ['old']):
         raise ValueError('recipe must have exactly one of old/new, append or create')
-    if not isinstance(recipe[kinds[0]], str):
-        raise ValueError('recipe text must be a string')
+    texts = [recipe[field] for field in ('old', 'new', 'append', 'create') if field in recipe]
+    if not all(isinstance(text, str) for text in texts) or not isinstance(recipe.get('path'), str):
+        raise ValueError('recipe path and text must be strings')
+    try:
+        for text in texts:
+            text.encode('utf-8')
+    except UnicodeEncodeError:
+        # A text the write cannot encode is refused before any checkout or file exists.
+        raise ValueError('recipe text must be UTF-8 encodable') from None
     return kinds[0]
 
 
@@ -108,21 +115,35 @@ def create(root, recipe):
     if (not raw or relative.is_absolute() or relative.as_posix() != raw
             or any(part in ('', '.', '..') for part in raw.split('/'))):
         raise ValueError('create path must be relative and normalised')
-    if relative.parts[0] == '.git':
+    if '.git' in relative.parts:
         raise ValueError('create path is inside .git')
+    # Each directory below the checkout root must be real; the root itself may sit under a
+    # symlinked ancestor (/home -> /var/home) without refusing every create.
+    directory = root
+    for part in relative.parts[:-1]:
+        directory = directory / part
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError('create path has a missing or symlink parent')
     path = root / relative
-    if not path.parent.is_dir() or path.parent.resolve() != path.parent.absolute():
-        raise ValueError('create path has a missing or symlink parent')
     try:
         handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError:
         raise ValueError('create path already exists') from None
-    with os.fdopen(handle, 'w', encoding='utf-8') as out:
-        out.write(recipe['create'])
-    if path.is_symlink() or not path.is_file():
-        path.unlink(missing_ok=True)
-        raise ValueError('create plant was not applied')
+    # From here the file exists: every failure removes it and proves it absent before raising, so a
+    # plant that never reached the caller cannot outlive its case (Keel F1).
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as out:
+            out.write(recipe['create'])
+    except BaseException as error:
+        restore(path, None)
+        if isinstance(error, Exception):
+            raise ValueError('create plant write failed: ' + str(error)) from error
+        raise
     return path
+
+
+class RestoreError(OSError):
+    """A plant could not be undone; the checkout is no longer the subject and the run must stop."""
 
 
 def restore(path, before):
@@ -133,7 +154,7 @@ def restore(path, before):
         return
     path.unlink(missing_ok=True)
     if os.path.lexists(path):
-        raise OSError('created plant file still present: ' + str(path))
+        raise RestoreError('created plant file still present: ' + str(path))
 
 
 def edit(root, recipe):
@@ -260,6 +281,8 @@ def main():
                     planted['text'] = (output / planted['log']).read_bytes()[:LIMIT].decode('utf-8', errors='replace')
                     row['status'] = classify(positive, planted, case['diagnostic'])
                     planted.pop('text')
+                except RestoreError as error:
+                    row.update(status='ERROR_RESTORE', detail=str(error))
                 except (ValueError, OSError) as error:
                     row.update(status='ERROR_RECIPE', detail=str(error))
                 finally:
