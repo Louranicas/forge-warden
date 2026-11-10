@@ -7,15 +7,16 @@
     reason = "test harness: builds a scratch repository and runs the script; a panic is a failed test"
 )]
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = common::command("git")
         .args([
             "-c",
             "user.name=t",
@@ -38,9 +39,8 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 /// A scratch repository whose `crates/deep-diff-forge-graph/src/{risk,evidence}.rs` are the
 /// fixtures with `edit` applied to one of them, committed; returns (repo, commit).
-fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (PathBuf, String) {
-    let repo = std::env::temp_dir().join(format!("fw-vocab-{}-{name}", std::process::id()));
-    let _gone = std::fs::remove_dir_all(&repo);
+fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (common::Scratch, String) {
+    let repo = common::scratch(name);
     let src = repo.join("crates/deep-diff-forge-graph/src");
     std::fs::create_dir_all(&src).unwrap();
     for f in ["risk.rs", "evidence.rs"] {
@@ -60,11 +60,29 @@ fn commit_with(name: &str, file: &str, from: &str, to: &str) -> (PathBuf, String
     (repo, commit)
 }
 
+/// Run the script from a copy of the two files it needs, staged outside any Git repository (as in a
+/// mutation run's scratch tree or a release tarball), so it must find its tree without Git.
 fn check(repo: &Path, rev: &str) -> (i32, String) {
-    let out = Command::new("bash")
-        .arg(root().join("scripts/check_vocab.sh"))
+    for tool in [
+        "bash", "dirname", "mktemp", "mkdir", "git", "tar", "python3", "rm",
+    ] {
+        let _admitted = common::command(tool);
+    }
+    let tree = common::scratch("vocab-tree");
+    for file in [
+        "scripts/check_vocab.sh",
+        "crates/forge-warden-core/src/vocab.rs",
+    ] {
+        let to = tree.join(file);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(root().join(file), &to).unwrap();
+    }
+    let out = common::command("bash")
+        .arg(tree.join("scripts/check_vocab.sh"))
         .args([rev, repo.to_str().unwrap()])
-        .current_dir(root())
+        .current_dir(&tree)
+        // Git may not discover any repository around the staged tree.
+        .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
         .output()
         .unwrap();
     let text = format!(
@@ -154,6 +172,29 @@ fn every_label_form_the_script_cannot_read_exactly_fails_closed() {
         let (code, text) = check(&repo, &commit);
         assert_eq!(code, 1, "{name}: {text}");
         assert!(text.contains(want), "{name}: {text}");
-        let _cleaned = std::fs::remove_dir_all(&repo);
     }
+}
+
+#[test]
+fn git_fixture_environment_cannot_redirect_the_index() {
+    let repo = common::scratch("git-env-boundary");
+    let outside = common::write(&repo, "outer-index", b"untouched");
+    let mut cmd = common::command("git");
+    cmd.env("GIT_INDEX_FILE", &outside)
+        .env("GIT_DIR", "/nonexistent")
+        .env("GIT_CONFIG_COUNT", "invalid");
+    common::hermetic(&mut cmd);
+    let output = cmd
+        .args(["init", "--quiet"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    git(&repo, &["add", "-A"]);
+    assert_eq!(std::fs::read(outside).unwrap(), b"untouched");
+    assert!(repo.join(".git/index").is_file());
 }

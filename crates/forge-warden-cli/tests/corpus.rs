@@ -8,14 +8,27 @@
 )]
 
 mod common;
-use common::{files_under, run};
+#[path = "../../forge-warden-core/tests/support/corpus_manifest.rs"]
+mod corpus_manifest;
+use common::files_under;
+use forge_warden_core::Date;
+use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
+use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::testing::evaluate;
+use forge_warden_core::verdict::Seals;
 use forge_warden_core::vocab::is_known_signal;
 
 #[test]
 fn every_real_ranking_parses_with_known_vocabulary() {
     let files = files_under("fixtures/corpus", ".rank.json");
-    assert!(files.len() >= 30, "the corpus shrank to {}", files.len());
+    corpus_manifest::check(
+        "producer-rankings",
+        files
+            .iter()
+            .map(|path| (common::relative(path), std::fs::read(path).unwrap())),
+    )
+    .unwrap();
     let mut signals = std::collections::BTreeSet::new();
     for path in &files {
         let bytes = std::fs::read(path).unwrap();
@@ -23,11 +36,11 @@ fn every_real_ranking_parses_with_known_vocabulary() {
         for file in rank.files() {
             for signal in file.signals() {
                 assert!(
-                    is_known_signal(signal),
+                    is_known_signal(signal.name()),
                     "{}: unknown signal {signal}",
                     path.display()
                 );
-                signals.insert(signal.clone());
+                signals.insert(signal.name().to_owned());
             }
         }
     }
@@ -43,25 +56,25 @@ fn every_real_ranking_parses_with_known_vocabulary() {
 
 #[test]
 fn every_real_ranking_is_judged_deterministically() {
+    // These rankings come without their patches, so they are judged by the engine itself (the
+    // binary needs the patch: ADR 0005). Same bytes in, same bytes out.
+    let policy_bytes = std::fs::read(common::root().join("examples/starter.warden.toml")).unwrap();
+    let policy = parse_policy(&policy_bytes).unwrap();
+    let today = Date::parse("2026-11-05").unwrap();
     for path in files_under("fixtures/corpus", ".rank.json") {
-        let rank = std::fs::read(&path).unwrap();
-        let args = [
-            "check",
-            "--policy",
-            "examples/starter.warden.toml",
-            "--today",
-            "2026-11-05",
-            "--json",
-        ];
-        let first = run(&args, &rank);
-        let second = run(&args, &rank);
-        assert!(
-            matches!(first.code, 0 | 7 | 8),
-            "{}: exit {} {}",
-            path.display(),
-            first.code,
-            first.stderr
-        );
-        assert_eq!(first.stdout, second.stdout, "{}", path.display());
+        let bytes = std::fs::read(&path).unwrap();
+        let judge = || {
+            let rank = parse_rank(&bytes).unwrap();
+            let seals = Seals::new(
+                sha256_hex(&policy_bytes),
+                sha256_hex(&bytes),
+                rank.input_sha256().to_owned(),
+                rank.tool_version().to_owned(),
+            );
+            evaluate(&policy, &rank, seals, today).to_json()
+        };
+        let first = judge();
+        assert_eq!(first, judge(), "{}", path.display());
+        assert!(first.contains("\"verdict\""), "{}", path.display());
     }
 }

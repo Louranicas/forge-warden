@@ -5,6 +5,7 @@
 //! terminal-escape injection and Trojan-Source bidi reordering impossible by construction, at the
 //! cost of escaping legitimate non-ASCII paths (the JSON output keeps them exact).
 
+use crate::defaults::NamedDefault as _;
 use crate::verdict::{Note, RuleOutcome, Verdict};
 use std::fmt::Write as _;
 
@@ -29,32 +30,37 @@ pub fn terminal_safe(text: &str) -> String {
 #[must_use]
 pub fn render_text(verdict: &Verdict) -> String {
     let mut out = String::new();
-    let label = verdict.verdict.label().to_ascii_uppercase();
+    let label = verdict.outcome().label().to_ascii_uppercase();
     let _ = writeln!(
         out,
         "forge-warden {}: {label} (exit {} {}, next: {})",
-        verdict.tool.version, verdict.exit.code, verdict.exit.name, verdict.exit.action
+        verdict.tool().version,
+        verdict.exit().code,
+        verdict.exit().name,
+        verdict.exit().action
     );
+    let ranker = match &verdict.seals().ranked_by.sha256 {
+        Some(sha256) => format!(
+            "produced by ranker {}",
+            terminal_safe(&short(sha256.as_str()))
+        ),
+        None => "supplied, unverified".to_owned(),
+    };
     let _ = writeln!(
         out,
-        "  patch {} ({}), policy {}, ranked by deep-diff-forge {}, on {}",
-        short(&verdict.seals.patch_sha256),
-        if verdict.seals.patch_verified {
-            "verified"
-        } else {
-            "as claimed"
-        },
-        short(&verdict.seals.policy_sha256),
-        terminal_safe(&verdict.seals.ranked_by),
-        verdict.evaluated_on,
+        "  patch {}, policy {}, ranked by deep-diff-forge {} ({ranker}), on {}",
+        short(verdict.seals().patch_sha256.as_str()),
+        short(verdict.seals().policy_sha256.as_str()),
+        terminal_safe(&verdict.seals().ranked_by.version),
+        verdict.evaluated_on(),
     );
-    let s = &verdict.summary;
+    let s = &verdict.summary();
     let _ = writeln!(
         out,
         "  {} file(s), {} rule(s): {} pass, {} waived, {} hold, {} fail",
         s.files, s.rules, s.passed, s.waived, s.held, s.failed
     );
-    for rule in &verdict.rules {
+    for rule in verdict.rules() {
         let mark = match rule.outcome {
             RuleOutcome::Pass => "PASS  ",
             RuleOutcome::Waived => "WAIVED",
@@ -73,12 +79,13 @@ pub fn render_text(verdict: &Verdict) -> String {
             let path = v
                 .path
                 .as_deref()
-                .map_or_else(|| "(whole change)".to_owned(), terminal_safe);
-            // display only: an unwaived violation carries no waiver annotation
+                .map(terminal_safe)
+                .or_display("(whole change)".to_owned());
+            // An unwaived violation carries no waiver annotation.
             let waived = v
                 .waived_by
                 .map(|i| format!(" [waived by waiver[{i}]]"))
-                .unwrap_or_default();
+                .or_display(String::new());
             let _ = writeln!(
                 out,
                 "           - {path}: {}{waived}",
@@ -90,12 +97,12 @@ pub fn render_text(verdict: &Verdict) -> String {
                     "               at {} line {} (hunk {})",
                     c.side,
                     c.line,
-                    short(&c.address)
+                    short(c.address.as_str())
                 );
             }
         }
     }
-    for w in &verdict.expired_waivers {
+    for w in verdict.expired_waivers() {
         let _ = writeln!(
             out,
             "  [EXPIRED] waiver[{}] for {} (owner {}) expired {}: renew or delete it",
@@ -105,7 +112,7 @@ pub fn render_text(verdict: &Verdict) -> String {
             w.expires
         );
     }
-    for w in &verdict.unused_waivers {
+    for w in verdict.unused_waivers() {
         let _ = writeln!(
             out,
             "  [UNUSED] waiver[{}] for {} matched nothing in this change",
@@ -113,28 +120,28 @@ pub fn render_text(verdict: &Verdict) -> String {
             terminal_safe(&w.rule)
         );
     }
-    render_notes(&mut out, &verdict.notes);
+    render_notes(&mut out, verdict.notes());
     out
 }
 
 /// The first 12 characters of a seal, for a one-line summary.
 fn short(seal: &str) -> String {
-    // fails safe: a seal shorter than 12 characters is shown whole, never hidden
-    seal.get(..12).unwrap_or(seal).to_owned()
+    // A seal shorter than 12 characters is shown whole, never hidden.
+    seal.get(..12).or_fail_safe(seal).to_owned()
 }
 
 fn render_notes(out: &mut String, notes: &[Note]) {
     for n in notes {
-        // display only: a change-wide note has no path to show
+        // A change-wide note has no path to show.
         let path = n
             .path
             .as_deref()
             .map(|p| format!(" {}:", terminal_safe(p)))
-            .unwrap_or_default();
+            .or_display(String::new());
         let _ = writeln!(
             out,
             "  [NOTE] {}{path} {}",
-            n.code,
+            n.code.name(),
             terminal_safe(&n.detail)
         );
     }

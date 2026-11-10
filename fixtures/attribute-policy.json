@@ -1,0 +1,286 @@
+[
+  {
+    "name": "allow",
+    "source": "#[allow(dead_code)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-allow",
+    "source": "#[r#allow(dead_code)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "inner-allow",
+    "source": "#![r#allow(dead_code)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "nested-allow",
+    "source": "#[r#cfg_attr(test, cfg_attr(unix, r#allow(dead_code)))]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "inline-allow",
+    "source": "#[inline] #[allow(dead_code)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "door-allow",
+    "source": "#[allow(clippy::all)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": true,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-door-allow",
+    "source": "#[r#allow(r#clippy::r#disallowed_methods)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": true,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "missing-reason",
+    "source": "#[expect(dead_code)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "empty-reason",
+    "source": "#[expect(dead_code, reason = \" \")]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "duplicate-reason",
+    "source": "#[expect(dead_code, reason = \"a\", reason = \"b\")]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "nonliteral-reason",
+    "source": "#[expect(dead_code, reason = WHY)]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "no-lint",
+    "source": "#[expect(reason = \"reason\")]\nfn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "expect",
+    "source": "#[expect(dead_code, reason = \"reviewed\")]\nfn f() {}",
+    "expectations": [
+      [
+        "dead_code",
+        "reviewed"
+      ]
+    ],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-expect",
+    "source": "#[r#expect(r#dead_code, r#reason = \"reviewed\")]\nfn f() {}",
+    "expectations": [
+      [
+        "dead_code",
+        "reviewed"
+      ]
+    ],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "inner-expect",
+    "source": "#![expect(dead_code, reason = \"reviewed\")]\nfn f() {}",
+    "expectations": [
+      [
+        "dead_code",
+        "reviewed"
+      ]
+    ],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "conditional-expect",
+    "source": "#[r#cfg_attr(test, cfg_attr(unix, expect(dead_code, reason = \"reviewed\")))]\nfn f() {}",
+    "expectations": [
+      [
+        "dead_code",
+        "reviewed"
+      ]
+    ],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "multi-lint",
+    "source": "#[expect(dead_code, unused_imports, reason = r#\"reviewed\"#)] fn f() {}",
+    "expectations": [
+      [
+        "dead_code",
+        "reviewed"
+      ],
+      [
+        "unused_imports",
+        "reviewed"
+      ]
+    ],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "door-expect",
+    "source": "#[expect(clippy::disallowed_methods, reason = \"reviewed\")] fn f() {}",
+    "expectations": [
+      [
+        "clippy::disallowed_methods",
+        "reviewed"
+      ]
+    ],
+    "door_violation": true,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "macro-outer",
+    "source": "some_macro! { #[r#allow(dead_code)] fn f() {} }",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "macro-inner",
+    "source": "some_macro! { fn f() { #![r#allow(dead_code)] } }",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "macro-expect",
+    "source": "some_macro! { #[expect(dead_code, reason = \"reviewed\")] fn f() {} }",
+    "expectations": [
+      [
+        "dead_code",
+        "reviewed"
+      ]
+    ],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "comments",
+    "source": "/* nested /* #[allow(dead_code)] */ comment */\n// #[expect(dead_code)]\nfn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-string",
+    "source": "const S: &str = r###\"#[allow(dead_code)] #[expect(x)]\"###;",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "string",
+    "source": "const S: &str = \"#[allow(dead_code)]\";",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "safe-doc",
+    "source": "some_macro! { #[doc = $text] fn f() {} }",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "warn-doors",
+    "source": "#[warn(clippy::disallowed_methods)] fn f() {}",
+    "expectations": [],
+    "door_violation": true,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-ignore",
+    "source": "#[r#ignore] fn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 1
+  },
+  {
+    "name": "conditional-ignore",
+    "source": "#[cfg_attr(test, r#cfg_attr(unix, r#ignore))] fn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 1
+  },
+  {
+    "name": "inner-ignore",
+    "source": "#![r#ignore]\nfn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 1
+  },
+  {
+    "name": "macro-inner-ignore",
+    "source": "some_macro! { fn f() { #![r#ignore] } }",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 1
+  },
+  {
+    "name": "reasoned-ignore",
+    "source": "#[r#ignore = \"hardware\"] fn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "qualified-tool-expect",
+    "source": "#[cfg_attr(any(), rustfmt::expect(dead_code, reason = \"reviewed\"))] fn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "predicate-is-not-an-attribute",
+    "source": "#[cfg_attr(any(expect(dead_code, reason = \"predicate\")), inline)] fn f() {}",
+    "expectations": [],
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-byte-reason",
+    "source": "#[expect(dead_code, reason = br\"reviewed\")] fn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  },
+  {
+    "name": "raw-c-reason",
+    "source": "#[expect(dead_code, reason = cr\"reviewed\")] fn f() {}",
+    "expectations": null,
+    "door_violation": false,
+    "unexplained_ignores": 0
+  }
+]

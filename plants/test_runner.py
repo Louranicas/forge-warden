@@ -23,6 +23,29 @@ class Runner(unittest.TestCase):
             actual = RUN.environment()
         self.assertTrue(all(name not in actual for name in flags))
 
+    def test_caller_colour_cannot_change_named_diagnostic(self):
+        child = ("import os,sys; "
+                 "colour=os.environ.get('CARGO_TERM_COLOR')=='always' or "
+                 "any(os.environ.get(k) not in (None, '', '0') for k in ('CLICOLOR_FORCE','FORCE_COLOR')); "
+                 "print('\\x1b[1merror\\x1b[0m: named breach' if colour else 'error: named breach'); "
+                 "sys.exit(101)")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for inherited in ({'CARGO_TERM_COLOR': 'never'},
+                              {'CARGO_TERM_COLOR': 'always', 'CLICOLOR': '1',
+                               'CLICOLOR_FORCE': '1', 'FORCE_COLOR': '3', 'TERM': 'xterm-256color'}):
+                with self.subTest(inherited=inherited), patch.dict(os.environ, inherited):
+                    result = RUN.execute([sys.executable, '-c', child], root, root / 'colour.log')
+                    result['text'] = (root / 'colour.log').read_text()
+                    self.assertEqual(RUN.classify(dict(exit=0, error=None, text='baseline'),
+                                                  result, 'error: named breach'), 'CAUGHT')
+                    env = RUN.environment()
+                    self.assertEqual(env['CARGO_TERM_COLOR'], 'never')
+                    self.assertEqual(env['TERM'], 'dumb')
+                    self.assertTrue(env['NO_COLOR'])
+                    self.assertNotIn('CLICOLOR_FORCE', env)
+                    self.assertNotIn('FORCE_COLOR', env)
+
     def test_execution_profiles_keep_argv_and_refuse_silent_native_fallback(self):
         root, target = Path('/checkout'), Path('/target')
         cargo = dict(cargo=['test', '--offline'])
@@ -137,6 +160,12 @@ class Runner(unittest.TestCase):
             self.assertTrue(report['aborted_after_restore_error'])
             self.assertEqual((source / 'fixture').read_text(), 'clean\n')
             self.assertEqual(git('status', '--porcelain'), b'')
+
+    def test_native_cargo_target_precedes_test_arguments(self):
+        case = {'cargo': ['test', '-p', 'forge-warden-cli', '--', 'a_test', '--exact']}
+        argv = RUN.command_for(case, Path('/checkout'), Path('/isolated-target'))
+        self.assertEqual(argv, ['cargo', 'test', '-p', 'forge-warden-cli',
+                                '--target-dir', '/isolated-target', '--', 'a_test', '--exact'])
 
     def test_missing_executable_is_an_error(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -19,6 +19,7 @@ categories = ["development-tools", "command-line-utilities"]
 # Rule of thumb: anything a reviewer would have to *remember* to check is a lint here instead.
 # ---------------------------------------------------------------------------------------------
 [workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fw_fixture_cli)'] }
 warnings = "deny"
 unsafe_code = "forbid"
 missing_docs = "deny"
@@ -87,6 +88,12 @@ thiserror = "2.0.12"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
 
 proptest = { version = "1.7", default-features = false, features = ["std"] }
+# Test-only CommonMark event parser for executable documentation. No renderer or CLI features.
+pulldown-cmark = { version = "=0.13.6", default-features = false }
+# Test-only: a real Rust parser for the door-lint suppression check (WP-C1c v3). Never a
+# dependency of either crate's library or binary.
+proc-macro2 = { version = "1.0.107", default-features = false, features = ["span-locations"] }
+syn = { version = "3.0.9", default-features = false, features = ["full", "parsing", "visit"] }
 
 [profile.release]
 codegen-units = 1

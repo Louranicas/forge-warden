@@ -1,0 +1,661 @@
+//! Nothing outside doors.rs can switch off the door lints (ADR 0005 §2.7, Bastion B-C1c-01/02).
+//!
+//! `clippy.toml` makes `Ranking::attest`, the raw-engine test door and the effect doors disallowed methods;
+//! clippy resolves every way of naming them (`tests/mint_lint.rs`). What remains is a lint attribute
+//! that switches the lint off. This check reads every first-party Rust file of the CLI crate with a
+//! real parser (syn), so comments, whitespace and raw identifiers never reach it, and inspects every
+//! attribute by its parsed path: outer and inner, nested in `cfg_attr`, and inside macro
+//! invocations. A file that does not parse fails, and so does a lint attribute whose arguments do not.
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test door: reads the CLI crate's source files"
+)]
+
+mod common;
+use common::attribute_policy::is_plain_doc;
+use common::{files_under, root};
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use syn::ext::IdentExt as _;
+use syn::punctuated::Punctuated;
+use syn::visit::Visit;
+use syn::{Attribute, Meta, Path, Token};
+
+/// Lints that would switch off `clippy::disallowed_methods` / `disallowed_types`: the groups that
+/// contain them, `warnings`, and the lints themselves (any `clippy::disallowed_*`, old names too).
+fn reaches_the_doors(path: &Path) -> bool {
+    let segments: Vec<String> = path
+        .segments
+        .iter()
+        .map(|s| s.ident.unraw().to_string())
+        .collect();
+    match segments.as_slice() {
+        [one] => one == "warnings",
+        [tool, lint] => {
+            tool == "clippy" && (lint == "all" || lint == "style" || lint.starts_with("disallowed"))
+        }
+        _ => false,
+    }
+}
+
+fn last(path: &Path) -> String {
+    path.segments
+        .last()
+        .map(|s| s.ident.unraw().to_string())
+        .unwrap_or_default()
+}
+
+/// What one attribute (as its `Meta`) does to the door lints: a list of offences.
+fn check_meta(meta: &Meta, found: &mut Vec<String>) {
+    let name = last(meta.path());
+    let level = matches!(name.as_str(), "allow" | "expect" | "warn");
+    if !level && name != "cfg_attr" {
+        return;
+    }
+    let Meta::List(list) = meta else {
+        if level {
+            found.push(format!("{name} without a lint list"));
+        }
+        return;
+    };
+    let Ok(items) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) else {
+        found.push(format!("{name}(…) whose arguments do not parse"));
+        return;
+    };
+    if name == "cfg_attr" {
+        // cfg_attr(predicate, attr, attr, …): every attribute after the predicate applies.
+        for nested in items.iter().skip(1) {
+            check_meta(nested, found);
+        }
+        return;
+    }
+    for item in &items {
+        if let Meta::Path(lint) = item
+            && reaches_the_doors(lint)
+        {
+            let names: Vec<String> = lint
+                .segments
+                .iter()
+                .map(|s| s.ident.unraw().to_string())
+                .collect();
+            found.push(format!("{name}({})", names.join("::")));
+        }
+    }
+}
+
+/// `#[…]` / `#![…]` written as tokens inside a macro invocation, checked as attributes.
+fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            check_tokens(group.stream(), found);
+        }
+        if let TokenTree::Ident(ident) = tree
+            && ident.unraw() == "include"
+            && matches!(trees.get(index.saturating_add(1)), Some(TokenTree::Punct(p)) if p.as_char() == '!')
+        {
+            found.push("include!".to_owned());
+        }
+        let TokenTree::Punct(pound) = tree else {
+            continue;
+        };
+        if pound.as_char() != '#' {
+            continue;
+        }
+        let mut next = index.saturating_add(1);
+        if matches!(trees.get(next), Some(TokenTree::Punct(p)) if p.as_char() == '!') {
+            next = next.saturating_add(1);
+        }
+        if let Some(TokenTree::Group(group)) = trees.get(next)
+            && group.delimiter() == Delimiter::Bracket
+            && !is_plain_doc(&group.stream())
+        {
+            match syn::parse2::<Meta>(group.stream()) {
+                Ok(meta) => check_meta(&meta, found),
+                Err(_) => found.push("an attribute in a macro that does not parse".to_owned()),
+            }
+        }
+    }
+}
+
+struct Scan {
+    found: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Scan {
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        check_meta(&attribute.meta, &mut self.found);
+        syn::visit::visit_attribute(self, attribute);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if last(&mac.path) == "macro_rules" {
+            // A macro could assemble a lint attribute from fragments no parser sees as one.
+            self.found.push("macro_rules!".to_owned());
+        }
+        if last(&mac.path) == "include" {
+            // Code from a file this check never parses (B-C1c-04); data uses include_str!/bytes!.
+            self.found.push("include!".to_owned());
+        }
+        check_tokens(mac.tokens.clone(), &mut self.found);
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Every offence in `source`; a file that does not parse is one offence.
+fn door_lint_controls(source: &str) -> Vec<String> {
+    match syn::parse_file(source) {
+        Ok(file) => {
+            let mut scan = Scan { found: Vec::new() };
+            scan.visit_file(&file);
+            scan.found
+        }
+        Err(e) => vec![format!("does not parse: {e}")],
+    }
+}
+
+#[test]
+fn the_parser_finds_every_suppression_form() {
+    let forms = [
+        ("plain", "#[expect(clippy::all, reason = \"x\")]\nfn f() {}"),
+        (
+            "block comment (B-C1c-02)",
+            "#[expect(clippy /* boundary */ :: all, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "line comment + newline",
+            "#[expect(clippy // boundary\n :: all, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "nested comment",
+            "#[expect(clippy /* a /* b */ c */ :: all, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "comment inside the lint name path end",
+            "#[expect(clippy:: /**/ style, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "raw identifier",
+            "#[expect(clippy::r#all, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "cfg_attr",
+            "#[cfg_attr(all(), expect(clippy::all, reason = \"x\"))]\nfn f() {}",
+        ),
+        (
+            "nested cfg_attr",
+            "#[cfg_attr(all(), cfg_attr(unix, expect(clippy::style, reason = \"x\")))]\nfn f() {}",
+        ),
+        (
+            "inner attribute in a module file",
+            "#![allow(warnings)]\nfn f() {}",
+        ),
+        (
+            "inner attribute in a module",
+            "mod m {\n    #![expect(clippy::all, reason = \"x\")]\n}",
+        ),
+        (
+            "on a statement",
+            "fn f() {\n    #[expect(clippy::all, reason = \"x\")]\n    let forge = 1;\n}",
+        ),
+        (
+            "on an expression",
+            "fn f() -> u8 {\n    #[expect(clippy::all, reason = \"x\")]\n    { 1 }\n}",
+        ),
+        (
+            "the lint itself",
+            "#[expect(clippy::disallowed_methods, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "old lint name",
+            "#[expect(clippy::disallowed_method, reason = \"x\")]\nfn f() {}",
+        ),
+        ("warn downgrade", "#[warn(clippy::all)]\nfn f() {}"),
+        (
+            "leading colons",
+            "#[expect(::clippy::all, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "among other lints",
+            "#[expect(dead_code, clippy::style, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "inside a macro invocation",
+            "some_macro! {\n    #[expect(clippy::all, reason = \"x\")]\n    fn f() {}\n}",
+        ),
+        ("macro_rules", "macro_rules! hide { () => {} }"),
+        (
+            "a metavariable attribute in a macro body",
+            "some_macro! { #[$lint] fn f() {} }",
+        ),
+        (
+            "a doc-prefixed path hiding allow",
+            "some_macro! { #[doc::allow(warnings)] fn f() {} }",
+        ),
+        (
+            "a doc literal with a trailing allow",
+            "some_macro! { #[doc = \"a\" allow(warnings)] fn f() {} }",
+        ),
+        (
+            "a doc metavariable repetition",
+            "some_macro! { #[doc = $($t)*] fn f() {} }",
+        ),
+        (
+            "unparseable lint list",
+            "#[expect(clippy::all reason)]\nfn f() {}",
+        ),
+        ("unparseable file", "fn f( {"),
+    ];
+    for (name, source) in forms {
+        assert!(
+            !door_lint_controls(source).is_empty(),
+            "missed: {name}\n{source}"
+        );
+    }
+}
+
+#[test]
+fn the_parser_ignores_names_outside_lint_attributes() {
+    for (name, source) in [
+        (
+            "an unrelated lint",
+            "#[expect(clippy::struct_field_names, reason = \"x\")]\nfn f() {}",
+        ),
+        (
+            "the name only in a reason",
+            "#[expect(dead_code, reason = \"not clippy::all\")]\nfn f() {}",
+        ),
+        (
+            "the name only in a comment",
+            "// #[expect(clippy::all)]\n/// clippy::all\nfn f() {}",
+        ),
+        (
+            "the name only in a string",
+            "fn f() -> &'static str { \"#[expect(clippy::all)]\" }",
+        ),
+        (
+            "a doc metavariable in a macro body",
+            "some_macro! { #[doc = $doc] fn f() {} }",
+        ),
+        (
+            "a doc literal in a macro body",
+            "some_macro! { #[doc = \"text\"] fn f() {} }",
+        ),
+        (
+            "deny is stricter, not looser",
+            "#[deny(clippy::all)]\nfn f() {}",
+        ),
+        (
+            "a string in a macro",
+            "fn f() { assert!(true, \"#[allow(warnings)]\"); }",
+        ),
+    ] {
+        assert_eq!(
+            door_lint_controls(source),
+            Vec::<String>::new(),
+            "false positive: {name}"
+        );
+    }
+}
+
+#[test]
+fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
+    // Scanned: every source compiled into production (whatever crate or directory it lives in, B-C1c-04)
+    // and every Rust file of the CLI crate. Production is decided by the compiler (B-C1c-03).
+    let production = common::production_sources();
+    let doors = "crates/forge-warden-cli/src/doors.rs";
+    let mut scanned: std::collections::BTreeSet<String> = production.clone();
+    scanned.extend(
+        files_under("crates/forge-warden-cli", ".rs")
+            .iter()
+            .filter(|p| !p.components().any(|c| c.as_os_str() == "target"))
+            .map(|p| common::relative(p)),
+    );
+    assert!(scanned.len() >= 10, "found only {} files", scanned.len());
+    for name in scanned {
+        if name == doors {
+            continue;
+        }
+        let source = std::fs::read_to_string(root().join(&name)).unwrap();
+        let shipped = production.contains(&name);
+        let cli = name.starts_with("crates/forge-warden-cli/");
+        let found: Vec<String> = door_lint_controls(&source)
+            .into_iter()
+            .filter(|f| {
+                // Test code may open test doors and include fixtures; production may not.
+                let test_door = f == "expect(clippy::disallowed_methods)"
+                    || f == "expect(clippy::disallowed_types)"
+                    || f == "include!";
+                // macro_rules! is refused in the CLI crate only (core declares note codes by macro).
+                let core_macro = f == "macro_rules!" && !cli;
+                !((!shipped && test_door) || core_macro)
+            })
+            .collect();
+        assert_eq!(
+            found,
+            Vec::<String>::new(),
+            "{name} could switch off the door lints (production: {shipped})"
+        );
+    }
+}
+
+#[test]
+fn raw_doc_name_has_the_same_literal_admission() {
+    let normal: TokenStream = "doc = \"prose\"".parse().unwrap();
+    let raw: TokenStream = "r#doc = \"prose\"".parse().unwrap();
+    assert!(is_plain_doc(&normal));
+    assert!(is_plain_doc(&raw));
+}
+
+#[test]
+fn raw_attribute_names_and_paths_cannot_suppress_doors() {
+    for (name, source) in [
+        (
+            "raw expect",
+            "#[r#expect(clippy::all, reason = \"x\")] fn f() {}",
+        ),
+        ("raw allow", "#[r#allow(clippy::all)] fn f() {}"),
+        ("raw warn", "#[r#warn(clippy::all)] fn f() {}"),
+        (
+            "raw path",
+            "#[expect(r#clippy::r#disallowed_methods, reason = \"x\")] fn f() {}",
+        ),
+        (
+            "raw conditional",
+            concat!(
+                "#[r#cfg_attr(all(), ",
+                "r#allow(r#clippy::r#all))] fn f() {}"
+            ),
+        ),
+    ] {
+        assert!(!door_lint_controls(source).is_empty(), "missed: {name}");
+    }
+}
+
+/// Inside doors.rs, two narrower rules than "doors live here" (Q-DOOR). Q2-02: only
+/// `open_regular` may open a named file, so it is the only production item under which any lint
+/// attribute names `clippy::disallowed_types` (`std::fs::OpenOptions`). Q2-03: production code
+/// joins no thread (a zero-argument `.join()` call, or any path ending in `join`, which covers
+/// `JoinHandle::join` through an alias); results come back through channels read with a timeout.
+///
+/// Attributes are read by `check_meta` (raw names normalised, every level, nested `cfg_attr`) on
+/// every item, impl item and statement, and inside macro tokens. An item is skipped as test-only
+/// only if its `cfg` predicate implies `test` (`test`; `all(..)` with an implying member; `any(..)`
+/// whose members all imply it). `not(..)`, `any(test, unix)` and anything else count as production
+/// (Bastion's Q-DOOR boundary probes).
+#[derive(Default)]
+struct DoorShape {
+    current: Vec<String>,
+    types_doors: Vec<String>,
+    joins: Vec<String>,
+}
+
+/// Whether a `cfg` predicate is true only when `test` is set.
+fn implies_test(predicate: &Meta) -> bool {
+    match predicate {
+        Meta::Path(path) => path.segments.len() == 1 && last(path) == "test",
+        Meta::List(list) => {
+            let Ok(members) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            else {
+                return false;
+            };
+            match (list.path.segments.len(), last(&list.path).as_str()) {
+                (1, "all") => members.iter().any(implies_test),
+                (1, "any") => !members.is_empty() && members.iter().all(implies_test),
+                _ => false,
+            }
+        }
+        Meta::NameValue(_) => false,
+    }
+}
+
+/// Whether an item's own attributes compile it only under `test`.
+fn is_test_only(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        a.path().segments.len() == 1
+            && last(a.path()) == "cfg"
+            && a.meta.require_list().is_ok_and(|list| {
+                list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+                    .is_ok_and(|args| args.len() == 1 && args.iter().all(implies_test))
+            })
+    })
+}
+
+impl DoorShape {
+    /// Walk an item under `name`, unless it is compiled only under `test`.
+    fn scoped(&mut self, attrs: &[Attribute], name: String, walk: impl FnOnce(&mut Self)) {
+        if is_test_only(attrs) {
+            return;
+        }
+        self.current.push(name);
+        walk(self);
+        self.current.pop();
+    }
+
+    fn context(&self) -> String {
+        self.current.join("::")
+    }
+
+    fn note_types_door(&mut self, found: &[String]) {
+        if found
+            .iter()
+            .any(|f| f.ends_with("(clippy::disallowed_types)"))
+        {
+            let here = self.context();
+            if !self.types_doors.contains(&here) {
+                self.types_doors.push(here);
+            }
+        }
+    }
+
+    /// `.join()` and `…::join` written as tokens inside a macro invocation.
+    fn scan_tokens_for_joins(&mut self, tokens: TokenStream) {
+        let trees: Vec<TokenTree> = tokens.into_iter().collect();
+        for (index, tree) in trees.iter().enumerate() {
+            if let TokenTree::Group(group) = tree {
+                self.scan_tokens_for_joins(group.stream());
+            }
+            let TokenTree::Ident(ident) = tree else {
+                continue;
+            };
+            if ident.unraw() != "join" {
+                continue;
+            }
+            let before = index.checked_sub(1).and_then(|i| trees.get(i));
+            let after = trees.get(index.saturating_add(1));
+            let dot_call = matches!(before, Some(TokenTree::Punct(p)) if p.as_char() == '.')
+                && matches!(after, Some(TokenTree::Group(g))
+                    if g.delimiter() == Delimiter::Parenthesis && g.stream().is_empty());
+            let path = matches!(before, Some(TokenTree::Punct(p)) if p.as_char() == ':');
+            if dot_call || path {
+                let here = self.context();
+                self.joins.push(here);
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for DoorShape {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.scoped(&item.attrs, format!("mod {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_mod(s, item);
+        });
+    }
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        self.scoped(&item.attrs, item.sig.ident.unraw().to_string(), |s| {
+            syn::visit::visit_item_fn(s, item);
+        });
+    }
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        self.scoped(&item.attrs, "impl".to_owned(), |s| {
+            syn::visit::visit_item_impl(s, item);
+        });
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.scoped(&item.attrs, item.sig.ident.unraw().to_string(), |s| {
+            syn::visit::visit_impl_item_fn(s, item);
+        });
+    }
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        self.scoped(&item.attrs, format!("const {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_const(s, item);
+        });
+    }
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        self.scoped(&item.attrs, format!("static {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_static(s, item);
+        });
+    }
+    fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+        self.scoped(&item.attrs, format!("struct {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_struct(s, item);
+        });
+    }
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        self.scoped(&item.attrs, format!("enum {}", item.ident.unraw()), |s| {
+            syn::visit::visit_item_enum(s, item);
+        });
+    }
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        self.scoped(&item.attrs, "use".to_owned(), |s| {
+            syn::visit::visit_item_use(s, item);
+        });
+    }
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        let mut found = Vec::new();
+        check_meta(&attribute.meta, &mut found);
+        self.note_types_door(&found);
+        syn::visit::visit_attribute(self, attribute);
+    }
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let mut found = Vec::new();
+        check_tokens(mac.tokens.clone(), &mut found);
+        self.note_types_door(&found);
+        self.scan_tokens_for_joins(mac.tokens.clone());
+        syn::visit::visit_macro(self, mac);
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if call.method.unraw() == "join" && call.args.is_empty() {
+            let here = self.context();
+            self.joins.push(here);
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path.path.segments.len() > 1 && last(&path.path) == "join" {
+            let here = self.context();
+            self.joins.push(here);
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+}
+
+fn door_shape(source: &str) -> DoorShape {
+    let mut shape = DoorShape::default();
+    match syn::parse_file(source) {
+        Ok(file) => shape.visit_file(&file),
+        // An unparseable file passes neither check: it names an impossible type door.
+        Err(e) => shape.types_doors.push(format!("does not parse: {e}")),
+    }
+    shape
+}
+
+#[test]
+fn the_door_shape_scanner_sees_joins_and_type_doors_and_skips_only_tests() {
+    let shape = door_shape(
+        r#"
+        #[expect(clippy::disallowed_types, reason = "door: open_regular")]
+        fn open_regular() {}
+        #[r#expect(r#clippy::r#disallowed_types, reason = "raw")]
+        fn raw_names() {}
+        #[cfg_attr(unix, expect(clippy::disallowed_types, reason = "conditional"))]
+        fn conditional() {}
+        fn inner() { #![allow(clippy::disallowed_types)] }
+        fn statement() { #[expect(clippy::disallowed_types, reason = "s")] let _o = 1; }
+        #[cfg(not(test))]
+        fn not_test() { let h = std::thread::spawn(|| ()); let _ = h.join(); }
+        #[cfg(any(test, unix))]
+        fn any_test_or_unix() { let _ = std::thread::spawn(|| ()).r#join(); }
+        fn ufcs(h: std::thread::JoinHandle<()>) { let _ = std::thread::JoinHandle::join(h); }
+        fn alias(h: std::thread::JoinHandle<()>) { use std::thread::JoinHandle as H; let _ = H::join(h); }
+        fn in_macro(h: std::thread::JoinHandle<()>) { let _ = format!("{:?}", h.join()); }
+        fn paths() { let _ = std::path::Path::new("a").join("b"); let _ = ["a"].join(","); }
+        #[cfg(test)]
+        mod tests {
+            #[expect(clippy::disallowed_types, reason = "test")]
+            fn t() { let _ = std::thread::spawn(|| ()).join(); }
+        }
+        #[cfg(all(unix, test))]
+        fn all_unix_test() { let _ = std::thread::spawn(|| ()).join(); }
+        #[cfg(any(test, all(test, unix)))]
+        fn any_all_test() { let _ = std::thread::spawn(|| ()).join(); }
+        "#,
+    );
+    assert_eq!(
+        shape.types_doors,
+        [
+            "open_regular",
+            "raw_names",
+            "conditional",
+            "inner",
+            "statement"
+        ]
+    );
+    assert_eq!(
+        shape.joins,
+        ["not_test", "any_test_or_unix", "ufcs", "alias", "in_macro"]
+    );
+}
+
+#[test]
+fn only_a_predicate_that_implies_test_is_test_only() {
+    for (cfg, test_only) in [
+        ("#[cfg(test)]", true),
+        ("#[r#cfg(r#test)]", true),
+        ("#[cfg(all(unix, test))]", true),
+        ("#[cfg(any(test, all(test, unix)))]", true),
+        ("#[cfg(not(test))]", false),
+        ("#[cfg(any(test, unix))]", false),
+        ("#[cfg(not(not(test)))]", false),
+        ("#[cfg(feature = \"test\")]", false),
+        ("#[cfg_attr(test, cfg(test))]", false),
+        ("#[cfg(any())]", false),
+    ] {
+        let item: syn::ItemFn = syn::parse_str(&format!("{cfg} fn f() {{}}")).unwrap();
+        assert_eq!(is_test_only(&item.attrs), test_only, "{cfg}");
+    }
+}
+
+#[test]
+fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
+    let source =
+        std::fs::read_to_string(root().join("crates/forge-warden-cli/src/doors.rs")).unwrap();
+    let shape = door_shape(&source);
+    assert_eq!(
+        shape.types_doors,
+        ["open_regular"],
+        "Q2-02: only open_regular may open a named file (and expect clippy::disallowed_types)"
+    );
+    assert!(
+        shape.joins.is_empty(),
+        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {:?}",
+        shape.joins
+    );
+}
+
+#[test]
+fn door_scanner_matches_its_role_in_the_shared_corpus() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(&common::read("fixtures/attribute-policy.json")).unwrap();
+    assert!(cases.len() >= 30, "attribute corpus shrank");
+    for case in cases {
+        let source = case
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        let expected = case
+            .get("door_violation")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap();
+        assert_eq!(!door_lint_controls(source).is_empty(), expected, "{case}");
+    }
+}

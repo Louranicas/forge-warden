@@ -32,7 +32,7 @@ def main():
             print('MISSED_NAMES:', missed.read_text(), end='')
         caught = Path(directory) / 'mutants.out/caught.txt'
         if caught.exists():
-            print('CAUGHT_NAMES:', caught.read_text(), end='')
+            print('CAUGHT_NAMES:', caught.read_text())
         if counts['total_mutants'] and not counts['missed']:
             for log in sorted((Path(directory) / 'mutants.out/log').glob('*.log')):
                 print('UNEXPECTED_CAUGHT_LOG:', log.name)

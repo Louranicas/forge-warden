@@ -10,10 +10,10 @@ following it is the fastest path, not the polite one.
   no clock, no environment, no threads, no hash-ordered collections**: `crates/forge-warden-core/clippy.toml`
   makes each of them a compile error (ADR 0001).
 - `crates/forge-warden-cli`: the `forge-warden` binary. Every effect (file, stdin, stdout,
-  stderr, clock) goes through one function in `src/doors.rs` (ADR 0001).
+  stderr, clock, environment and child process execution) goes through one function in `src/doors.rs` (ADR 0001).
 - Input: `deep-diff-forge.rank.v0` from deep-diff-forge, read tolerantly (additive fields are
   ignored) and validated strictly (everything forge-warden relies on is checked).
-- Output: `forge-warden.verdict.v0`, sealed and deterministic. Schemas live in `schemas/` and
+- Output: `forge-warden.verdict.v2`, sealed and deterministic. Schemas live in `schemas/` and
   tests keep them equal to the code.
 
 ## Definition of done
@@ -40,7 +40,7 @@ A change is done when all of these hold, and not before:
 | silence a lint | `#[expect(lint, reason = "why the lint is wrong here")]`; a stale one fails the build |
 | `unwrap()` / `expect()` / index / `as` | return a `Result`, use `.get()`, `try_from`, checked or saturating arithmetic |
 | print something | return a `String`; the CLI emits through `doors::emit` / `doors::diagnose` |
-| read a file, the clock, or the environment | add a door in `doors.rs`: that file is owned, so ask the human |
+| read a file, the clock, or the environment | add an effect door in `doors.rs`: that file is owned, so ask the human |
 | use `HashMap` / `HashSet` | `BTreeMap` / `BTreeSet`: output order must not depend on a hash seed |
 | add a dependency | say why in your summary; `deny.toml` bans I/O-heavy crates from the tree |
 | relax a lint, a policy rule, CI, a hook or `repo_invariants.rs` | stop and ask. The PreToolUse hook refuses edits to those files and shell commands that could change them (it errs towards refusing), CODEOWNERS requires the owner, and `warden.toml` holds the PR |
@@ -66,8 +66,10 @@ scripts/ci_fast.sh                                   # the fast gate
 scripts/ci_local.sh                                  # everything CI runs that works offline
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
-git diff --no-renames main... | deep-diff-forge --stdin-patch --rank --json \
-  | cargo run -q --bin forge-warden -- check --policy warden.toml   # judge your own change
+git diff --binary --no-renames main... > target/change.patch
+deep-diff-forge --stdin-patch --rank --json < target/change.patch \
+  | cargo run -q --bin forge-warden -- check --policy warden.toml \
+      --patch target/change.patch --advisory --rank -   # advice; never approves
 ```
 
 ## Subagents and skills
@@ -83,3 +85,7 @@ git diff --no-renames main... | deep-diff-forge --stdin-patch --rank --json \
 
 Use the falsifier on any claim you are about to put in a summary, and the reviewer before you
 call a change done. They have not seen your reasoning, which is the point.
+
+Use the [glossary](docs/GLOSSARY.md) for verdict documents, verdict levels, rule outcomes and
+effect doors. [ADR status](docs/ADR_STATUS.md) distinguishes current decisions from historical
+status records and pending implementation.

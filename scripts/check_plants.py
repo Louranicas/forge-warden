@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Gate every runnable plant on a clean exact subject, retaining pending coverage honestly."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_report(report, revision, ids):
+    rows = report["results"]
+    if report["revision"] != revision or len(rows) != len(ids) or {row["id"] for row in rows} != set(ids):
+        raise ValueError("plant receipt subject or case coverage mismatch")
+    if any(row["status"] != "CAUGHT" for row in rows):
+        raise ValueError("not every runnable plant was caught")
+    print(f"plants gate: {len(rows)} CAUGHT; pending coverage remains explicit: {report['pending_guardrails']}")
+
+
+def run():
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    tools = load('plant_tools', ROOT / 'scripts/plant_tools.py')
+    runner = load('plant_runner', ROOT / 'plants/run.py')
+    env = runner.environment()
+    def git(*args):
+        return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", *args],
+                                       cwd=ROOT, env=env, text=True).strip()
+    dirty = git("status", "--porcelain=v1", "--untracked-files=all")
+    if dirty:
+        raise ValueError("CI_DIRTY_TREE: pre-plant steps changed the committed subject; "
+                         "dirty status/path records: " + json.dumps(dirty.splitlines(), ensure_ascii=True))
+    cases = json.loads((ROOT / "plants/catalog.json").read_text())["cases"]
+    tools.preflight(tools.requirements(cases), ROOT, env)
+    revision = git("rev-parse", "HEAD")
+    # Explicit prerequisites: never rely on a previous gate having warmed these.
+    msrv = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["rust-version"]
+    if msrv.count(".") == 1:
+        msrv += ".0"
+    env["RUSTUP_AUTO_INSTALL"] = "0"
+    subprocess.run(["rustup", "run", msrv, "rustc", "--version"], cwd=ROOT, env=env, check=True)
+    subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT, env=env, check=True)
+    ids = [case["id"] for case in cases]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("plant catalog must have unique nonempty cases")
+    (ROOT / "target").mkdir(exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="plants-", dir=ROOT / "target")) / "evidence"
+    argv = [sys.executable, "-I", str(ROOT / "plants/run.py"), "--source", str(ROOT),
+            "--revision", revision, "--output", str(output)]
+    for case in ids:
+        argv.extend(["--case", case])
+    result = subprocess.run(argv, cwd=ROOT, env=env, check=False)
+    if result.returncode:
+        raise ValueError("plant harness failed; see " + str(output))
+    report = json.loads((output / "report.json").read_text())
+    validate_report(report, revision, ids)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(run())
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+        sys.exit("plants gate: " + str(error))

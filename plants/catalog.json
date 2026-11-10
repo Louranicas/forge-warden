@@ -6,8 +6,9 @@
     "supersessions": [
       "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
       "G-15 authenticates exact producer binary, not version string.",
-      "G-04 reviewed default markers, not a blanket clippy ban.",
-      "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR."
+      "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
+      "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
+      "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants."
     ]
   },
   "cases": [
@@ -24,7 +25,8 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = rank.files().first().unwrap();\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = rank.files().first().unwrap();\n    let mut used_waivers = BTreeSet::new();",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "string-slice",
@@ -38,8 +40,9 @@
         "--locked",
         "--offline"
       ],
-      "old": "seal.get(..12).unwrap_or(seal).to_owned()",
-      "new": "seal[..12].to_owned()"
+      "old": "seal.get(..12).or_fail_safe(seal).to_owned()",
+      "new": "seal[..12].to_owned()",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unchecked-add",
@@ -54,7 +57,8 @@
         "--offline"
       ],
       "old": "sum.saturating_add(u64::from(f.score()))",
-      "new": "sum + u64::from(f.score())"
+      "new": "sum + u64::from(f.score())",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "core-read",
@@ -69,7 +73,8 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = std::fs::read(\".\");\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = std::fs::read(\".\");\n    let mut used_waivers = BTreeSet::new();",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "hash-order",
@@ -84,7 +89,8 @@
         "--offline"
       ],
       "old": "    let mut used_waivers = BTreeSet::new();",
-      "new": "    let _probe = std::collections::HashMap::<String, String>::new();\n    let mut used_waivers = BTreeSet::new();"
+      "new": "    let _probe = std::collections::HashMap::<String, String>::new();\n    let mut used_waivers = BTreeSet::new();",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "kind-variant",
@@ -99,7 +105,8 @@
         "--offline"
       ],
       "old": "pub enum Kind {",
-      "new": "pub enum Kind {\n    /// Deliberately unhandled guardrail plant.\n    PlantUnhandled,"
+      "new": "pub enum Kind {\n    /// Deliberately unhandled guardrail plant.\n    PlantUnhandled,",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "member-lints",
@@ -116,7 +123,8 @@
         "--offline"
       ],
       "old": "[lints]\nworkspace = true\n",
-      "new": ""
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "allow-attribute",
@@ -132,8 +140,9 @@
         "--locked",
         "--offline"
       ],
-      "old": "#[must_use]\npub fn evaluate",
-      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub fn evaluate"
+      "old": "#[must_use]\npub(crate) fn evaluate",
+      "new": "#[allow(clippy::too_many_arguments)]\n#[must_use]\npub(crate) fn evaluate",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "readme-missing-row",
@@ -150,7 +159,8 @@
         "--offline"
       ],
       "old": "| 4 | `invalid_input` | The policy or the ranking failed to parse or validate, exceeded the byte budget, or the ranking's seal does not match the patch given with --patch. | `change_input` |",
-      "new": ""
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "golden-seal",
@@ -168,7 +178,8 @@
         "--offline"
       ],
       "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
-      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e"
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "todo-without-issue",
@@ -184,7 +195,8 @@
         "--locked",
         "--offline"
       ],
-      "append": "\n// TODO repair the planted breach\n"
+      "append": "\n// TODO repair the planted breach\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "cfg-allow",
@@ -200,8 +212,9 @@
         "--locked",
         "--offline"
       ],
-      "old": "#[must_use]\npub fn evaluate",
-      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub fn evaluate"
+      "old": "#[must_use]\npub(crate) fn evaluate",
+      "new": "#[cfg_attr(all(), allow(dead_code))]\n#[must_use]\npub(crate) fn evaluate",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "misspelled-exit",
@@ -215,8 +228,9 @@
         "--locked",
         "--offline"
       ],
-      "old": "Exit::InvalidInput\n",
-      "new": "Exit::InvalidInptu\n"
+      "old": "DoorErrorKind::Refused => (Exit::InvalidInput, \"change_input\"),",
+      "new": "DoorErrorKind::Refused => (Exit::InvalidInptu, \"change_input\"),",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unsafe-code",
@@ -230,7 +244,8 @@
         "--locked",
         "--offline"
       ],
-      "append": "\n/// Deliberately unsafe guardrail plant.\n///\n/// # Safety\n/// Test plant; no caller.\npub unsafe fn planted_unsafe() {}\n"
+      "append": "\n/// Deliberately unsafe guardrail plant.\n///\n/// # Safety\n/// Test plant; no caller.\npub unsafe fn planted_unsafe() {}\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "dependency-cycle",
@@ -245,25 +260,24 @@
         "--offline"
       ],
       "old": "[dependencies]\n",
-      "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n"
+      "new": "[dependencies]\nforge-warden-cli = { path = \"../forge-warden-cli\" }\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unreviewed-default",
       "guardrail": "G-04",
       "path": "crates/forge-warden-core/src/eval.rs",
-      "diagnostic": "defaults_say_which_way_they_fail.*FAILED",
+      "diagnostic": "(?:clippy::|#)disallowed[-_]methods",
       "cargo": [
-        "test",
-        "-p",
-        "forge-warden-cli",
-        "--test",
-        "repo_invariants",
-        "defaults_say_which_way_they_fail",
+        "clippy",
+        "--workspace",
+        "--all-targets",
         "--locked",
         "--offline"
       ],
-      "old": "            // fails closed: an uncountable file count is treated as over every budget\n",
-      "new": ""
+      "old": "u64::try_from(count).or_fail_closed(u64::MAX)",
+      "new": "u64::try_from(count).unwrap_or(0)",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "effect-outside-door",
@@ -278,7 +292,24 @@
         "--offline"
       ],
       "old": "fn main() -> doors::Status {",
-      "new": "fn main() -> doors::Status {\n    let _planted_effect = std::fs::read(\".\");"
+      "new": "fn main() -> doors::Status {\n    let _planted_effect = std::fs::read(\".\");",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "git-oracle-outside-door",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `forge_warden_core::verdict::GitOracle::approved`",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "old": "fn main() -> doors::Status {",
+      "new": "fn main() -> doors::Status {\n    let _planted_oracle = GitOracle::approved(String::new(), String::new(), sha256_hex(b\"\"), sha256_hex(b\"\"));",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "unknown-signal-pass",
@@ -295,8 +326,9 @@
         "--locked",
         "--offline"
       ],
-      "old": "file.signals().iter().filter(|s| !is_known_signal(s))",
-      "new": "file.signals().iter().filter(|s| !is_known_signal(s) && s.is_empty())"
+      "old": "file.signals().iter().filter(|s| !s.is_known())",
+      "new": "file.signals().iter().filter(|s| !s.is_known() && s.name().is_empty())",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "noncanonical-dotdot",
@@ -313,7 +345,8 @@
         "--offline"
       ],
       "old": "segment == \"..\"",
-      "new": "segment == \"...\""
+      "new": "segment == \"...\"",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "duplicate-path-pass",
@@ -331,7 +364,8 @@
         "--offline"
       ],
       "old": "    for path in duplicated {",
-      "new": "    for path in duplicated.into_iter().take(0) {"
+      "new": "    for path in duplicated.into_iter().take(0) {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "expanded-core-dependency",
@@ -347,7 +381,8 @@
         "the_core_depends_only_on_its_allow_list",
         "--offline"
       ],
-      "append": "\n[dependencies.memchr]\nversion = \"2\"\n"
+      "append": "\n[dependencies.memchr]\nversion = \"2\"\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "rank-schema-drift",
@@ -364,7 +399,8 @@
         "--offline"
       ],
       "old": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v0\";",
-      "new": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v1\";"
+      "new": "pub const RANK_SCHEMA: &str = \"deep-diff-forge.rank.v1\";",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "dead-private-function",
@@ -378,7 +414,8 @@
         "--locked",
         "--offline"
       ],
-      "append": "\nfn planted_dead_code() {}\n"
+      "append": "\nfn planted_dead_code() {}\n",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "rank-budget-off-by-one",
@@ -395,7 +432,8 @@
         "--offline"
       ],
       "old": "if bytes.len() > crate::MAX_INPUT_BYTES {",
-      "new": "if bytes.len() > crate::MAX_INPUT_BYTES.saturating_add(1) {"
+      "new": "if bytes.len() > crate::MAX_INPUT_BYTES.saturating_add(1) {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "serde-additive-refusal",
@@ -412,7 +450,8 @@
         "--offline"
       ],
       "old": "#[derive(Deserialize)]\nstruct RawFile {",
-      "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {"
+      "new": "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct RawFile {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "swallowed-judge-exit",
@@ -423,8 +462,9 @@
         "bash",
         "scripts/tests/ci_local.sh"
       ],
-      "old": "      --rank target/rank.json --patch target/change.patch",
-      "new": "      --rank target/rank.json --patch target/change.patch || true"
+      "old": "        --advisory --rank target/rank.json --patch target/change.patch",
+      "new": "        --advisory --rank target/rank.json --patch target/change.patch || true",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "hook-shell-spelling",
@@ -438,7 +478,8 @@
         "Guard.test_shell_tokenization_and_rust_writes"
       ],
       "old": "tokens = list(lexer)  # Concatenated quotes and absolute paths are checked after tokenization.",
-      "new": "tokens = command.split()  # Deliberately discard shell quote concatenation."
+      "new": "tokens = command.split()  # Deliberately discard shell quote concatenation.",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "hook-malformed-open",
@@ -452,7 +493,8 @@
         "Guard.test_malformed_events_fail_closed"
       ],
       "old": "        refuse(f\"malformed event or unavailable check: {error}\")",
-      "new": "        return  # Deliberately turn malformed input into success."
+      "new": "        return  # Deliberately turn malformed input into success.",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "hook-unsupported-tool-open",
@@ -466,7 +508,8 @@
         "Guard.test_alternative_edit_tools_refuse"
       ],
       "old": "        refuse(f\"unsupported tool {tool!r}: no checked mutation adapter (including multi-edit/patch tools)\")",
-      "new": "        return  # Deliberately permit unsupported mutation adapters."
+      "new": "        return  # Deliberately permit unsupported mutation adapters.",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "candidate-judge-build",
@@ -478,7 +521,8 @@
         "scripts/tests/dogfood.sh"
       ],
       "old": "cd \"$trusted\"",
-      "new": "cd \"$candidate\""
+      "new": "cd \"$candidate\"",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "ack-head-replay",
@@ -492,7 +536,8 @@
         "BoundAck.test_valid_receipt_and_new_push"
       ],
       "old": "require(receipt == wanted, \"acknowledgement does not match current subject and verdict\")",
-      "new": "require({k: v for k, v in receipt.items() if k != \"head\"} == {k: v for k, v in wanted.items() if k != \"head\"}, \"acknowledgement does not match current subject and verdict\")"
+      "new": "require({k: v for k, v in receipt.items() if k != \"head\"} == {k: v for k, v in wanted.items() if k != \"head\"}, \"acknowledgement does not match current subject and verdict\")",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh", "ssh-keygen"]
     },
     {
       "id": "candidate-review-policy",
@@ -506,7 +551,8 @@
         "ReviewBundle.test_candidate_cannot_supply_instructions_or_policy"
       ],
       "old": "  trusted_git show \"$base:$file\" > \"$out/$(basename \"$file\")\"",
-      "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\""
+      "new": "  trusted_git show \"$head:$file\" > \"$out/$(basename \"$file\")\"",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "untested-mutation-branch",
@@ -519,7 +565,8 @@
         "plants/mutation_survivor.py"
       ],
       "old": "#[cfg(test)]\nmod tests {",
-      "new": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n\n#[cfg(test)]\nmod tests {"
+      "new": "\n/// Deliberately untested branch to prove that the mutation process rejects survivors.\n#[must_use]\npub fn planted_uncovered_branch(value: bool) -> u8 {\n    if value {\n        7\n    } else {\n        8\n    }\n}\n\n#[cfg(test)]\nmod tests {",
+      "required_tools": ["bash", "cargo", "cargo-clippy", "cargo-mutants", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "enum-wildcard",
@@ -534,7 +581,8 @@
         "--offline"
       ],
       "old": "Self::MaxFiles => \"max_files\",",
-      "new": "_ => \"max_files\","
+      "new": "_ => \"max_files\",",
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
     },
     {
       "id": "raw-terminal-control",
@@ -551,105 +599,867 @@
         "--offline"
       ],
       "old": "let _ignored = write!(out, \"\\\\u{{{:04x}}}\", u32::from(other));",
-      "new": "out.push(other);"
+      "new": "out.push(other);",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "unchecked-rank-literal",
+      "guardrail": "G-12",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "PRIVATE_CONSTRUCTION_ESCAPED",
+      "command": [
+        "python3",
+        "-I",
+        "plants/private_constructor.py"
+      ],
+      "old": "pub struct RankDoc {\n    input_sha256: Sha256Hex,\n    tool_version: String,\n    files: Vec<RankedFile>,\n}",
+      "new": "pub struct RankDoc {\n    /// Deliberately exposed unchecked seal.\n    pub input_sha256: Sha256Hex,\n    /// Deliberately exposed unchecked version.\n    pub tool_version: String,\n    /// Deliberately exposed unchecked records.\n    pub files: Vec<RankedFile>,\n}",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "post-msrv-string-api",
+      "guardrail": "G-51",
+      "path": "crates/forge-warden-core/src/render.rs",
+      "diagnostic": "MSRV_BOUNDARY_REJECTED",
+      "command": [
+        "python3",
+        "-I",
+        "plants/msrv_boundary.py"
+      ],
+      "old": "#[cfg(test)]\nmod tests {",
+      "new": "/// Deliberate API specimen for the pinned MSRV check.\n#[must_use]\npub fn planted_new_api(text: &str, index: usize) -> usize {\n    text.floor_char_boundary(index)\n}\n\n#[cfg(test)]\nmod tests {",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "vocabulary-corpus-drift",
+      "guardrail": "G-41",
+      "path": "crates/forge-warden-core/src/vocab.rs",
+      "diagnostic": "every_real_ranking_parses_with_known_vocabulary.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "corpus",
+        "every_real_ranking_parses_with_known_vocabulary",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    \"many_hunks\",",
+      "new": "    \"o3_unpublished_signal\",",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "missing-patch-success",
+      "guardrail": "G-13",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "omitting_the_patch_requires_review_or_refusal.*FAILED",
+      "old": "finish(Err(Failure::new(Exit::Usage, text)), true)",
+      "new": "finish(Err(Failure::new(Exit::Pass, text)), true)",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "adversarial",
+        "omitting_the_patch_requires_review_or_refusal",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "omitted-file-coverage",
+      "guardrail": "G-14",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "a_forged_ranking_with_the_real_patch_holds_instead_of_passing.*FAILED",
+      "old": "extra.extend(checked.notes());",
+      "new": "extra.extend(checked.notes().into_iter().filter(|note| note.code != NoteCode::RankIncomplete));",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "authority",
+        "a_forged_ranking_with_the_real_patch_holds_instead_of_passing",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "unadmitted-producer",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
+      "old": "let Some(admitted) = policy.admit_producer(&pinned.sha256) else {",
+      "new": "let Some(admitted) = policy.producers().first().and_then(|listed| policy.admit_producer(listed)) else {",
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import json,subprocess,sys\nsteps=[[\"cargo\",\"build\",\"--workspace\",\"--examples\",\"--locked\",\"--offline\"],[\"cargo\",\"test\",\"-p\",\"forge-warden-cli\",\"--test\",\"authority_mode\",\"a_ranker_the_policy_does_not_list_is_refused_without_a_verdict\",\"--locked\",\"--offline\",\"--\",\"--nocapture\"]]\nfor cmd in steps:\n print(\"COMMAND \"+json.dumps(cmd),flush=True)\n result=subprocess.run(cmd)\n if result.returncode: sys.exit(result.returncode)"
+      ],
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "citation-order-drift",
+      "guardrail": "G-25",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "citations_follow_explicit_address_side_line_order.*FAILED",
+      "old": "            evidence.sort();",
+      "new": "            evidence.sort_by(|left, right| right.cmp(left));",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "adversarial_output",
+        "citations_follow_explicit_address_side_line_order",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "oversized-function",
+      "guardrail": "G-29",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "too[-_]many[-_]lines",
+      "append": "\n/// Deliberately oversized function specimen.\n#[must_use]\npub fn planted_oversized_function(value: u8) -> u8 {\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    let _observed = std::hint::black_box(value);\n    value\n}\n",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "unreachable-public-item",
+      "guardrail": "G-30",
+      "path": "crates/forge-warden-core/src/lib.rs",
+      "diagnostic": "unreachable[-_]pub|unreachable .pub. item",
+      "append": "\nmod planted_private_api {\n    /// Deliberately overexposed item behind a private module.\n    #[must_use]\n    pub fn exposed(value: u8) -> u8 { value }\n}\n\n/// Use the inaccessible item so dead-code is not the refusal reason.\n#[must_use]\npub fn planted_public_caller(value: u8) -> u8 { planted_private_api::exposed(value) }\n",
+      "cargo": [
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "required_tools": ["cargo", "cargo-clippy", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "codeowners-protected-drift",
+      "guardrail": "G-39",
+      "path": ".github/CODEOWNERS",
+      "diagnostic": "CODEOWNERS protected paths drift",
+      "old": "\n* @Louranicas\n",
+      "new": "\n* @o3-unreviewed-owner\n",
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import runpy; from pathlib import Path; runpy.run_path(\"scripts/check_guardrails.py\")[\"check_paths\"](Path.cwd())"
+      ],
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "reference-forbidden-file-skip",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "finite_boundary_matrix_matches_the_independent_reference.*FAILED",
+      "old": "for file in files.iter().filter(|f| scope.contains(f.path().as_str())) {",
+      "new": "for file in files.iter().filter(|f| scope.contains(f.path().as_str())).skip(1) {",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "laws",
+        "finite_boundary_matrix_matches_the_independent_reference",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "swallowed-authority-judge-exit",
+      "guardrail": "G-17",
+      "path": "scripts/ci_local.sh",
+      "diagnostic": "AUTHORITY_JUDGE_EXIT_MISMATCH expected=4 actual=0",
+      "command": [
+        "python3",
+        "-I",
+        "plants/authority_script.py"
+      ],
+      "old": "        --ranker \"$ranker\" --patch target/change.patch",
+      "new": "        --ranker \"$ranker\" --patch target/change.patch || true",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "oracle-production-coupling",
+      "guardrail": "G-45",
+      "path": "fixtures/adversarial/reference_model.rs",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "oracle_contracts",
+        "declared_oracles_are_independent",
+        "--locked",
+        "--offline"
+      ],
+      "diagnostic": "ORACLE_INDEPENDENCE",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ],
+      "old": "scope == 0 || (scope == 1 && file.group == 0) || (scope == 2 && file.group == 2)",
+      "new": "{\n        let source: &[u8] = match scope {\n            0 => br#\"schema = \"forge-warden.policy.v0\"\n[[rule]]\nid = \"oracle\"\nwhy = \"production matcher coupling plant\"\nkind = \"protect_paths\"\nseverity = \"hold\"\npaths = [\"**\"]\n\"#,\n            1 => br#\"schema = \"forge-warden.policy.v0\"\n[[rule]]\nid = \"oracle\"\nwhy = \"production matcher coupling plant\"\nkind = \"protect_paths\"\nseverity = \"hold\"\npaths = [\"src/**\"]\n\"#,\n            2 => br#\"schema = \"forge-warden.policy.v0\"\n[[rule]]\nid = \"oracle\"\nwhy = \"production matcher coupling plant\"\nkind = \"protect_paths\"\nseverity = \"hold\"\npaths = [\"docs/**\"]\n\"#,\n            _ => return false,\n        };\n        let policy = forge_warden_core::policy::parse_policy(source).unwrap();\n        let forge_warden_core::policy::Check::ProtectPaths { scope: matcher } =\n            &policy.rules().first().check else { return false; };\n        matcher.contains(match file.group {\n            0 => \"src/model.rs\",\n            1 => \"tests/model.rs\",\n            _ => \"docs/model.md\",\n        })\n    }"
+    },
+    {
+      "id": "golden-behavior-rebless",
+      "guardrail": "G-24",
+      "path": "fixtures/demo.verdict.json",
+      "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "command": [
+        "python3",
+        "plants/golden_review.py"
+      ],
+      "diagnostic": "GOLDEN_REVIEW_REQUIRED",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "golden-bless-environment",
+      "guardrail": "G-24",
+      "path": "fixtures/demo.verdict.json",
+      "old": "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "new": "0bf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e",
+      "command": [
+        "bash",
+        "-c",
+        "FORGE_WARDEN_BLESS=1 cargo test -p forge-warden-cli --test cli golden_verdict_for_the_demo_change --locked --offline"
+      ],
+      "diagnostic": "golden_verdict_for_the_demo_change.*FAILED",
+      "required_tools": [
+        "bash",
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-owner",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_metadata_requires_the_exact_owner_and_unwritable_ancestors.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_metadata_requires_the_exact_owner_and_unwritable_ancestors",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "meta.uid() != trust.owner ||",
+      "new": "(meta.uid() != trust.owner && false) ||",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-write-mode",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if meta.uid() != trust.owner || meta.mode() & 0o022 != 0 {",
+      "new": "if meta.uid() != trust.owner || (meta.mode() & 0o022 != 0 && false) {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-symlink",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "open_regular(path, Symlinks::Refuse, \"Git admission\")",
+      "new": "open_regular(path, Symlinks::Follow, \"Git admission\")",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-regular-file",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !meta.is_file() {",
+      "new": "if !meta.is_file() && meta.is_file() {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-byte-budget",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if meta.len() > u64::try_from(budget).map_err(git_refusal)? {",
+      "new": "if meta.len() > u64::try_from(budget).map_err(git_refusal)? && false {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-missing-policy",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) {",
+      "new": "if snapshot.is_none() && matches!(admission, GitAdmission::Pinned) && false {",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-unlisted-digest",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_binds_descriptor_and_exact_policy_bytes",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if digests.contains(&sha256) =>",
+      "new": "if digests.contains(&sha256) || !digests.contains(&sha256) =>",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-policy-snapshot",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_binds_descriptor_and_exact_policy_bytes",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "Ok(Some((parse_git_allowlist(&bytes)?, sha256_hex(&bytes))))",
+      "new": "Ok(Some((parse_git_allowlist(&bytes)?, sha256_hex(b\"\"))))",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-descriptor-version",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_binds_descriptor_and_exact_policy_bytes",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "program: Program::Pinned(&git.executable),\n            args: &[\"--version\"],",
+      "new": "program: Program::Pinned(&pin_executable(&git.path)?),\n            args: &[\"--version\"],",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-script",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !bytes.starts_with(b\"\\x7fELF\")",
+      "new": "if (!bytes.starts_with(b\"\\x7fELF\") && false)",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-ack-revocation",
+      "guardrail": "G-36",
+      "path": "scripts/hold_ack.py",
+      "diagnostic": "FAIL: test_git_policy_revocation_invalidates_receipt \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/hold_ack.py",
+        "BoundAck.test_git_policy_revocation_invalidates_receipt"
+      ],
+      "old": "    admitted_git(verdict)\n",
+      "new": "    # planted omission of current owner-policy check\n",
+      "required_tools": [
+        "python3",
+        "ssh-keygen"
+      ]
+    },
+    {
+      "id": "git-ack-downgrade",
+      "guardrail": "G-36",
+      "path": "scripts/hold_ack.py",
+      "diagnostic": "FAIL: test_unpinned_git_and_v1_are_refused \\(",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/hold_ack.py",
+        "BoundAck.test_unpinned_git_and_v1_are_refused"
+      ],
+      "old": "verdict[\"schema\"] == \"forge-warden.verdict.v2\"",
+      "new": "verdict[\"schema\"] in (\"forge-warden.verdict.v1\", \"forge-warden.verdict.v2\")",
+      "required_tools": [
+        "python3",
+        "ssh-keygen"
+      ]
+    },
+    {
+      "id": "git-policy-exact-limit",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_policy_budget_is_exactly_64_kib.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_policy_budget_is_exactly_64_kib",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;",
+      "new": "const MAX_GIT_ALLOWLIST_BYTES: usize = 64 + 1024;",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-parent-traversal",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_paths_refuse_parent_traversal_before_metadata_walk.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_paths_refuse_parent_traversal_before_metadata_walk",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "if !path.is_absolute()\n            || path",
+      "new": "if !path.is_absolute()\n            && path",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-core-advisory-note",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "advisory_git_admission_note_is_composed_by_core.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "authority",
+        "advisory_git_admission_note_is_composed_by_core",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "git.admission() == crate::verdict::Admission::Unpinned",
+      "new": "git.admission() == crate::verdict::Admission::Approved",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-judged-verdict-capture",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "cli_borrows_judged_verdicts_directly_and_never_takes_ownership.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "cli_borrows_judged_verdicts_directly_and_never_takes_ownership",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let verdict: &Verdict = if",
+      "new": "let verdict = if",
+      "required_tools": [
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-judged-verdict-clone",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "no method named .clone. found for struct .*Verdict",
+      "cargo": [
+        "check",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline"
+      ],
+      "old": "    report(verdict, args.json)\n",
+      "new": "    let mut rewritten = (*verdict).clone();\n    for note in &mut rewritten.notes {\n        note.detail.push_str(\"; post-evaluation edit\");\n    }\n    let verdict = &rewritten;\n    report(verdict, args.json)\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-parent-error-class",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "git_parent_absence_is_distinct_from_metadata_failure.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "git_parent_absence_is_distinct_from_metadata_failure",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),",
+      "new": "Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Ok(false),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-authority-mode-wiring",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "expected reference .&PinnedGit.",
+      "cargo": [
+        "check",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline"
+      ],
+      "old": "doors::child::admit_git_pinned(&args.git)",
+      "new": "doors::child::admit_git_advisory(&args.git)",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-test-scratch-identity",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "scratch_calls_never_replace_a_live_directory.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "scratch_calls_never_replace_a_live_directory",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)",
+      "new": "NEXT.fetch_add(0, std::sync::atomic::Ordering::Relaxed)",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "git-test-scratch-exclusive",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-cli/src/doors.rs",
+      "diagnostic": "scratch_helpers_require_per_call_identity_and_exclusive_creation.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--test",
+        "repo_invariants",
+        "scratch_helpers_require_per_call_identity_and_exclusive_creation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "match std::fs::create_dir(&dir) {",
+      "new": "match std::fs::create_dir_all(&dir) {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
     {
-      "id": "G-12",
-      "title": "Unvalidated construction through the library (R-19)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-13",
-      "title": "Unverified patch binding passes (R-05)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-14",
-      "title": "Ranking does not cover the patch (R-01)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-15",
-      "title": "Producer is not authenticated or version-gated (R-14)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
       "id": "G-16",
       "title": "Toolchain drift (R-08)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "Exact toolchain pin exists, but no local CI toolchain-drift invariant is implemented; missing offline toolchains must not count as caught."
     },
     {
       "id": "G-18",
       "title": "A skipped gate reads as a passed gate",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-25",
-      "title": "Nondeterministic output",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-29",
-      "title": "Oversized or mixed-reason module",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-30",
-      "title": "Public-surface creep",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "ci_local still permits optional-tool skips; a strict missing-required-tool refusal has not been implemented. No passing plant is claimed."
     },
     {
       "id": "G-38",
       "title": "Required CI check names drift",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-39",
-      "title": "Protected-path lists diverge",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "Required-check names are enforced by hosted admission, but this offline runner has no approved check-name snapshot/identity adapter."
     },
     {
       "id": "G-40",
       "title": "Docs and comments that name non-existent tests (R-15)",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-41",
-      "title": "Vocabulary provenance (R-09, R-16, R-17)",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-45",
-      "title": "Test that checks self-agreement",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "No general documentation/test-reference invariant is implemented. Naming a nonexistent test is still a review obligation."
     },
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
       "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
-    },
-    {
-      "id": "G-51",
-      "title": "MSRV drift",
-      "status": "PENDING",
-      "reason": "No runnable recipe in this first harness batch; see live workboard and binding rulings. Not counted as caught."
+      "reason": "Hosted zizmor audit exists, but the trusted offline execution image has no zizmor. No installation or weaker replacement audit is performed."
     }
   ]
 }

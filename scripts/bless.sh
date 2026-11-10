@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Regenerate golden verdicts after an intended change, then review `git diff fixtures/`.
-# A golden file is a contract: bless only what you meant to change.
+# Operator-only regeneration. Ordinary cargo tests are always read-only.
+# An independent verifier builds the reviewed subject, regenerates, compares exact bytes,
+# and retains the binary/output hashes for the owner-held golden review.
 set -euo pipefail
+if [ "${CI+x}" = x ] || [ "${GITHUB_ACTIONS+x}" = x ]; then
+  echo 'golden regeneration is refused in CI' >&2
+  exit 2
+fi
+if [ "$#" -ne 6 ] || [ "$1" != --binary ] || [ "$3" != --receipt ] || [ "$5" != --subject ]; then
+  echo 'usage: scripts/bless.sh --binary PATH --receipt PATH --subject source-sha256:HEX' >&2
+  exit 2
+fi
+binary=$2
+receipt=$4
+subject=$6
 cd "$(git rev-parse --show-toplevel)"
-cargo build --quiet --bin forge-warden
-set +e
-./target/debug/forge-warden check --policy examples/starter.warden.toml \
-  --rank fixtures/demo.rank.json --patch fixtures/demo.patch --today 2026-11-05 --json \
-  > fixtures/demo.verdict.json
-code=$?
-set -e
-[ "$code" -eq 7 ] || { echo "bless: expected exit 7 for the demo, got $code" >&2; exit 1; }
+backup_dir=$(mktemp -d /tmp/fw-golden-backups.XXXXXXXX)
+printf 'Golden backups: %s\n' "$backup_dir"
+python3 -I scripts/golden_output.py --binary "$binary" --receipt "$receipt" --subject "$subject" --write --backup-dir "$backup_dir"
+cargo test --quiet --locked -p forge-warden-cli --test cli golden_verdict_for_the_demo_change
 git --no-pager diff --stat -- fixtures/

@@ -165,7 +165,11 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "forge-warden-core",
+ "proc-macro2",
+ "proptest",
+ "pulldown-cmark",
  "serde_json",
+ "syn",
  "toml",
 ]
 
@@ -173,6 +177,7 @@ dependencies = [
 name = "forge-warden-core"
 version = "0.1.0"
 dependencies = [
+ "forge-warden-core",
  "globset",
  "proptest",
  "serde",
@@ -288,6 +293,17 @@ dependencies = [
  "rand_xorshift",
  "regex-syntax",
  "unarray",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]
@@ -493,6 +509,12 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
+name = "unicase"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 
 [[package]]
 name = "unicode-ident"

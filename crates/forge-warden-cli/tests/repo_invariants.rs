@@ -8,36 +8,64 @@
 )]
 
 mod common;
+#[path = "../../forge-warden-core/tests/support/corpus_manifest.rs"]
+mod corpus_manifest;
 use common::{files_under, read, root};
+use syn::ext::IdentExt as _;
+
+/// Whether `path` (`crates/…`) is compiled into the production binary, by compiler evidence
+/// (B-C1c-03): a test exemption is never decided by a directory name.
+fn is_production(path: &str) -> bool {
+    static PRODUCTION: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    PRODUCTION
+        .get_or_init(common::production_sources)
+        .contains(path)
+}
 
 fn rust_sources() -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for dir in ["crates"] {
+    // Every Rust file under crates/, under every workspace member wherever it lives, and every source
+    // compiled into production (Touchstone C1c-O3-04, B-C1c-04): nothing first-party is out of view.
+    let mut names = std::collections::BTreeSet::new();
+    let mut dirs = vec!["crates".to_owned()];
+    dirs.extend(common::workspace_members().dirs);
+    for dir in &dirs {
         for path in files_under(dir, ".rs") {
-            let rel = path
-                .strip_prefix(root())
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace("/crates/../..", "");
-            // This file names the markers and attributes it searches for, so it cannot scan itself.
-            if rel.ends_with("tests/repo_invariants.rs") {
-                continue;
+            if !path.components().any(|c| c.as_os_str() == "target") {
+                names.insert(common::relative(&path));
             }
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
-            out.push((rel, text));
         }
     }
-    assert!(
-        out.len() >= 10,
-        "found only {} Rust files; is the walk broken?",
-        out.len()
+    names.extend(common::production_sources());
+    let out: Vec<(String, String)> = names
+        .into_iter()
+        .map(|rel| {
+            let text = read(&rel);
+            (rel, text)
+        })
+        .collect();
+    // Membership only: pinning source content would trivially kill every cargo-mutants plant.
+    assert_eq!(
+        corpus_manifest::check(
+            "rust-sources",
+            out.iter()
+                .map(|(name, _)| (name.clone(), name.as_bytes().to_vec())),
+        ),
+        Ok(())
     );
-    out
+    // Marker scanning excludes this exact scanner; manifest membership above excludes nothing.
+    out.into_iter()
+        .filter(|(rel, _)| rel != "crates/forge-warden-cli/tests/repo_invariants.rs")
+        .collect()
 }
 
 #[test]
 fn every_crate_inherits_the_workspace_lints() {
-    for manifest in files_under("crates", "Cargo.toml") {
+    let mut manifests = files_under("crates", "Cargo.toml");
+    for dir in common::workspace_members().dirs {
+        manifests.push(root().join(dir).join("Cargo.toml"));
+    }
+    for manifest in manifests {
         let text = std::fs::read_to_string(&manifest).unwrap();
         assert!(
             text.contains("[lints]\nworkspace = true"),
@@ -56,39 +84,19 @@ fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 
 #[test]
 fn suppressions_are_expectations_with_reasons() {
-    for (path, text) in rust_sources() {
-        let lines: Vec<&str> = text.lines().collect();
-        for (n, line) in code_lines(&text) {
-            let code = line.trim_start();
-            assert!(
-                !(code.starts_with("#[allow(")
-                    || code.starts_with("#![allow(")
-                    || (code.contains("cfg_attr(") && code.contains("allow("))),
-                "{path}:{}: use #[expect(lint, reason = \"…\")], which fails once it is no longer needed",
-                n + 1
-            );
-            if code.starts_with("#[expect(") || code.starts_with("#![expect(") {
-                // The attribute runs until the first line that closes it.
-                let attribute: String = lines[n..]
-                    .iter()
-                    .take_while(|l| !l.trim_end().ends_with(")]"))
-                    .chain(lines[n..].iter().find(|l| l.trim_end().ends_with(")]")))
-                    .copied()
-                    .collect();
-                assert!(
-                    attribute.contains("reason = \""),
-                    "{path}:{}: every #[expect] needs a reason = \"…\"",
-                    n + 1
-                );
-            }
-        }
+    let mut names = common::sources().test_only;
+    names.extend(rust_sources().into_iter().map(|(path, _)| path));
+    names.insert("crates/forge-warden-cli/tests/repo_invariants.rs".to_owned());
+    for path in names {
+        let result = common::attribute_policy::expectations(&read(&path));
+        assert!(result.is_ok(), "{path}: {result:?}");
     }
 }
 
 #[test]
 fn only_doors_rs_opens_doors_in_production_code() {
     for (path, text) in rust_sources() {
-        let is_test = path.contains("/tests/");
+        let is_test = !is_production(&path);
         if is_test || path.ends_with("src/doors.rs") {
             continue;
         }
@@ -106,48 +114,73 @@ fn production_part(text: &str) -> &str {
 }
 
 #[test]
-fn defaults_say_which_way_they_fail() {
-    // G-04: `.unwrap_or(Outcome::Pass)` decided a verdict silently. A default is a decision about
-    // which way a missing value fails, so every one in production code is marked, one marker per
-    // default, at most six lines above it.
-    const MARKERS: [&str; 3] = ["// fails closed:", "// fails safe:", "// display only:"];
-    for (path, text) in rust_sources() {
-        if path.contains("/tests/") {
-            continue;
-        }
-        let lines: Vec<&str> = production_part(&text).lines().collect();
-        let mut defaults = 0_usize;
-        let mut markers = 0_usize;
-        for (index, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            if MARKERS.iter().any(|m| trimmed.starts_with(m)) {
-                markers = markers.saturating_add(1);
-                continue;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            let calls = line.matches("unwrap_or").count();
-            if calls == 0 {
-                continue;
-            }
-            defaults = defaults.saturating_add(calls);
-            let window = lines
-                .get(index.saturating_sub(6)..index)
-                .unwrap_or_default();
+fn raw_defaults_are_disallowed_in_both_crates() {
+    // G-04 (WP-B7, B7.1): `.unwrap_or(Outcome::Pass)` decided a verdict silently; `map_or` and
+    // `get_or_insert*` pick a default the same way. A default is now chosen
+    // through forge_warden_core::defaults::NamedDefault (or_fail_closed / or_fail_safe / or_display),
+    // and clippy refuses the raw methods in every target of both crates (measured: method call,
+    // UFCS, fn pointer, alias, use-as, closure). The configs are PARSED (Touchstone B7-O3-01): only an
+    // active `disallowed-methods` entry counts, never a commented-out line that keeps the text.
+    for config in ["clippy.toml", "crates/forge-warden-core/clippy.toml"] {
+        let active = disallowed_method_paths(&read(config));
+        for method in [
+            "core::option::Option::unwrap_or",
+            "core::option::Option::unwrap_or_else",
+            "core::option::Option::unwrap_or_default",
+            "core::result::Result::unwrap_or",
+            "core::result::Result::unwrap_or_else",
+            "core::result::Result::unwrap_or_default",
+            "core::option::Option::map_or",
+            "core::option::Option::map_or_else",
+            "core::result::Result::map_or",
+            "core::result::Result::map_or_else",
+            "core::option::Option::get_or_insert",
+            "core::option::Option::get_or_insert_with",
+            "core::option::Option::get_or_insert_default",
+        ] {
             assert!(
-                window
-                    .iter()
-                    .any(|l| MARKERS.iter().any(|m| l.trim_start().starts_with(m))),
-                "{path}:{}: say which way this default fails: a `// fails closed: …`, `// fails safe: …` or `// display only: …` line just above it",
-                index.saturating_add(1)
+                active.contains(method),
+                "{config} must actively disallow {method}"
             );
         }
-        assert_eq!(
-            markers, defaults,
-            "{path}: {markers} default marker(s) for {defaults} default(s); each default gets its own"
-        );
     }
+}
+
+/// The `path` of every active `disallowed-methods` entry in a clippy.toml (table or string form).
+fn disallowed_method_paths(text: &str) -> std::collections::BTreeSet<String> {
+    // An unparseable config activates nothing, so every required method is then reported missing.
+    let Ok(config) = text.parse::<toml::Table>() else {
+        return std::collections::BTreeSet::new();
+    };
+    config
+        .get("disallowed-methods")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| match entry {
+            toml::Value::String(path) => Some(path.clone()),
+            toml::Value::Table(table) => table
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Array(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn only_active_config_entries_count() {
+    // B7-O3-01 regression: a commented entry keeps its text but disallows nothing.
+    let active = "disallowed-methods = [\n    { path = \"core::option::Option::unwrap_or\", reason = \"x\" },\n    \"core::result::Result::unwrap_or\",\n]\n";
+    let commented = "disallowed-methods = [\n    # { path = \"core::option::Option::unwrap_or\", reason = \"x\" },\n]\n";
+    let paths = disallowed_method_paths(active);
+    assert!(paths.contains("core::option::Option::unwrap_or"));
+    assert!(paths.contains("core::result::Result::unwrap_or"));
+    assert!(disallowed_method_paths(commented).is_empty());
 }
 
 #[test]
@@ -231,7 +264,10 @@ fn core_dependency_violations(manifest: &str) -> Vec<String> {
         "thiserror",
         "toml",
     ];
-    const ALLOWED_DEV: [&str; 1] = ["proptest"];
+    // `forge-warden-core` itself: the engine tests' self dev-dependency that enables the
+    // `unattested-evaluate` test door (Q-TYPES-1); a normal dependency may never enable it
+    // (`no_normal_dependency_opens_the_unattested_evaluate_door`).
+    const ALLOWED_DEV: [&str; 2] = ["forge-warden-core", "proptest"];
     let declared = match declared_dependencies(manifest) {
         Ok(declared) => declared,
         Err(error) => return vec![format!("the manifest is not valid TOML: {error}")],
@@ -323,7 +359,7 @@ fn exit_statuses_come_from_the_registry() {
     // turns an `Exit` into a process status; everything else returns an `Exit`, so a code cannot
     // drift from the table.
     for (path, text) in rust_sources() {
-        if path.contains("/tests/") || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+        if !is_production(&path) || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
             continue;
         }
         for (line, code) in code_lines(&text) {
@@ -409,4 +445,621 @@ fn readme_exit_table_tracks_the_registry() {
             "README.md is missing or has drifted from this row:\n{row}"
         );
     }
+}
+
+#[test]
+fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
+    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in doors.rs, right after the pinned
+    // ranker ran; and the binary judges only through `evaluate_authority`/`evaluate_advisory`.
+    for (path, text) in rust_sources() {
+        if !is_production(&path) || path.ends_with("crates/forge-warden-core/src/authority.rs") {
+            continue;
+        }
+        let attests = text.matches("attest(").count();
+        if path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+            assert_eq!(
+                attests, 1,
+                "{path}: exactly one attest call, in produce_ranking"
+            );
+        } else {
+            assert_eq!(attests, 0, "{path}: only doors.rs may call Ranking::attest");
+        }
+    }
+    let main = read("crates/forge-warden-cli/src/main.rs");
+    for (index, line) in main.lines().enumerate() {
+        let raw = line
+            .match_indices("evaluate(")
+            .any(|(at, _)| !line.get(..at).is_some_and(|before| before.ends_with('_')));
+        assert!(
+            !raw,
+            "crates/forge-warden-cli/src/main.rs:{}: judge through evaluate_authority or evaluate_advisory, never raw evaluate",
+            index.saturating_add(1)
+        );
+    }
+}
+
+#[test]
+fn the_clippy_config_disallows_minting_and_raw_judging() {
+    let config = read("clippy.toml");
+    for path in [
+        "path = \"forge_warden_core::authority::Ranking::attest\"",
+        "path = \"forge_warden_core::testing::evaluate\"",
+    ] {
+        assert!(config.contains(path), "clippy.toml lost {path}");
+    }
+}
+
+#[test]
+fn no_normal_dependency_opens_the_unattested_evaluate_door() {
+    // Q-TYPES-1: the raw engine (`forge_warden_core::testing::evaluate`, which can pass with no
+    // provenance) exists only with the `unattested-evaluate` feature, and only [dev-dependencies]
+    // may enable it. Judged on the RESOLVED graph, not on manifest tables (Bastion: a
+    // target-specific, renamed or transitive dependency can enable it too): cargo tree over every
+    // member, every target, normal and build edges only, with feature nodes.
+    let core: toml::Table = toml::from_str(&read("crates/forge-warden-core/Cargo.toml")).unwrap();
+    let defaults = core
+        .get("features")
+        .and_then(|f| f.get("default"))
+        .and_then(toml::Value::as_array)
+        .map(Vec::len);
+    assert!(
+        matches!(defaults, None | Some(0)),
+        "forge-warden-core has default features: {defaults:?}"
+    );
+    let out = common::command(env!("CARGO"))
+        .args([
+            "tree",
+            "--offline",
+            "--locked",
+            "--workspace",
+            "--target",
+            "all",
+            "-e",
+            "normal,build,features",
+            "--prefix",
+            "none",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    let tree = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        out.status.success() && tree.contains("forge-warden-core v"),
+        "cargo tree did not run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let opened: Vec<&str> = tree
+        .lines()
+        .filter(|l| l.contains("feature \"unattested-evaluate\""))
+        .collect();
+    assert!(
+        opened.is_empty(),
+        "a normal or build dependency enables unattested-evaluate: {opened:?}"
+    );
+
+    // The declarations, too, so a dependency or feature that is off by default (an optional or
+    // target-specific dependency, a renamed key, a member feature forwarding to it) is refused
+    // before anyone turns it on (Bastion B-QTYPES-02): every member, every dependency kind but
+    // dev, every [features] value.
+    let meta = common::command(env!("CARGO"))
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(meta.status.success(), "cargo metadata did not run");
+    let meta: serde_json::Value = serde_json::from_slice(&meta.stdout).unwrap();
+    let feature = "unattested-evaluate";
+    let mut declared = Vec::new();
+    for package in meta["packages"].as_array().unwrap() {
+        let name = package["name"].as_str().unwrap();
+        for dep in package["dependencies"].as_array().unwrap() {
+            let enables = dep["name"] == "forge-warden-core"
+                && dep["kind"].as_str() != Some("dev")
+                && dep["features"]
+                    .as_array()
+                    .is_some_and(|f| f.iter().any(|v| v == feature));
+            if enables {
+                declared.push(format!("{name}: dependency {dep}"));
+            }
+        }
+        for (key, values) in package["features"].as_object().unwrap() {
+            for value in values.as_array().unwrap() {
+                let text = value.as_str().unwrap();
+                if text.ends_with("/unattested-evaluate") {
+                    declared.push(format!("{name}: feature {key} = {text}"));
+                }
+            }
+        }
+    }
+    assert!(
+        declared.is_empty(),
+        "unattested-evaluate is declared outside [dev-dependencies]: {declared:#?}"
+    );
+}
+
+/// Inspect parsed attributes, including conditional attributes; comments and strings are inert.
+fn unexplained_ignores(text: &str) -> usize {
+    struct Ignores(usize);
+    impl Ignores {
+        fn inspect(&mut self, meta: &syn::Meta) {
+            if meta
+                .path()
+                .get_ident()
+                .is_some_and(|name| name.unraw() == "ignore")
+            {
+                let explained = match meta {
+                    syn::Meta::NameValue(value) => matches!(&value.value,
+                        syn::Expr::Lit(expr) if matches!(&expr.lit,
+                            syn::Lit::Str(reason) if !reason.value().trim().is_empty())),
+                    syn::Meta::Path(_) | syn::Meta::List(_) => false,
+                };
+                if !explained {
+                    self.0 = self.0.saturating_add(1);
+                }
+            } else if meta
+                .path()
+                .get_ident()
+                .is_some_and(|name| name.unraw() == "cfg_attr")
+                && let syn::Meta::List(list) = meta
+            {
+                let Ok(nested) = list.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                ) else {
+                    self.0 = usize::MAX;
+                    return;
+                };
+                for attr in nested.iter().skip(1) {
+                    self.inspect(attr);
+                }
+            }
+        }
+    }
+    impl Ignores {
+        fn tokens(&mut self, tokens: proc_macro2::TokenStream) {
+            let mut tokens = tokens.into_iter().peekable();
+            while let Some(token) = tokens.next() {
+                match token {
+                    proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
+                        if matches!(tokens.peek(), Some(proc_macro2::TokenTree::Punct(bang)) if bang.as_char() == '!')
+                        {
+                            tokens.next();
+                        }
+                        if let Some(proc_macro2::TokenTree::Group(group)) = tokens.peek()
+                            && group.delimiter() == proc_macro2::Delimiter::Bracket
+                            && let Ok(meta) = syn::parse2::<syn::Meta>(group.stream())
+                        {
+                            self.inspect(&meta);
+                        }
+                    }
+                    proc_macro2::TokenTree::Group(group) => self.tokens(group.stream()),
+                    proc_macro2::TokenTree::Ident(_)
+                    | proc_macro2::TokenTree::Literal(_)
+                    | proc_macro2::TokenTree::Punct(_) => {}
+                }
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Ignores {
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.tokens(mac.tokens.clone());
+            syn::visit::visit_macro(self, mac);
+        }
+
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            self.inspect(&attr.meta);
+            syn::visit::visit_attribute(self, attr);
+        }
+    }
+    let Ok(parsed) = syn::parse_file(text) else {
+        return usize::MAX;
+    };
+    let mut visitor = Ignores(0);
+    syn::visit::Visit::visit_file(&mut visitor, &parsed);
+    visitor.0
+}
+
+#[test]
+fn ignored_tests_require_an_explicit_reason() {
+    let mut names = common::sources().test_only;
+    names.extend(common::production_sources());
+    names.extend(rust_sources().into_iter().map(|(path, _)| path));
+    // Unlike the legacy text scans, parsed attributes cannot confuse fixture strings with code.
+    // Include this file explicitly even if compiler source discovery changes.
+    names.insert("crates/forge-warden-cli/tests/repo_invariants.rs".to_owned());
+    for path in names {
+        assert_eq!(
+            unexplained_ignores(&read(&path)),
+            0,
+            "{path}: ignored tests require a nonempty #[ignore = \"reason\"]"
+        );
+    }
+}
+
+#[test]
+fn ignore_reason_check_reads_conditional_attributes_and_ignores_prose() {
+    for bad in [
+        "#[r#ignore]",
+        "#[r#cfg_attr(test, r#ignore)]",
+        "#[cfg_attr(test, r#cfg_attr(unix, r#ignore))]",
+        "#[ignore]",
+        "#[ignore = \" \"]",
+        "#[cfg_attr(test, ignore)]",
+        "#[cfg_attr(test, cfg_attr(unix, ignore))]",
+    ] {
+        assert_eq!(
+            unexplained_ignores(&format!("{bad} fn probe() {{}}")),
+            1,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        unexplained_ignores("#[ignore = \"requires external hardware\"] fn probe() {}"),
+        0
+    );
+    assert_eq!(unexplained_ignores("// #[ignore]\nfn probe() {}"), 0);
+    assert_eq!(
+        unexplained_ignores("#[r#ignore = \"hardware\"] fn probe() {}"),
+        0
+    );
+    assert_eq!(
+        unexplained_ignores("macro_rules! probe { () => { #[r#ignore] fn probe() {} } }"),
+        1
+    );
+    assert_eq!(
+        unexplained_ignores("macro_rules! probe { () => { #[ignore] fn probe() {} } }"),
+        1
+    );
+}
+
+#[test]
+fn suppression_and_ignore_scanners_match_the_shared_corpus() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(&read("fixtures/attribute-policy.json")).unwrap();
+    corpus_manifest::check(
+        "attribute-cases",
+        cases.iter().map(|case| {
+            (
+                case["name"].as_str().unwrap().to_owned(),
+                serde_json::to_vec(case).unwrap(),
+            )
+        }),
+    )
+    .unwrap();
+    for case in cases {
+        let source = case
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        let expected = case.get("expectations").unwrap();
+        let actual = common::attribute_policy::expectations(source);
+        if expected.is_null() {
+            assert!(actual.is_err(), "{case}: {actual:?}");
+        } else {
+            let pairs: Vec<(String, String)> = serde_json::from_value(expected.clone()).unwrap();
+            assert_eq!(actual, Ok(pairs), "{case}");
+        }
+        let ignored = case
+            .get("unexplained_ignores")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap();
+        assert_eq!(
+            u64::try_from(unexplained_ignores(source)).unwrap(),
+            ignored,
+            "{case}"
+        );
+    }
+}
+
+/// Reject fixture-only compiler switches in operational build surfaces. Normalize shell/YAML/
+/// TOML separators so split argv arrays and encoded rustflags cannot hide the two switches.
+fn fixture_compiler_switch(source: &str) -> bool {
+    let compact: String = source
+        .chars()
+        .filter(|ch| {
+            !ch.is_whitespace()
+                && !ch.is_control()
+                && !matches!(ch, '\'' | '"' | ',' | '[' | ']' | '\\')
+        })
+        .collect();
+    (compact.contains("--cfgfw_fixture_cli") || compact.contains("--cfg=fw_fixture_cli"))
+        || compact.contains("--cfgtest")
+        || compact.contains("--cfg=test")
+}
+
+#[test]
+fn production_build_routes_cannot_enable_fixture_cli() {
+    let mut paths = vec![root().join("justfile")];
+    for directory in ["scripts", ".github", ".cargo", ".githooks", ".claude"] {
+        if root().join(directory).exists() {
+            paths.extend(files_under(directory, ""));
+        }
+    }
+    for path in paths {
+        if path.is_file() {
+            let bytes = std::fs::read(&path).unwrap();
+            if let Ok(source) = std::str::from_utf8(&bytes) {
+                assert!(
+                    !fixture_compiler_switch(source),
+                    "fixture compiler switch in operational build surface {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    for source in [
+        "cargo rustc -- --cfg test",
+        "rustflags = [\"--cfg\", \"test\"]",
+        "RUSTFLAGS='--cfg=test'",
+        "CARGO_ENCODED_RUSTFLAGS=--cfg\u{1f}test",
+        "cargo rustc -- --cfg fw_fixture_cli",
+        "RUSTFLAGS='--cfg=fw_fixture_cli'",
+    ] {
+        assert!(fixture_compiler_switch(source), "missed {source:?}");
+    }
+    assert!(!fixture_compiler_switch(
+        "cargo build --release\nRUSTFLAGS='-D warnings'"
+    ));
+}
+
+fn named_call(expression: &syn::Expr, expected: &str) -> bool {
+    matches!(expression, syn::Expr::Call(call)
+        if matches!(call.func.as_ref(), syn::Expr::Path(path)
+            if path.path.segments.last().is_some_and(|part| part.ident == expected)))
+}
+
+fn final_expression(block: &syn::Block) -> Option<&syn::Expr> {
+    if let syn::Stmt::Expr(expression, None) = block.stmts.last()? {
+        Some(expression)
+    } else {
+        None
+    }
+}
+
+/// Secondary shape check only: two immutable result holders feed one shared view and the
+/// immediately following report. Verdict's absent Clone implementation is the compiler rung
+/// against copying a judged view; Q-TYPES-2 separately makes all verdict fields private.
+fn read_only_judgement(source: &str) -> bool {
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    let Some(check) = file.items.iter().find_map(|item| {
+        if let syn::Item::Fn(function) = item {
+            (function.sig.ident == "check").then_some(function)
+        } else {
+            None
+        }
+    }) else {
+        return false;
+    };
+    let Some(syn::Stmt::Local(binding)) = check.block.stmts.iter().rev().nth(1) else {
+        return false;
+    };
+    if !matches!(&binding.pat, syn::Pat::Type(pattern)
+        if matches!(pattern.pat.as_ref(), syn::Pat::Ident(name) if name.ident == "verdict" && name.mutability.is_none())
+        && matches!(pattern.ty.as_ref(), syn::Type::Reference(reference) if reference.mutability.is_none()
+            && matches!(reference.elem.as_ref(), syn::Type::Path(path) if path.path.is_ident("Verdict"))))
+    {
+        return false;
+    }
+    let Some(initializer) = &binding.init else {
+        return false;
+    };
+    let syn::Expr::If(branches) = initializer.expr.as_ref() else {
+        return false;
+    };
+    if !matches!(final_expression(&branches.then_branch), Some(syn::Expr::Reference(reference))
+        if reference.mutability.is_none()
+            && matches!(reference.expr.as_ref(), syn::Expr::Path(path) if path.path.is_ident("authority")))
+        || !assigned_evaluation(&branches.then_branch, "authority", "evaluate_authority")
+    {
+        return false;
+    }
+    let Some((_, otherwise)) = &branches.else_branch else {
+        return false;
+    };
+    let syn::Expr::Block(block) = otherwise.as_ref() else {
+        return false;
+    };
+    if !matches!(final_expression(&block.block), Some(syn::Expr::MethodCall(borrow))
+        if borrow.method == "verdict" && borrow.args.is_empty()
+            && matches!(borrow.receiver.as_ref(), syn::Expr::Path(path) if path.path.is_ident("advisory")))
+        || !assigned_evaluation(&block.block, "advisory", "evaluate_advisory")
+    {
+        return false;
+    }
+    let Some(syn::Expr::Call(report)) = final_expression(&check.block) else {
+        return false;
+    };
+    if !matches!(report.func.as_ref(), syn::Expr::Path(path) if path.path.is_ident("report"))
+        || !matches!(report.args.first(), Some(syn::Expr::Path(path)) if path.path.is_ident("verdict"))
+    {
+        return false;
+    }
+    let mut visitor = JudgementReferences::default();
+    syn::visit::Visit::visit_file(&mut visitor, &file);
+    visitor.evaluators == 2 && !visitor.renamed
+}
+
+fn assigned_evaluation(block: &syn::Block, holder: &str, evaluator: &str) -> bool {
+    matches!(block.stmts.iter().rev().nth(1), Some(syn::Stmt::Expr(syn::Expr::Assign(assignment), Some(_)))
+        if matches!(assignment.left.as_ref(), syn::Expr::Path(path) if path.path.is_ident(holder))
+            && named_call(&assignment.right, evaluator))
+}
+
+#[derive(Default)]
+struct JudgementReferences {
+    evaluators: usize,
+    renamed: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for JudgementReferences {
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path.path.segments.last().is_some_and(|part| {
+            matches!(
+                part.ident.to_string().as_str(),
+                "evaluate_authority" | "evaluate_advisory"
+            )
+        }) {
+            self.evaluators = self.evaluators.saturating_add(1);
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+    fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+        self.renamed |= matches!(
+            rename.ident.to_string().as_str(),
+            "evaluate_authority" | "evaluate_advisory"
+        );
+        syn::visit::visit_use_rename(self, rename);
+    }
+}
+
+#[test]
+fn cli_borrows_judged_verdicts_directly_and_never_takes_ownership() {
+    let source = read("crates/forge-warden-cli/src/main.rs");
+    assert!(
+        read_only_judgement(&source),
+        "CLI evaluator results must be captured directly as &Verdict and reported by shared reference"
+    );
+    for broken in [
+        source.replace("let verdict: &Verdict = if", "let mut verdict = if"),
+        source.replace(
+            "let verdict: &Verdict = if",
+            "let verdict: &mut Verdict = if",
+        ),
+        source.replace(
+            "evaluate_authority(&policy, &checked, copy, seals, today)",
+            "rewrite(evaluate_authority(&policy, &checked, copy, seals, today))",
+        ),
+        format!("{source}\nfn extra() {{ let f = evaluate_authority; }}"),
+        format!("{source}\nuse forge_warden_core::authority::evaluate_authority as alias;"),
+        source.replace(
+            "report(verdict, args.json)",
+            "report(&rewritten, args.json)",
+        ),
+        source.replace("report(verdict, args.json)", "let mut rewritten = (*verdict).clone(); for note in &mut rewritten.notes { note.detail.push_str(\"; post-evaluation edit\"); } let verdict = &rewritten; report(verdict, args.json)"),
+
+    ] {
+        assert!(
+            !read_only_judgement(&broken),
+            "judged-value boundary regression escaped"
+        );
+    }
+}
+
+#[derive(Default)]
+struct ScratchOperations {
+    calls: Vec<String>,
+    methods: Vec<String>,
+    literals: Vec<String>,
+}
+impl<'ast> syn::visit::Visit<'ast> for ScratchOperations {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = call.func.as_ref()
+            && let Some(last) = path.path.segments.last()
+        {
+            self.calls.push(last.ident.unraw().to_string());
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.methods.push(call.method.unraw().to_string());
+        syn::visit::visit_expr_method_call(self, call);
+    }
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.literals.push(literal.value());
+    }
+}
+
+/// Raw temporary-root access is confined to reviewed allocators and production door bases.
+/// The runtime same-label/concurrency tests prove isolation; this is a structural backstop.
+#[test]
+fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
+    use syn::visit::Visit as _;
+
+    struct Helpers<'a> {
+        path: &'a str,
+        scratch_count: usize,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Helpers<'_> {
+        fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+            let name = function.sig.ident.unraw().to_string();
+            let mut operations = ScratchOperations::default();
+            operations.visit_block(&function.block);
+            let is_allocator = name == "scratch"
+                && matches!(
+                    self.path,
+                    "crates/forge-warden-cli/src/doors.rs"
+                        | "crates/forge-warden-cli/tests/common/runtime.rs"
+                );
+            if is_allocator {
+                self.scratch_count = self.scratch_count.checked_add(1).unwrap();
+                for required in ["temp_dir", "create_dir"] {
+                    assert!(
+                        operations.calls.iter().any(|call| call == required),
+                        "{}: scratch needs {required}",
+                        self.path
+                    );
+                }
+                assert!(
+                    operations
+                        .methods
+                        .iter()
+                        .any(|method| method == "fetch_add"),
+                    "{}: scratch needs a per-call atomic identity",
+                    self.path
+                );
+                for forbidden in ["remove_dir_all", "create_dir_all"] {
+                    assert!(
+                        !operations.calls.iter().any(|call| call == forbidden),
+                        "{}: scratch must reserve exclusively, never {forbidden}",
+                        self.path
+                    );
+                }
+            }
+            if operations.calls.iter().any(|call| call == "temp_dir") && !is_allocator {
+                // Production bases delegate to random/exclusive PrivateDir creation; the
+                // vocabulary test passes the root only as Git's discovery ceiling.
+                assert!(
+                    (self.path == "crates/forge-warden-cli/src/doors.rs"
+                        && matches!(
+                            name.as_str(),
+                            "git_facts" | "git_version" | "produce_ranking"
+                        ))
+                        || self.path == "crates/forge-warden-cli/tests/check_vocab.rs",
+                    "{}::{name}: raw temporary root requires a reviewed unique allocator",
+                    self.path
+                );
+            }
+            assert!(
+                !operations
+                    .literals
+                    .iter()
+                    .any(|value| value == "/tmp" || value.starts_with("/tmp/")),
+                "{}::{name}: fixed temporary paths bypass scratch ownership",
+                self.path
+            );
+            syn::visit::visit_item_fn(self, function);
+        }
+    }
+    let mut allocators = 0_usize;
+    for (path, text) in rust_sources() {
+        let parsed = syn::parse_file(&text).unwrap();
+        let mut helpers = Helpers {
+            path: &path,
+            scratch_count: 0,
+        };
+        helpers.visit_file(&parsed);
+        allocators = allocators.checked_add(helpers.scratch_count).unwrap();
+    }
+    assert_eq!(
+        allocators, 2,
+        "both reviewed scratch allocators must be checked"
+    );
 }

@@ -10,7 +10,9 @@
 # instead of silently dropping out of the comparison (R-16).
 set -euo pipefail
 rev="${1:?usage: check_vocab.sh <deep-diff-forge commit> [checkout]}"
-root="$(git rev-parse --show-toplevel)"
+# The forge-warden tree this script belongs to, found from the script itself: it need not be a Git
+# checkout (mutation runs and release tarballs are not), and the caller's cwd does not matter.
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

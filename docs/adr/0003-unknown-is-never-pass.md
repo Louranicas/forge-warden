@@ -1,6 +1,9 @@
 # ADR 0003: Unknown is never pass
 
-**Status:** accepted, 2026-11-05
+Status: Accepted
+Owner-deployment: Not-required
+
+Historical status record: **Status:** accepted, 2026-11-05
 
 ## Context
 
@@ -22,8 +25,11 @@ reports nothing wrong.
   cannot outlive their date silently.
 - A policy with no rules, or naming a signal the vocabulary lacks, is refused at load (exit 4):
   the author meant something the tool cannot enforce.
-- The overall verdict is the maximum of every contribution under `pass < hold < fail`. The
-  property `adding_a_rule_never_loosens_the_verdict` checks monotonicity over random inputs.
+- The overall verdict is the maximum of every contribution under `pass < hold < fail`. In
+  `crates/forge-warden-core/tests/laws.rs`, the law `adding_a_rule_cannot_loosen_the_verdict`
+  checks monotonicity over random inputs (the evaluator's verdict before and after one added
+  rule), and the separate `all_rule_kinds_match_the_independent_reference` compares the evaluator
+  with an independent reference model.
 
 ## Consequences
 

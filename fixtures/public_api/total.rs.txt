@@ -1,0 +1,54 @@
+
+/// Doc prose is not API.
+#[derive(Debug)]
+pub struct Named<T: Clone> where T: Default {
+    /// Field prose is not API either.
+    pub field: Vec<T>,
+    hidden_field: hidden_t,
+}
+pub struct Tuple(pub u16, u8);
+pub enum Kind { Unit, Pair(u32, i8), Record { inner: i64 }, Valued = 7 }
+pub union Bits { pub word: u32, hidden_word: hidden_f }
+pub fn free<'life>(arg: &'life str) -> Option<&'life str> where 'life: 'static { hidden_body(hidden_local) }
+pub const LIMIT: usize = 64;
+pub static NAME: &str = "warden";
+pub type Alias = Result<u8, String>;
+pub use core::fmt::Write as WriteAlias;
+pub mod inner { pub fn nested() -> bool { hidden_value } }
+pub trait Compact { fn compact(&self) -> u8; }
+pub trait Wide<Param>: Sized {
+    const CAP: usize = 3;
+    type Out: Clone;
+    fn wide(self, by: Param) -> Self::Out;
+    fn defaulted(&self) -> i8 {
+        hidden_default
+    }
+}
+impl<T> Compact for Named<T> where T: Clone + Default {
+    fn compact(&self) -> u8 { hidden_impl_body }
+}
+impl Marker for Tuple {
+    // A plain comment.
+    #[inline]
+    const N: u8 = 1;
+    #[cfg(test)]
+    fn hidden_test_member() {}
+    type Assoc = u64;
+    fn inherited() {}
+}
+impl Kind {
+    pub fn make() -> Self { hidden_ctor }
+    pub const MAX: u8 = 9;
+    fn hidden_method() {}
+    const hidden_const: hidden_t = hidden_init;
+}
+unsafe extern "C" {
+    pub fn foreign(x: i32) -> i32;
+    pub static FOREIGN: u8;
+    fn hidden_foreign();
+}
+macro_rules! generate { ($name:ident) => { pub struct $name; }; }
+generate!(Generated);
+pub extern crate alloc as alloc_alias;
+#[cfg(test)]
+pub fn hidden_test_only(hidden_arg: hidden_ty) {}

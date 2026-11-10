@@ -11,9 +11,15 @@
 use forge_warden_core::path::RepoPath;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{Evidence, RankDoc, RankedFile};
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::{RuleOutcome, Seals};
-use forge_warden_core::{Date, Outcome, evaluate};
+use forge_warden_core::{Date, Outcome};
 use proptest::prelude::*;
+
+/// A test seal from a known-good constant.
+fn seal(text: &str) -> forge_warden_core::seal::Sha256Hex {
+    forge_warden_core::seal::Sha256Hex::parse(text).unwrap()
+}
 
 const SEAL: &str = "bbf580931c6739af491bb5e2258550631327ca07f1078135cb008797e22b836e";
 
@@ -31,9 +37,12 @@ fn file_with(
 ) -> RankedFile {
     RankedFile::new(
         RepoPath::parse(path).unwrap(),
-        status.to_owned(),
+        forge_warden_core::vocab::Status::parse(status),
         score,
-        signals.iter().map(|s| (*s).to_owned()).collect(),
+        signals
+            .iter()
+            .map(|s| forge_warden_core::vocab::Signal::parse(s))
+            .collect(),
         evidence,
         evidence_truncated,
     )
@@ -41,21 +50,21 @@ fn file_with(
 }
 
 fn evidence(signal: &str, side: &str, line: u64) -> Evidence {
-    Evidence::new(signal.to_owned(), SEAL.to_owned(), side.to_owned(), line).unwrap()
+    Evidence::new(
+        forge_warden_core::vocab::Signal::parse(signal),
+        seal(SEAL),
+        forge_warden_core::vocab::Side::parse(side).unwrap(),
+        line,
+    )
+    .unwrap()
 }
 
 fn rank(files: Vec<RankedFile>) -> RankDoc {
-    RankDoc::new(SEAL.to_owned(), "0.7.0".to_owned(), files).unwrap()
+    RankDoc::new(seal(SEAL), "0.7.0".to_owned(), files).unwrap()
 }
 
 fn seals() -> Seals {
-    Seals {
-        policy_sha256: SEAL.to_owned(),
-        rank_sha256: SEAL.to_owned(),
-        patch_sha256: SEAL.to_owned(),
-        patch_verified: false,
-        ranked_by: "0.7.0".to_owned(),
-    }
+    Seals::new(seal(SEAL), seal(SEAL), seal(SEAL), "0.7.0".to_owned())
 }
 
 fn today() -> Date {
@@ -64,7 +73,10 @@ fn today() -> Date {
 
 fn policy(rules: &str) -> forge_warden_core::Policy {
     let text = format!("schema = \"forge-warden.policy.v0\"\n{rules}");
-    parse_policy(text.as_bytes()).unwrap_or_else(|e| panic!("{e}"))
+    match parse_policy(text.as_bytes()) {
+        Ok(policy) => policy,
+        Err(e) => panic!("{e}"),
+    }
 }
 
 const NO_UNSAFE: &str = r#"
@@ -100,7 +112,7 @@ fn the_text_summary_shows_outcome_seals_evidence_and_notes() {
     );
     let odd = file("docs/x.md", "unknown", 0, &[]);
     let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib, odd]), seals(), today());
-    let citation = &verdict.rules[0].violations[0].evidence[0];
+    let citation = &verdict.rules()[0].violations[0].evidence[0];
     assert_eq!(
         (
             citation.address.as_str(),
@@ -114,7 +126,9 @@ fn the_text_summary_shows_outcome_seals_evidence_and_notes() {
     assert!(text.starts_with("forge-warden "), "{text}");
     assert!(text.contains(": FAIL (exit 7 policy_fail"), "{text}");
     assert!(
-        text.contains(&format!("patch {short} (as claimed)")),
+        text.contains(&format!(
+            "patch {short}, policy {short}, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05"
+        )),
         "{text}"
     );
     assert!(
@@ -137,10 +151,10 @@ fn forbid_signal_cites_evidence_and_respects_except() {
     let ffi = file("crates/ffi/src/lib.rs", "modified", 9, &["unsafe_added"]);
     let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib, ffi]), seals(), today());
 
-    assert_eq!(verdict.verdict, Outcome::Fail);
-    assert_eq!(verdict.exit.code, 7);
-    assert_eq!(verdict.rules[0].severity, "fail");
-    let rule = &verdict.rules[0];
+    assert_eq!(verdict.outcome(), Outcome::Fail);
+    assert_eq!(verdict.exit().code, 7);
+    assert_eq!(verdict.rules()[0].severity, "fail");
+    let rule = &verdict.rules()[0];
     assert_eq!(
         rule.violations.len(),
         1,
@@ -158,7 +172,7 @@ fn require_companion_is_satisfied_by_a_live_companion_only() {
         file("tests/a.rs", "modified", 1, &["test_only"]),
     ]);
     assert_eq!(
-        evaluate(&p, &with_tests, seals(), today()).verdict,
+        evaluate(&p, &with_tests, seals(), today()).outcome(),
         Outcome::Pass
     );
 
@@ -168,19 +182,19 @@ fn require_companion_is_satisfied_by_a_live_companion_only() {
     ]);
     let verdict = evaluate(&p, &deleting_tests, seals(), today());
     assert_eq!(
-        verdict.verdict,
+        verdict.outcome(),
         Outcome::Fail,
         "deleting tests is not a companion change"
     );
     // The violation tells the author which companion the rule wanted (PathSet::patterns).
     assert_eq!(
-        verdict.rules[0].violations[0].message,
+        verdict.rules()[0].violations[0].message,
         "changed without a companion change matching [tests/**]"
     );
 
     let deleting_source = rank(vec![file("src/a.rs", "deleted", 4, &["deleted_file"])]);
     assert_eq!(
-        evaluate(&p, &deleting_source, seals(), today()).verdict,
+        evaluate(&p, &deleting_source, seals(), today()).outcome(),
         Outcome::Pass,
         "removing code asks for no new tests"
     );
@@ -209,11 +223,11 @@ paths = [".github/workflows/**"]
         seals(),
         today(),
     );
-    assert_eq!(verdict.verdict, Outcome::Hold);
-    assert_eq!(verdict.exit.code, 8);
-    assert_eq!(verdict.exit.action, "review_evidence");
-    assert_eq!(verdict.rules[0].severity, "hold");
-    assert_eq!(verdict.rules[0].kind, "protect_paths");
+    assert_eq!(verdict.outcome(), Outcome::Hold);
+    assert_eq!(verdict.exit().code, 8);
+    assert_eq!(verdict.exit().action, "review_evidence");
+    assert_eq!(verdict.rules()[0].severity, "hold");
+    assert_eq!(verdict.rules()[0].kind, "protect_paths");
 }
 
 #[test]
@@ -252,14 +266,14 @@ paths = ["src/**"]
         file("docs/x.md", "modified", 2, &[]),
     ]);
     let verdict = evaluate(&p, &r, seals(), today());
-    let outcomes: Vec<_> = verdict.rules.iter().map(|rule| rule.outcome).collect();
+    let outcomes: Vec<_> = verdict.rules().iter().map(|rule| rule.outcome).collect();
     assert_eq!(
         outcomes,
         [RuleOutcome::Hold, RuleOutcome::Fail, RuleOutcome::Hold]
     );
-    assert_eq!(verdict.verdict, Outcome::Fail);
+    assert_eq!(verdict.outcome(), Outcome::Fail);
     assert!(
-        verdict.rules[1].violations[0].path.is_none(),
+        verdict.rules()[1].violations[0].path.is_none(),
         "a change-wide budget has no path"
     );
 }
@@ -303,7 +317,7 @@ paths = ["src/**"]
     ]);
     let verdict = evaluate(&p, &at_limit, seals(), today());
     assert_eq!(
-        verdict.verdict,
+        verdict.outcome(),
         Outcome::Pass,
         "a score equal to its limit is within it, and docs/ is out of scope: {verdict:#?}"
     );
@@ -314,12 +328,12 @@ paths = ["src/**"]
         file("src/c.rs", "modified", 0, &[]),
     ]);
     let over_verdict = evaluate(&p, &over, seals(), today());
-    let outcomes: Vec<_> = over_verdict.rules.iter().map(|r| r.outcome).collect();
+    let outcomes: Vec<_> = over_verdict.rules().iter().map(|r| r.outcome).collect();
     assert_eq!(
         outcomes,
         [RuleOutcome::Fail, RuleOutcome::Fail, RuleOutcome::Fail]
     );
-    let over_file_budget: Vec<_> = over_verdict.rules[0]
+    let over_file_budget: Vec<_> = over_verdict.rules()[0]
         .violations
         .iter()
         .map(|v| v.path.as_deref())
@@ -355,13 +369,13 @@ expires = \"2099-01-01\"
         file("tests/it.rs", "modified", 1, &["test_only"]),
     ]);
     let verdict = evaluate(&policy(&text), &r, seals(), today());
-    assert_eq!(verdict.rules[0].outcome, RuleOutcome::Fail);
-    assert_eq!(verdict.rules[0].violations[0].waived_by, None);
+    assert_eq!(verdict.rules()[0].outcome, RuleOutcome::Fail);
+    assert_eq!(verdict.rules()[0].violations[0].waived_by, None);
     assert_eq!(
-        verdict.rules[0].violations[0].signal.as_deref(),
+        verdict.rules()[0].violations[0].signal.as_deref(),
         Some("unsafe_added")
     );
-    assert_eq!(verdict.verdict, Outcome::Fail);
+    assert_eq!(verdict.outcome(), Outcome::Fail);
 }
 
 #[test]
@@ -385,19 +399,19 @@ expires = \"2026-11-05\"
     )]);
 
     let on_last_day = evaluate(&p, &r, seals(), today());
-    assert_eq!(on_last_day.verdict, Outcome::Pass);
-    assert_eq!(on_last_day.rules[0].outcome, RuleOutcome::Waived);
-    assert_eq!(on_last_day.rules[0].violations[0].waived_by, Some(0));
+    assert_eq!(on_last_day.outcome(), Outcome::Pass);
+    assert_eq!(on_last_day.rules()[0].outcome, RuleOutcome::Waived);
+    assert_eq!(on_last_day.rules()[0].violations[0].waived_by, Some(0));
     assert!(
-        on_last_day.unused_waivers.is_empty(),
+        on_last_day.unused_waivers().is_empty(),
         "a waiver that covered something is used"
     );
 
     let next_day = evaluate(&p, &r, seals(), Date::new(2026, 11, 6).unwrap());
-    assert_eq!(next_day.verdict, Outcome::Fail);
-    assert_eq!(next_day.expired_waivers.len(), 1);
+    assert_eq!(next_day.outcome(), Outcome::Fail);
+    assert_eq!(next_day.expired_waivers().len(), 1);
     assert!(
-        next_day.unused_waivers.is_empty(),
+        next_day.unused_waivers().is_empty(),
         "an expired waiver is reported as expired, not unused"
     );
 
@@ -407,9 +421,9 @@ expires = \"2026-11-05\"
         seals(),
         today(),
     );
-    assert_eq!(unrelated.verdict, Outcome::Pass);
+    assert_eq!(unrelated.outcome(), Outcome::Pass);
     assert_eq!(
-        unrelated.unused_waivers.len(),
+        unrelated.unused_waivers().len(),
         1,
         "an unused waiver is reported"
     );
@@ -421,7 +435,7 @@ expires = \"2026-11-05\"
         Date::new(2027, 1, 1).unwrap(),
     );
     assert_eq!(
-        expired_and_unrelated.verdict,
+        expired_and_unrelated.outcome(),
         Outcome::Fail,
         "an expired waiver fails even when unused"
     );
@@ -446,7 +460,7 @@ expires = "2099-01-01"
 "#;
     let r = rank(vec![file("a", "added", 3, &[]), file("b", "added", 3, &[])]);
     assert_eq!(
-        evaluate(&policy(text), &r, seals(), today()).verdict,
+        evaluate(&policy(text), &r, seals(), today()).outcome(),
         Outcome::Fail
     );
 }
@@ -455,8 +469,8 @@ expires = "2099-01-01"
 fn what_the_policy_cannot_judge_holds() {
     let p = policy(NO_UNSAFE);
     let empty = evaluate(&p, &rank(Vec::new()), seals(), today());
-    assert_eq!(empty.verdict, Outcome::Hold);
-    assert_eq!(empty.notes[0].code, "empty_ranking");
+    assert_eq!(empty.outcome(), Outcome::Hold);
+    assert_eq!(empty.notes()[0].code, "empty_ranking");
 
     let future = evaluate(
         &p,
@@ -464,8 +478,8 @@ fn what_the_policy_cannot_judge_holds() {
         seals(),
         today(),
     );
-    assert_eq!(future.verdict, Outcome::Hold);
-    let codes: Vec<_> = future.notes.iter().map(|n| n.code).collect();
+    assert_eq!(future.outcome(), Outcome::Hold);
+    let codes: Vec<_> = future.notes().iter().map(|n| n.code).collect();
     assert_eq!(codes, ["unknown_signal", "unknown_status"]);
 }
 
@@ -488,8 +502,8 @@ paths = ["warden.toml"]
     for status in ["renamed", "copied"] {
         let r = rank(vec![file("docs/old-policy.toml", status, 2, &[])]);
         let verdict = evaluate(&p, &r, seals(), today());
-        assert_eq!(verdict.verdict, Outcome::Hold, "{status}");
-        assert_eq!(verdict.notes[0].code, "source_path_unknown");
+        assert_eq!(verdict.outcome(), Outcome::Hold, "{status}");
+        assert_eq!(verdict.notes()[0].code, "source_path_unknown");
     }
     // Ranked with --no-renames, the same change is a deletion plus an addition: fully judged.
     let split = rank(vec![
@@ -497,9 +511,9 @@ paths = ["warden.toml"]
         file("docs/old-policy.toml", "added", 3, &["new_file"]),
     ]);
     let verdict = evaluate(&p, &split, seals(), today());
-    assert_eq!(verdict.rules[0].outcome, RuleOutcome::Hold);
+    assert_eq!(verdict.rules()[0].outcome, RuleOutcome::Hold);
     assert_eq!(
-        verdict.notes,
+        verdict.notes(),
         Vec::new(),
         "a --no-renames split leaves nothing unjudged"
     );
@@ -521,7 +535,7 @@ fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
         ),
     ]);
     assert_eq!(
-        evaluate(&p, &deleted_blob, seals(), today()).verdict,
+        evaluate(&p, &deleted_blob, seals(), today()).outcome(),
         Outcome::Fail
     );
     let changed_blob = rank(vec![
@@ -529,7 +543,7 @@ fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
         file("tests/blob.bin", "binary_changed", 2, &["binary_change"]),
     ]);
     assert_eq!(
-        evaluate(&p, &changed_blob, seals(), today()).verdict,
+        evaluate(&p, &changed_blob, seals(), today()).outcome(),
         Outcome::Fail
     );
     let new_blob = rank(vec![
@@ -542,7 +556,7 @@ fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
         ),
     ]);
     assert_eq!(
-        evaluate(&p, &new_blob, seals(), today()).verdict,
+        evaluate(&p, &new_blob, seals(), today()).outcome(),
         Outcome::Pass
     );
     let deleted_source = rank(vec![file(
@@ -552,7 +566,7 @@ fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
         &["deleted_file"],
     )]);
     assert_eq!(
-        evaluate(&p, &deleted_source, seals(), today()).verdict,
+        evaluate(&p, &deleted_source, seals(), today()).outcome(),
         Outcome::Pass,
         "a deletion triggers nothing"
     );
@@ -563,8 +577,8 @@ fn binary_deletions_and_unknowable_binary_changes_are_not_companions() {
 fn status_unknown_holds() {
     let r = rank(vec![file("src/x.rs", "unknown", 0, &[])]);
     let verdict = evaluate(&policy(NO_UNSAFE), &r, seals(), today());
-    assert_eq!(verdict.verdict, Outcome::Hold);
-    assert_eq!(verdict.notes[0].code, "unknown_status");
+    assert_eq!(verdict.outcome(), Outcome::Hold);
+    assert_eq!(verdict.notes()[0].code, "unknown_status");
 }
 
 #[test]
@@ -578,7 +592,7 @@ fn truncated_evidence_is_flagged_on_the_violation() {
         true,
     );
     let verdict = evaluate(&policy(NO_UNSAFE), &rank(vec![lib]), seals(), today());
-    assert!(verdict.rules[0].violations[0].evidence_truncated);
+    assert!(verdict.rules()[0].violations[0].evidence_truncated);
     let json = verdict.to_json();
     assert!(json.contains("\"evidence_truncated\": true"));
     let quiet = evaluate(
@@ -601,7 +615,7 @@ fn serialization_is_deterministic_and_round_trips_as_json() {
     let b = evaluate(&p, &r, seals(), today()).to_json();
     assert_eq!(a, b);
     let value: serde_json::Value = serde_json::from_str(&a).unwrap();
-    assert_eq!(value["schema"], "forge-warden.verdict.v0");
+    assert_eq!(value["schema"], "forge-warden.verdict.v2");
     assert_eq!(value["rules"][1]["violations"][0]["path"], "src/lib.rs");
 }
 
@@ -644,40 +658,21 @@ const RULES: [&str; 5] = [
     "[[rule]]\nid = \"secrets\"\nwhy = \"A credential committed once is compromised forever.\"\nkind = \"forbid_signal\"\nseverity = \"fail\"\nsignals = [\"secret_like\"]\n",
 ];
 
+// Two complementary checks in tests/laws.rs (WP-B5) replace the old properties here:
+// `adding_a_rule_cannot_loosen_the_verdict` compares the evaluator's verdict before and after one
+// added rule (monotonicity), and `all_rule_kinds_match_the_independent_reference` separately compares
+// the evaluator with an independent reference model over all rule kinds and waivers. Determinism
+// holds by construction: the core has no effects (clippy.toml, repo_invariants) and serialization is
+// pinned above.
 proptest! {
-    /// Adding a rule can only keep or tighten a verdict.
-    #[test]
-    fn adding_a_rule_never_loosens_the_verdict(
-        files in proptest::collection::vec(arb_file(), 0..6),
-        chosen in proptest::sample::subsequence((0..RULES.len()).collect::<Vec<_>>(), 1..RULES.len()),
-        extra in 0..RULES.len(),
-    ) {
-        prop_assume!(!chosen.contains(&extra));
-        let base: String = chosen.iter().map(|&i| RULES[i]).collect();
-        let more = format!("{base}{}", RULES[extra]);
-        let r = rank(files);
-        let before = evaluate(&policy(&base), &r, seals(), today()).verdict;
-        let after = evaluate(&policy(&more), &r, seals(), today()).verdict;
-        prop_assert!(after >= before, "{before:?} -> {after:?}");
-    }
-
     /// The summary always accounts for every rule, and the exit code always matches the verdict.
     #[test]
     fn summary_and_exit_are_consistent(files in proptest::collection::vec(arb_file(), 0..6)) {
         let all: String = RULES.concat();
         let v = evaluate(&policy(&all), &rank(files), seals(), today());
-        let s = v.summary;
+        let s = v.summary();
         prop_assert_eq!(s.passed + s.waived + s.held + s.failed, s.rules);
-        prop_assert_eq!(v.exit.code, v.verdict.exit_entry().code);
-        if s.failed > 0 { prop_assert_eq!(v.verdict, Outcome::Fail); }
-    }
-
-    /// Evaluation never panics and is a pure function of its inputs.
-    #[test]
-    fn evaluation_is_pure(files in proptest::collection::vec(arb_file(), 0..8)) {
-        let all: String = RULES.concat();
-        let p = policy(&all);
-        let r = rank(files);
-        prop_assert_eq!(evaluate(&p, &r, seals(), today()), evaluate(&p, &r, seals(), today()));
+        prop_assert_eq!(v.exit().code, v.outcome().exit_entry().code);
+        if s.failed > 0 { prop_assert_eq!(v.outcome(), Outcome::Fail); }
     }
 }

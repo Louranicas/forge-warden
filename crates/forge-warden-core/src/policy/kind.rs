@@ -6,6 +6,7 @@
 
 /// What a rule checks. Each variant is one `kind = "…"` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Kind {
     /// `forbid_signal`: no file in scope may carry any of the listed signals.
     ForbidSignal,
@@ -21,6 +22,7 @@ pub enum Kind {
 
 /// An optional rule field. `id`, `why`, `kind` and `severity` are required on every rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Field {
     /// `signals`
     Signals,

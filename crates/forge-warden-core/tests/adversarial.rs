@@ -6,9 +6,10 @@
 
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankError, parse_rank};
-use forge_warden_core::seal::sha256_hex;
+use forge_warden_core::seal::{Sha256Hex, sha256_hex};
+use forge_warden_core::testing::evaluate;
 use forge_warden_core::verdict::Seals;
-use forge_warden_core::{Date, Outcome, evaluate};
+use forge_warden_core::{Date, Outcome};
 use serde_json::{Value, json};
 
 const HEADER: &str = "schema=\"forge-warden.policy.v0\"\n";
@@ -54,20 +55,19 @@ fn judge(body: &str, input: &Value, day: &str) -> forge_warden_core::Verdict {
     let rank_bytes = serde_json::to_vec(input).unwrap();
     let policy = parse_policy(&policy_bytes).unwrap();
     let rank = parse_rank(&rank_bytes).unwrap();
-    let seals = Seals {
-        policy_sha256: sha256_hex(&policy_bytes),
-        rank_sha256: sha256_hex(&rank_bytes),
-        patch_sha256: HASH.to_owned(),
-        patch_verified: true,
-        ranked_by: "0.7.0".to_owned(),
-    };
+    let seals = Seals::new(
+        sha256_hex(&policy_bytes),
+        sha256_hex(&rank_bytes),
+        Sha256Hex::parse(HASH).unwrap(),
+        "0.7.0".to_owned(),
+    );
     evaluate(&policy, &rank, seals, Date::parse(day).unwrap())
 }
 
 #[test]
 fn unknowns_cannot_pass_an_otherwise_passing_scope() {
     let clean = document(vec![file("README.md", "modified", &[])]);
-    assert_eq!(judge(SECRET, &clean, "2026-11-06").verdict, Outcome::Pass);
+    assert_eq!(judge(SECRET, &clean, "2026-11-06").outcome(), Outcome::Pass);
     for (status, signals) in [
         ("unknown", vec![]),
         ("future_status", vec![]),
@@ -77,11 +77,11 @@ fn unknowns_cannot_pass_an_otherwise_passing_scope() {
     ] {
         let rank = document(vec![file("README.md", status, &signals)]);
         let v = judge(SECRET, &rank, "2026-11-06");
-        assert_eq!(v.verdict, Outcome::Hold, "{status} {signals:?}");
-        assert_eq!(v.notes.len(), 1);
+        assert_eq!(v.outcome(), Outcome::Hold, "{status} {signals:?}");
+        assert_eq!(v.notes().len(), 1);
     }
     assert_eq!(
-        judge(SECRET, &document(vec![]), "2026-11-06").verdict,
+        judge(SECRET, &document(vec![]), "2026-11-06").outcome(),
         Outcome::Hold
     );
 }
@@ -90,8 +90,8 @@ fn unknowns_cannot_pass_an_otherwise_passing_scope() {
 fn a_failure_is_not_downgraded_by_an_unknown() {
     let rank = document(vec![file("README.md", "future_status", &["secret_like"])]);
     let v = judge(SECRET, &rank, "2026-11-06");
-    assert_eq!(v.verdict, Outcome::Fail);
-    assert_eq!(v.notes.len(), 1);
+    assert_eq!(v.outcome(), Outcome::Fail);
+    assert_eq!(v.notes().len(), 1);
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn protected_scopes_respect_segment_boundaries_and_exceptions() {
                 &document(vec![file(path, "modified", &[])]),
                 "2026-11-06"
             )
-            .verdict,
+            .outcome(),
             expected
         );
     }
@@ -235,7 +235,7 @@ fn protected_scopes_respect_segment_boundaries_and_exceptions() {
             &document(vec![file("src/deep/lib.rs", "modified", &[])]),
             "2026-11-06"
         )
-        .verdict,
+        .outcome(),
         Outcome::Pass
     );
     let except = format!("{PROTECT}except=[\"src/generated/**\"]\n");
@@ -245,7 +245,7 @@ fn protected_scopes_respect_segment_boundaries_and_exceptions() {
             &document(vec![file("src/generated/a.rs", "modified", &[])]),
             "2026-11-06"
         )
-        .verdict,
+        .outcome(),
         Outcome::Pass
     );
     assert_eq!(
@@ -254,7 +254,7 @@ fn protected_scopes_respect_segment_boundaries_and_exceptions() {
             &document(vec![file("src/a.rs", "modified", &[])]),
             "2026-11-06"
         )
-        .verdict,
+        .outcome(),
         Outcome::Fail
     );
     for pattern in ["/src/**", "./src/**", "src/["] {
@@ -269,7 +269,7 @@ fn protected_scopes_respect_segment_boundaries_and_exceptions() {
 fn a_deleted_or_unknowable_test_is_not_a_live_companion() {
     let source = file("src/lib.rs", "modified", &[]);
     assert_eq!(
-        judge(COMPANION, &document(vec![source.clone()]), "2026-11-06").verdict,
+        judge(COMPANION, &document(vec![source.clone()]), "2026-11-06").outcome(),
         Outcome::Fail
     );
     for (status, signals, expected) in [
@@ -281,7 +281,7 @@ fn a_deleted_or_unknowable_test_is_not_a_live_companion() {
     ] {
         let rank = document(vec![source.clone(), file("tests/it.rs", status, &signals)]);
         assert_eq!(
-            judge(COMPANION, &rank, "2026-11-06").verdict,
+            judge(COMPANION, &rank, "2026-11-06").outcome(),
             expected,
             "{status} {signals:?}"
         );
@@ -302,11 +302,11 @@ fn waiver_expiry_is_inclusive_and_expired_unused_waivers_fail() {
         ("2026-11-06", Outcome::Pass),
         ("2026-11-07", Outcome::Fail),
     ] {
-        assert_eq!(judge(&waived(), &protected, day).verdict, outcome);
+        assert_eq!(judge(&waived(), &protected, day).outcome(), outcome);
     }
     let outside = document(vec![file("README.md", "modified", &[])]);
     assert_eq!(
-        judge(&waived(), &outside, "2026-11-07").verdict,
+        judge(&waived(), &outside, "2026-11-07").outcome(),
         Outcome::Fail
     );
     for (from, to) in [
@@ -325,9 +325,9 @@ fn waiver_expiry_is_inclusive_and_expired_unused_waivers_fail() {
         "2026-11-06+11:00",
         "2026-1-06",
     ] {
-        assert_eq!(Date::parse(bad), None);
+        assert!(Date::parse(bad).is_err());
     }
-    assert!(Date::parse("2028-02-29").is_some());
+    assert!(Date::parse("2028-02-29").is_ok());
 }
 
 #[test]
@@ -351,11 +351,11 @@ fn noncanonical_paths_are_refused_not_silently_out_of_scope() {
 fn duplicate_ranked_paths_hold() {
     let f = file("README.md", "modified", &[]);
     let verdict = judge(SECRET, &document(vec![f.clone(), f]), "2026-11-06");
-    assert_eq!(verdict.verdict, Outcome::Hold);
-    assert_eq!(verdict.exit.code, 8);
+    assert_eq!(verdict.outcome(), Outcome::Hold);
+    assert_eq!(verdict.exit().code, 8);
     assert!(
         verdict
-            .notes
+            .notes()
             .iter()
             .any(|note| note.code == "duplicate_paths")
     );
@@ -375,6 +375,6 @@ proptest::proptest! {
         let scoped = format!("{SECRET}paths=[\"src/**\"]\n");
         let input = document(vec![file("README.md", "modified", &[&unknown])]);
         let verdict = judge(&scoped, &input, "2026-11-06");
-        proptest::prop_assert_eq!(verdict.verdict, Outcome::Hold);
+        proptest::prop_assert_eq!(verdict.outcome(), Outcome::Hold);
     }
 }

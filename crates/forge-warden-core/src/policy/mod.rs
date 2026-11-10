@@ -32,7 +32,7 @@ mod validate;
 
 pub use error::{PolicyError, PolicyIssue};
 pub use kind::{Field, Kind};
-pub use model::{Check, Policy, Rule, ScorePer, Severity, Waiver};
+pub use model::{AdmittedProducer, Check, Policy, Rule, ScorePer, Severity, Waiver};
 pub use paths::{PathSet, Scope};
 pub use validate::{MAX_ID_CHARS, MIN_WHY_CHARS, POLICY_SCHEMA, parse_policy};
 

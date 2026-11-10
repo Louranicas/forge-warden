@@ -1,0 +1,520 @@
+crate::authority #[derive(Debug)] pub enum Produced
+crate::authority #[derive(Debug)] pub enum Supplied
+crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Ranking<P>
+crate::authority Ranking.<3 private field(s)>
+crate::authority impl Ranking<Supplied>
+crate::authority Ranking::#[must_use] pub const fn supplied(doc: RankDoc) -> Self
+crate::authority impl Ranking<Produced>
+crate::authority Ranking::#[must_use] pub fn attest(doc: RankDoc, producer: AdmittedProducer) -> Self
+crate::authority impl<P> Ranking<P>
+crate::authority Ranking::#[must_use] pub const fn doc(&self) -> &RankDoc
+crate::authority Ranking::#[must_use] pub const fn producer_sha256(&self) -> Option<&Sha256Hex>
+crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Checked<'r, P>
+crate::authority Checked.<3 private field(s)>
+crate::authority #[must_use] pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P>
+crate::authority impl<P> Checked<'_, P>
+crate::authority Checked::#[must_use] pub const fn ranking(&self) -> &Ranking<P>
+crate::authority Checked::#[must_use] pub const fn is_covered(&self) -> bool
+crate::authority #[derive(Debug)] #[non_exhaustive] pub struct AdvisoryVerdict
+crate::authority AdvisoryVerdict.<1 private field(s)>
+crate::authority #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum AdvisoryOutcome
+crate::authority AdvisoryOutcome::Hold,
+crate::authority AdvisoryOutcome::Fail,
+crate::authority impl AdvisoryVerdict
+crate::authority AdvisoryVerdict::#[must_use] pub const fn outcome(&self) -> AdvisoryOutcome
+crate::authority AdvisoryVerdict::#[must_use] pub const fn verdict(&self) -> &Verdict
+crate::authority #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum SuppliedCopy
+crate::authority SuppliedCopy::Absent,
+crate::authority SuppliedCopy::Identical,
+crate::authority SuppliedCopy::Different,
+crate::authority impl SuppliedCopy
+crate::authority SuppliedCopy::#[must_use] pub fn compare(supplied: Option<&[u8]>, produced: &[u8]) -> Self
+crate::authority #[must_use] pub fn evaluate_authority( policy: &Policy, checked: &Checked<'_, Produced>, supplied: SuppliedCopy, seals: Seals, today: Date, ) -> Verdict
+crate::authority #[must_use] pub fn evaluate_advisory( policy: &Policy, checked: &Checked<'_, Supplied>, seals: Seals, today: Date, ) -> AdvisoryVerdict
+crate::date #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum DateError
+crate::date DateError::#[error("is not YYYY-MM-DD")] BadShape,
+crate::date DateError::#[error("is outside 1970-01-01..=9999-12-31")] OutOfRange,
+crate::date DateError::#[error("is not a calendar date")] NotACalendarDate,
+crate::date #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)] #[non_exhaustive] pub struct Date
+crate::date Date.<3 private field(s)>
+crate::date impl Date
+crate::date Date::pub fn new(year: u16, month: u8, day: u8) -> Result<Self, DateError>
+crate::date Date::pub fn parse(text: &str) -> Result<Self, DateError>
+crate::date Date::#[must_use] pub fn from_unix_days(days: u64) -> Option<Self>
+crate::date Date::#[must_use] pub fn to_unix_days(self) -> u64
+crate::date impl serde::Serialize for Date
+crate::date Date::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::date impl fmt::Display for Date
+crate::date Date::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+crate::defaults pub trait NamedDefault<T>
+crate::defaults NamedDefault::type Missing;
+crate::defaults NamedDefault::#[must_use] fn or_fail_closed(self, strict: T) -> T;
+crate::defaults NamedDefault::#[must_use] fn or_fail_closed_with(self, strict: impl FnOnce(Self::Missing) -> T) -> T;
+crate::defaults NamedDefault::#[must_use] fn or_fail_safe(self, safe: T) -> T;
+crate::defaults NamedDefault::#[must_use] fn or_display(self, shown: T) -> T;
+crate::defaults impl<T> NamedDefault<T> for Option<T>
+crate::defaults Option::type Missing = ();
+crate::defaults Option::fn or_fail_closed(self, strict: T) -> T
+crate::defaults Option::fn or_fail_closed_with(self, strict: impl FnOnce(()) -> T) -> T
+crate::defaults Option::fn or_fail_safe(self, safe: T) -> T
+crate::defaults Option::fn or_display(self, shown: T) -> T
+crate::defaults impl<T, E> NamedDefault<T> for Result<T, E>
+crate::defaults Result::type Missing = E;
+crate::defaults Result::fn or_fail_closed(self, strict: T) -> T
+crate::defaults Result::fn or_fail_closed_with(self, strict: impl FnOnce(E) -> T) -> T
+crate::defaults Result::fn or_fail_safe(self, safe: T) -> T
+crate::defaults Result::fn or_display(self, shown: T) -> T
+crate::exit #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct ExitEntry
+crate::exit ExitEntry.pub code: u8,
+crate::exit ExitEntry.pub name: &'static str,
+crate::exit ExitEntry.pub meaning: &'static str,
+crate::exit ExitEntry.pub action: &'static str,
+crate::exit ExitEntry.pub may_be_transient: bool,
+crate::exit pub const EXIT_REGISTRY: [ExitEntry; 7] = [ ExitEntry { code: 0, name: "pass", meaning: "Every rule passed or was waived by an active waiver.", action: "proceed", may_be_transient: false, }, ExitEntry { code: 2, name: "usage", meaning: "Command-line usage error.", action: "fix_invocation", may_be_transient: false, }, ExitEntry { code: 3, name: "io", meaning: "A file or stream could not be read, or output could not be written.", action: "check_environment", may_be_transient: true, }, ExitEntry { code: 4, name: "invalid_input", meaning: "The policy or the ranking failed to parse or validate, exceeded the byte budget, or the ranking's seal does not match the patch given with --patch.", action: "change_input", may_be_transient: false, }, ExitEntry { code: 7, name: "policy_fail", meaning: "At least one rule of severity `fail` was violated, or a waiver has expired.", action: "change_input", may_be_transient: false, }, ExitEntry { code: 8, name: "policy_hold", meaning: "No rule failed, but a `hold` rule was violated or the ranking holds something the policy cannot judge (no files, unknown vocabulary): a person must decide.", action: "review_evidence", may_be_transient: false, }, ExitEntry { code: 101, name: "internal", meaning: "Internal error (a bug). Report it with the command and its input.", action: "report_bug", may_be_transient: false, }, ];
+crate::exit #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)] #[serde(rename_all = "snake_case")] pub enum Outcome
+crate::exit Outcome::Pass,
+crate::exit Outcome::Hold,
+crate::exit Outcome::Fail,
+crate::exit #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub enum Exit
+crate::exit Exit::Pass,
+crate::exit Exit::Usage,
+crate::exit Exit::Io,
+crate::exit Exit::InvalidInput,
+crate::exit Exit::PolicyFail,
+crate::exit Exit::PolicyHold,
+crate::exit Exit::Internal,
+crate::exit impl Exit
+crate::exit Exit::pub const ALL: [Self; 7] = [ Self::Pass, Self::Usage, Self::Io, Self::InvalidInput, Self::PolicyFail, Self::PolicyHold, Self::Internal, ];
+crate::exit Exit::#[must_use] pub const fn entry(self) -> &'static ExitEntry
+crate::exit impl Outcome
+crate::exit Outcome::#[must_use] pub const fn exit(self) -> Exit
+crate::exit Outcome::#[must_use] pub const fn exit_entry(self) -> &'static ExitEntry
+crate::exit Outcome::#[must_use] pub const fn label(self) -> &'static str
+crate::exit #[must_use] pub fn entry_by_name(name: &str) -> Option<&'static ExitEntry>
+crate::exit #[must_use] pub fn entry_by_code(code: u8) -> Option<&'static ExitEntry>
+crate::facts #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum ChangeKind
+crate::facts ChangeKind::Added,
+crate::facts ChangeKind::Deleted,
+crate::facts ChangeKind::Modified,
+crate::facts #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum Mode
+crate::facts Mode::File,
+crate::facts Mode::Exec,
+crate::facts Mode::Symlink,
+crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct FileChange
+crate::facts FileChange.<6 private field(s)>
+crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PatchFacts
+crate::facts PatchFacts.<1 private field(s)>
+crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum Unverifiable
+crate::facts Unverifiable::GitRefused(String),
+crate::facts Unverifiable::Empty,
+crate::facts Unverifiable::NonUtf8Path,
+crate::facts Unverifiable::NewlineInPath,
+crate::facts Unverifiable::NonCanonicalPath { /// The path as Git wrote it. path: String, /// What makes it non-canonical. why: crate::path::PathError, },
+crate::facts Unverifiable::RepeatedPath(String),
+crate::facts Unverifiable::SummaryPathUnknown(String),
+crate::facts Unverifiable::TypeChange(String),
+crate::facts Unverifiable::RenameOrCopy,
+crate::facts Unverifiable::UnsupportedMode(String),
+crate::facts Unverifiable::UnreadableModeHeader(String),
+crate::facts Unverifiable::SymlinkTargetEdit,
+crate::facts Unverifiable::UnreadableGitOutput(String),
+crate::facts impl fmt::Display for Unverifiable
+crate::facts Unverifiable::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+crate::facts #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum Disagreement
+crate::facts Disagreement::Missing(RepoPath),
+crate::facts Disagreement::Extraneous(RepoPath),
+crate::facts Disagreement::Status(RepoPath),
+crate::facts impl PatchFacts
+crate::facts PatchFacts::pub fn from_git(numstat_z: &[u8], summary: &[u8], patch: &[u8]) -> Result<Self, Unverifiable>
+crate::facts PatchFacts::pub fn files(&self) -> impl Iterator<Item = &FileChange>
+crate::facts #[must_use] pub fn derived_signals(change: &FileChange) -> BTreeSet<Signal>
+crate::facts #[must_use] pub fn compare(rank: &RankDoc, facts: &PatchFacts) -> Vec<Disagreement>
+crate::facts impl FileChange
+crate::facts FileChange::#[must_use] pub const fn path(&self) -> &RepoPath
+crate::facts FileChange::#[must_use] pub const fn kind(&self) -> ChangeKind
+crate::facts FileChange::#[must_use] pub const fn binary(&self) -> bool
+crate pub mod authority
+crate pub mod date
+crate pub mod defaults
+crate pub mod eval
+crate pub mod exit
+crate pub mod facts
+crate pub mod nonempty
+crate pub mod path
+crate pub mod policy
+crate pub mod rank
+crate pub mod render
+crate pub mod seal
+crate pub mod verdict
+crate pub mod vocab
+crate pub use date::Date;
+crate pub use exit::{EXIT_REGISTRY, Exit, ExitEntry, Outcome};
+crate pub use policy::{Policy, PolicyError, PolicyIssue};
+crate pub use rank::{RankDoc, RankError};
+crate pub use verdict::Verdict;
+crate #[cfg(feature = "unattested-evaluate")] pub mod testing
+crate::testing #[must_use] pub fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict
+crate pub const TOOL_NAME: &str = "forge-warden";
+crate pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
+crate pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+crate::nonempty #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct NonEmpty<T>
+crate::nonempty NonEmpty.<2 private field(s)>
+crate::nonempty impl<T> NonEmpty<T>
+crate::nonempty NonEmpty::#[must_use] pub fn from_vec(mut items: Vec<T>) -> Option<Self>
+crate::nonempty NonEmpty::#[must_use] pub const fn first(&self) -> &T
+crate::nonempty NonEmpty::pub fn iter(&self) -> impl Iterator<Item = &T>
+crate::nonempty NonEmpty::#[must_use] #[expect( clippy::len_without_is_empty, reason = "a NonEmpty is never empty; an is_empty that always says false would be noise" )] pub const fn len(&self) -> usize
+crate::nonempty NonEmpty::pub fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> NonEmpty<U>
+crate::nonempty NonEmpty::#[must_use] pub fn into_vec(self) -> Vec<T>
+crate::path #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct RepoPath(String);
+crate::path #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)] pub enum PathError
+crate::path PathError::#[error("is empty")] Empty,
+crate::path PathError::#[error("contains NUL")] Nul,
+crate::path PathError::#[error("is absolute; paths are relative to the repository root")] Absolute,
+crate::path PathError::#[error("is not canonical: it has an empty, `.` or `..` segment")] NonCanonical,
+crate::path impl RepoPath
+crate::path RepoPath::pub fn parse(text: &str) -> Result<Self, PathError>
+crate::path RepoPath::#[must_use] pub fn as_str(&self) -> &str
+crate::path impl fmt::Display for RepoPath
+crate::path RepoPath::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+crate::policy::error #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum PolicyError
+crate::policy::error PolicyError::#[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
+crate::policy::error PolicyError::#[error("policy is not valid TOML of the forge-warden.policy.v0 shape: {message}")] Malformed { /// The parser's message. message: String, /// Where, as (line, column), both 1-based; `None` when the parser gave no span. at: Option<(usize, usize)>, },
+crate::policy::error PolicyError::#[error("policy refused with {} issue(s):\\n{}", .0.len(), IssueList(.0))] Invalid(Vec<PolicyIssue>),
+crate::policy::error #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PolicyIssue
+crate::policy::error PolicyIssue.pub location: String,
+crate::policy::error PolicyIssue.pub message: String,
+crate::policy::error impl fmt::Display for PolicyIssue
+crate::policy::error PolicyIssue::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+crate::policy::error impl fmt::Display for IssueList<'_>
+crate::policy::error IssueList::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+crate::policy::issues impl Issues
+crate::policy::kind #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum Kind
+crate::policy::kind Kind::ForbidSignal,
+crate::policy::kind Kind::RequireCompanion,
+crate::policy::kind Kind::ProtectPaths,
+crate::policy::kind Kind::MaxScore,
+crate::policy::kind Kind::MaxFiles,
+crate::policy::kind #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum Field
+crate::policy::kind Field::Signals,
+crate::policy::kind Field::Paths,
+crate::policy::kind Field::Except,
+crate::policy::kind Field::When,
+crate::policy::kind Field::Require,
+crate::policy::kind Field::Limit,
+crate::policy::kind Field::Per,
+crate::policy::kind impl Kind
+crate::policy::kind Kind::pub const ALL: [Self; 5] = [ Self::ForbidSignal, Self::RequireCompanion, Self::ProtectPaths, Self::MaxScore, Self::MaxFiles, ];
+crate::policy::kind Kind::#[must_use] pub const fn name(self) -> &'static str
+crate::policy::kind Kind::#[must_use] pub fn from_name(name: &str) -> Option<Self>
+crate::policy::kind Kind::#[must_use] pub const fn fields(self) -> &'static [Field]
+crate::policy::kind impl Field
+crate::policy::kind Field::pub const ALL: [Self; 7] = [ Self::Signals, Self::Paths, Self::Except, Self::When, Self::Require, Self::Limit, Self::Per, ];
+crate::policy::kind Field::#[must_use] pub const fn name(self) -> &'static str
+crate::policy pub use error::{PolicyError, PolicyIssue};
+crate::policy pub use kind::{Field, Kind};
+crate::policy pub use model::{AdmittedProducer, Check, Policy, Rule, ScorePer, Severity, Waiver};
+crate::policy pub use paths::{PathSet, Scope};
+crate::policy pub use validate::{MAX_ID_CHARS, MIN_WHY_CHARS, POLICY_SCHEMA, parse_policy};
+crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Policy
+crate::policy::model Policy.<3 private field(s)>
+crate::policy::model impl Policy
+crate::policy::model Policy::#[must_use] pub const fn rules(&self) -> &NonEmpty<Rule>
+crate::policy::model Policy::#[must_use] pub fn waivers(&self) -> &[Waiver]
+crate::policy::model Policy::#[must_use] pub fn producers(&self) -> &[Sha256Hex]
+crate::policy::model Policy::#[must_use] pub fn admits_producer(&self, sha256: &Sha256Hex) -> bool
+crate::policy::model Policy::#[must_use] pub fn admit_producer(&self, sha256: &Sha256Hex) -> Option<AdmittedProducer>
+crate::policy::model #[derive(Debug)] #[non_exhaustive] pub struct AdmittedProducer
+crate::policy::model AdmittedProducer.<1 private field(s)>
+crate::policy::model impl AdmittedProducer
+crate::policy::model AdmittedProducer::#[must_use] pub const fn sha256(&self) -> &Sha256Hex
+crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Rule
+crate::policy::model Rule.pub id: String,
+crate::policy::model Rule.pub why: String,
+crate::policy::model Rule.pub severity: Severity,
+crate::policy::model Rule.pub check: Check,
+crate::policy::model #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum Severity
+crate::policy::model Severity::Fail,
+crate::policy::model Severity::Hold,
+crate::policy::model impl Severity
+crate::policy::model Severity::#[must_use] pub const fn outcome(self) -> Outcome
+crate::policy::model Severity::#[must_use] pub const fn label(self) -> &'static str
+crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub enum Check
+crate::policy::model Check::ForbidSignal { /// Signals that are not allowed (each a known vocabulary value: the policy refuses others). signals: Vec<Signal>, /// Files the rule looks at. scope: Scope, },
+crate::policy::model Check::RequireCompanion { /// Files whose change triggers the rule. when: Scope, /// Files of which at least one must also be in the change. require: PathSet, },
+crate::policy::model Check::ProtectPaths { /// Files that are protected. scope: Scope, },
+crate::policy::model Check::MaxScore { /// The largest allowed score. limit: u32, /// Per file, or summed over the change. per: ScorePer, /// Files the rule looks at. scope: Scope, },
+crate::policy::model Check::MaxFiles { /// The largest allowed number of files. limit: u32, /// Files the rule looks at. scope: Scope, },
+crate::policy::model impl Check
+crate::policy::model Check::#[must_use] pub const fn kind(&self) -> Kind
+crate::policy::model #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum ScorePer
+crate::policy::model ScorePer::File,
+crate::policy::model ScorePer::Change,
+crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Waiver
+crate::policy::model Waiver.pub rule: String,
+crate::policy::model Waiver.pub paths: PathSet,
+crate::policy::model Waiver.pub reason: String,
+crate::policy::model Waiver.pub owner: String,
+crate::policy::model Waiver.pub expires: Date,
+crate::policy::paths #[derive(Debug, Clone)] #[non_exhaustive] pub struct PathSet
+crate::policy::paths PathSet.<2 private field(s)>
+crate::policy::paths impl PathSet
+crate::policy::paths PathSet::#[must_use] pub fn matches(&self, path: &str) -> bool
+crate::policy::paths PathSet::#[must_use] pub fn patterns(&self) -> &[String]
+crate::policy::paths #[derive(Debug, Clone)] #[non_exhaustive] pub struct Scope
+crate::policy::paths Scope.<2 private field(s)>
+crate::policy::paths impl Scope
+crate::policy::paths Scope::#[must_use] pub fn contains(&self, path: &str) -> bool
+crate::policy::raw impl RawRule
+crate::policy::validate pub const POLICY_SCHEMA: &str = "forge-warden.policy.v0";
+crate::policy::validate pub const MIN_WHY_CHARS: usize = 12;
+crate::policy::validate pub const MAX_ID_CHARS: usize = 64;
+crate::policy::validate pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError>
+crate::rank pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
+crate::rank #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct RankDoc
+crate::rank RankDoc.<3 private field(s)>
+crate::rank #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct RankedFile
+crate::rank RankedFile.<6 private field(s)>
+crate::rank #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct Evidence
+crate::rank Evidence.<4 private field(s)>
+crate::rank impl RankDoc
+crate::rank RankDoc::pub fn new( input_sha256: Sha256Hex, tool_version: String, files: Vec<RankedFile>, ) -> Result<Self, RankInvalid>
+crate::rank RankDoc::#[must_use] pub const fn input_sha256(&self) -> &Sha256Hex
+crate::rank RankDoc::#[must_use] pub fn tool_version(&self) -> &str
+crate::rank RankDoc::#[must_use] pub fn files(&self) -> &[RankedFile]
+crate::rank impl RankedFile
+crate::rank RankedFile::pub fn new( path: RepoPath, status: Status, score: u32, signals: Vec<Signal>, evidence: Vec<Evidence>, evidence_truncated: bool, ) -> Result<Self, RankInvalid>
+crate::rank RankedFile::#[must_use] pub const fn path(&self) -> &RepoPath
+crate::rank RankedFile::#[must_use] pub const fn status(&self) -> &Status
+crate::rank RankedFile::#[must_use] pub const fn score(&self) -> u32
+crate::rank RankedFile::#[must_use] pub fn signals(&self) -> &[Signal]
+crate::rank RankedFile::#[must_use] pub fn evidence(&self) -> &[Evidence]
+crate::rank RankedFile::#[must_use] pub const fn evidence_truncated(&self) -> bool
+crate::rank impl Evidence
+crate::rank Evidence::pub fn new( signal: Signal, address: Sha256Hex, side: Side, line: u64, ) -> Result<Self, RankInvalid>
+crate::rank Evidence::#[must_use] pub const fn signal(&self) -> &Signal
+crate::rank Evidence::#[must_use] pub const fn address(&self) -> &Sha256Hex
+crate::rank Evidence::#[must_use] pub const fn side(&self) -> Side
+crate::rank Evidence::#[must_use] pub const fn line(&self) -> u64
+crate::rank #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum RankError
+crate::rank RankError::#[error("ranking is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
+crate::rank RankError::#[error("ranking is not a valid deep-diff-forge.rank.v0 document: {0}")] Malformed(String),
+crate::rank RankError::#[error("ranking refused: {0}")] Invalid(RankInvalid),
+crate::rank #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum RankInvalid
+crate::rank RankInvalid::#[error( "schema is {found:?}; expected {RANK_SCHEMA:?} (pipe `deep-diff-forge --stdin-patch --rank --json`)" )] Schema { /// The schema name found. found: String, },
+crate::rank RankInvalid::#[error("tool.name is {found:?}; expected \\"deep-diff-forge\\"")] ToolName { /// The tool name found. found: String, },
+crate::rank RankInvalid::#[error("tool.version is empty or whitespace")] ToolVersionEmpty,
+crate::rank RankInvalid::#[error("tool.version {version:?} has surrounding whitespace")] ToolVersionWhitespace { /// The version as written. version: String, },
+crate::rank RankInvalid::#[error("input_sha256 is not 64 lowercase hex digits")] BadSeal,
+crate::rank RankInvalid::#[error("path {0}")] Path(PathError),
+crate::rank RankInvalid::#[error("status is empty")] EmptyStatus,
+crate::rank RankInvalid::#[error("a signal is empty")] EmptySignal,
+crate::rank RankInvalid::#[error("evidence[{index}]: cites signal {signal:?}, which the file does not carry")] EvidenceSignalMissing { /// The evidence item's index. index: usize, /// The cited signal's name. signal: String, },
+crate::rank RankInvalid::#[error("address is not 64 lowercase hex digits")] BadAddress,
+crate::rank RankInvalid::#[error("side is {side:?}; expected \\"new\\" or \\"old\\"")] BadSide { /// The side as written. side: String, },
+crate::rank RankInvalid::#[error("line is 0; lines are 1-based")] ZeroLine,
+crate::rank RankInvalid::#[error("evidence[{index}]: {problem}")] InEvidence { /// The evidence item's index. index: usize, /// What is wrong with it. problem: Box<RankInvalid>, },
+crate::rank RankInvalid::#[error("ranked[{index}]: {problem}")] InFile { /// The file's index in `ranked`. index: usize, /// What is wrong with it. problem: Box<RankInvalid>, },
+crate::rank pub fn parse_rank(bytes: &[u8]) -> Result<RankDoc, RankError>
+crate::render #[must_use] pub fn terminal_safe(text: &str) -> String
+crate::render #[must_use] pub fn render_text(verdict: &Verdict) -> String
+crate::seal #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)] #[serde(transparent)] pub struct Sha256Hex(String);
+crate::seal #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum SealError
+crate::seal SealError::#[error("a seal is 64 lowercase hex digits, not {len} bytes")] Length { /// The byte length found. len: usize, },
+crate::seal SealError::#[error("a seal is 64 lowercase hex digits; byte {at} is not one")] NotLowercaseHex { /// The offset of the first offending byte. at: usize, },
+crate::seal impl Sha256Hex
+crate::seal Sha256Hex::#[must_use] pub fn of(bytes: &[u8]) -> Self
+crate::seal Sha256Hex::pub fn parse(text: &str) -> Result<Self, SealError>
+crate::seal Sha256Hex::#[must_use] pub fn as_str(&self) -> &str
+crate::seal impl std::fmt::Display for Sha256Hex
+crate::seal Sha256Hex::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex
+crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
+crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
+crate::verdict Verdict.<11 private field(s)>
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Tool
+crate::verdict Tool.pub name: &'static str,
+crate::verdict Tool.pub version: &'static str,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Seals
+crate::verdict Seals.pub policy_sha256: Sha256Hex,
+crate::verdict Seals.pub rank_sha256: Sha256Hex,
+crate::verdict Seals.pub patch_sha256: Sha256Hex,
+crate::verdict Seals.pub patch_facts_sha256: Option<Sha256Hex>,
+crate::verdict Seals.pub provenance: Provenance,
+crate::verdict Seals.pub ranked_by: RankedBy,
+crate::verdict Seals.pub git: Option<GitOracle>,
+crate::verdict Seals.#[serde(skip_serializing_if = "Option::is_none")] pub claims: Option<Claims>,
+crate::verdict impl Seals
+crate::verdict Seals::#[must_use] pub const fn new( policy_sha256: Sha256Hex, rank_sha256: Sha256Hex, patch_sha256: Sha256Hex, ranked_by_version: String, ) -> Self
+crate::verdict Seals::#[must_use] pub fn with_git(mut self, facts_sha256: Option<Sha256Hex>, git: GitOracle) -> Self
+crate::verdict Seals::#[must_use] pub fn with_claims(mut self, claims: Claims) -> Self
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "snake_case")] #[non_exhaustive] pub enum Provenance
+crate::verdict Provenance::Produced,
+crate::verdict Provenance::Supplied,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct RankedBy
+crate::verdict RankedBy.pub version: String,
+crate::verdict RankedBy.pub sha256: Option<Sha256Hex>,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct GitOracle
+crate::verdict GitOracle.<5 private field(s)>
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "lowercase")] #[non_exhaustive] pub enum Admission
+crate::verdict Admission::Approved,
+crate::verdict Admission::Unpinned,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Claims
+crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub base: Option<String>,
+crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub head: Option<String>,
+crate::verdict Claims.pub verified: Unverified,
+crate::verdict impl RankedBy
+crate::verdict RankedBy::#[must_use] pub const fn new(version: String, sha256: Option<Sha256Hex>) -> Self
+crate::verdict impl GitOracle
+crate::verdict GitOracle::#[must_use] pub const fn approved( path: String, version: String, sha256: Sha256Hex, allowlist_sha256: Sha256Hex, ) -> Self
+crate::verdict GitOracle::#[must_use] pub const fn unpinned(path: String, version: String, sha256: Sha256Hex) -> Self
+crate::verdict GitOracle::#[must_use] pub fn path(&self) -> &str
+crate::verdict GitOracle::#[must_use] pub fn version(&self) -> &str
+crate::verdict GitOracle::#[must_use] pub const fn sha256(&self) -> &Sha256Hex
+crate::verdict GitOracle::#[must_use] pub const fn admission(&self) -> Admission
+crate::verdict GitOracle::#[must_use] pub const fn allowlist_sha256(&self) -> Option<&Sha256Hex>
+crate::verdict impl Claims
+crate::verdict Claims::#[must_use] pub const fn new(base: Option<String>, head: Option<String>) -> Self
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified;
+crate::verdict impl Serialize for Unverified
+crate::verdict Unverified::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct ExitInfo
+crate::verdict ExitInfo.pub code: u8,
+crate::verdict ExitInfo.pub name: &'static str,
+crate::verdict ExitInfo.pub action: &'static str,
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Summary
+crate::verdict Summary.pub files: usize,
+crate::verdict Summary.pub rules: usize,
+crate::verdict Summary.pub passed: usize,
+crate::verdict Summary.pub waived: usize,
+crate::verdict Summary.pub held: usize,
+crate::verdict Summary.pub failed: usize,
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "snake_case")] pub enum RuleOutcome
+crate::verdict RuleOutcome::Pass,
+crate::verdict RuleOutcome::Waived,
+crate::verdict RuleOutcome::Hold,
+crate::verdict RuleOutcome::Fail,
+crate::verdict impl RuleOutcome
+crate::verdict RuleOutcome::#[must_use] pub const fn overall(self) -> Outcome
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct RuleResult
+crate::verdict RuleResult.pub id: String,
+crate::verdict RuleResult.pub kind: &'static str,
+crate::verdict RuleResult.pub severity: &'static str,
+crate::verdict RuleResult.pub outcome: RuleOutcome,
+crate::verdict RuleResult.pub why: String,
+crate::verdict RuleResult.pub violations: Vec<Violation>,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Violation
+crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub path: Option<String>,
+crate::verdict Violation.pub message: String,
+crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub signal: Option<String>,
+crate::verdict Violation.#[serde(skip_serializing_if = "Vec::is_empty")] pub evidence: Vec<Citation>,
+crate::verdict Violation.#[serde(skip_serializing_if = "std::ops::Not::not")] pub evidence_truncated: bool,
+crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub waived_by: Option<usize>,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)] #[non_exhaustive] pub struct Citation
+crate::verdict Citation.pub address: Sha256Hex,
+crate::verdict Citation.pub side: String,
+crate::verdict Citation.pub line: u64,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct WaiverNote
+crate::verdict WaiverNote.pub index: usize,
+crate::verdict WaiverNote.pub rule: String,
+crate::verdict WaiverNote.pub owner: String,
+crate::verdict WaiverNote.pub expires: Date,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Note
+crate::verdict Note.pub code: NoteCode,
+crate::verdict Note.#[serde(skip_serializing_if = "Option::is_none")] pub path: Option<String>,
+crate::verdict Note.pub detail: String,
+crate::verdict macro macro_rules! note_codes { ($($doc:literal $variant:ident => $name:literal,)*) => { /// Why a verdict holds when the policy alone cannot decide. Every note holds the verdict at /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and /// the schema's enum lists exactly these names (tests check both). #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum NoteCode { $(#[doc = $doc] $variant,)* } impl NoteCode { /// Every code, in declaration order. pub const ALL: &'static [Self] = &[$(Self::$variant,)*]; /// The name the verdict writes. #[must_use] pub const fn name(self) -> &'static str { match self { $(Self::$variant => $name,)* } } } }; }
+crate::verdict macro note_codes! { "The ranking lists no file: there is nothing to judge." EmptyRanking => "empty_ranking", "A signal this forge-warden does not know." UnknownSignal => "unknown_signal", "A status this forge-warden does not know (including deep-diff-forge's `unknown`)." UnknownStatus => "unknown_status", "A rename or copy: rank.v0 does not report the source path." SourcePathUnknown => "source_path_unknown", "One path is listed more than once (deep-diff-forge does this for a type change)." DuplicatePaths => "duplicate_paths", "Git sees a file in the patch that the ranking does not list." RankIncomplete => "rank_incomplete", "The ranking lists a file the patch does not change." RankExtraneous => "rank_extraneous", "The ranking's status or change-kind signals contradict Git." StatusMismatch => "status_mismatch", "Git refused the patch, or its facts cannot be read; coverage cannot be verified." PatchUnverifiable => "patch_unverifiable", "The ranking was supplied, not produced (advisory mode)." RankUnverified => "rank_unverified", "The ranking supplied with `--rank` differs from the one forge-warden produced." RankMismatch => "rank_mismatch", }
+crate::verdict impl Serialize for NoteCode
+crate::verdict NoteCode::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::verdict impl PartialEq<&str> for NoteCode
+crate::verdict NoteCode::fn eq(&self, other: &&str) -> bool
+crate::verdict impl From<Outcome> for ExitInfo
+crate::verdict ExitInfo::fn from(outcome: Outcome) -> Self
+crate::verdict impl Verdict
+crate::verdict Verdict::#[must_use] pub const fn schema(&self) -> &'static str
+crate::verdict Verdict::#[must_use] pub const fn tool(&self) -> &Tool
+crate::verdict Verdict::#[must_use] pub const fn evaluated_on(&self) -> Date
+crate::verdict Verdict::#[must_use] pub const fn seals(&self) -> &Seals
+crate::verdict Verdict::#[must_use] pub const fn outcome(&self) -> Outcome
+crate::verdict Verdict::#[must_use] pub const fn exit(&self) -> &ExitInfo
+crate::verdict Verdict::#[must_use] pub const fn summary(&self) -> &Summary
+crate::verdict Verdict::#[must_use] pub fn rules(&self) -> &[RuleResult]
+crate::verdict Verdict::#[must_use] pub fn expired_waivers(&self) -> &[WaiverNote]
+crate::verdict Verdict::#[must_use] pub fn unused_waivers(&self) -> &[WaiverNote]
+crate::verdict Verdict::#[must_use] pub fn notes(&self) -> &[Note]
+crate::verdict Verdict::#[must_use] pub fn to_json(&self) -> String
+crate::vocab pub const KNOWN_SIGNALS: [&str; 21] = [ // Path and shape signals (`risk.rs`). "public_api_surface", "new_file", "deleted_file", "binary_change", "large_change", "many_hunks", "config_or_lockfile", "test_only", "generated_or_vendored", "hazardous_text", "symlink_change", "executable_bit", // Code-evidence signals (`evidence.rs`). "unsafe_added", "process_spawn", "network_fetch", "dynamic_eval", "ci_privilege", "build_hook", "secret_like", "check_suppressed", "test_removed", ];
+crate::vocab pub const KNOWN_STATUSES: [&str; 8] = [ "added", "modified", "deleted", "renamed", "copied", "type_changed", "mode_changed", "binary_changed", ];
+crate::vocab #[derive(Debug, Clone, PartialEq, Eq)] pub enum Signal
+crate::vocab Signal::PublicApiSurface,
+crate::vocab Signal::NewFile,
+crate::vocab Signal::DeletedFile,
+crate::vocab Signal::BinaryChange,
+crate::vocab Signal::LargeChange,
+crate::vocab Signal::ManyHunks,
+crate::vocab Signal::ConfigOrLockfile,
+crate::vocab Signal::TestOnly,
+crate::vocab Signal::GeneratedOrVendored,
+crate::vocab Signal::HazardousText,
+crate::vocab Signal::SymlinkChange,
+crate::vocab Signal::ExecutableBit,
+crate::vocab Signal::UnsafeAdded,
+crate::vocab Signal::ProcessSpawn,
+crate::vocab Signal::NetworkFetch,
+crate::vocab Signal::DynamicEval,
+crate::vocab Signal::CiPrivilege,
+crate::vocab Signal::BuildHook,
+crate::vocab Signal::SecretLike,
+crate::vocab Signal::CheckSuppressed,
+crate::vocab Signal::TestRemoved,
+crate::vocab Signal::Unknown(String),
+crate::vocab impl Signal
+crate::vocab Signal::pub const KNOWN: [Self; 21] = [ Self::PublicApiSurface, Self::NewFile, Self::DeletedFile, Self::BinaryChange, Self::LargeChange, Self::ManyHunks, Self::ConfigOrLockfile, Self::TestOnly, Self::GeneratedOrVendored, Self::HazardousText, Self::SymlinkChange, Self::ExecutableBit, Self::UnsafeAdded, Self::ProcessSpawn, Self::NetworkFetch, Self::DynamicEval, Self::CiPrivilege, Self::BuildHook, Self::SecretLike, Self::CheckSuppressed, Self::TestRemoved, ];
+crate::vocab Signal::#[must_use] pub fn parse(name: &str) -> Self
+crate::vocab Signal::#[must_use] pub fn name(&self) -> &str
+crate::vocab Signal::#[must_use] pub const fn is_known(&self) -> bool
+crate::vocab impl PartialOrd for Signal
+crate::vocab Signal::fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+crate::vocab impl Ord for Signal
+crate::vocab Signal::fn cmp(&self, other: &Self) -> std::cmp::Ordering
+crate::vocab impl std::fmt::Display for Signal
+crate::vocab Signal::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl serde::Serialize for Signal
+crate::vocab Signal::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::vocab #[derive(Debug, Clone, PartialEq, Eq)] pub enum Status
+crate::vocab Status::Added,
+crate::vocab Status::Modified,
+crate::vocab Status::Deleted,
+crate::vocab Status::Renamed,
+crate::vocab Status::Copied,
+crate::vocab Status::TypeChanged,
+crate::vocab Status::ModeChanged,
+crate::vocab Status::BinaryChanged,
+crate::vocab Status::Unknown(String),
+crate::vocab impl Status
+crate::vocab Status::pub const KNOWN: [Self; 8] = [ Self::Added, Self::Modified, Self::Deleted, Self::Renamed, Self::Copied, Self::TypeChanged, Self::ModeChanged, Self::BinaryChanged, ];
+crate::vocab Status::#[must_use] pub fn parse(name: &str) -> Self
+crate::vocab Status::#[must_use] pub fn name(&self) -> &str
+crate::vocab Status::#[must_use] pub const fn is_known(&self) -> bool
+crate::vocab impl PartialOrd for Status
+crate::vocab Status::fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+crate::vocab impl Ord for Status
+crate::vocab Status::fn cmp(&self, other: &Self) -> std::cmp::Ordering
+crate::vocab impl std::fmt::Display for Status
+crate::vocab Status::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl serde::Serialize for Status
+crate::vocab Status::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::vocab #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum Side
+crate::vocab Side::New,
+crate::vocab Side::Old,
+crate::vocab impl Side
+crate::vocab Side::#[must_use] pub fn parse(name: &str) -> Option<Self>
+crate::vocab Side::#[must_use] pub const fn name(self) -> &'static str
+crate::vocab impl std::fmt::Display for Side
+crate::vocab Side::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl serde::Serialize for Side
+crate::vocab Side::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::vocab #[must_use] pub fn is_known_signal(name: &str) -> bool
+crate::vocab #[must_use] pub fn is_known_status(name: &str) -> bool
+crate::vocab #[must_use] pub fn suggest_signal(name: &str) -> Option<&'static str>

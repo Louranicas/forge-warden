@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Louranicas/forge-warden/schemas/lint.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "rules",
+    "waivers",
+    "policy_sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "forge-warden.lint.v1"
+    },
+    "rules": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "waivers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "policy_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

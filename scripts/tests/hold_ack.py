@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Offline acknowledgement attacks using disposable fixture keys, never deployment keys."""
 import json
+import hashlib
+import os
+from unittest.mock import patch
 import shutil
 import subprocess
 import sys
@@ -12,8 +15,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def require_host_tools():
+    tool = Path("/usr/bin/ssh-keygen")
+    if not tool.is_file() or not os.access(tool, os.X_OK):
+        raise RuntimeError("HOLD_ACK_TOOL_UNAVAILABLE: install executable /usr/bin/ssh-keygen before constructing signature fixtures")
+
+
+class ToolAdmission(unittest.TestCase):
+    def test_missing_tool_refuses_before_fixture_construction(self):
+        with patch("os.access", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "HOLD_ACK_TOOL_UNAVAILABLE"):
+                require_host_tools()
+
+
 class BoundAck(unittest.TestCase):
+    def test_missing_signature_tool_has_named_refusal(self):
+        self.helper.write_text(self.helper.read_text().replace("/usr/bin/ssh-keygen", "/nonexistent/fw-ssh-keygen"))
+        result = self.run_helper("verify", "--ack", str(self.root / "ack.json"), "--signature", str(self.root / "ack.sig"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"HOLD_ACK_TOOL_UNAVAILABLE", result.stderr)
+
     def setUp(self):
+        require_host_tools()
         self.tmp = tempfile.TemporaryDirectory(prefix="ack-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -22,8 +45,24 @@ class BoundAck(unittest.TestCase):
         self.keys.mkdir(parents=True)
         self.helper = self.root / "scripts/hold_ack.py"
         shutil.copyfile(ROOT / "scripts/hold_ack.py", self.helper)
+        # Only this disposable source copy changes trust roots; the production controller has
+        # no argument or environment override for these constants.
+        self.git_policy = self.root / "git-allowlist.toml"
+        self.git_policy.write_text('schema = "forge-warden.git-allowlist.v1"\nrevision = 1\nsha256 = ["' + "d" * 64 + '"]\n')
+        source = self.helper.read_text()
+        source = source.replace('Path("/etc/forge-warden/git-allowlist.toml")', repr(self.git_policy).replace('PosixPath', 'Path'))
+        source = source.replace('GIT_POLICY_ROOT = Path("/")', 'GIT_POLICY_ROOT = ' + repr(self.root).replace('PosixPath', 'Path'))
+        source = source.replace('GIT_POLICY_UID = 0', 'GIT_POLICY_UID = ' + str(os.getuid()))
+        self.helper.write_text(source)
         self.base, self.head = "a" * 40, "b" * 40
         self.verdict = json.loads((ROOT / "fixtures/demo.verdict.json").read_bytes())
+        # The golden is advisory (supplied ranking); an acknowledgeable HOLD is authority mode.
+        self.verdict["schema"] = "forge-warden.verdict.v2"
+        self.verdict["seals"]["git"].update({"admission": "approved", "sha256": "d" * 64,
+            "allowlist_sha256": hashlib.sha256(self.git_policy.read_bytes()).hexdigest()})
+        self.verdict["seals"]["provenance"] = "produced"
+        self.verdict["seals"]["ranked_by"]["sha256"] = "c" * 64
+        self.verdict["notes"] = []
         self.verdict["verdict"] = "hold"
         self.verdict["exit"] = {"code": 8, "name": "policy_hold", "action": "review_evidence"}
         self.verdict["summary"]["failed"] = 0
@@ -65,6 +104,29 @@ class BoundAck(unittest.TestCase):
         self.assertEqual(out.returncode, 0 if success else 8, out.stderr)
         if not success:
             self.assertEqual(out.stdout, b"")
+
+    def test_git_policy_revocation_invalidates_receipt(self):
+        self.git_policy.write_text(self.git_policy.read_text().replace("d" * 64, "e" * 64))
+        self.verify()
+
+    def test_git_policy_bytes_change_invalidates_receipt(self):
+        self.git_policy.write_text(self.git_policy.read_text() + "# owner changed snapshot\n")
+        self.verify()
+
+    def test_unpinned_git_and_v1_are_refused(self):
+        self.verdict["seals"]["git"]["admission"] = "unpinned"
+        self.write_verdict()
+        self.assertEqual(self.run_helper("prepare", "--signer", "fixture").returncode, 8)
+        self.verdict["seals"]["git"]["admission"] = "approved"
+        self.verdict["schema"] = "forge-warden.verdict.v1"
+        self.write_verdict()
+        self.assertEqual(self.run_helper("prepare", "--signer", "fixture").returncode, 8)
+
+    def test_missing_or_writable_git_policy_refuses(self):
+        self.git_policy.chmod(0o666)
+        self.verify()
+        self.git_policy.unlink()
+        self.verify()
 
     def test_valid_receipt_and_new_push(self):
         self.verify(True)
@@ -141,15 +203,18 @@ class BoundAck(unittest.TestCase):
 
     def test_fail_pass_unknown_schema_and_unverified_refuse(self):
         original = json.dumps(self.verdict)
-        for label in ("fail", "pass", "schema", "unverified", "expired"):
+        for label in ("fail", "pass", "schema", "unverified", "no-producer", "expired"):
             with self.subTest(label=label):
                 self.verdict = json.loads(original)
                 if label in ("fail", "pass"):
                     self.verdict["verdict"] = label
                 elif label == "schema":
-                    self.verdict["schema"] = "forge-warden.verdict.v1"
+                    self.verdict["schema"] = "forge-warden.verdict.v0"
                 elif label == "unverified":
-                    self.verdict["seals"]["patch_verified"] = False
+                    self.verdict["seals"]["provenance"] = "supplied"
+                    self.verdict["seals"]["ranked_by"]["sha256"] = None
+                elif label == "no-producer":
+                    self.verdict["seals"]["ranked_by"]["sha256"] = "not-a-digest"
                 else:
                     self.verdict["expired_waivers"] = ["expired"]
                 self.write_verdict()

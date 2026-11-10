@@ -9,6 +9,7 @@ use serde::Serialize;
 
 /// One documented exit code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct ExitEntry {
     /// The process exit status.
     pub code: u8,
@@ -78,6 +79,8 @@ pub const EXIT_REGISTRY: [ExitEntry; 7] = [
 /// The overall outcome of an evaluation, strictest wins: `Fail` > `Hold` > `Pass`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
+// Exhaustive on purpose: the verdict lattice pass < hold < fail (ADR 0003). Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum Outcome {
     /// Nothing to object to.
     Pass,
@@ -93,6 +96,7 @@ pub enum Outcome {
 /// status can never be a literal that drifts from the table (R-20). A misspelt exit is a compile
 /// error, not a silent `internal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Exit {
     /// `pass` (0).
     Pass,

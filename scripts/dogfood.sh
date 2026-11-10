@@ -50,20 +50,29 @@ cp -- warden.toml "$out/policy.toml"
 export CARGO_TARGET_DIR="$out/target"
 cargo build --release --locked --bin forge-warden
 # The producer pin is part of this trusted script, not a PR environment variable.
-ddf_rev=587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54
+ddf_rev="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_rev)"
 cargo install --git https://github.com/Louranicas/deep-diff-forge --rev "$ddf_rev" \
   deep-diff-forge-cli --locked --root "$out/ranker"
-"$out/ranker/bin/deep-diff-forge" --stdin-patch --rank --json < "$out/change.patch" > "$out/rank.json"
+mode="$(python3 -I "$trusted/scripts/judge_mode.py" "$out/policy.toml")"
+if [ "$mode" = authority ]; then
+  judge_mode=(--ranker "$out/ranker/bin/deep-diff-forge")
+else
+  echo 'dogfood: explicit advisory mode (trusted policy has no producer pin); this result cannot PASS' >&2
+  "$out/ranker/bin/deep-diff-forge" --stdin-patch --rank --json < "$out/change.patch" > "$out/rank.json"
+  judge_mode=(--advisory --rank "$out/rank.json")
+fi
 printf 'base=%s\nhead=%s\nddf_rev=%s\n' "$base" "$head" "$ddf_rev" > "$out/provenance.txt"
 sha256sum "$out/target/release/forge-warden" "$out/ranker/bin/deep-diff-forge" \
-  "$out/change.patch" "$out/policy.toml" "$out/rank.json" >> "$out/provenance.txt"
+  "$out/change.patch" "$out/policy.toml" >> "$out/provenance.txt"
+printf 'mode=%s\n' "$mode" >> "$out/provenance.txt"
+if [ "$mode" = advisory ]; then sha256sum "$out/rank.json" >> "$out/provenance.txt"; fi
 # Preserve the raw verdict; a signed acknowledgement is a separate admission decision.
 set +e
 "$out/target/release/forge-warden" check --policy "$out/policy.toml" \
-  --rank "$out/rank.json" --patch "$out/change.patch" --json > "$out/verdict.json"
+  "${judge_mode[@]}" --patch "$out/change.patch" --base "$base" --head "$head" --json > "$out/verdict.json"
 code=$?
 set -e
-if [ "$code" -eq 8 ] && [ "$#" -eq 6 ]; then
+if [ "$mode" = authority ] && [ "$code" -eq 8 ] && [ "$#" -eq 6 ]; then
   # Key lookup is inside this trusted checkout; receipt data never chooses a key path.
   if python3 -I "$trusted/scripts/hold_ack.py" verify --base "$base" --head "$head" \
       --verdict "$out/verdict.json" --ack "$5" --signature "$6" > "$out/acknowledgement.json"; then

@@ -2,6 +2,7 @@
 
 /// One or more values, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NonEmpty<T> {
     head: T,
     tail: Vec<T>,

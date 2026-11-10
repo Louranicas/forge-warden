@@ -5,18 +5,30 @@ use super::paths::{PathSet, Scope};
 use crate::date::Date;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
+use crate::seal::Sha256Hex;
+use crate::vocab::Signal;
 
 /// A validated policy.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Policy {
     rules: NonEmpty<Rule>,
     waivers: Vec<Waiver>,
+    producers: Vec<Sha256Hex>,
 }
 
 impl Policy {
     /// Only `parse_policy` builds a policy, so every one in existence was validated and has a rule.
-    pub(super) const fn new(rules: NonEmpty<Rule>, waivers: Vec<Waiver>) -> Self {
-        Self { rules, waivers }
+    pub(super) const fn new(
+        rules: NonEmpty<Rule>,
+        waivers: Vec<Waiver>,
+        producers: Vec<Sha256Hex>,
+    ) -> Self {
+        Self {
+            rules,
+            waivers,
+            producers,
+        }
     }
 
     /// Rules, in the order the file declares them (and the verdict reports them). Never empty.
@@ -30,10 +42,58 @@ impl Policy {
     pub fn waivers(&self) -> &[Waiver] {
         &self.waivers
     }
+
+    /// `[producer] sha256`: the SHA-256 of every ranker binary authority mode may run, each 64
+    /// lowercase hex digits, in file order. Empty when the policy has no `[producer]` table: such a
+    /// policy can only be used in advisory mode (ADR 0005 §2.4).
+    #[must_use]
+    pub fn producers(&self) -> &[Sha256Hex] {
+        &self.producers
+    }
+
+    /// Whether `sha256` is on the producer allowlist.
+    #[must_use]
+    pub fn admits_producer(&self, sha256: &Sha256Hex) -> bool {
+        self.producers.contains(sha256)
+    }
+
+    /// The token that lets a ranking be attested as produced by the ranker whose bytes hash to
+    /// `sha256`, if and only if this policy's `[producer] sha256` allowlist lists it. This is the
+    /// only way to obtain an [`AdmittedProducer`] (Q-TYPES-1).
+    #[must_use]
+    pub fn admit_producer(&self, sha256: &Sha256Hex) -> Option<AdmittedProducer> {
+        self.admits_producer(sha256).then(|| AdmittedProducer {
+            sha256: sha256.clone(),
+        })
+    }
+}
+
+/// A ranker the policy's `[producer] sha256` allowlist admits, obtained only from
+/// [`Policy::admit_producer`] (its field is private and it has no other constructor). Attesting a
+/// produced ranking takes one by value, so the allowlist check is a precondition the compiler
+/// enforces for every caller, the CLI and any library consumer alike (Q1-01).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct AdmittedProducer {
+    sha256: Sha256Hex,
+}
+
+impl AdmittedProducer {
+    /// The admitted ranker's SHA-256 (64 lowercase hex digits, as the allowlist holds it).
+    #[must_use]
+    pub const fn sha256(&self) -> &Sha256Hex {
+        &self.sha256
+    }
+
+    /// The SHA-256, consuming the token (an attestation uses it up).
+    pub(crate) fn into_sha256(self) -> Sha256Hex {
+        self.sha256
+    }
 }
 
 /// One rule.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Rule {
     /// Unique kebab-case id.
     pub id: String,
@@ -47,6 +107,8 @@ pub struct Rule {
 
 /// What a violated rule does to the verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Exhaustive on purpose: a rule's severity is hold or fail. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum Severity {
     /// The change must not merge as it is.
     Fail,
@@ -76,11 +138,12 @@ impl Severity {
 
 /// The check a rule performs. Each variant is one [`Kind`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Check {
     /// [`Kind::ForbidSignal`]: no file in scope may carry any of `signals`.
     ForbidSignal {
-        /// Signals that are not allowed.
-        signals: Vec<String>,
+        /// Signals that are not allowed (each a known vocabulary value: the policy refuses others).
+        signals: Vec<Signal>,
         /// Files the rule looks at.
         scope: Scope,
     },
@@ -130,6 +193,8 @@ impl Check {
 
 /// Whether a score budget applies to each file or to the change as a whole.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Exhaustive on purpose: a score budget is per file or per change. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum ScorePer {
     /// Each file's score.
     File,
@@ -139,6 +204,7 @@ pub enum ScorePer {
 
 /// A time-boxed, owned exemption from one rule for some paths.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Waiver {
     /// The rule it exempts from.
     pub rule: String,

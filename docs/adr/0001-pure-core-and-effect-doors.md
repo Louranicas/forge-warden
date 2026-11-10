@@ -1,6 +1,9 @@
 # ADR 0001: A pure core, and effects only through named doors
 
-**Status:** accepted, 2026-11-05
+Status: Accepted
+Owner-deployment: Not-required
+
+Historical status record: **Status:** accepted, 2026-11-05
 
 ## Context
 
@@ -24,7 +27,7 @@ let a change pass on one machine and fail on another.
 
 ## Consequences
 
-- Every verdict is reproducible from `(policy bytes, ranking bytes, date)`; the golden test and
-  `evaluation_is_pure` property hold it to that.
+- Every verdict is reproducible from `(policy bytes, ranking bytes, date)`; the golden test
+  holds it to that, and the core cannot reach an effect (`clippy.toml`, `repo_invariants.rs`).
 - The date is an explicit input (`--today`), which also makes waiver expiry testable.
 - Adding an effect costs a reviewed diff to one small file. That cost is the point.

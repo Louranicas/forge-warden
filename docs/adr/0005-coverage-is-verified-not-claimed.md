@@ -1,6 +1,9 @@
 # ADR 0005: Coverage is verified, not claimed
 
-**Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
+Status: Accepted
+Owner-deployment: Not-required
+
+Historical status record: **Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
 attack); record `mission4/lanes/lodestar/C0-ACCEPT.md`. Author: Keel (O2). Text unchanged from v3 (59b89ac) except
 this line. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`, `c0v4.cases.json` (51 cases),
 `c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`. Implementation: WP-C1 (C1a doors and bounds, C1b
@@ -262,3 +265,43 @@ site. A tuple match over selected fields would not give this guarantee and is no
 | **v3, B-A** (Bastion): external authority root; no fallback to the candidate | §2.6 |
 | **v3, B-B** (Bastion): a tuple match is not compile-breaking | §2.9 exhaustive destructure without `..`; §4; planted red in C1 |
 | **v3, standing**: process-group kill is not a sandbox | §2.5 |
+
+## 8. Amendment (Q-TYPES-1, 2026-11-07): provenance and coverage as implemented
+
+§2.7 and §4 described a `Coverage::verify` / `Covered` design and conceded that a library caller could call
+`attest`. The implementation now states and enforces this instead (Mission 5 findings Q1-01, Q1-07, Q4-09; Zen B1,
+B4):
+
+- **Admission is a type.** `Ranking::<Produced>::attest(doc, AdmittedProducer)`. An `AdmittedProducer` comes only
+  from `Policy::admit_producer(sha256)`, which returns one if and only if the policy's `[producer] sha256`
+  allowlist lists the digest (private field, `#[non_exhaustive]`, no other constructor). That a door actually ran the
+  admitted bytes is still the binary's guarantee: the core cannot observe a process, and the CLI's `clippy.toml`
+  keeps `attest` to `doors.rs` (rung 4 for *which file*; rung 2 for *admitted*).
+- **The proof is bound to its subject.** `check(&Ranking<P>, facts) -> Checked<'_, P>` borrows the exact ranking it
+  checked, and `evaluate_authority(policy, &Checked<'_, Produced>, …)` / `evaluate_advisory(policy,
+  &Checked<'_, Supplied>, …)` take only that proof. A proof for ranking A cannot be presented with ranking B, and a
+  supplied ranking's proof cannot reach the authority judge (rung 2). `Checked::is_covered` is the "covered" of
+  §2.7; it is a property of the proof, not a separate token.
+- **Raw judging is not a library API.** `eval::evaluate` (the rule engine, which knows nothing of provenance) is
+  `pub(crate)`; engine tests reach it through `forge_warden_core::testing::evaluate`, which exists only with the
+  off-by-default feature `unattested-evaluate`, enabled only by `[dev-dependencies]` (repo invariant
+  `no_normal_dependency_opens_the_unattested_evaluate_door`).
+- **Widening cannot silently fail.** The T2 union (§2.8) is built by `RankDoc::map_files` and
+  `RankedFile::with_added_signals`, which keep every constructor invariant by construction; the former "unreachable"
+  fallback to the unwidened ranking is gone.
+- **The surface is reviewed.** Growth types are `#[non_exhaustive]`; the closed lattices (`Outcome`, `RuleOutcome`,
+  `AdvisoryOutcome`, `SuppliedCopy`, `Severity`, `ScorePer`, `ChangeKind`, `Mode`) stay exhaustive on purpose, so a
+  new variant breaks every consumer's match. `crates/forge-warden-core/public-api.txt` is the committed snapshot
+  (`tests/public_api.rs`).
+
+Measured in `crates/forge-warden-cli/tests/api_boundary.rs`: a downstream crate with default features cannot attest
+with a bare string (E0308), call raw `evaluate` (E0425 / E0603), build an `AdmittedProducer` (E0639), judge one ranking
+with another's proof (E0061), or judge a supplied proof as produced (E0308); the admitted and advisory paths compile.
+On `e1d74bc` (before) the first four of those bypasses compiled.
+
+| Guarantee (amended rows of §4) | Rung |
+|---|---|
+| A produced ranking names an allowlisted ranker | **2, type** (`AdmittedProducer` from `Policy` only) |
+| A coverage proof judges only the ranking it checked | **2, type** (`Checked<'_, P>` borrows it) |
+| A library caller cannot judge without provenance | **2, visibility** (`evaluate` crate-private; test feature off by default) |
+| Only `doors.rs` mints in the binary | 4, clippy `disallowed-methods` (unchanged) |

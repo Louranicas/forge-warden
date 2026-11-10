@@ -4,7 +4,9 @@
 You are working on **forge-warden**, a Rust CLI that judges code changes against a repository's
 written policy. deep-diff-forge ranks a patch by risk (`deep-diff-forge.rank.v0`); forge-warden
 evaluates `warden.toml` over that ranking and emits a sealed, deterministic verdict
-(`forge-warden.verdict.v0`) with exit 0 pass, 7 fail, 8 hold.
+(`forge-warden.verdict.v1`) with exit 0 pass, 7 fail, 8 hold. Only authority mode
+(`--ranker`, which runs a pinned deep-diff-forge itself) can pass; advisory mode
+(`--advisory --rank`) can at best hold (ADR 0005).
 
 The project knowledge holds the contract (`CLAUDE.md`), the ADRs, the policy reference, the
 schemas and the core source. Treat them as authoritative over anything you remember.

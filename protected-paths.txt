@@ -1,0 +1,27 @@
+# Canonical root-relative protected paths; supported globs: whole-segment * and trailing **.
+.cargo/**
+.claude/**
+.githooks/**
+.github/**
+Cargo.lock
+Cargo.toml
+agents/**
+clippy.toml
+crates/*/Cargo.toml
+crates/*/clippy.toml
+crates/*/tests/**
+crates/forge-warden-cli/src/doors.rs
+crates/forge-warden-cli/tests/repo_invariants.rs
+deny.toml
+fixtures/**
+fixtures/coverage/MANIFEST
+justfile
+lint-expectations.toml
+lint-floor.toml
+plants/**
+protected-paths.txt
+rust-toolchain.toml
+rustfmt.toml
+schemas/**
+scripts/**
+warden.toml

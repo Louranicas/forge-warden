@@ -8,11 +8,14 @@
 
 use crate::path::RepoPath;
 use crate::rank::{RankDoc, RankedFile};
+use crate::vocab::{Signal, Status};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// What happened to a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Exhaustive on purpose: Git reports a file as added, deleted or modified. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum ChangeKind {
     /// The file is new.
     Added,
@@ -24,6 +27,8 @@ pub enum ChangeKind {
 
 /// A Git file mode forge-warden supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// Exhaustive on purpose: the file modes ADR 0005 §2.2 admits. Adding a variant must break every
+// consumer's match (Q-TYPES-1; recorded in the public-API snapshot).
 pub enum Mode {
     /// `100644`
     File,
@@ -35,6 +40,7 @@ pub enum Mode {
 
 /// Git's facts about one file in a patch.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FileChange {
     path: RepoPath,
     kind: ChangeKind,
@@ -46,12 +52,14 @@ pub struct FileChange {
 
 /// Git's facts about a whole patch: one record per file, each path once.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PatchFacts {
     files: BTreeMap<RepoPath, FileChange>,
 }
 
 /// Why Git's view of a patch cannot be trusted as complete. Each one holds the verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Unverifiable {
     /// Git refused the patch (nonzero exit).
     GitRefused(String),
@@ -61,8 +69,14 @@ pub enum Unverifiable {
     NonUtf8Path,
     /// A path contains a newline (the summary could not be read unambiguously).
     NewlineInPath,
-    /// A path is not canonical (`./x`, `/x`, `a//b`, `..`).
-    NonCanonicalPath(String),
+    /// A path is not canonical (`./x`, `/x`, `a//b`, `..`), and why (Q-TYPES-2, Q1-05: the reason is
+    /// kept as data, not dropped).
+    NonCanonicalPath {
+        /// The path as Git wrote it.
+        path: String,
+        /// What makes it non-canonical.
+        why: crate::path::PathError,
+    },
     /// Git lists one path twice (repeated operations; `--no-prefix` folding).
     RepeatedPath(String),
     /// A summary record names a path the numstat does not.
@@ -90,7 +104,7 @@ impl fmt::Display for Unverifiable {
             Self::Empty => f.write_str("git found no file in the patch"),
             Self::NonUtf8Path => f.write_str("a path is not UTF-8"),
             Self::NewlineInPath => f.write_str("a path contains a newline"),
-            Self::NonCanonicalPath(p) => write!(f, "path {p:?} is not canonical"),
+            Self::NonCanonicalPath { path, .. } => write!(f, "path {path:?} is not canonical"),
             Self::RepeatedPath(p) => write!(f, "git lists {p:?} more than once"),
             Self::SummaryPathUnknown(p) => {
                 write!(f, "git's summary names {p:?}, which its numstat does not")
@@ -116,6 +130,7 @@ impl fmt::Display for Unverifiable {
 
 /// Where the ranking and Git disagree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Disagreement {
     /// Git sees this path; the ranking does not list it.
     Missing(RepoPath),
@@ -222,8 +237,11 @@ impl PatchFacts {
             if text.contains('\n') {
                 return Err(Unverifiable::NewlineInPath);
             }
-            let repo_path = RepoPath::parse(text)
-                .map_err(|_| Unverifiable::NonCanonicalPath(text.to_owned()))?;
+            let repo_path =
+                RepoPath::parse(text).map_err(|why| Unverifiable::NonCanonicalPath {
+                    path: text.to_owned(),
+                    why,
+                })?;
             let binary = added == b"-" && deleted == b"-";
             let change = FileChange {
                 path: repo_path.clone(),
@@ -297,7 +315,7 @@ fn apply_summary(
 /// The change-kind signals Git's facts imply. A rule sees these **added** to the ranking's
 /// signals; Git never removes one (ADR 0005 §2.8, T2).
 #[must_use]
-pub fn derived_signals(change: &FileChange) -> BTreeSet<&'static str> {
+pub fn derived_signals(change: &FileChange) -> BTreeSet<Signal> {
     let FileChange {
         path: _,
         kind,
@@ -309,18 +327,18 @@ pub fn derived_signals(change: &FileChange) -> BTreeSet<&'static str> {
     let mut out = BTreeSet::new();
     match kind {
         ChangeKind::Added => {
-            out.insert("new_file");
+            out.insert(Signal::NewFile);
         }
         ChangeKind::Deleted => {
-            out.insert("deleted_file");
+            out.insert(Signal::DeletedFile);
         }
         ChangeKind::Modified => {}
     }
     if *binary {
-        out.insert("binary_change");
+        out.insert(Signal::BinaryChange);
     }
     if *old_mode == Some(Mode::Symlink) || *new_mode == Some(Mode::Symlink) {
-        out.insert("symlink_change");
+        out.insert(Signal::SymlinkChange);
     }
     let gained_exec = *new_mode == Some(Mode::Exec)
         && match kind {
@@ -329,7 +347,7 @@ pub fn derived_signals(change: &FileChange) -> BTreeSet<&'static str> {
             ChangeKind::Deleted => false,
         };
     if gained_exec {
-        out.insert("executable_bit");
+        out.insert(Signal::ExecutableBit);
     }
     out
 }
@@ -346,11 +364,11 @@ fn agrees(change: &FileChange, ranked: &RankedFile) -> bool {
         binary,
         content,
     } = change;
-    let signals: BTreeSet<&str> = ranked.signals().iter().map(String::as_str).collect();
-    let forbidden: &[&str] = match kind {
-        ChangeKind::Added => &["deleted_file"],
-        ChangeKind::Deleted => &["new_file"],
-        ChangeKind::Modified => &["new_file", "deleted_file"],
+    let signals: BTreeSet<&Signal> = ranked.signals().iter().collect();
+    let forbidden: &[Signal] = match kind {
+        ChangeKind::Added => &[Signal::DeletedFile],
+        ChangeKind::Deleted => &[Signal::NewFile],
+        ChangeKind::Modified => &[Signal::NewFile, Signal::DeletedFile],
     };
     if forbidden.iter().any(|s| signals.contains(s)) {
         return false;
@@ -363,14 +381,14 @@ fn agrees(change: &FileChange, ranked: &RankedFile) -> bool {
     let mode_changed = old_mode.is_some();
     let status = match (kind, *binary, mode_changed, *content) {
         (ChangeKind::Added | ChangeKind::Deleted | ChangeKind::Modified, true, _, _) => {
-            "binary_changed"
+            Status::BinaryChanged
         }
-        (ChangeKind::Added, false, _, _) => "added",
-        (ChangeKind::Deleted, false, _, _) => "deleted",
-        (ChangeKind::Modified, false, true, false) => "mode_changed",
-        (ChangeKind::Modified, false, _, _) => "modified",
+        (ChangeKind::Added, false, _, _) => Status::Added,
+        (ChangeKind::Deleted, false, _, _) => Status::Deleted,
+        (ChangeKind::Modified, false, true, false) => Status::ModeChanged,
+        (ChangeKind::Modified, false, _, _) => Status::Modified,
     };
-    ranked.status() == status
+    *ranked.status() == status
 }
 
 /// Where `rank` and Git's `facts` disagree, in path order. Empty means the ranking covers the
@@ -422,6 +440,43 @@ impl FileChange {
 mod tests {
     use super::*;
 
+    #[test]
+    fn every_derived_signal_is_a_non_empty_constant() {
+        // Zen B4: `RankedFile::with_added_signals` is infallible because an added signal can never
+        // be empty. Every combination of kind, modes and binary is enumerated here.
+        let kinds = [ChangeKind::Added, ChangeKind::Deleted, ChangeKind::Modified];
+        let modes = [
+            None,
+            Some(Mode::File),
+            Some(Mode::Exec),
+            Some(Mode::Symlink),
+        ];
+        let mut seen = BTreeSet::new();
+        for kind in kinds {
+            for old_mode in modes {
+                for new_mode in modes {
+                    for binary in [false, true] {
+                        let change = FileChange {
+                            path: RepoPath::parse("a").unwrap(),
+                            kind,
+                            old_mode,
+                            new_mode,
+                            binary,
+                            content: true,
+                        };
+                        for signal in derived_signals(&change) {
+                            // Q-TYPES-2: a derived signal is a known vocabulary value, by type.
+                            assert!(signal.is_known(), "{change:?}");
+                            assert!(!signal.name().is_empty(), "{change:?}");
+                            seen.insert(signal);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen.len() >= 4, "too few derived signals reached: {seen:?}");
+    }
+
     fn facts(numstat: &str, summary: &str) -> Result<PatchFacts, Unverifiable> {
         PatchFacts::from_git(numstat.as_bytes(), summary.as_bytes(), b"")
     }
@@ -464,15 +519,40 @@ mod tests {
     }
 
     #[test]
+    fn a_non_canonical_git_path_keeps_its_reason() {
+        // Q-TYPES-2 (Q1-05): the PathError is data, not dropped; the message is unchanged.
+        for (path, why) in [
+            ("/a", crate::path::PathError::Absolute),
+            ("./a", crate::path::PathError::NonCanonical),
+        ] {
+            let error = facts(&format!("1\t0\t{path}\0"), "").unwrap_err();
+            assert_eq!(
+                error,
+                Unverifiable::NonCanonicalPath {
+                    path: path.to_owned(),
+                    why
+                }
+            );
+            assert_eq!(error.to_string(), format!("path {path:?} is not canonical"));
+        }
+    }
+
+    #[test]
     fn derived_signals_follow_git() {
         let symlink = one("1\t0\tlink\0", " create mode 120000 link\n");
         assert_eq!(
-            derived_signals(&symlink).into_iter().collect::<Vec<_>>(),
+            derived_signals(&symlink)
+                .iter()
+                .map(Signal::name)
+                .collect::<Vec<_>>(),
             ["new_file", "symlink_change"]
         );
         let gained = one("0\t0\trun.sh\0", " mode change 100644 => 100755 run.sh\n");
         assert_eq!(
-            derived_signals(&gained).into_iter().collect::<Vec<_>>(),
+            derived_signals(&gained)
+                .iter()
+                .map(Signal::name)
+                .collect::<Vec<_>>(),
             ["executable_bit"]
         );
         let lost = one("0\t0\trun.sh\0", " mode change 100755 => 100644 run.sh\n");
@@ -480,7 +560,8 @@ mod tests {
         let deleted_link = one("0\t1\tl\0", " delete mode 120000 l\n");
         assert_eq!(
             derived_signals(&deleted_link)
-                .into_iter()
+                .iter()
+                .map(Signal::name)
                 .collect::<Vec<_>>(),
             ["deleted_file", "symlink_change"]
         );
@@ -510,7 +591,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             derived_signals(changed.files().next().unwrap())
-                .into_iter()
+                .iter()
+                .map(Signal::name)
                 .collect::<Vec<_>>(),
             ["executable_bit"]
         );
@@ -576,7 +658,10 @@ mod tests {
             (Unverifiable::NonUtf8Path, "a path is not UTF-8"),
             (Unverifiable::NewlineInPath, "a path contains a newline"),
             (
-                Unverifiable::NonCanonicalPath("./a".to_owned()),
+                Unverifiable::NonCanonicalPath {
+                    path: "./a".to_owned(),
+                    why: crate::path::PathError::NonCanonical,
+                },
                 "path \"./a\" is not canonical",
             ),
             (
