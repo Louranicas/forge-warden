@@ -174,15 +174,18 @@ signal, on real producer output.
 For each path in both, the ranking must match the measured producer behaviour (`MATRIX.md`); otherwise note
 `status_mismatch` (HOLD):
 
-| Git `FileChange` | allowed ranking status | required signals | forbidden signals |
+| Git `FileChange` | allowed ranking status | required signals (= `derived_signals`, §2.8) | forbidden signals |
 |---|---|---|---|
-| Added, text | `added` | `new_file` (+ `symlink_change` if Symlink) | `deleted_file` |
-| Added, binary | `binary_changed` | — | `deleted_file` |
+| Added, text | `added` | `new_file` (+ `symlink_change` if Symlink; + `executable_bit` if added as Exec) | `deleted_file` |
+| Added, binary | `binary_changed` | `new_file`, `binary_change` (+ `symlink_change` if Symlink; + `executable_bit` if added as Exec) | `deleted_file` |
 | Deleted, text | `deleted` | `deleted_file` (+ `symlink_change` if Symlink) | `new_file` |
-| Deleted, binary | `binary_changed` | — | `new_file` |
-| Modified, binary | `binary_changed` | — | `new_file`, `deleted_file` |
-| Modified, mode changed, no content | `mode_changed` | — | `new_file`, `deleted_file` |
-| Modified, content (± mode) | `modified` | — | `new_file`, `deleted_file` |
+| Deleted, binary | `binary_changed` | `deleted_file`, `binary_change` (+ `symlink_change` if Symlink) | `new_file` |
+| Modified, binary | `binary_changed` | `binary_change` (+ `symlink_change` if either mode is Symlink; + `executable_bit` if Exec gained) | `new_file`, `deleted_file` |
+| Modified, mode changed, no content | `mode_changed` | none, except `symlink_change` if either mode is Symlink and `executable_bit` if Exec gained | `new_file`, `deleted_file` |
+| Modified, content (± mode) | `modified` | none, except `symlink_change` if either mode is Symlink and `executable_bit` if Exec gained | `new_file`, `deleted_file` |
+
+The required column is exactly `derived_signals` (§2.8): a ranking that lacks any of them is `status_mismatch`.
+This column was corrected on 2026-11-10 by the amendment in §9, which quotes the original.
 
 The product implements the matrix, the derived signals and the comparison with an **exhaustive destructure of
 `FileChange` without `..`** at every site that reads it (`let FileChange { path, kind, old_mode, new_mode, binary,
@@ -305,3 +308,34 @@ On `e1d74bc` (before) the first four of those bypasses compiled.
 | A coverage proof judges only the ranking it checked | **2, type** (`Checked<'_, P>` borrows it) |
 | A library caller cannot judge without provenance | **2, visibility** (`evaluate` crate-private; test feature off by default) |
 | Only `doors.rs` mints in the binary | 4, clippy `disallowed-methods` (unchanged) |
+
+## 9. Amendment (Q-RANK-BINARY G4, 2026-11-10): §2.9's required-signals column
+
+**What was wrong.** From ADR v2 (2f65891, 2026-11-06) until this amendment, §2.9's "required signals" column listed
+only `new_file`/`deleted_file` (+ `symlink_change` if Symlink) for text adds and deletes, and "—" for every other
+row. That contradicted §2.8. The original column read:
+
+| Git `FileChange` | required signals (original) |
+|---|---|
+| Added, text | `new_file` (+ `symlink_change` if Symlink) |
+| Added, binary | — |
+| Deleted, text | `deleted_file` (+ `symlink_change` if Symlink) |
+| Deleted, binary | — |
+| Modified, binary | — |
+| Modified, mode changed, no content | — |
+| Modified, content (± mode) | — |
+
+**What the behaviour always was.** §2.8 is the rule, and the implementation has followed it since `facts.rs` was
+created (1367b79, WP-C1b, 2026-11-06): `facts::agrees` refuses a ranking unless every signal in
+`derived_signals(change)` is present. That includes `binary_change` for every binary file, `executable_bit` when
+Exec is gained, and `symlink_change` on Modified files. With deep-diff-forge 0.7.0 through 0.8.2, which mark a binary
+add or delete with `binary_change` only, every binary addition and deletion therefore HOLDs by `status_mismatch`
+(§2.8, producer facts 3 and 3b). Only the table was wrong. No behaviour, test, golden or policy changes with this
+amendment; §2.9's table now states the required column as `derived_signals`.
+
+**Pinned record.** The JEV Z3 frozen record (`fixtures/adversarial/z3_oracle.rs` `SOURCE_IDENTITY`, emitted into
+`fixtures/z3/manifest.json`) pins this file's pre-amendment bytes, sha256
+`4663916ecafd9ecf7384346db2358dd0005f785956b2aaf72be692e3289d3fb1`, as reviewed at implementation base
+04bbf7b5. That record is left as is: it names what its reviewers read. The next Z3 frozen revision (B6) re-pins.
+
+Found by Keel's Q-RANK-BINARY brief (row G4), confirmed on source by Bastion (O4); decided by Lodestar (O1), Option 1.
