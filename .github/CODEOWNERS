@@ -11,7 +11,7 @@
 /crates/*/Cargo.toml @Louranicas
 /crates/*/clippy.toml @Louranicas
 /crates/*/tests/** @Louranicas
-/crates/forge-warden-cli/src/doors.rs @Louranicas
+/crates/forge-warden-cli/src/doors/** @Louranicas
 /crates/forge-warden-cli/tests/repo_invariants.rs @Louranicas
 /deny.toml @Louranicas
 /fixtures/** @Louranicas
