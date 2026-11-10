@@ -1369,7 +1369,7 @@ pub(crate) mod child {
 
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-#[path = "../tests/support/process_env.rs"]
+#[path = "../../tests/support/process_env.rs"]
 mod test_environment;
 
 #[cfg(test)]

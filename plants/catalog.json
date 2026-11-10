@@ -694,7 +694,7 @@
     {
       "id": "unadmitted-producer",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
       "old": "let Some(admitted) = policy.admit_producer(&pinned.sha256) else {",
       "new": "let Some(admitted) = policy.producers().first().and_then(|listed| policy.admit_producer(listed)) else {",
@@ -875,7 +875,7 @@
     {
       "id": "git-owner",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_metadata_requires_the_exact_owner_and_unwritable_ancestors.*FAILED",
       "cargo": [
         "test",
@@ -903,7 +903,7 @@
     {
       "id": "git-write-mode",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -931,7 +931,7 @@
     {
       "id": "git-symlink",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -959,7 +959,7 @@
     {
       "id": "git-regular-file",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize.*FAILED",
       "cargo": [
         "test",
@@ -987,7 +987,7 @@
     {
       "id": "git-byte-budget",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading.*FAILED",
       "cargo": [
         "test",
@@ -1015,7 +1015,7 @@
     {
       "id": "git-missing-policy",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -1043,7 +1043,7 @@
     {
       "id": "git-unlisted-digest",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
@@ -1071,7 +1071,7 @@
     {
       "id": "git-policy-snapshot",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
@@ -1099,7 +1099,7 @@
     {
       "id": "git-descriptor-version",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
@@ -1127,7 +1127,7 @@
     {
       "id": "git-script",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -1191,7 +1191,7 @@
     {
       "id": "git-policy-exact-limit",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_policy_budget_is_exactly_64_kib.*FAILED",
       "cargo": [
         "test",
@@ -1219,7 +1219,7 @@
     {
       "id": "git-parent-traversal",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_paths_refuse_parent_traversal_before_metadata_walk.*FAILED",
       "cargo": [
         "test",
@@ -1327,7 +1327,7 @@
     {
       "id": "git-parent-error-class",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "git_parent_absence_is_distinct_from_metadata_failure.*FAILED",
       "cargo": [
         "test",
@@ -1378,7 +1378,7 @@
     {
       "id": "git-test-scratch-identity",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "scratch_calls_never_replace_a_live_directory.*FAILED",
       "cargo": [
         "test",
@@ -1405,7 +1405,7 @@
     {
       "id": "git-test-scratch-exclusive",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "scratch_helpers_require_per_call_identity_and_exclusive_creation.*FAILED",
       "cargo": [
         "test",

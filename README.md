@@ -229,12 +229,12 @@ contract.
 | Layer | What it stops | Where |
 | --- | --- | --- |
 | **Lint wall** | `unsafe`, panics (`unwrap`, `expect`, `panic!`, indexing, unchecked arithmetic, `as` casts), missing docs, wildcard matches, `print!`, `#[allow]`; every warning is an error | `Cargo.toml` `[workspace.lints]`, [ADR 0002](docs/adr/0002-the-lint-wall.md) |
-| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git and `/usr/bin/kill` for cleanup); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors.rs`](crates/forge-warden-cli/src/doors.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
+| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git and `/usr/bin/kill` for cleanup); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors/`](crates/forge-warden-cli/src/doors/mod.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
 | **A pure core** | I/O, clocks and threads in the engine: they are compile errors in `forge-warden-core` | [`crates/forge-warden-core/clippy.toml`](crates/forge-warden-core/clippy.toml) |
 | **Contracts as tests** | schema, README, registry and vocabulary drift; non-determinism; unsafe output | `crates/forge-warden-cli/tests/` |
 | **Properties** | whole classes of bugs: adding a rule never loosens a verdict; dates round-trip; rendered output is always printable ASCII | `proptest` in both crates |
 | **Real corpus** | a reader that only works on hand-written JSON | 40 rankings from a real deep-diff-forge binary in `fixtures/corpus/` |
-| **Repository invariants** | crates that skip the lint wall, unexplained suppressions, doors outside `doors.rs`, untracked TODOs | [`repo_invariants.rs`](crates/forge-warden-cli/tests/repo_invariants.rs) |
+| **Repository invariants** | crates that skip the lint wall, unexplained suppressions, doors outside the listed door modules (`src/doors/`), untracked TODOs | [`repo_invariants.rs`](crates/forge-warden-cli/tests/repo_invariants.rs) |
 | **Mutation testing** | tests that pass whatever the code does: every surviving mutant in a PR's diff fails it | CI job `mutation` |
 | **Supply chain** | unknown registries and git sources, copyleft licences, yanked or advisory-flagged crates | [`deny.toml`](deny.toml), CI job `supply-chain` |
 | **Workflow audit** | template injection, credential persistence, unpinned actions | `zizmor` in CI; every action pinned to a commit SHA |

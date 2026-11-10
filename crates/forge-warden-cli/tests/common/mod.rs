@@ -26,6 +26,20 @@ use std::process::{Command, Stdio};
 #[path = "../support/process_env.rs"]
 mod process_env;
 
+/// The door modules (ADR 0001, Q-DOOR-SPLIT): the only production files that may switch off the
+/// door lints, make an `ExitCode` or mint a produced ranking. The list is closed and exact.
+/// `door_files_are_exactly_the_listed_modules` refuses any other Rust file under [`DOOR_DIR`], so no
+/// file gains door rights just by where it lives.
+pub(crate) const DOOR_FILES: [&str; 1] = ["crates/forge-warden-cli/src/doors/mod.rs"];
+
+/// The directory that holds the door modules and nothing else.
+pub(crate) const DOOR_DIR: &str = "crates/forge-warden-cli/src/doors";
+
+/// Whether `path` (repository-relative) is one of the door modules, by exact match.
+pub(crate) fn is_door_file(path: &str) -> bool {
+    DOOR_FILES.contains(&path)
+}
+
 /// Clear ambient process configuration; admit only tool locations and an isolated HOME.
 /// Tests needing hostile variables must add them explicitly after this boundary.
 /// Commands and their children must finish before the creating test thread exits: that thread
@@ -587,9 +601,11 @@ fn check_coverage(
 ) {
     for anchor in [
         "crates/forge-warden-cli/src/main.rs",
-        "crates/forge-warden-cli/src/doors.rs",
         "crates/forge-warden-core/src/lib.rs",
-    ] {
+    ]
+    .into_iter()
+    .chain(DOOR_FILES)
+    {
         assert!(
             production.contains(anchor),
             "compiler evidence lacks {anchor}"

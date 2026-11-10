@@ -97,12 +97,12 @@ fn suppressions_are_expectations_with_reasons() {
 fn only_doors_rs_opens_doors_in_production_code() {
     for (path, text) in rust_sources() {
         let is_test = !is_production(&path);
-        if is_test || path.ends_with("src/doors.rs") {
+        if is_test || common::is_door_file(&path) {
             continue;
         }
         assert!(
             !text.contains("disallowed_methods") && !text.contains("disallowed_types"),
-            "{path}: effects go through crates/forge-warden-cli/src/doors.rs (ADR 0001), not a local exemption"
+            "{path}: effects go through the door modules (common::DOOR_FILES, ADR 0001), not a local exemption"
         );
     }
 }
@@ -355,17 +355,17 @@ fn the_dependency_scan_reads_every_cargo_form() {
 
 #[test]
 fn exit_statuses_come_from_the_registry() {
-    // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door in `doors.rs`
+    // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door (a door module)
     // turns an `Exit` into a process status; everything else returns an `Exit`, so a code cannot
     // drift from the table.
     for (path, text) in rust_sources() {
-        if !is_production(&path) || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+        if !is_production(&path) || common::is_door_file(&path) {
             continue;
         }
         for (line, code) in code_lines(&text) {
             assert!(
                 !code.contains("ExitCode"),
-                "{path}:{}: return an `Exit` from the registry (forge_warden_core::Exit); only doors.rs makes an `ExitCode`",
+                "{path}:{}: return an `Exit` from the registry (forge_warden_core::Exit); only a door module makes an `ExitCode`",
                 line.saturating_add(1)
             );
         }
@@ -449,22 +449,28 @@ fn readme_exit_table_tracks_the_registry() {
 
 #[test]
 fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
-    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in doors.rs, right after the pinned
-    // ranker ran; and the binary judges only through `evaluate_authority`/`evaluate_advisory`.
+    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in the door modules, exactly once in
+    // all of them together, right after the pinned ranker ran; and the binary judges only through
+    // `evaluate_authority`/`evaluate_advisory`.
+    let mut door_attests = 0_usize;
     for (path, text) in rust_sources() {
         if !is_production(&path) || path.ends_with("crates/forge-warden-core/src/authority.rs") {
             continue;
         }
         let attests = text.matches("attest(").count();
-        if path.ends_with("crates/forge-warden-cli/src/doors.rs") {
-            assert_eq!(
-                attests, 1,
-                "{path}: exactly one attest call, in produce_ranking"
-            );
+        if common::is_door_file(&path) {
+            door_attests = door_attests.checked_add(attests).unwrap();
         } else {
-            assert_eq!(attests, 0, "{path}: only doors.rs may call Ranking::attest");
+            assert_eq!(
+                attests, 0,
+                "{path}: only a door module may call Ranking::attest"
+            );
         }
     }
+    assert_eq!(
+        door_attests, 1,
+        "exactly one attest call across the door modules, in produce_ranking"
+    );
     let main = read("crates/forge-warden-cli/src/main.rs");
     for (index, line) in main.lines().enumerate() {
         let raw = line
@@ -993,11 +999,8 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
             let mut operations = ScratchOperations::default();
             operations.visit_block(&function.block);
             let is_allocator = name == "scratch"
-                && matches!(
-                    self.path,
-                    "crates/forge-warden-cli/src/doors.rs"
-                        | "crates/forge-warden-cli/tests/common/runtime.rs"
-                );
+                && (common::is_door_file(self.path)
+                    || self.path == "crates/forge-warden-cli/tests/common/runtime.rs");
             if is_allocator {
                 self.scratch_count = self.scratch_count.checked_add(1).unwrap();
                 for required in ["temp_dir", "create_dir"] {
@@ -1027,7 +1030,7 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
                 // Production bases delegate to random/exclusive PrivateDir creation; the
                 // vocabulary test passes the root only as Git's discovery ceiling.
                 assert!(
-                    (self.path == "crates/forge-warden-cli/src/doors.rs"
+                    (common::is_door_file(self.path)
                         && matches!(
                             name.as_str(),
                             "git_facts" | "git_version" | "produce_ranking"
