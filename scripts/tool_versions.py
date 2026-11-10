@@ -167,9 +167,10 @@ TOOLCHAIN_HISTORY = ("CHANGELOG.md",)
 # Whitespace is flexible in every form (Keel B4f, B4g): two spaces after cargo, or none around an
 # equals sign, still make a site.
 TOOLCHAIN_FORM = re.compile(
-    r"""(?:toolchain\s+install\s+|rustup\s+install\s+|rustup\s+default\s+|rustup\s+run\s+"""
-    r"""|rustup\s+override\s+set\s+|cargo\s+\+|RUSTUP_TOOLCHAIN\s*[:=]\s*["']?"""
-    r"""|(?<![\w-])toolchain\s*:\s*["']?|rust-version\s*=\s*"|channel\s*=\s*")"""
+    r"""(?:toolchain\s+install\s+|toolchain\s+add\s+|rustup\s+install\s+|rustup\s+default\s+"""
+    r"""|rustup\s+run\s+|rustup\s+update\s+|rustup\s+override\s+set\s+|cargo\s+\+"""
+    r"""|--toolchain[\s=]+["']?|RUSTUP_TOOLCHAIN\s*[:=]\s*["']?|rust-toolchain@"""
+    r"""|(?<![\w-])toolchain\s*[:=]\s*["']?|rust-version\s*=\s*"|channel\s*=\s*")"""
     r"""([A-Za-z0-9][A-Za-z0-9._-]*)"""
     r"""|["']\+([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b""")
 SKIPPED_DIRS = {".git", "target", "mutants.out", "mutants.out.old"}
@@ -181,7 +182,14 @@ def canonical_toolchains(values):
 
 
 def check_toolchain_sites(root):
-    """Every toolchain version written in a machine form is canonical and sits in a listed file."""
+    """Every toolchain version written in one of these forms is canonical and sits in a listed file.
+
+    Covered, and nothing more (a list of spellings cannot be complete; Keel NOTE a99f6064):
+    rustup default|run|install|update|override set|toolchain install|toolchain add <v>; cargo +<v>;
+    --toolchain <v>; RUSTUP_TOOLCHAIN <v> (= or :, quoted or not); a toolchain key (: or =);
+    rust-version = "<v>"; channel = "<v>"; an action ref rust-toolchain@<v>; a quoted argv '+<v>'.
+    Prose ("Rust 1.99.1") is not scanned.
+    """
     allowed = canonical_toolchains(versions(root))
     found = set()
     # A symlinked file is scanned through its link (Keel B7): skipping it let drift hide behind one.
@@ -261,7 +269,8 @@ def check_toolchain(root, env=None, timeout=15):
     env = dict(os.environ if env is None else env)
     pinned = versions(root)["rust"]
     for name in COMPILER_OVERRIDES:
-        if env.get(name):
+        # Set at all, even empty, is refused: the gate does not depend on how cargo reads "".
+        if name in env:
             raise ValueError(f"{name} is set, so cargo would not build with the probed rustc (G-16)")
     for config in cargo_configs(root, env):
         for key in config_compiler_keys(config):

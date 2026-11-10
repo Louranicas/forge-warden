@@ -244,6 +244,10 @@ class ToolchainKeelAttacks(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name + " is set"):
                 tool_versions.check_toolchain(self.root, self.env(**{name: "/usr/bin/false"}), timeout=2)
 
+    def test_f3_an_empty_compiler_override_is_refused_too(self):
+        with self.assertRaisesRegex(ValueError, "RUSTC is set"):
+            tool_versions.check_toolchain(self.root, self.env(RUSTC=""), timeout=2)
+
     def test_f3_a_cargo_config_compiler_key_is_refused(self):
         (self.root / ".cargo").mkdir()
         (self.root / ".cargo/config.toml").write_text('[build]\nrustc = "/usr/bin/false"\n')
@@ -270,6 +274,11 @@ class ToolchainKeelAttacks(unittest.TestCase):
             "tool" + "chain: stable\n",
             "cargo  " + PLUS + "1.80.0 build\n",
             "chan" + 'nel="1.80.0"\n',
+            "rustup toolchain " + "add 1.80.0\n",
+            "rustup " + "update 1.80.0\n",
+            "cargo build --tool" + "chain 1.80.0\n",
+            "tool" + 'chain = "1.80.0"\n',
+            "      - uses: dtolnay/rust-tool" + "chain@1.80.0\n",
         ]:
             with self.subTest(text=text):
                 site.write_text(text)
