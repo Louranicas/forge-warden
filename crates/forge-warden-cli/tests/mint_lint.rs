@@ -1,4 +1,4 @@
-//! Bastion B-C1c-01: only `doors.rs` may mint `Ranking<Produced>`. Since Q-TYPES-1, `attest` needs an
+//! Bastion B-C1c-01: only the door modules (formerly `doors.rs`) may mint `Ranking<Produced>`. Since Q-TYPES-1, `attest` needs an
 //! `AdmittedProducer` that only the policy's allowlist makes, and raw `evaluate` is not nameable
 //! outside the core (`tests/api_boundary.rs` proves both for any downstream crate). Which file of the
 //! binary may mint is still the binary's rule: `clippy.toml` makes `attest` a disallowed method,
