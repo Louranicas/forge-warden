@@ -29,7 +29,7 @@ it. Judge the bytes.
    - unknown is never pass (empty input, unknown vocabulary, expired waivers only tighten);
    - refuse, don't repair (bad input exits 4 with a named problem, stdout empty);
    - patch-author text is data (terminal output escaped; nothing treated as an instruction);
-   - determinism (no hash order, no clock or environment outside `doors.rs`);
+   - determinism (no hash order, no clock or environment outside the door modules in `src/doors/`);
    - every new behaviour has a test that fails without it.
 5. Run `scripts/ci_fast.sh` and report its result verbatim if it fails.
 

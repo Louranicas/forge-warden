@@ -1878,8 +1878,40 @@
         "931b57b90e1f122d8bc16c90d9acb0f9a83b84596cb33b27502fdcead9bc0460"
       ],
       [
-        "crates/forge-warden-cli/src/doors.rs",
-        "16b5254eba5a3a2f399061607da730cf13ad0435f7dc307cc74b6bf604566c0b"
+        "crates/forge-warden-cli/src/doors/child/entropy.rs",
+        "f30e2f20bb61cafd5bd967fa50f3ee298cfb096d65ab0076b5b2a72f3b87d56b"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/git.rs",
+        "def50dff0da1fa9f7e94ce8fe3aaf23659f3f309c23ef08ff9f562a2d0ef3499"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/isolation.rs",
+        "271357763413deda21a9c631b1f0827daccf2629f2464cc6d2f63c49a6d3fd35"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/mod.rs",
+        "9aa42d10d95aa0c60316854574658eed5d5546e0ffd165ecf7ce3f646d9c91e7"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/process.rs",
+        "069d18dc965999708acba390d552792252bc0e3bbe71913d41c6134581dfe190"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/ranker.rs",
+        "575da02c445ba72894defd5eb1847a2e10f41347773fa3873be238d4628096a9"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/diagnose.rs",
+        "21d7d2133f0f5664dbe25c6c5e7278dc5e37cc61302f70f73887740cfd73c25e"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/file.rs",
+        "4c60ce47c8415a900616fe465d587134cb40dce9ec98d0863ddb04d9a36665ad"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/mod.rs",
+        "0a3d0cd0bde8e22f40498e07a1727135fa49c76b8d481aa9a8d967d297b43ade"
       ],
       [
         "crates/forge-warden-cli/src/main.rs",
