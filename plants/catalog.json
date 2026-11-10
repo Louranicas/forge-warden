@@ -2006,6 +2006,31 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "stray-clippy-config",
+      "guardrail": "G-06",
+      "path": "scripts/clippy.toml",
+      "create": "# A lint configuration in another directory: a cargo [env] CLIPPY_CONF_DIR could point clippy at it.\ndisallowed-methods = []\n",
+      "diagnostic": "the_lint_configuration_is_exactly_the_two_reviewed_files.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_lint_configuration_is_exactly_the_two_reviewed_files"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
