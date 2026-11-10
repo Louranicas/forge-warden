@@ -156,8 +156,13 @@ TOOLCHAIN_SITES = (
 )
 # Dated history keeps the versions it recorded.
 TOOLCHAIN_HISTORY = ("CHANGELOG.md",)
-TOOLCHAIN_FORM = re.compile(r"""(?:toolchain install |rustup default |rustup run |cargo \+|RUSTUP_TOOLCHAIN[:=] ?"""
-                            r"""|rust-version = "|channel = "|["']\+)([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b""")
+# Each form captures whatever names the toolchain, numeric or not, so a channel name (nightly, beta,
+# stable) in any of them is drift too (Keel F4). The quoted argv form stays numeric-only.
+TOOLCHAIN_FORM = re.compile(
+    r"""(?:toolchain install |rustup install |rustup default |rustup run |rustup override set |cargo \+"""
+    r"""|RUSTUP_TOOLCHAIN[:=] ?["']?|(?<![\w-])toolchain: ?["']?|rust-version = "|channel = ")"""
+    r"""([A-Za-z0-9][A-Za-z0-9._-]*)"""
+    r"""|["']\+([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b""")
 SKIPPED_DIRS = {".git", "target", "mutants.out", "mutants.out.old"}
 
 
@@ -170,14 +175,31 @@ def check_toolchain_sites(root):
     """Every toolchain version written in a machine form is canonical and sits in a listed file."""
     allowed = canonical_toolchains(versions(root))
     found = set()
-    for directory, subdirectories, files in os.walk(root):
-        subdirectories[:] = sorted(d for d in subdirectories if d not in SKIPPED_DIRS)
-        for path in (Path(directory) / f for f in sorted(files)):
-            if path.is_file() and not path.is_symlink():
-                scan_toolchain_file(root, path, allowed, found)
+    for path in toolchain_candidates(root):
+        if path.is_file() and not path.is_symlink():
+            scan_toolchain_file(root, path, allowed, found)
     if found != set(TOOLCHAIN_SITES):
         extra, missing = sorted(found - set(TOOLCHAIN_SITES)), sorted(set(TOOLCHAIN_SITES) - found)
         raise ValueError(f"toolchain sites differ from TOOLCHAIN_SITES (G-16): unlisted {extra}, absent {missing}")
+
+
+def toolchain_candidates(root):
+    """The files to scan: Git's tracked files when `root` is a work tree (so an untracked vendor/ or
+    registry copy is not a site, Keel F5), else every file below `root` (a git-less export such as
+    fw-verify's holds only tracked files, and walking everything is the stricter fallback)."""
+    try:
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        listed = None
+    if listed is not None and listed.returncode == 0 and listed.stdout:
+        names = sorted(n for n in listed.stdout.decode("utf-8", "surrogateescape").split("\0") if n)
+        return [root / n for n in names if not SKIPPED_DIRS & set(Path(n).parts)]
+    out = []
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = sorted(d for d in subdirectories if d not in SKIPPED_DIRS)
+        out.extend(Path(directory) / f for f in sorted(files))
+    return out
 
 
 def scan_toolchain_file(root, path, allowed, found):
@@ -191,27 +213,63 @@ def scan_toolchain_file(root, path, allowed, found):
     for number, line in enumerate(text.splitlines(), 1):
         for match in TOOLCHAIN_FORM.finditer(line):
             found.add(name)
-            if match.group(1) not in allowed:
-                raise ValueError(f"{name}:{number}: toolchain {match.group(1)} drifts from "
+            value = match.group(1) or match.group(2)
+            if value not in allowed:
+                raise ValueError(f"{name}:{number}: toolchain {value} drifts from "
                                  f"rust-toolchain.toml/Cargo.toml (G-16)")
+
+
+# Variables that make cargo build with a compiler other than the rustc the probe asks (Keel F3).
+COMPILER_OVERRIDES = ("RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC",
+                      "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+CONFIG_COMPILER_KEYS = ("rustc", "rustc-wrapper", "rustc-workspace-wrapper")
+
+
+def cargo_configs(root, env):
+    """Cargo config files that apply to a build in `root`: every `.cargo/config[.toml]` from `root` up,
+    and the one in CARGO_HOME (default ~/.cargo)."""
+    out, here = [], Path(root).resolve()
+    for directory in (here, *here.parents):
+        out.extend(directory / ".cargo" / n for n in ("config", "config.toml"))
+    home = env.get("CARGO_HOME") or (str(Path(env["HOME"]) / ".cargo") if env.get("HOME") else None)
+    if home:
+        out.extend(Path(home) / n for n in ("config", "config.toml"))
+    return [p for p in dict.fromkeys(out) if p.is_file()]
+
+
+def config_compiler_keys(path):
+    """The [build] compiler keys a cargo config sets; an unreadable config is refused, not skipped."""
+    try:
+        build = tomllib.loads(path.read_text()).get("build", {})
+    except (OSError, ValueError) as error:
+        raise ValueError(f"{path}: cargo config cannot be read: {error} (G-16)") from error
+    return [k for k in CONFIG_COMPILER_KEYS if isinstance(build, dict) and k in build]
 
 
 def check_toolchain(root, env=None, timeout=15):
     """The compiler that runs the local gate is the pinned one, chosen by rust-toolchain.toml alone."""
     env = dict(os.environ if env is None else env)
     pinned = versions(root)["rust"]
+    for name in COMPILER_OVERRIDES:
+        if env.get(name):
+            raise ValueError(f"{name} is set, so cargo would not build with the probed rustc (G-16)")
+    for config in cargo_configs(root, env):
+        for key in config_compiler_keys(config):
+            raise ValueError(f"{config}: build.{key} overrides the compiler for the gate (G-16)")
     if env.get("RUSTUP_TOOLCHAIN", pinned) != pinned:
         raise ValueError(f"RUSTUP_TOOLCHAIN={env['RUSTUP_TOOLCHAIN']} overrides the pinned {pinned} "
                          "for the gate (G-16)")
     # A missing pinned toolchain must refuse here, offline, rather than be downloaded.
     env["RUSTUP_AUTO_INSTALL"] = "0"
-    for argv, form in ((["rustc", "-Vv"], r"release: ([0-9.]+)"), (["cargo", "-V"], r"cargo ([0-9.]+)")):
+    # Whole stable versions only: `1.99.1-nightly` or `-beta` with the same number is refused (Keel F2).
+    for argv, form in ((["rustc", "-Vv"], r"release: ([0-9]+\.[0-9]+\.[0-9]+)$"),
+                       (["cargo", "-V"], r"cargo ([0-9]+\.[0-9]+\.[0-9]+) \(")):
         try:
             result = subprocess.run(argv, cwd=root, env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=timeout, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ValueError(f"{argv[0]} is unavailable for the gate (G-16)") from error
-        found = re.findall(r"^" + form + r"\b", result.stdout, re.MULTILINE)
+        found = re.findall(r"^" + form, result.stdout, re.MULTILINE)
         if result.returncode != 0 or len(found) != 1:
             raise ValueError(f"{argv[0]} did not report one version; is toolchain {pinned} installed? (G-16)")
         if found[0] != pinned:

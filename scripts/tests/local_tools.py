@@ -160,13 +160,13 @@ class Toolchain(unittest.TestCase):
 
     def test_the_pinned_compiler_is_admitted_offline(self):
         tool_versions.check_toolchain(self.root, self.env(), timeout=2)
-        tool_versions.check_toolchain(self.root, self.env(RUSTUP_TOOLCHAIN=self.pinned), timeout=2)
+        tool_versions.check_toolchain(self.root, self.env(**{"RUSTUP_" + "TOOLCHAIN": self.pinned}), timeout=2)
 
     def test_another_compiler_is_refused(self):
         for extra, pattern in [
             ({"RUSTC_RELEASE": "1.99.0"}, "rustc is 1.99.0"),
             ({"CARGO_RELEASE": "1.98.0"}, "cargo is 1.98.0"),
-            ({"RUSTUP_TOOLCHAIN": "1.88.0"}, "RUSTUP_TOOLCHAIN" + "=1.88.0 overrides"),
+            ({"RUSTUP_" + "TOOLCHAIN": "1.88.0"}, "RUSTUP_" + "TOOLCHAIN=1.88.0 overrides"),
             ({"RUSTC_RELEASE": ""}, "rustc did not report one version"),
         ]:
             with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, pattern):
@@ -213,6 +213,74 @@ class Toolchain(unittest.TestCase):
         (self.root / "target").mkdir()
         (self.root / "target/old.sh").write_text(DEFAULT + "1.40.0\n")
         tool_versions.check_toolchain_sites(self.root)
+
+
+class ToolchainKeelAttacks(unittest.TestCase):
+    """Keel's REQUEST CHANGES e6f07f96 on G-16, F2-F5, kept as planted cases (Toolchain's fixture)."""
+
+    setUp = Toolchain.setUp
+    tearDown = Toolchain.tearDown
+    env = Toolchain.env
+
+    def test_f2_a_same_number_prerelease_is_refused(self):
+        for extra, pattern in [({"RUSTC_RELEASE": self.pinned + "-nightly"}, "rustc did not report one version"),
+                               ({"CARGO_RELEASE": self.pinned + "-beta"}, "cargo did not report one version")]:
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, pattern):
+                tool_versions.check_toolchain(self.root, self.env(**extra), timeout=2)
+
+    def test_f3_a_compiler_override_is_refused(self):
+        for name in tool_versions.COMPILER_OVERRIDES:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name + " is set"):
+                tool_versions.check_toolchain(self.root, self.env(**{name: "/usr/bin/false"}), timeout=2)
+
+    def test_f3_a_cargo_config_compiler_key_is_refused(self):
+        (self.root / ".cargo").mkdir()
+        (self.root / ".cargo/config.toml").write_text('[build]\nrustc = "/usr/bin/false"\n')
+        with self.assertRaisesRegex(ValueError, "build.rustc overrides the compiler"):
+            tool_versions.check_toolchain(self.root, self.env(), timeout=2)
+        (self.root / ".cargo/config.toml").write_text("[build\n")
+        with self.assertRaisesRegex(ValueError, "cargo config cannot be read"):
+            tool_versions.check_toolchain(self.root, self.env(), timeout=2)
+        (self.root / ".cargo/config.toml").unlink()
+        home = self.root / "home"
+        (home / ".cargo").mkdir(parents=True)
+        (home / ".cargo/config.toml").write_text('[build]\nrustc-wrapper = "sccache"\n')
+        with self.assertRaisesRegex(ValueError, "build.rustc-wrapper overrides the compiler"):
+            tool_versions.check_toolchain(self.root, self.env(HOME=str(home)), timeout=2)
+
+    def test_f4_every_site_form_is_seen(self):
+        site = self.root / "scripts/new_site.sh"
+        for text in [
+            "RUSTUP_" + 'TOOLCHAIN: "1.80.0"\n',
+            "          tool" + "chain: 1.80.0\n",
+            "rustup " + "install 1.80.0\n",
+            "rustup " + "override set 1.80.0\n",
+            "cargo " + PLUS + "nightly build\n",
+            "tool" + "chain: stable\n",
+        ]:
+            with self.subTest(text=text):
+                site.write_text(text)
+                with self.assertRaisesRegex(ValueError, r"scripts/new_site\.sh:1: toolchain \S+ drifts"):
+                    tool_versions.check_toolchain_sites(self.root)
+        site.unlink()
+        tool_versions.check_toolchain_sites(self.root)
+
+    def test_f5_untracked_files_are_not_sites_in_a_work_tree(self):
+        import subprocess
+        git = ["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@local.invalid"]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "add", "-A"], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "fixture"], check=True)
+        vendored = self.root / "vendor/somecrate/Cargo.toml"
+        vendored.parent.mkdir(parents=True)
+        vendored.write_text("[package]\nrust-" + 'version = "1.70"\n')
+        tool_versions.check_toolchain_sites(self.root)
+        subprocess.run([*git, "add", "vendor"], check=True)
+        with self.assertRaisesRegex(ValueError, r"vendor/somecrate/Cargo\.toml:2: toolchain 1\.70 drifts"):
+            tool_versions.check_toolchain_sites(self.root)
+        shutil.rmtree(self.root / ".git")
+        with self.assertRaisesRegex(ValueError, r"vendor/somecrate/Cargo\.toml"):
+            tool_versions.check_toolchain_sites(self.root)
 
 
 if __name__ == "__main__":
