@@ -13,6 +13,7 @@ step tool-versions; python3 -I scripts/tool_versions.py --check
 # G-16: the compiler running this gate is the one rust-toolchain.toml pins (no override, no download).
 step local-tools; python3 -I scripts/tool_versions.py --check-local-tools
 step perimeter; python3 -I scripts/tests/perimeter.py
+step runner-routing; python3 -I scripts/tests/runner_routing.py
 step plant-runner; python3 -I plants/test_runner.py
 step guardrails; python3 -I scripts/check_guardrails.py
 step fmt;     cargo fmt --all --check

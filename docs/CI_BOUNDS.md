@@ -10,6 +10,7 @@ Job durations are completedAt minus startedAt from GitHub Actions job records fe
 
 | Workflow/job | Measured job duration | Budget | Reason |
 | --- | --- | --- | --- |
+| mutation-baseline/route (WP-RUNNER-UP) | No hosted run yet; one hosted step of shell comparisons and two printf calls | 5min provisional | It does no checkout and no install, so job setup dominates. Five minutes bounds a stuck runner. If it times out, the routed jobs (mutation-plan and mutation-shards) still run hosted (`!cancelled()` and an `|| 'ubuntu-latest'` fallback). On runner-up the shard budgets stay the hosted-measured `matrix.minutes`; the guest bootstrap runs inside that budget's setup allowance. |
 | ci/gate | 374s successful; 384s before a plant failure | 20min | More than three times the successful run, accommodating cold build/cache and plant variability. |
 | ci/msrv | 21s and 33s successful | 10min | Allows substantial toolchain provisioning/network variability while bounding hangs. |
 | ci/supply-chain | 14s and 17s successful | 10min | Allows advisory/action provisioning variability; no unlimited wait. |
