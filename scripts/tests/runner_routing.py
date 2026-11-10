@@ -514,6 +514,13 @@ ISOLATED_SHAPE_EDITS = {
         "\njobs:\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n    \t- run: echo x\n", "odd indentation"),
     "no runs-on": (
         "\njobs:\n  extra:\n    timeout-minutes: 5\n    steps:\n      - run: echo x\n", "exactly one runs-on"),
+    # Keel R1 (FENCE-MUTATION verdict 574d355e): only the start anchor of match() refuses these.
+    "a quoted field that ends like a plain one": (
+        '\njobs:\n  extra:\n    runs-on: ubuntu-latest\n    "runs-on": self-hosted #    x: y\n    steps:\n'
+        "      - run: echo x\n", "a job field must be a plain"),
+    "a job key that ends like a plain one": (
+        "\njobs:\n  sneak: #  x:\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n",
+        "a job key must be a plain"),
 }
 
 def case(event, ref="refs/heads/main", protected="true"):
@@ -652,6 +659,13 @@ class Routing(unittest.TestCase):
                              "misnamed": text.replace(line, line.replace("runner=%s", "runnr=%s"), 1)}.items():
             with self.subTest(case=name), self.assertRaises(ValueError):
                 route(edited, "push", "refs/heads/main", "true")
+
+    def test_only_the_exact_shell_special_names_are_kept_out_of_the_hostile_environment(self):
+        # Keel R2: without the end anchor, names that only extend a special one would be left out.
+        for name in ("EVENT", "REF", "PATH", "GITHUB_OUTPUT", "BASH_ENV", "ENV", "LC_ALL"):
+            self.assertTrue(SHELL_SPECIAL.match(name), name)
+        for name in ("EVENT_NAME", "REFX", "PATHS", "GITHUB_OUTPUT2", "ENVIRONMENT", "PROTECTED_X"):
+            self.assertFalse(SHELL_SPECIAL.match(name), name)
 
     def test_workflow_env_names_reads_exactly_the_workflow_env(self):
         self.assertEqual(workflow_env_names((ROOT / BASELINE).read_text()),
