@@ -126,7 +126,7 @@ class Guardrails(unittest.TestCase):
             checks.check_expectations(self.root, [p.relative_to(self.root).as_posix() for p in (self.root / "crates").rglob("*.rs")])
 
     def test_removed_expectation_refuses(self):
-        self.change("crates/forge-warden-cli/src/doors/mod.rs",
+        self.change("crates/forge-warden-cli/src/doors/file.rs",
                     '#[expect(clippy::disallowed_methods, reason = "door: read_stdin")]', '')
         with self.assertRaisesRegex(ValueError, "stale="):
             checks.check_expectations(self.root, [p.relative_to(self.root).as_posix() for p in (self.root / "crates").rglob("*.rs")])

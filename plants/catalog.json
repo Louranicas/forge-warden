@@ -959,7 +959,7 @@
     {
       "id": "git-regular-file",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/mod.rs",
+      "path": "crates/forge-warden-cli/src/doors/file.rs",
       "diagnostic": "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize.*FAILED",
       "cargo": [
         "test",
