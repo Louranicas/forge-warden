@@ -11,6 +11,9 @@ Every routed job must provision the guest first, right after checkout (Bastion B
 WP-RUNNER-UP v8: the routed jobs are the sharded baseline's plan and shards; each has one exact
 header. The shards also wait on the plan and run only after it succeeded. The aggregate check
 (full-workspace) stays hosted.
+RUNNER-ROUTING.1: the route step reads exactly event, ref and protected, and the script expands no
+other variable; the truth table also holds under a hostile ambient environment (every documented
+GITHUB_*/RUNNER_* variable, every workflow env key and every other name the script mentions).
 
 This is routing only: anyone who can push a branch can also edit `runs-on` on it, so the trust
 boundary is repository write access plus runner-up's fork guard (docs/runner-up.md).
@@ -149,21 +152,165 @@ def route_script(text):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def route(text, event, ref, protected):
-    """Run the workflow's own route script with bash; return the runner it chose."""
+def route(text, event, ref, protected, ambient=None):
+    """Run the workflow's own route script with bash; return the runner it chose.
+
+    `ambient` adds the variables a runner would also have set (RUNNER-ROUTING.1). The script's own
+    inputs and PATH always override them."""
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "output"
         output.write_text("")
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output),
-               "EVENT": event, "REF": ref, "PROTECTED": protected}
+        env = dict(ambient or {})
+        env.update({"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GITHUB_OUTPUT": str(output),
+                    "EVENT": event, "REF": ref, "PROTECTED": protected})
         result = subprocess.run(["bash", "-c", route_script(text)], env=env, capture_output=True,
-                                text=True, stdin=subprocess.DEVNULL, timeout=30, check=False)
+                                text=True, stdin=subprocess.DEVNULL, timeout=30, check=False,
+                                cwd=directory)
         if result.returncode != 0:
             raise ValueError("route script failed: " + result.stderr)
         lines = output.read_text().splitlines()
         if len(lines) != 1 or not lines[0].startswith("runner="):
             raise ValueError("route script must write exactly one runner= line: " + repr(lines))
         return lines[0][len("runner="):]
+
+
+# RUNNER-ROUTING.1 (Bastion's finding in PLANTS-FENCES-route 6378221d): the truth table above
+# feeds the script only EVENT, REF and PROTECTED, so a condition on anything else the runner sets
+# was invisible to it. Two layers close that. (1) Static: the route step maps exactly the three
+# reviewed contexts, and the script expands no other variable and has no other way to read input.
+# (2) Dynamic: the table must route identically under a hostile ambient environment.
+ROUTE_STEP = ("      - id: pick\n"
+              "        env:\n"
+              "          EVENT: ${{ github.event_name }}\n"
+              "          REF: ${{ github.ref }}\n"
+              "          PROTECTED: ${{ github.ref_protected }}\n"
+              "        run: |\n")
+SCRIPT_VARIABLES = frozenset({"EVENT", "REF", "PROTECTED", "GITHUB_OUTPUT", "runner"})
+EXPANSION = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+# Builtins and commands that read variables by name, or run text as code, without a `$`.
+NAME_READERS = re.compile(r"(?<![A-Za-z0-9_-])(printenv|env|declare|typeset|compgen|export|"
+                          r"readonly|local|set|eval|source|exec|command|builtin|read|mapfile)"
+                          r"(?![A-Za-z0-9_-])")
+# The default variables GitHub documents for every runner, plus CI.
+DOCUMENTED_AMBIENT = (
+    "CI", "GITHUB_ACTION", "GITHUB_ACTION_PATH", "GITHUB_ACTION_REPOSITORY", "GITHUB_ACTIONS",
+    "GITHUB_ACTOR", "GITHUB_ACTOR_ID", "GITHUB_API_URL", "GITHUB_BASE_REF", "GITHUB_ENV",
+    "GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_GRAPHQL_URL", "GITHUB_HEAD_REF", "GITHUB_JOB",
+    "GITHUB_PATH", "GITHUB_REF", "GITHUB_REF_NAME", "GITHUB_REF_PROTECTED", "GITHUB_REF_TYPE",
+    "GITHUB_REPOSITORY", "GITHUB_REPOSITORY_ID", "GITHUB_REPOSITORY_OWNER",
+    "GITHUB_REPOSITORY_OWNER_ID", "GITHUB_RETENTION_DAYS", "GITHUB_RUN_ATTEMPT", "GITHUB_RUN_ID",
+    "GITHUB_RUN_NUMBER", "GITHUB_SERVER_URL", "GITHUB_SHA", "GITHUB_STEP_SUMMARY",
+    "GITHUB_TRIGGERING_ACTOR", "GITHUB_WORKFLOW", "GITHUB_WORKFLOW_REF", "GITHUB_WORKFLOW_SHA",
+    "GITHUB_WORKSPACE", "RUNNER_ARCH", "RUNNER_DEBUG", "RUNNER_ENVIRONMENT", "RUNNER_NAME",
+    "RUNNER_OS", "RUNNER_TEMP", "RUNNER_TOOL_CACHE",
+)
+# Never set from outside: they change how bash itself starts or parses.
+SHELL_SPECIAL = re.compile(r"(BASH.*|ENV|IFS|SHELLOPTS|PS[0-9]|CDPATH|GLOBIGNORE|POSIXLY_CORRECT|"
+                           r"LD_.*|HOME|SHELL|TERM|LANG|LC_.*|TZ|PATH|GITHUB_OUTPUT|EVENT|REF|"
+                           r"PROTECTED)\Z")
+HOSTILE_VALUES = (POOL, "true", "refs/heads/main", "workflow_dispatch", "1")
+
+
+def workflow_env_names(text):
+    """The keys of the workflow-level `env:` mapping (runtime variables of every job)."""
+    if "\nenv:\n" not in text:
+        return []
+    block = text.split("\nenv:\n", 1)[1]
+    names = []
+    for line in block.splitlines():
+        if not line.startswith("  "):
+            break
+        match = re.match(r"  ([A-Za-z_][A-Za-z0-9_]*):", line)
+        if match:
+            names.append(match.group(1))
+    return names
+
+
+def route_input_problems(text):
+    """Why the route job could read something other than its three reviewed inputs."""
+    body = job_bodies(text)["route"]
+    script = route_script(text)
+    problems = []
+    steps = steps_of(body)
+    if len(steps) != 1 or not steps[0].startswith(ROUTE_STEP):
+        problems.append("route: one step whose env is exactly EVENT, REF and PROTECTED")
+    if body.count("env:") != 1:
+        problems.append("route: no env other than the step's three inputs")
+    if "`" in script:
+        problems.append("route script: no command substitution")
+    for at in (m.start() for m in re.finditer(r"\$", script)):
+        match = EXPANSION.match(script, at)
+        name = match and (match.group(1) or match.group(2))
+        if name not in SCRIPT_VARIABLES:
+            problems.append("route script: expands only " + ", ".join(sorted(SCRIPT_VARIABLES))
+                            + ", plainly: " + script[at:at + 24].split("\n")[0])
+    if "<" in script:
+        problems.append("route script: reads no file, here-string or process")
+    for match in NAME_READERS.finditer(script):
+        problems.append("route script: no " + match.group(1))
+    return problems
+
+
+def hostile_ambient(text, value):
+    """Every documented runner variable, every workflow env key and every other name the route
+    script mentions, all set to `value`."""
+    names = set(DOCUMENTED_AMBIENT) | set(workflow_env_names(text))
+    names |= set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", route_script(text)))
+    return {name: value for name in sorted(names) if not SHELL_SPECIAL.match(name)}
+
+
+def ambient_routing_problems(text):
+    """Rows of the truth table that route differently under a hostile ambient environment."""
+    problems = []
+    for value in HOSTILE_VALUES:
+        ambient = hostile_ambient(text, value)
+        for (event, ref, protected), expected in TABLE:
+            try:
+                got = route(text, event, ref, protected, ambient)
+            except ValueError as error:
+                got = "error: " + str(error)
+            if got != expected:
+                problems.append((value, event, ref, protected, got))
+                break
+    return problems
+
+
+# Edits that make routing depend on an ambient input, and the layer(s) that must refuse each.
+GUARD = '[ "$REF" = refs/heads/main ] && [ "$PROTECTED" = true ]'
+AMBIENT_EDITS = {
+    "head ref condition (Bastion)": (
+        "if " + GUARD + "; then",
+        'if { ' + GUARD + '; } || [ -n "${GITHUB_HEAD_REF:-}" ]; then', True, True),
+    "runner override default (Bastion)": (
+        "runner=ubuntu-latest\n", "runner=${RUNNER_OVERRIDE:-ubuntu-latest}\n", True, True),
+    "dispatch from any branch": (
+        "if " + GUARD + "; then",
+        "if { " + GUARD + '; } || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then', True, True),
+    "printenv, no dollar": (
+        "if " + GUARD + "; then",
+        "if { " + GUARD + "; } || printenv GITHUB_HEAD_REF >/dev/null; then", True, True),
+    "[[ -v ]], no dollar": (
+        "if " + GUARD + "; then",
+        "if { " + GUARD + "; } || [[ -v GITHUB_HEAD_REF ]]; then", False, True),
+    "no initial runner": ("runner=ubuntu-latest\n", "", False, True),
+    "a new step input": (
+        "          PROTECTED: ${{ github.ref_protected }}\n",
+        "          PROTECTED: ${{ github.ref_protected }}\n          HEAD: ${{ github.head_ref }}\n",
+        True, False),
+    "REF from the head ref": (
+        "          REF: ${{ github.ref }}\n", "          REF: ${{ github.head_ref }}\n", True, False),
+    "PROTECTED a constant": (
+        "          PROTECTED: ${{ github.ref_protected }}\n", "          PROTECTED: ${{ true }}\n",
+        True, False),
+    "job-level env": (
+        "    runs-on: ubuntu-latest\n    outputs:\n",
+        "    runs-on: ubuntu-latest\n    env:\n      X: ${{ github.head_ref }}\n    outputs:\n",
+        True, False),
+    "event file read": (
+        "if " + GUARD + "; then",
+        "if { " + GUARD + '; } || [ -n "$(cat "$GITHUB_EVENT_PATH" 2>/dev/null)" ]; then',
+        True, False),
+}
 
 
 def routed_job_problems(text, routed):
@@ -263,6 +410,32 @@ class Routing(unittest.TestCase):
             for (event, ref, protected), expected in TABLE:
                 with self.subTest(event=event, ref=ref, protected=protected):
                     self.assertEqual(route(text, event, ref, protected), expected)
+
+    def test_the_route_job_reads_only_event_ref_and_protected(self):
+        for path, text in self.workflows().items():
+            with self.subTest(path=path):
+                self.assertEqual(route_input_problems(text), [])
+
+    def test_routing_ignores_a_hostile_ambient_environment(self):
+        for path, text in self.workflows().items():
+            with self.subTest(path=path):
+                ambient = hostile_ambient(text, POOL)
+                self.assertIn("GITHUB_HEAD_REF", ambient)
+                for name in workflow_env_names(text):
+                    self.assertIn(name, ambient)
+                self.assertEqual(ambient_routing_problems(text), [])
+
+    def test_each_ambient_input_edit_is_refused_by_its_layer(self):
+        for path, text in self.workflows().items():
+            for name, (old, new, static, dynamic) in AMBIENT_EDITS.items():
+                with self.subTest(path=path, edit=name):
+                    self.assertEqual(text.count(old), 1, "anchor must be unique")
+                    edited = text.replace(old, new, 1)
+                    self.assertTrue(static or dynamic)
+                    if static:
+                        self.assertNotEqual(route_input_problems(edited), [], "static layer")
+                    if dynamic:
+                        self.assertNotEqual(ambient_routing_problems(edited), [], "dynamic layer")
 
     def test_a_routed_job_falls_back_to_hosted_without_a_route_output(self):
         self.assertEqual(evaluate(ROUTE, {"needs.route.outputs.runner": ""}), HOSTED)
