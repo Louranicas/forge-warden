@@ -447,6 +447,51 @@ fn readme_exit_table_tracks_the_registry() {
     }
 }
 
+/// EFFECT-WALL (review candidate C3, measured): clippy reads the configuration nearest to a crate's
+/// manifest, so a `clippy.toml` or `.clippy.toml` beside a crate replaces the root file for that
+/// crate. A copy of the root file without one `disallowed-methods` line let `std::env::var` through
+/// with clippy clean. The two reviewed files are therefore the only ones that may exist: the root
+/// one (the CLI's effect wall) and the core's (its purity wall).
+#[test]
+fn the_lint_configuration_is_exactly_the_two_reviewed_files() {
+    let mut directories = vec![String::new(), "crates".to_owned()];
+    for entry in std::fs::read_dir(root().join("crates")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_dir() {
+            directories.push(format!("crates/{}", entry.file_name().to_string_lossy()));
+        }
+    }
+    let mut present = Vec::new();
+    for directory in &directories {
+        for name in ["clippy.toml", ".clippy.toml"] {
+            let relative = if directory.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{directory}/{name}")
+            };
+            // A dangling symlink is still a configuration clippy may be pointed at: it counts.
+            if std::fs::symlink_metadata(root().join(&relative)).is_ok() {
+                present.push(relative);
+            }
+        }
+    }
+    present.sort();
+    assert_eq!(
+        present,
+        ["clippy.toml", "crates/forge-warden-core/clippy.toml"],
+        "a lint configuration beside a crate replaces the reviewed one for that crate"
+    );
+    for reviewed in &present {
+        assert!(
+            std::fs::symlink_metadata(root().join(reviewed))
+                .unwrap()
+                .file_type()
+                .is_file(),
+            "{reviewed} is a regular file, never a symlink"
+        );
+    }
+}
+
 #[test]
 fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
     // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in the door modules, exactly once in

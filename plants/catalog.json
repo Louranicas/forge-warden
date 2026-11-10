@@ -1981,6 +1981,31 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "crate-local-clippy-config",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/clippy.toml",
+      "create": "# A lint configuration beside the crate: it would replace the reviewed root file for this crate.\ndisallowed-methods = []\n",
+      "diagnostic": "the_lint_configuration_is_exactly_the_two_reviewed_files.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_lint_configuration_is_exactly_the_two_reviewed_files"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
