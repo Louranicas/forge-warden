@@ -113,6 +113,17 @@ class LocalTools(unittest.TestCase):
         self.plant("step local-tools; python3 -I scripts/tool_versions.py --check-local-tools\n", "",
                    "local-tools step exactly once")
 
+    def test_a_required_tool_cannot_leave_the_required_list(self):
+        for text, pattern in (
+            ('required = []\nhosted_only = ["zizmor", "deep-diff-forge"]\n', "not in \\[local_gate\\] required"),
+            ('required = ["cargo-mutants"]\nhosted_only = ["zizmor", "deep-diff-forge", "cargo-deny"]\n',
+             "no recorded reason: cargo-deny"),
+        ):
+            with self.subTest(text=text):
+                self.write_gate(text)
+                with self.assertRaisesRegex(ValueError, pattern):
+                    tool_versions.check_ci_local(self.root)
+
     def test_the_old_success_claim_is_refused(self):
         self.plant("ci_local: all gates passed", "ci_local: all available gates passed", "must not claim")
 
