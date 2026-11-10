@@ -179,7 +179,7 @@ class Runner(unittest.TestCase):
         runnable={c['guardrail'] for c in catalog['cases']}
         pending={c['id'] for c in catalog['pending_guardrails']}
         self.assertFalse(runnable & pending)
-        self.assertEqual(runnable | pending, {f'G-{i:02}' for i in range(1,52)})
+        self.assertEqual(runnable | pending, {f'G-{i:02}' for i in range(1,53)})
         self.assertTrue(all(c['status']=='PENDING' for c in catalog['pending_guardrails']))
 
     def test_cli_receipt_is_incomplete_and_source_is_unchanged(self):

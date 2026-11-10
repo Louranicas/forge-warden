@@ -2,13 +2,14 @@
   "schema": "forge-warden.plants.catalog.v1",
   "register": {
     "name": "Mission4 guardrail register draft",
-    "sha256": "25c4520d63d0319bed5d0650c67acc35e1b6d4be6e52ef8d97ecc1db308e8dd8",
+    "sha256": "0e975350f6004c560154b61f30dc1ce1d7c5fc24c81b8781c547966dcb078086",
     "supersessions": [
       "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
       "G-15 authenticates exact producer binary, not version string.",
       "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
-      "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants."
+      "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
+      "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a."
     ]
   },
   "cases": [
@@ -1811,6 +1812,12 @@
       "title": "Workflow hardening drift",
       "status": "PENDING",
       "reason": "Hosted zizmor audit exists, but the trusted offline execution image has no zizmor. No installation or weaker replacement audit is performed."
+    },
+    {
+      "id": "G-52",
+      "title": "Self-hosted runner routing drift",
+      "status": "PENDING",
+      "reason": "The control is scripts/tests/runner_routing.py, which arrives with RUNNER-UP v8. Its catalog cases land once v8 is on main (WP PLANTS-FENCES); until then no routing plant counts as caught."
     }
   ]
 }
