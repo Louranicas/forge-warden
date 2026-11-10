@@ -112,6 +112,7 @@ implemented control for each property and why a stronger claim is unavailable.
 - Review ownership, unsigned byte hashes and local hub branch names are not deployment
   authentication. L1 golden approval and the integrator's exact merged-tree gate
   are recorded for the baseline above; future changes need their own acceptance. No claim of zero future defects follows from zero missed mutants.
+- Four gate checks are narrower than their names (deep review 2026-11-10, C13; accepted as low): the `unexpected_cfgs` check-cfg list in `Cargo.toml` is not held by `lint-floor.toml`, so an added cfg passes the floor check; `scripts/tests/perimeter.py` has no timeout entry for the `route` job of `mutation-baseline.yml`; each crate's `[lints] workspace = true` is checked as text, not parsed; `scripts/check_vocab.sh` accepts any revision Git resolves, a branch name included, not only a commit id.
 
 ## Mission 3 finding traceability
 
