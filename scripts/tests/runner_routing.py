@@ -696,6 +696,8 @@ class Routing(unittest.TestCase):
         # FENCE-MUTATION: paths the mutation pass found unexercised.
         with self.assertRaises(ValueError):
             evaluate("${{ 'a'", {})
+        with self.assertRaises(ValueError):  # ends right, starts wrong: the start check alone
+            evaluate("{{ 'a' }}", {})
         self.assertEqual(evaluate("${{ ('a' == 'A') }}", {}), True)
         self.assertEqual(evaluate("${{ true == true }}", {}), True)
         self.assertEqual(evaluate("${{ true == 'true' }}", {}), False)
