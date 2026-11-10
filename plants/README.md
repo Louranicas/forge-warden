@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 89 named plants over 47 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 5 register rows are explicitly PENDING
+This revision implements 93 named plants over 47 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 5 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -112,7 +112,8 @@ prove script exit propagation; they do not qualify a live ranker or hosted admis
 The five pending rows have individual reasons in the catalog: unavailable local enforcement for
 CI toolchain/name drift or documentation references, the unimplemented strict skip contract, and
 a missing offline zizmor backend. G-52 (runner routing) has four script plants against
-`scripts/tests/runner_routing.py`. Missing tools and missing checks are never counted as caught.
+`scripts/tests/runner_routing.py`. G-06 has four door-list plants (WP-PLANTS-FENCES 3b), one of them a
+`create` of an unlisted module under `doors/`. Missing tools and missing checks are never counted as caught.
 
 ## Required gate execution (Q-PERIMETER)
 
