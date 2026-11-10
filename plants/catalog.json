@@ -1854,6 +1854,95 @@
       ]
     },
     {
+      "id": "route-ambient-env",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_routing_ignores_a_hostile_ambient_environment",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "              if [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; then",
+      "new": "              if { [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; } || [ -n \"${GITHUB_HEAD_REF:-}\" ]; then",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-ambient-arith",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_the_route_job_is_exactly_the_reviewed_job",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "          runner=ubuntu-latest\n",
+      "new": "          runner=ubuntu-latest\n          (( GITHUB_RUN_ATTEMPT > 1 )) && { EVENT=push; REF=refs/heads/main; PROTECTED=true; }\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-defaults-template",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "\njobs:\n",
+      "new": "\n\"defaults\":\n  run:\n    shell: env EVENT=push REF=refs/heads/main PROTECTED=true bash {0}\n\njobs:\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-indented-job",
+      "guardrail": "G-52",
+      "path": ".github/workflows/ci.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "append": "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-repeated-job",
+      "guardrail": "G-52",
+      "path": ".github/workflows/ci.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_pinned_whole",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "\njobs:\n",
+      "new": "\njobs:\n  sneak:\n    name: \"a\n    runs-on: ubuntu-latest\n  vocabulary:\n    env: \"\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
       "id": "door-list-drops-module",
       "guardrail": "G-06",
       "path": "crates/forge-warden-cli/tests/common/mod.rs",
