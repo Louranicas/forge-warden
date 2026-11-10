@@ -113,8 +113,11 @@ renewed or deleted. An active waiver that covered nothing is listed in `unused_w
 
 | Mode | Command | What is judged | Best outcome |
 | --- | --- | --- | --- |
-| Authority (default) | `check --policy P --patch C --ranker R` | the ranking forge-warden produced by running R on C | `pass` (exit 0) |
+| Authority | `check --policy P --patch C --ranker R` | the ranking forge-warden produced by running R on C | `pass` (exit 0) |
 | Advisory | `check --policy P --patch C --advisory --rank FILE` (`-` reads stdin) | the supplied ranking | `hold` (exit 8) |
+
+There is no default mode: `check` requires exactly one of `--ranker` and `--advisory` (a required
+argument group in `src/main.rs`), and refuses with a usage error (exit 2) when neither is given.
 
 - `--patch` is required in both modes, and is read once: the same bytes are hashed, given to the
   ranker and given to Git. Produce it with `git diff --binary --no-renames` (not `format-patch`).
@@ -144,7 +147,7 @@ renewed or deleted. An active waiver that covered nothing is listed in `unused_w
 | `patch_facts_sha256` | SHA-256 of Git's facts: `--numstat -z` output, one 0x00 byte, `--summary` output. `null` when Git refused the patch. |
 | `provenance` | `produced` (authority) or `supplied` (advisory). |
 | `ranked_by` | `{version, sha256}`: the version the ranking reports, and the ranker binary's SHA-256 (`null` when supplied). |
-| `git` | `{path, version}` of the Git that read the patch: recorded for audit, not attested. |
+| `git` | The Git that read the patch: `{path, version, sha256, admission, allowlist_sha256}`. `sha256` is the executable read through the descriptor every Git call used; `admission` is `approved` when that digest is enrolled in the owner's allowlist, `unpinned` otherwise (advisory only); `allowlist_sha256` is the SHA-256 of the admitted allowlist bytes, `null` when unpinned. `path` and `version` are recorded for audit, not attested. |
 | `claims` | Only when `--base`/`--head` were given: `{base?, head?, verified: false}`. |
 
 `sha256sum` reproduces every digest. v0's `patch_verified` is gone: the patch is always hashed.
