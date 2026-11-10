@@ -141,8 +141,8 @@ review_reason = "C1a bounded child execution is the reviewed sole process spawn 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors/child/process.rs"
 lint = "clippy::disallowed_methods"
-source_reason = "door: run_child (poll sleep, /proc/<pid>/stat)"
-review_reason = "Q-DOOR: reads only the spawned child PID status to observe exit without reaping before group cleanup; polling sleeps remain inside the child deadline."
+source_reason = "door: run_child (/proc/<pid>/stat)"
+review_reason = "Q-DOOR: reads only the spawned child PID status to observe exit without reaping before group cleanup. Q-DOOR-SPLIT (Q2-14): the probe is read_exited; the poll sleep and the deadline clock moved into run_child_killing_with's door, so wait_bounded is pure and carries no expectation."
 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors/child/process.rs"

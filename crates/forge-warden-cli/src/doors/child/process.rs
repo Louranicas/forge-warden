@@ -21,6 +21,17 @@ pub(in crate::doors) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
 /// How often the parent checks a running child for exit, overflow or timeout.
 pub(super) const POLL: std::time::Duration = std::time::Duration::from_millis(5);
 
+/// How [`wait_bounded`] sees time (Q2-14): the time since the child started, and one pause
+/// between polls. The door builds the only production clock from `Instant::now` and a real
+/// [`POLL`] sleep, inside [`run_child_killing_with`]. A test passes a fake clock, so every deadline
+/// and precedence case of the wait runs without a process or a real sleep.
+pub(super) struct Clock<E, P> {
+    /// Time since the child was started.
+    pub(super) elapsed: E,
+    /// Wait one poll interval.
+    pub(super) pause: P,
+}
+
 /// An executable opened once, checked and hashed through that one descriptor. It runs as
 /// `/proc/self/fd/<n>` (the same open file), so swapping the path after hashing changes nothing.
 #[derive(Debug)]
@@ -155,7 +166,13 @@ pub(in crate::doors) fn run_child_killing_with(
     let (out_over, out_rx) = drain(Box::new(stdout), spec.stdout_cap);
     let (err_over, err_rx) = drain(Box::new(stderr), spec.stderr_cap);
 
-    let ended = wait_bounded(child.id(), &out_over, &err_over, started, spec.timeout);
+    let clock = Clock {
+        elapsed: || started.elapsed(),
+        pause: || std::thread::sleep(POLL),
+    };
+    let stat_path = format!("/proc/{group}/stat");
+    let exited = || read_exited(&stat_path);
+    let ended = wait_bounded(exited, &out_over, &err_over, &clock, spec.timeout);
     // Whatever happened, nothing in the child's group outlives this call. The leader is not
     // reaped yet (exited means a zombie), so the group still exists and its id cannot have been
     // reused: the kill must succeed, and a failure is reported (Q2-04).
@@ -163,17 +180,15 @@ pub(in crate::doors) fn run_child_killing_with(
     // If the group kill failed, the direct child still dies here, so `wait` cannot hang.
     let _killed = child.kill();
     let reaped = child.wait();
-    let remaining = spec
-        .timeout
-        .saturating_sub(started.elapsed())
-        .saturating_add(POLL);
-    let out_bytes = out_rx.recv_timeout(remaining);
-    let err_bytes = err_rx.recv_timeout(POLL.saturating_mul(20));
-    let wrote = wrote_rx.recv_timeout(
+    // What is left of the deadline, plus one poll, read afresh at each use.
+    let remaining = || {
         spec.timeout
-            .saturating_sub(started.elapsed())
-            .saturating_add(POLL),
-    );
+            .saturating_sub((clock.elapsed)())
+            .saturating_add(POLL)
+    };
+    let out_bytes = out_rx.recv_timeout(remaining());
+    let err_bytes = err_rx.recv_timeout(POLL.saturating_mul(20));
+    let wrote = wrote_rx.recv_timeout(remaining());
 
     killed.map_err(ChildFailure::Io)?;
     ended?;
@@ -206,21 +221,23 @@ pub(in crate::doors) fn run_child_killing_with(
     })
 }
 
-/// Wait for the child `pid` to exit, stopping early on an overflow or the wall-clock limit. Exit
-/// is read from `/proc/<pid>/stat` WITHOUT reaping (`try_wait` would reap), so the caller can
-/// still kill the group by the leader's id before the kernel may reuse it (Q2-04).
-#[expect(
-    clippy::disallowed_methods,
-    reason = "door: run_child (poll sleep, /proc/<pid>/stat)"
-)]
-pub(super) fn wait_bounded(
-    pid: u32,
+/// Wait for the child to exit, stopping early on an overflow or the wall-clock limit. `exited`
+/// reads whether the child has exited WITHOUT reaping it (`try_wait` would reap), so the caller can
+/// still kill the group by the leader's id before the kernel may reuse it (Q2-04). Each poll checks,
+/// in this order: stdout overflow, stderr overflow, exit, then the deadline (`elapsed >= timeout`),
+/// and only then pauses. The loop has no effect of its own: time and the exit probe come in
+/// through `clock` and `exited` (Q2-14).
+pub(super) fn wait_bounded<E, P>(
+    mut exited: impl FnMut() -> Result<bool, ChildFailure>,
     out_over: &AtomicBool,
     err_over: &AtomicBool,
-    started: std::time::Instant,
+    clock: &Clock<E, P>,
     timeout: std::time::Duration,
-) -> Result<(), ChildFailure> {
-    let stat_path = format!("/proc/{pid}/stat");
+) -> Result<(), ChildFailure>
+where
+    E: Fn() -> std::time::Duration,
+    P: Fn(),
+{
     loop {
         if out_over.load(Ordering::SeqCst) {
             return Err(ChildFailure::StdoutOverflow);
@@ -228,22 +245,27 @@ pub(super) fn wait_bounded(
         if err_over.load(Ordering::SeqCst) {
             return Err(ChildFailure::StderrOverflow);
         }
-        let stat = std::fs::read(&stat_path)
-            .map_err(|e| ChildFailure::Io(format!("reading {stat_path}: {e}")))?;
-        match has_exited(&stat) {
-            Some(true) => return Ok(()),
-            Some(false) => {}
-            None => {
-                return Err(ChildFailure::Io(format!(
-                    "{stat_path} is not a process status"
-                )));
-            }
+        if exited()? {
+            return Ok(());
         }
-        if started.elapsed() >= timeout {
+        if (clock.elapsed)() >= timeout {
             return Err(ChildFailure::Timeout);
         }
-        std::thread::sleep(POLL);
+        (clock.pause)();
     }
+}
+
+/// The production exit probe for [`wait_bounded`]: whether the process whose `/proc/<pid>/stat` is
+/// at `stat_path` has exited, read without reaping it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "door: run_child (/proc/<pid>/stat)"
+)]
+fn read_exited(stat_path: &str) -> Result<bool, ChildFailure> {
+    let stat = std::fs::read(stat_path)
+        .map_err(|e| ChildFailure::Io(format!("reading {stat_path}: {e}")))?;
+    has_exited(&stat)
+        .ok_or_else(|| ChildFailure::Io(format!("{stat_path} is not a process status")))
 }
 
 /// Whether a `/proc/<pid>/stat` line shows an exited, unreaped process (state `Z` or `X`). The
@@ -334,5 +356,148 @@ pub(super) fn kill_group(kill: &Path, group: u32) -> Result<(), String> {
                 return Err(failed(format!("could not be waited on: {e}")));
             }
         }
+    }
+}
+
+/// Q2-14: the wait's deadline and precedence, driven by a fake clock and a scripted exit probe (no
+/// process, no real sleep). Each poll checks stdout overflow, then stderr overflow, then exit, then
+/// the deadline, and only then pauses one [`POLL`].
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+mod tests {
+    use super::{Clock, POLL, wait_bounded};
+    use crate::doors::child::ChildFailure;
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    /// A clock that advances exactly one [`POLL`] per pause, counting the pauses.
+    struct Fake {
+        now: Cell<Duration>,
+        pauses: Cell<u32>,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            Self {
+                now: Cell::new(Duration::ZERO),
+                pauses: Cell::new(0),
+            }
+        }
+
+        fn clock(&self) -> Clock<impl Fn() -> Duration + '_, impl Fn() + '_> {
+            Clock {
+                elapsed: || self.now.get(),
+                pause: || {
+                    self.now.set(self.now.get().saturating_add(POLL));
+                    self.pauses.set(self.pauses.get().saturating_add(1));
+                },
+            }
+        }
+    }
+
+    /// Run the wait with a probe that reports exit on poll `exit_on` (1-based; 0 never exits).
+    /// Returns the outcome, the number of probes and the number of pauses.
+    fn run(
+        exit_on: u32,
+        timeout: Duration,
+        stdout_over: &AtomicBool,
+        stderr_over: &AtomicBool,
+    ) -> (Result<(), ChildFailure>, u32, u32) {
+        let fake = Fake::new();
+        let probes = Cell::new(0_u32);
+        let exited = || {
+            probes.set(probes.get().saturating_add(1));
+            // A wait that never stops (no deadline, or a clock that never moves) fails fast here
+            // instead of hanging the test.
+            if probes.get() > 1_000 {
+                return Err(ChildFailure::Io("the wait did not stop".to_owned()));
+            }
+            Ok(exit_on != 0 && probes.get() >= exit_on)
+        };
+        let ended = wait_bounded(exited, stdout_over, stderr_over, &fake.clock(), timeout);
+        (ended, probes.get(), fake.pauses.get())
+    }
+
+    fn flags(out: bool, err: bool) -> (AtomicBool, AtomicBool) {
+        (AtomicBool::new(out), AtomicBool::new(err))
+    }
+
+    #[test]
+    fn an_exited_child_ends_the_wait_without_a_pause() {
+        let (out, err) = flags(false, false);
+        assert_eq!(run(1, POLL.saturating_mul(4), &out, &err), (Ok(()), 1, 0));
+    }
+
+    #[test]
+    fn a_running_child_is_polled_once_per_pause_until_it_exits() {
+        let (out, err) = flags(false, false);
+        assert_eq!(run(3, POLL.saturating_mul(4), &out, &err), (Ok(()), 3, 2));
+    }
+
+    #[test]
+    fn the_deadline_is_reached_when_elapsed_equals_the_timeout() {
+        // Polls at 0, 1, 2, 3 and 4 POLL; at 4 POLL elapsed == timeout, so the wait times out
+        // there (`>=`, not `>`), after exactly four pauses.
+        let (out, err) = flags(false, false);
+        assert_eq!(
+            run(0, POLL.saturating_mul(4), &out, &err),
+            (Err(ChildFailure::Timeout), 5, 4)
+        );
+        // A zero timeout probes once and then times out without pausing.
+        assert_eq!(
+            run(0, Duration::ZERO, &out, &err),
+            (Err(ChildFailure::Timeout), 1, 0)
+        );
+    }
+
+    #[test]
+    fn exit_on_the_deadline_poll_is_an_exit_not_a_timeout() {
+        let (out, err) = flags(false, false);
+        assert_eq!(run(5, POLL.saturating_mul(4), &out, &err), (Ok(()), 5, 4));
+    }
+
+    #[test]
+    fn overflow_beats_exit_and_stdout_overflow_beats_stderr_overflow() {
+        let cases = [
+            (true, false, ChildFailure::StdoutOverflow),
+            (false, true, ChildFailure::StderrOverflow),
+            (true, true, ChildFailure::StdoutOverflow),
+        ];
+        for (stdout, stderr, expected) in cases {
+            let (out, err) = flags(stdout, stderr);
+            assert_eq!(run(1, POLL, &out, &err), (Err(expected), 0, 0));
+        }
+    }
+
+    #[test]
+    fn an_overflow_during_the_wait_is_seen_on_the_next_poll_before_the_probe() {
+        let fake = Fake::new();
+        let (out, err) = flags(false, false);
+        let probes = Cell::new(0_u32);
+        let exited = || {
+            probes.set(probes.get().saturating_add(1));
+            if probes.get() == 2 {
+                err.store(true, Ordering::SeqCst);
+            }
+            Ok(probes.get() >= 3)
+        };
+        let ended = wait_bounded(exited, &out, &err, &fake.clock(), POLL.saturating_mul(10));
+        assert_eq!(
+            (ended, probes.get(), fake.pauses.get()),
+            (Err(ChildFailure::StderrOverflow), 2, 2)
+        );
+    }
+
+    #[test]
+    fn a_probe_failure_ends_the_wait_before_the_deadline_check() {
+        let fake = Fake::new();
+        let (out, err) = flags(false, false);
+        let failure = || Err(ChildFailure::Io("reading /proc/1/stat: gone".to_owned()));
+        assert_eq!(
+            wait_bounded(failure, &out, &err, &fake.clock(), Duration::ZERO),
+            Err(ChildFailure::Io("reading /proc/1/stat: gone".to_owned()))
+        );
+        assert_eq!(fake.pauses.get(), 0);
     }
 }
