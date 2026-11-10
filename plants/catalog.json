@@ -694,7 +694,7 @@
     {
       "id": "unadmitted-producer",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/mod.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
       "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
       "old": "let Some(admitted) = policy.admit_producer(&pinned.sha256) else {",
       "new": "let Some(admitted) = policy.producers().first().and_then(|listed| policy.admit_producer(listed)) else {",
