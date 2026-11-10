@@ -214,6 +214,10 @@ advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). 
 the repository is not an independent approval boundary, so the trust root must be enforced
 outside the pull request (see [`SECURITY.md`](SECURITY.md)).
 
+The scheduled full mutation baseline, run on merged `main` only, can use a self-hosted
+runner-up pool. Pull requests and every ci.yml job always run hosted. The trade-offs and the residual host-loopback exposure are set out in
+[`docs/runner-up.md`](docs/runner-up.md).
+
 A `hold` is accepted only with an OpenSSH-signed acknowledgement. The receipt binds the exact
 base, head, verdict digest and held rules, signed by a reviewer enrolled in the base branch's
 `.github/hold-reviewers/allowed_signers` ([ADR 0007](docs/adr/0007-subject-bound-hold-acknowledgements.md)).

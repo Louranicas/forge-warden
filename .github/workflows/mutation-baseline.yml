@@ -1,4 +1,8 @@
-# Periodic audit only: not a required pull-request check.
+# PROOF BRANCH ONLY (wp/RUNNER-UP-proof-v6, never merged). Periodic audit only: not a required check.
+# This branch's copy proves one thing: a real dispatched job lands on a runner-up KVM place,
+# bootstraps the guest (scripts/guest_bootstrap.sh: build-essential, pinned rustup), checks out,
+# runs one bounded step (cargo test -p forge-warden-core), exits and is cleaned up. main's sharded
+# mutation jobs are left out here on purpose; RUNNER-UP v7.2's real rebase reconciles them.
 name: mutation-baseline
 
 on:
@@ -18,82 +22,57 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  mutation-plan:
-    timeout-minutes: 10
-    name: plan mutation shards
+  route:
+    timeout-minutes: 5
+    name: route (runner-up for merged main only)
+    # WP-RUNNER-UP: the only place the pool is chosen. Exact (case-sensitive) bash comparisons.
+    # PROOF BRANCH ONLY: the default below is the pool, so this branch's dispatch routes there.
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      runner: ${{ steps.pick.outputs.runner }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
-        with:
-          tool: cargo-mutants@27.1.0
-      - run: python3 -I scripts/tool_versions.py --check
-      - name: Count the complete mutation inventory and size budgets
-        id: plan
-        run: python3 -I scripts/mutation_ci.py plan full
-
-  mutation-shards:
-    timeout-minutes: ${{ matrix.minutes }}
-    name: mutation shard ${{ matrix.index }}
-    needs: [mutation-plan]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.mutation-plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
-        with:
-          tool: cargo-mutants@27.1.0
-      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
-      - run: cargo fetch --locked
-      - name: Record the exact subject and tool versions
-        run: |
-          git rev-parse HEAD > mutation-provenance.txt
-          rustc --version >> mutation-provenance.txt
-          cargo mutants --version >> mutation-provenance.txt
-          cat scripts/tool-versions.toml >> mutation-provenance.txt
-      - name: Verify inventory and test every mutant assigned to this shard
+      - id: pick
         env:
-          SHARD_INDEX: ${{ matrix.index }}
-          SHARD_COUNT: ${{ matrix.shards }}
-          MUTANT_TOTAL: ${{ matrix.total }}
-          INVENTORY_DIGEST: ${{ matrix.digest }}
-          SHARD_MINUTES: ${{ matrix.minutes }}
-        run: python3 -I scripts/mutation_ci.py run full
-      - if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: mutants-shard-${{ matrix.index }}
-          path: |
-            mutants.out
-            mutation-provenance.txt
-          if-no-files-found: error
-          retention-days: 30
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PROTECTED: ${{ github.ref_protected }}
+        run: |
+          # PROOF BRANCH ONLY (never merged): route this one dispatch to the pool.
+          runner=runner-up-kinoite
+          case "$EVENT" in
+            push|schedule|workflow_dispatch)
+              if [ "$REF" = refs/heads/main ] && [ "$PROTECTED" = true ]; then
+                runner=runner-up-kinoite
+              fi
+              ;;
+          esac
+          printf 'runner=%s\n' "$runner" >> "$GITHUB_OUTPUT"
+          printf 'route: event=%s ref=%s protected=%s -> %s\n' "$EVENT" "$REF" "$PROTECTED" "$runner"
 
   full-workspace:
-    timeout-minutes: 5
-    name: full workspace mutation baseline
-    needs: [mutation-plan, mutation-shards]
-    if: always()
-    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    name: runner-up live proof (bounded core tests)
+    needs: route
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
-      - name: Require successful planning and every shard
+      - name: Prepare a self-hosted runner-up guest (hosted images ship these tools)
+        if: runner.environment == 'self-hosted'
+        run: bash scripts/guest_bootstrap.sh
+      - name: Refuse to count a hosted fallback as the proof
         env:
-          PLAN_RESULT: ${{ needs.mutation-plan.result }}
-          SHARD_RESULT: ${{ needs.mutation-shards.result }}
-        run: python3 -I scripts/mutation_ci.py aggregate
+          ENVIRONMENT: ${{ runner.environment }}
+          ROUTED: ${{ needs.route.outputs.runner }}
+        run: |
+          printf 'proof: runner_name=%s environment=%s routed=%s head=%s\n' \
+            "$RUNNER_NAME" "$ENVIRONMENT" "$ROUTED" "$(git rev-parse HEAD)"
+          test "$ENVIRONMENT" = self-hosted
+          test "$ROUTED" = runner-up-kinoite
+      - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
+      - run: cargo fetch --locked
+      - name: One bounded step (core crate tests only; a full mutation run would take hours here)
+        timeout-minutes: 30
+        run: cargo test --locked -p forge-warden-core
