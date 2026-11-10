@@ -70,7 +70,7 @@ CI_TIMEOUTS = {
     "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10, "workflow-audit": 10,
                "mutation": 5, "mutation-plan": 10, "mutation-shards": "${{ matrix.minutes }}",
                "dogfood": 10, "vocabulary": 10},
-    "mutation-baseline.yml": {"full-workspace": 5, "mutation-plan": 10,
+    "mutation-baseline.yml": {"route": 5, "full-workspace": 5, "mutation-plan": 10,
                               "mutation-shards": "${{ matrix.minutes }}"},
 }
 
@@ -145,6 +145,10 @@ def check_timeouts(root):
                     allowed.update({"mutation-plan": {"outputs"},
                                     "mutation-shards": {"needs", "strategy"},
                                     "mutation": {"needs"}, "full-workspace": {"needs"}}.get(job, set()))
+                    # WP-RUNNER-UP: only the baseline's route job has outputs of its own, and only
+                    # the baseline's plan waits on it. ci.yml gains no field.
+                    allowed.update({("mutation-baseline.yml", "route"): {"outputs"},
+                                    ("mutation-baseline.yml", "mutation-plan"): {"needs"}}.get((filename, job), set()))
                     if not match or match[1] not in allowed:
                         raise ValueError("CI timeout contract: unsupported job field")
                     if match[1] in fields:
@@ -167,8 +171,9 @@ MUTATION_CONTRACT = {
     ('ci.yml', 'mutation-plan'): 'ead40464329ae65d88e971c65024ddb0c59685f300545e5b7ff1bfee9ca35ab6',
     ('ci.yml', 'mutation-shards'): 'fb283a1342631e9837b7a77313433a5e5607772011fba36402666667866d491e',
     ('ci.yml', 'mutation'): 'dcbad6a3b73cbc3e2f5c16fc8e307aa18ed1225ca61f94c4c61d5b8e529d8e02',
-    ('mutation-baseline.yml', 'mutation-plan'): 'ea1c1c5c7c1d1f800409765d42d1147cf46f572632245480de0b0a7f999622d8',
-    ('mutation-baseline.yml', 'mutation-shards'): 'c7d339068b77740e7d96fd3ad756eeaa594161b15241d3df05a11aa225b687c0',
+    # WP-RUNNER-UP v8: plan and shards gain the routed header and the guarded guest bootstrap only.
+    ('mutation-baseline.yml', 'mutation-plan'): '388a92e62af3f3f0b1e7b340fea30821d25531c2dc103b37f7020b9de7f1d35f',
+    ('mutation-baseline.yml', 'mutation-shards'): 'e9867e6cf81ef1edaa343ae218822bd4070e9d782ad795be6d18d14f8683901a',
     ('mutation-baseline.yml', 'full-workspace'): '952432a0135022009d488de17045a82fc742520493518173f5e02fda1e4c6277',
 }
 MUTATION_DRIVER_SHA256 = '79d89f4bc97940b8c28fbe6dfb924232ee2595ac012c427c14edea20da8559e7'
