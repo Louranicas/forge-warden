@@ -255,6 +255,24 @@ fn the_parser_finds_every_suppression_form() {
             "some_macro! { #[doc = $($t)*] fn f() {} }",
         ),
         (
+            "unparseable lint list",
+            "#[expect(clippy::all reason)]\nfn f() {}",
+        ),
+        ("unparseable file", "fn f( {"),
+    ];
+    for (name, source) in forms {
+        assert!(
+            !door_lint_controls(source).is_empty(),
+            "missed: {name}\n{source}"
+        );
+    }
+}
+
+/// Q-DOOR-PATH: every way of writing a `path` attribute is an offence for the shipped-file scan.
+#[test]
+fn the_parser_finds_every_path_attribute_form() {
+    let forms = [
+        (
             "a path attribute (Q-DOOR-PATH)",
             "#[path = \"doors/file.rs\"]\nmod again;",
         ),
@@ -274,15 +292,12 @@ fn the_parser_finds_every_suppression_form() {
             "a path attribute on an inline module",
             "#[path = \"doors\"]\nmod again {\n    mod file;\n}",
         ),
-        (
-            "unparseable lint list",
-            "#[expect(clippy::all reason)]\nfn f() {}",
-        ),
-        ("unparseable file", "fn f( {"),
     ];
     for (name, source) in forms {
         assert!(
-            !door_lint_controls(source).is_empty(),
+            door_lint_controls(source)
+                .iter()
+                .any(|f| f == PATH_ATTRIBUTE),
             "missed: {name}\n{source}"
         );
     }
