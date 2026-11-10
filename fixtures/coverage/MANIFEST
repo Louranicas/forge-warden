@@ -1878,6 +1878,10 @@
         "931b57b90e1f122d8bc16c90d9acb0f9a83b84596cb33b27502fdcead9bc0460"
       ],
       [
+        "crates/forge-warden-cli/src/doors/diagnose.rs",
+        "21d7d2133f0f5664dbe25c6c5e7278dc5e37cc61302f70f73887740cfd73c25e"
+      ],
+      [
         "crates/forge-warden-cli/src/doors/file.rs",
         "4c60ce47c8415a900616fe465d587134cb40dce9ec98d0863ddb04d9a36665ad"
       ],

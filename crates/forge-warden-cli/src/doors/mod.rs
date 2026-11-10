@@ -6,7 +6,6 @@
 //! fails if any other file opens a door.
 
 use forge_warden_core::{Date, Exit};
-use std::io::Write as _;
 
 /// Why a door could not be passed. It decides the registry exit, in one exhaustive `match`
 /// (`Failure::from_door` in main.rs), so a new kind cannot ship unmapped (Q2-05).
@@ -86,20 +85,8 @@ fn date_of_unix_seconds(seconds: u64) -> Result<Date, DoorError> {
         .ok_or_else(|| DoorError::environment("system clock is outside 1970..=9999".to_owned()))
 }
 
-/// Write `text` to stdout. A closed pipe (`forge-warden … | head`) is not an error.
-#[expect(clippy::disallowed_methods, reason = "door: emit")]
-pub(crate) fn emit(text: &str) -> Result<(), DoorError> {
-    write_tolerating_closed_pipe(std::io::stdout().lock(), text)
-}
-
-fn write_tolerating_closed_pipe(mut out: impl std::io::Write, text: &str) -> Result<(), DoorError> {
-    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
-        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
-            Err(DoorError::io("writing stdout", &e))
-        }
-        Ok(()) | Err(_) => Ok(()),
-    }
-}
+mod diagnose;
+pub(crate) use diagnose::{diagnose, diagnose_json, emit};
 
 /// The process status for a registry [`Exit`]: the only place a status is made (R-20). `main`
 /// returns a `Status`, so every way the binary ends goes through the exit-code registry.
@@ -111,33 +98,10 @@ impl std::process::Termination for Status {
     }
 }
 
-/// Write a diagnostic line to stderr. Failure to write a diagnostic is ignored: there is nowhere
-/// left to report it.
-#[expect(clippy::disallowed_methods, reason = "door: diagnose")]
-pub(crate) fn diagnose(text: &str) {
-    let mut err = std::io::stderr().lock();
-    let _ignored = writeln!(err, "{}", forge_warden_core::render::terminal_safe(text));
-}
-
 /// Capture OS arguments once; parsing and machine-output selection remain pure in main.rs.
 #[expect(clippy::disallowed_methods, reason = "door: arguments")]
 pub(crate) fn arguments() -> Vec<std::ffi::OsString> {
     std::env::args_os().collect()
-}
-
-/// Write exactly one JSON error envelope. Fields are terminal-safe before encoding, so JSON
-/// escapes are not double-escaped by the human diagnostic door. Stderr write failure is final.
-#[expect(clippy::disallowed_methods, reason = "door: diagnose_json")]
-pub(crate) fn diagnose_json(exit: Exit, message: &str, next: &str) {
-    let entry = exit.entry();
-    let value = serde_json::json!({
-        "exit": entry.code,
-        "name": entry.name,
-        "message": forge_warden_core::render::terminal_safe(message),
-        "next": forge_warden_core::render::terminal_safe(next),
-    });
-    let mut err = std::io::stderr().lock();
-    let _ignored = writeln!(err, "{value}");
 }
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
@@ -2304,7 +2268,6 @@ mod child_tests {
 #[cfg(not(fw_fixture_cli))]
 mod tests {
     use super::*;
-    use std::io::ErrorKind;
 
     #[test]
     fn unix_seconds_map_to_utc_dates() {
@@ -2325,25 +2288,5 @@ mod tests {
             date_of_unix_seconds(1_793_880_000).unwrap(),
             Date::new(2026, 11, 5).unwrap()
         );
-    }
-
-    struct Failing(ErrorKind);
-
-    impl std::io::Write for Failing {
-        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-            Err(self.0.into())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn a_closed_pipe_is_not_an_error_but_other_write_failures_are() {
-        assert!(write_tolerating_closed_pipe(Failing(ErrorKind::BrokenPipe), "x").is_ok());
-        assert!(write_tolerating_closed_pipe(Failing(ErrorKind::PermissionDenied), "x").is_err());
-        let mut sink = Vec::new();
-        write_tolerating_closed_pipe(&mut sink, "hello").unwrap();
-        assert_eq!(sink, b"hello");
     }
 }

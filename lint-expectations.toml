@@ -13,13 +13,13 @@ source_reason = "door: today"
 review_reason = "Reviewed effect boundary: door: today; I/O remains confined to its named door."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors/mod.rs"
+file = "crates/forge-warden-cli/src/doors/diagnose.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: emit"
 review_reason = "Reviewed effect boundary: door: emit; I/O remains confined to its named door."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors/mod.rs"
+file = "crates/forge-warden-cli/src/doors/diagnose.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: diagnose"
 review_reason = "Reviewed effect boundary: door: diagnose; I/O remains confined to its named door."
@@ -367,8 +367,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "b09615dd19ea78028bc080771b2fdd779bcf288302658c291bbde065ff5257b7"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes."
+sha256 = "99495a4856c703a3ab496ae0a482f455faa3503bbfb161b550555b75b098a968"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
@@ -413,7 +413,7 @@ source_reason = "door: arguments"
 review_reason = "WP-Q-CLI-CONTRACT: one OS argv capture; pure clap parsing and exact flag classification remain in main.rs (O1 #921)."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors/mod.rs"
+file = "crates/forge-warden-cli/src/doors/diagnose.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: diagnose_json"
 review_reason = "WP-Q-CLI-CONTRACT: fixed error-envelope stderr sink; fields terminal-sanitized before JSON encoding, one line, no raw stderr bypass (O1 #921)."
