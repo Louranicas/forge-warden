@@ -1941,6 +1941,109 @@
         "coreutils",
         "python3"
       ]
+    },
+    {
+      "id": "door-list-drops-module",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/tests/common/mod.rs",
+      "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "door_files_are_exactly_the_listed_modules"
+      ],
+      "old": "pub(crate) const DOOR_FILES: [&str; 9] = [\n    \"crates/forge-warden-cli/src/doors/child/entropy.rs\",\n",
+      "new": "pub(crate) const DOOR_FILES: [&str; 8] = [\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-dir-widened",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/tests/common/mod.rs",
+      "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "door_files_are_exactly_the_listed_modules"
+      ],
+      "old": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-cli/src/doors\";",
+      "new": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-cli/src\";",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-second-attest",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/doors/file.rs",
+      "diagnostic": "only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "only_the_door_mints_a_produced_ranking"
+      ],
+      "old": "//! File admission doors: the one named-file open ([`open_regular`]) and the bounded readers.",
+      "new": "//! File admission doors: the one named-file open ([`open_regular`]) and the bounded readers.\n// Ranking::attest(doc, admitted) a second mint in another door module",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-unlisted-module",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/doors/extra.rs",
+      "create": "//! An unlisted module under doors/: it must gain no door rights.\n",
+      "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "door_files_are_exactly_the_listed_modules"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
