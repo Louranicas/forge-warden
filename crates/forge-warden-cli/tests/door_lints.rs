@@ -139,10 +139,12 @@ const ATTRIBUTE_EXPRESSION: &str = "an expression in an attribute";
 
 /// Attributes that may carry an expression, each written exactly so (whitespace aside). Reviewed:
 /// the first builds a clap `ArgGroup` from literals; the second formats a count and a list of the
-/// variant's own field. Neither reaches an effect.
-const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 2] = [
+/// variant's own field; the last two name the crate's own size constant. None reaches an effect.
+const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 4] = [
     r#"command(group(ArgGroup::new("mode").required(true).args(["ranker","advisory"])))"#,
     r#"error("policy refused with {} issue(s):\n{}",.0.len(),IssueList(.0))"#,
+    r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
+    r#"error("ranking is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
 ];
 
 /// `text` without whitespace (inside string literals too: spacing never makes an expression).
@@ -158,24 +160,34 @@ const CLAP_ATTRIBUTES: [&str; 5] = ["command", "arg", "clap", "group", "value"];
 /// generates under `#[allow(clippy::style)]`, which contains `disallowed_methods`: a call written
 /// there reaches an effect and clippy reports nothing (measured on clap's derive). So a call, a
 /// method call, a macro call, a block, a closure and every operator are refused wherever they
-/// stand in an attribute; a named function or constant is fine, because its own body is linted.
-/// `depth` counts enclosing parentheses; in a clap attribute `name(value)` is an expression too,
-/// so parentheses inside such a value are a call.
-fn holds_an_expression(tokens: TokenStream, depth: usize, clap: bool) -> bool {
+/// stand in an attribute. A value (after `=`, or inside a clap `name(value)`) must be a literal,
+/// `true`, `false`, `None` or a list of those: a bare name or path there may be a function the macro
+/// calls for us, and `value_parser = std::env::var` is as much an effect as a call written out
+/// (Bastion). `depth` counts enclosing parentheses; `literal_only` carries a value position into
+/// a bracketed list.
+fn holds_an_expression(tokens: TokenStream, depth: usize, clap: bool, literal_only: bool) -> bool {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut value = false;
     for (index, tree) in trees.iter().enumerate() {
         let before = index.checked_sub(1).and_then(|at| trees.get(at));
+        let strict = literal_only || value || (clap && depth >= 1);
         match tree {
             TokenTree::Punct(punct) => match punct.as_char() {
                 '=' => value = true,
                 ',' => value = false,
-                ':' | '-' => {}
+                '-' => {}
+                ':' if !strict => {}
                 _ => return true,
             },
+            TokenTree::Ident(ident) => {
+                let name = ident.unraw().to_string();
+                if strict && !["true", "false", "None"].contains(&name.as_str()) {
+                    return true;
+                }
+            }
             TokenTree::Group(group) => {
                 let inner = group.stream();
-                let (nested, nested_clap) = match group.delimiter() {
+                let (nested, nested_clap, nested_literal) = match group.delimiter() {
                     Delimiter::Brace => return true,
                     Delimiter::Parenthesis => {
                         let name = match before {
@@ -196,18 +208,18 @@ fn holds_an_expression(tokens: TokenStream, depth: usize, clap: bool) -> bool {
                         let starts_clap =
                             !clap && name.is_some_and(|n| CLAP_ATTRIBUTES.contains(&n.as_str()));
                         if starts_clap {
-                            (0, true)
+                            (0, true, false)
                         } else {
-                            (depth.saturating_add(1), clap)
+                            (depth.saturating_add(1), clap, false)
                         }
                     }
-                    Delimiter::Bracket | Delimiter::None => (depth, clap),
+                    Delimiter::Bracket | Delimiter::None => (depth, clap, strict),
                 };
-                if holds_an_expression(inner, nested, nested_clap) {
+                if holds_an_expression(inner, nested, nested_clap, nested_literal) {
                     return true;
                 }
             }
-            TokenTree::Ident(_) | TokenTree::Literal(_) => {}
+            TokenTree::Literal(_) => {}
         }
     }
     false
@@ -228,7 +240,7 @@ fn check_expression(meta: &Meta, found: &mut Vec<String>) {
     };
     let name = last(meta.path());
     let clap = CLAP_ATTRIBUTES.contains(&name.as_str());
-    if !holds_an_expression(list.tokens.clone(), 0, clap) {
+    if !holds_an_expression(list.tokens.clone(), 0, clap, false) {
         return;
     }
     let written = squeeze(&format!("{name}({})", list.tokens));
@@ -486,6 +498,22 @@ fn the_parser_finds_every_attribute_expression_form() {
             "#[command(after_help(v(\"X\")))]\nstruct Cli;",
         ),
         (
+            "a std function named as a value, not called (Bastion)",
+            "#[arg(long, value_parser = std::fs::read_to_string)]\nstruct Cli;",
+        ),
+        (
+            "an imported function named as a value",
+            "#[arg(long, value_parser = v)]\nstruct Cli;",
+        ),
+        (
+            "a function named in clap's name(value) form",
+            "#[arg(long, value_parser(std::env::var))]\nstruct Cli;",
+        ),
+        (
+            "a name inside a list value",
+            "#[arg(long, value_parser = [v, \"b\"])]\nstruct Cli;",
+        ),
+        (
             "a block",
             "#[arg(long, default_value_t = { 1 })]\nstruct Cli;",
         ),
@@ -530,14 +558,19 @@ fn the_parser_finds_every_attribute_expression_form() {
             "missed: {name}\n{source}"
         );
     }
+}
+
+/// Q37: what an attribute may hold without being an expression.
+#[test]
+fn the_parser_admits_names_literals_and_lists_of_literals() {
     let plain = [
         (
             "literals, flags and a list of literals",
             "#[arg(long, value_name = \"FILE\", default_value = \"/usr/bin/git\", value_parser = [\"a\", \"b\"])]\nstruct Cli;",
         ),
         (
-            "a named function or constant as a value",
-            "#[arg(long, value_parser = parse_date, default_value_t = DEFAULT)]\nstruct Cli;",
+            "true, false, None and clap's name(literal) form",
+            "#[arg(long, required = true, hide = false, long_help = None, value_name(\"FILE\"))]\nstruct Cli;",
         ),
         (
             "nested lists in a non-clap attribute",
