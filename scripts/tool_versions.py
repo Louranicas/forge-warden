@@ -93,6 +93,8 @@ def local_gate(root):
     return required, hosted
 
 
+# The tools whose steps below are required lines; [local_gate] required must keep them (Keel A6).
+STEP_TOOLS = ("cargo-deny", "cargo-mutants")
 # G-18: each required tool's step, as one unconditional line of fixed form. A guard, a `|| true` or a
 # moved command changes the line and is refused here; scripts/tests/ci_local.sh proves the lines run.
 REQUIRED_STEP_LINES = (
@@ -105,7 +107,11 @@ REQUIRED_STEP_LINES = (
 
 def check_ci_local(root):
     """ci_local probes only hosted-only tools, runs the local-tools step, and never claims a pass it skipped."""
-    _, hosted = local_gate(root)
+    required, hosted = local_gate(root)
+    missing = sorted(set(STEP_TOOLS) - set(required))
+    if missing:
+        raise ValueError("a tool whose step ci_local requires is not in [local_gate] required (G-18): "
+                         + ", ".join(missing))
     text = (root / "scripts/ci_local.sh").read_text()
     probed = re.findall(r"command -v ([A-Za-z0-9_.+-]+)", text)
     stray = sorted(set(probed) - set(hosted))
