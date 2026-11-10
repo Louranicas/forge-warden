@@ -573,6 +573,15 @@ impl Verdict {
         self
     }
 
+    /// This verdict with `extra` notes and then `because` appended. `because` is not optional, so
+    /// the result always carries a note and is at least a hold (Q25: the refusal arm of
+    /// `authority::judge` has no other way to finish).
+    #[must_use]
+    pub(crate) fn held_by(self, mut extra: Vec<Note>, because: Note) -> Self {
+        extra.push(because);
+        self.with_notes(extra)
+    }
+
     /// Always [`VERDICT_SCHEMA`].
     #[must_use]
     pub const fn schema(&self) -> &'static str {

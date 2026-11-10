@@ -451,8 +451,9 @@ fn a_binary_modification_is_never_a_companion() {
 
 #[test]
 fn a_facts_error_never_passes_anywhere_in_the_corpus() {
-    // `Checked::effective` has nothing to widen with when Git's facts are an error, so the rules
-    // read the ranking as written. The `patch_unverifiable` note is what keeps that from passing.
+    // With no facts from Git there is nothing to widen with, so the rules read the ranking as
+    // written. `judge`'s refusal arm finishes through `Verdict::held_by`, which takes the
+    // `patch_unverifiable` note as a required argument; this checks the result over the corpus.
     let index: serde_json::Value = serde_json::from_slice(&read("cases.json")).unwrap();
     let p = policy(PERMISSIVE);
     let mut raw_passes = 0_usize;

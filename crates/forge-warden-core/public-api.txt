@@ -10,7 +10,7 @@ crate::authority impl<P> Ranking<P>
 crate::authority Ranking::#[must_use] pub const fn doc(&self) -> &RankDoc
 crate::authority Ranking::#[must_use] pub const fn producer_sha256(&self) -> Option<&Sha256Hex>
 crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Checked<'r, P>
-crate::authority Checked.<3 private field(s)>
+crate::authority Checked.<2 private field(s)>
 crate::authority #[must_use] pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P>
 crate::authority impl<P> Checked<'_, P>
 crate::authority Checked::#[must_use] pub const fn ranking(&self) -> &Ranking<P>

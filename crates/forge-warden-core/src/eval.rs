@@ -193,7 +193,7 @@ fn forbidden_signals(signals: &[Signal], scope: &Scope, files: &[RankedFile]) ->
 
 /// Whether a file was removed by the change. deep-diff-forge (0.7.0 and 0.8.2) ranks a deleted
 /// binary file as `binary_changed` with only `binary_change`: it never writes `deleted_file` for
-/// it. The signal read here comes from Git's facts, which `authority::Checked::effective` adds
+/// it. The signal read here comes from Git's facts, which `authority::judge` adds (see `widened`)
 /// before any rule runs (ADR 0005 §2.8), so the status alone is not enough. This raw engine,
 /// given an unwidened ranking, cannot see a binary deletion.
 fn is_deleted(file: &RankedFile) -> bool {
