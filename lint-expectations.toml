@@ -169,7 +169,7 @@ source_reason = "door: git_facts (the system temp dir)"
 review_reason = "C1b git_facts reads the system temp base only before admission and isolated Git execution; no ambient candidate repository authority is accepted."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors/child/mod.rs"
+file = "crates/forge-warden-cli/src/doors/child/isolation.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: admit_base (canonicalize)"
 review_reason = "C1b base admission canonicalizes the absolute temp path before requiring non-lossy UTF-8 and a colon-free Git ceiling; refusal prevents repository discovery escapes."
@@ -367,8 +367,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "09b3daf3c0a50bbee664b7d49a9f4e802b93fbac552fadb61ffe2833e09594b5"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes."
+sha256 = "cd8428733d9fd822420eafa436bee5f9a6e70e78f36cddb8fcb6e21c3cb52ca2"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"

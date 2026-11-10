@@ -1882,6 +1882,10 @@
         "def50dff0da1fa9f7e94ce8fe3aaf23659f3f309c23ef08ff9f562a2d0ef3499"
       ],
       [
+        "crates/forge-warden-cli/src/doors/child/isolation.rs",
+        "271357763413deda21a9c631b1f0827daccf2629f2464cc6d2f63c49a6d3fd35"
+      ],
+      [
         "crates/forge-warden-cli/src/doors/child/mod.rs",
         "9aa42d10d95aa0c60316854574658eed5d5546e0ffd165ecf7ce3f646d9c91e7"
       ],
