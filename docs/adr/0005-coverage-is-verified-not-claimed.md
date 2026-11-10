@@ -230,7 +230,8 @@ site. A tuple match over selected fields would not give this guarantee and is no
   deletion ranked by the real producer (MATRIX row).
 - **WP-B2 change:** duplicate ranked paths are a real producer output (type change), so the rank parser must not
   refuse them as malformed (exit 4). The coverage check turns them into `patch_unverifiable` HOLD. A3's
-  `duplicate_ranked_paths_are_refused` should expect HOLD, not refusal (Touchstone owns it).
+  `duplicate_ranked_paths_hold` should expect HOLD, not refusal (Touchstone owns it). [Renamed 2026-11-10;
+  §9 quotes the original name.]
 - Upstream for Luke (DDF): facts 3, 4 and 6.
 
 ## 6. Planted controls C1 must pass (Bastion's list, each with an expected result)
@@ -261,7 +262,7 @@ site. A tuple match over selected fields would not give this guarantee and is no
 | Bastion 6: proof-carrying types with private constructors | §2.7, §4 |
 | Touchstone C0-O3-01: suffix collision | §2.2 whole-line parse; v3 case `ts-mode-collision-real` (facts per path correct) |
 | Touchstone C0-O3-02: mode and binary axes | §2.9 matrix; v3 cases `ts-forged-mode`, `ts-text-as-binary` → `status_mismatch` |
-| Touchstone: `--no-prefix` must HOLD, not auto-repair | v3 refuses (`repeated_operation_on_path`) |
+| Touchstone: `--no-prefix` must HOLD, not auto-repair | v3 refuses (the prototype's repeated-operation refusal; §9 says what pins it now) |
 | Touchstone: bounded capture, typed refusals, empty ≠ valid | §2.5; `empty_patch` refusal |
 | **v3, T1** (Touchstone C0v2-O3-01): an unchanged submodule update read as covered | §2.2 header-line modes; v4 cases `ts2-new-submodule-update`, `keel-submodule-update` (and both additions) refuse |
 | **v3, T2** (Lodestar): Git may only add change-kind signals | §2.8 union rule + table; v4 effective signals per derived signal |
@@ -332,6 +333,18 @@ Exec is gained, and `symlink_change` on Modified files. With deep-diff-forge 0.7
 add or delete with `binary_change` only, every binary addition and deletion therefore HOLDs by `status_mismatch`
 (§2.8, producer facts 3 and 3b). Only the table was wrong. No behaviour, test, golden or policy changes with this
 amendment; §2.9's table now states the required column as `derived_signals`.
+
+**Two stale names elsewhere in this ADR (G-40, measured 2026-11-10).** Each line now carries
+the current name or a description, with a pointer here; the original names are quoted only in this section:
+- §5 named A3's test `duplicate_ranked_paths_are_refused`. It was renamed `duplicate_ranked_paths_hold` and changed to
+  expect HOLD in 7ae3807 (WP-A3.1, 2026-11-06; `crates/forge-warden-core/tests/adversarial.rs`). The consequence §5
+  asked for was carried out.
+- §7 cited `repeated_operation_on_path`, the refusal string of the C0 prototype
+  (`mission4/lanes/keel/C0/oracle_proto_v4.py`), not a test. The implementation refuses the case with
+  `Unverifiable::RepeatedPath` (`facts.rs`). No test pins that `--no-prefix` input yields that variant specifically:
+  - the corpus case `ts-no-prefix`, in `every_case_in_the_coverage_corpus_classifies_as_expected`
+    (`tests/coverage.rs`), pins only that the patch is refused as unverifiable;
+  - `every_refusal_says_why` (`facts.rs`) pins only the variant's message.
 
 **Pinned record.** The JEV Z3 frozen record (`fixtures/adversarial/z3_oracle.rs` `SOURCE_IDENTITY`, emitted into
 `fixtures/z3/manifest.json`) pins this file's pre-amendment bytes, sha256
