@@ -10,6 +10,7 @@ export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
 step tool-versions; python3 -I scripts/tool_versions.py --check
 # G-18: a required tool that is missing or at another version is a refusal, not a skip.
+# G-16: the compiler running this gate is the one rust-toolchain.toml pins (no override, no download).
 step local-tools; python3 -I scripts/tool_versions.py --check-local-tools
 step perimeter; python3 -I scripts/tests/perimeter.py
 step runner-routing; python3 -I scripts/tests/runner_routing.py
