@@ -191,16 +191,19 @@ fn forbidden_signals(signals: &[Signal], scope: &Scope, files: &[RankedFile]) ->
     out
 }
 
-/// Whether a file was removed by the change. deep-diff-forge classifies a deleted binary file as
-/// `binary_changed` and marks the deletion only with the `deleted_file` signal, so the status
-/// alone is not enough.
+/// Whether a file was removed by the change. deep-diff-forge (0.7.0 and 0.8.2) ranks a deleted
+/// binary file as `binary_changed` with only `binary_change`: it never writes `deleted_file` for
+/// it. The signal read here comes from Git's facts, which `authority::Checked::effective` adds
+/// before any rule runs (ADR 0005 §2.8), so the status alone is not enough. This raw engine,
+/// given an unwidened ranking, cannot see a binary deletion.
 fn is_deleted(file: &RankedFile) -> bool {
     *file.status() == Status::Deleted || file.signals().contains(&Signal::DeletedFile)
 }
 
 /// Whether a file can stand as a companion: it must exist after the change, and its change must be
-/// knowable. A `binary_changed` file without `new_file` may be a deletion deep-diff-forge could not
-/// label, so it does not count.
+/// knowable. For a `binary_changed` file only a Git-derived `new_file` (ADR 0005 §2.8) shows that:
+/// the producer writes neither `new_file` nor `deleted_file` for a binary, so without it the entry
+/// may be a deletion or a modification of unknowable size, and it does not count.
 fn is_live_companion(file: &RankedFile) -> bool {
     !is_deleted(file)
         && (*file.status() != Status::BinaryChanged || file.signals().contains(&Signal::NewFile))
