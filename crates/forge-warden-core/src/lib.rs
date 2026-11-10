@@ -36,6 +36,8 @@ pub mod render;
 pub mod seal;
 pub mod verdict;
 pub mod vocab;
+#[cfg(test)]
+mod refusal_rows;
 
 pub use date::Date;
 pub use exit::{EXIT_REGISTRY, Exit, ExitEntry, Outcome};
