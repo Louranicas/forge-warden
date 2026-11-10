@@ -164,9 +164,12 @@ TOOLCHAIN_SITES = (
 TOOLCHAIN_HISTORY = ("CHANGELOG.md",)
 # Each form captures whatever names the toolchain, numeric or not, so a channel name (nightly, beta,
 # stable) in any of them is drift too (Keel F4). The quoted argv form stays numeric-only.
+# Whitespace is flexible in every form (Keel B4f, B4g): two spaces after cargo, or none around an
+# equals sign, still make a site.
 TOOLCHAIN_FORM = re.compile(
-    r"""(?:toolchain install |rustup install |rustup default |rustup run |rustup override set |cargo \+"""
-    r"""|RUSTUP_TOOLCHAIN[:=] ?["']?|(?<![\w-])toolchain: ?["']?|rust-version = "|channel = ")"""
+    r"""(?:toolchain\s+install\s+|rustup\s+install\s+|rustup\s+default\s+|rustup\s+run\s+"""
+    r"""|rustup\s+override\s+set\s+|cargo\s+\+|RUSTUP_TOOLCHAIN\s*[:=]\s*["']?"""
+    r"""|(?<![\w-])toolchain\s*:\s*["']?|rust-version\s*=\s*"|channel\s*=\s*")"""
     r"""([A-Za-z0-9][A-Za-z0-9._-]*)"""
     r"""|["']\+([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b""")
 SKIPPED_DIRS = {".git", "target", "mutants.out", "mutants.out.old"}
@@ -181,8 +184,9 @@ def check_toolchain_sites(root):
     """Every toolchain version written in a machine form is canonical and sits in a listed file."""
     allowed = canonical_toolchains(versions(root))
     found = set()
+    # A symlinked file is scanned through its link (Keel B7): skipping it let drift hide behind one.
     for path in toolchain_candidates(root):
-        if path.is_file() and not path.is_symlink():
+        if path.is_file():
             scan_toolchain_file(root, path, allowed, found)
     if found != set(TOOLCHAIN_SITES):
         extra, missing = sorted(found - set(TOOLCHAIN_SITES)), sorted(set(TOOLCHAIN_SITES) - found)

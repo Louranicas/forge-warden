@@ -268,6 +268,8 @@ class ToolchainKeelAttacks(unittest.TestCase):
             "rustup " + "override set 1.80.0\n",
             "cargo " + PLUS + "nightly build\n",
             "tool" + "chain: stable\n",
+            "cargo  " + PLUS + "1.80.0 build\n",
+            "chan" + 'nel="1.80.0"\n',
         ]:
             with self.subTest(text=text):
                 site.write_text(text)
@@ -275,6 +277,13 @@ class ToolchainKeelAttacks(unittest.TestCase):
                     tool_versions.check_toolchain_sites(self.root)
         site.unlink()
         tool_versions.check_toolchain_sites(self.root)
+
+    def test_b7_drift_behind_a_symlinked_file_is_seen(self):
+        target = self.root / "scripts/real_site.txt"
+        target.write_text(DEFAULT + "1.80.0\n")
+        (self.root / "scripts/linked_site.sh").symlink_to("real_site.txt")
+        with self.assertRaisesRegex(ValueError, r"toolchain 1\.80\.0 drifts"):
+            tool_versions.check_toolchain_sites(self.root)
 
     def test_f5_untracked_files_are_not_sites_in_a_work_tree(self):
         import subprocess
