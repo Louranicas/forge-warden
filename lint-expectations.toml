@@ -367,8 +367,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "8d4eb9e2f2ec1543f6456be8272b828abb5482bde62772243f6c91cd52150460"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust."
+sha256 = "5dc654ead9938dc55b35ba2998e2b1e0c5720139e74db3da0eb3717793253d80"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
@@ -457,3 +457,45 @@ review_reason = "Q-TYPES-1.1 test-only Rust-text input for the extern-block memb
 file = "fixtures/public_api/probe-extern-after.rs.txt"
 sha256 = "bdd42d4c7be7b6288c674a4fedadec8f4237d0ad84df2c9155ec5294400e4f1b"
 review_reason = "Q-TYPES-1.1 test-only Rust-text input for the extern-block member probe (after side), moved byte-exact out of a string literal. Parsed by syn as data; never compiled as source."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::panic"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::indexing_slicing"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::too_many_lines"
+source_reason = "the oracle's case table and manifest entry are one row per case or field"
+review_reason = "The std-only oracle may carry no attributes (registry isolation), so its two long table functions are expected on the harness's `mod oracle;` declaration; splitting the frozen case table would hide it."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::too_many_lines"
+source_reason = "one block per assertion facet keeps the IDs visible"
+review_reason = "The per-case judge lists one block per literal assertion ID (setup, refusal_kind, coverage, overall, summary, rules, notes, waivers, provenance); splitting it would hide the ID-to-check map."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::print_stderr"
+source_reason = "the executed and accepted counts are the law's receipt evidence"
+review_reason = "Test-only: each generated law prints its executed/accepted counts and seed to stderr as receipt evidence; nothing in production prints."

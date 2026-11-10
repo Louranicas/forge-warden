@@ -1,7 +1,8 @@
 {
   "schema": "forge-warden.quality-contract.v2",
   "oracles": [
-    "fixtures/adversarial/reference_model.rs"
+    "fixtures/adversarial/reference_model.rs",
+    "fixtures/adversarial/z3_oracle.rs"
   ],
   "goldens": [
     "fixtures/demo.verdict.json",

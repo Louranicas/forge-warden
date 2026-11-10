@@ -2084,6 +2084,10 @@
       [
         "crates/forge-warden-core/tests/support/corpus_manifest.rs",
         "b80b904c23a1529586df2d373efbb5fce773ce1aa8593414646cb13890b25a03"
+      ],
+      [
+        "crates/forge-warden-core/tests/z3_authority.rs",
+        "6a9c7c0081f01f70cb480a4aec1069fe38d19ba410aae82be9bf5ada8fc5495f"
       ]
     ]
   ]

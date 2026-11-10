@@ -1428,6 +1428,357 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "z3-all-hold",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.P01\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "SuppliedCopy::Absent | SuppliedCopy::Identical => Vec::new(),",
+      "new": "SuppliedCopy::Absent | SuppliedCopy::Identical => vec![Note { code: NoteCode::RankMismatch, path: None, detail: String::new() }],",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-no-rank-unverified",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.N01\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let verdict = judge(policy, checked, vec![unverified], seals, today);",
+      "new": "let verdict = judge(policy, checked, vec![unverified].into_iter().filter(|_| false).collect(), seals, today);",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-no-missing-note",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "Z3\\.N04\\.notes:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "None => out.push(Disagreement::Missing(path.clone())),",
+      "new": "None => {}",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-no-git-deletion-signal",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "Z3\\.N14\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "out.insert(Signal::DeletedFile);",
+      "new": "{}",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-git-only-union",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "Z3\\.N15\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let mut signals = self.signals.clone();",
+      "new": "let mut signals: Vec<Signal> = Vec::new();",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-notes-overwrite-fail",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/verdict.rs",
+      "diagnostic": "Z3\\.N03\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": ".map(|_| Outcome::Hold)\n            .fold(self.verdict, Outcome::max);",
+      "new": ".map(|_| Outcome::Hold)\n            .fold(self.verdict, |_, hold| hold);",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-ge-instead-of-gt",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.P12\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "scope.contains(f.path().as_str()) && f.score() > *limit",
+      "new": "scope.contains(f.path().as_str()) && f.score() >= *limit",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-u32-change-sum",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.N23\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": ".fold(0_u64, |sum, f| sum.saturating_add(u64::from(f.score())));",
+      "new": ".fold(0_u32, |sum, f| sum.saturating_add(f.score())).into();",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-deleted-companion-live",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.N17\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "    !is_deleted(file)\n        && (",
+      "new": "    (true || !is_deleted(file))\n        && (",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-expiry-le",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.P16\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "w.rule == rule.id && w.expires >= today",
+      "new": "w.rule == rule.id && w.expires > today",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-caller-provenance",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.P20\\.provenance:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "    seals.provenance = kind;\n",
+      "new": "    seals.provenance = if matches!(kind, Provenance::Produced) { seals.provenance } else { kind };\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-caller-ranked-by",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.P20\\.provenance:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "    seals.ranked_by = RankedBy {",
+      "new": "    let _discarded = RankedBy {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-symlink-kind-mislabel",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "Z3\\.N20\\.refusal_kind:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "                    return Err(Unverifiable::SymlinkTargetEdit);",
+      "new": "                    return Err(Unverifiable::UnreadableModeHeader(line.trim_end().to_owned()));",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
