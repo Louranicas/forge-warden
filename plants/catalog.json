@@ -1955,6 +1955,32 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "door-clap-attribute-effect",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "shipped_code_writes_no_expression_in_an_attribute.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "shipped_code_writes_no_expression_in_an_attribute"
+      ],
+      "old": "#[derive(Parser)]\n",
+      "new": "#[derive(Parser)]\n#[command(after_help = std::env::var(\"FW_PLANT\").is_ok().to_string())]\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [
