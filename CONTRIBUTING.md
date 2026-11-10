@@ -26,8 +26,10 @@ just fast            # fmt + clippy (the full lint wall) + tests
 just ci              # everything CI runs that works offline
 ```
 
-Optional tools the full gate uses when present: `cargo-deny`, `cargo-mutants`, `zizmor`,
-`deep-diff-forge`.
+The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
+`scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
+(G-18). `zizmor` and `deep-diff-forge` are hosted-only (the `[local_gate]` table says why). When they
+are absent, the gate's last line names them as not run here instead of claiming that everything passed.
 
 ## First rule: a passing example and a failing control
 

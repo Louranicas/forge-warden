@@ -6,3 +6,11 @@ cargo_deny = "0.20.2"
 
 # Shared immutable installer revision; every declarative CI copy is checked.
 install_action = "c509219cf42fba86913069efd0ade2458c59337b"
+
+# The local gate (G-18): a skipped gate must never read as a passed gate. A `required` tool that is
+# missing or at another version stops ci_local with a named refusal. A `hosted-only` step that cannot
+# run here is named in ci_local's final line; it runs in hosted CI. Moving a tool between the lists is
+# a reviewed change to this protected file.
+[local_gate]
+required = ["cargo-deny", "cargo-mutants"]
+hosted_only = ["zizmor", "deep-diff-forge"]
