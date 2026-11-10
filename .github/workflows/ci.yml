@@ -45,11 +45,13 @@ jobs:
       - name: Prepare locked dependencies for offline script fixtures
         run: cargo fetch --locked
       - run: python3 -I scripts/tool_versions.py --check
+      - run: python3 -I scripts/tool_versions.py --check-toolchain
       - run: python3 -I scripts/tests/perimeter.py
       - run: python3 -I scripts/tests/mutation_budget.py
       - run: python3 -I scripts/tests/runner_routing.py
       - run: bash scripts/tests/ci_local.sh
       - run: python3 -I scripts/tests/mutation_env.py
+      - run: python3 -I scripts/tests/local_tools.py
       - run: bash scripts/tests/dogfood.sh
       - run: python3 -I scripts/tests/hold_ack.py
       - run: python3 -I .claude/hooks/test_guard.py
