@@ -2,6 +2,7 @@
 """Read canonical inputs; reject drift in the workflow's declarative copies."""
 import collections
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -126,16 +127,95 @@ def check_local_tools(root, env=None, timeout=15):
             raise ValueError(f"required tool {name} reports {lines[0].strip()!r}, pinned {values[key]} (G-18)")
 
 
+# G-16 (R-08). Every machine-readable Rust toolchain version in the repository names the pinned
+# compiler (rust-toolchain.toml) or the MSRV (Cargo.toml), and lives in one of these reviewed files.
+# A new site, or a site that drifts, fails here; a toolchain bump is one reviewed diff of all of them.
+TOOLCHAIN_SITES = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/mutation-baseline.yml",
+    "CONTRIBUTING.md",
+    "Cargo.toml",
+    "plants/msrv_boundary.py",
+    "rust-toolchain.toml",
+)
+# Dated history keeps the versions it recorded.
+TOOLCHAIN_HISTORY = ("CHANGELOG.md",)
+TOOLCHAIN_FORM = re.compile(r"""(?:toolchain install |rustup default |rustup run |cargo \+|RUSTUP_TOOLCHAIN[:=] ?"""
+                            r"""|rust-version = "|channel = "|["']\+)([0-9]+\.[0-9]+(?:\.[0-9]+)?)\b""")
+SKIPPED_DIRS = {".git", "target", "mutants.out", "mutants.out.old"}
+
+
+def canonical_toolchains(values):
+    msrv = values["msrv"]
+    return {values["rust"], msrv, msrv if msrv.count(".") == 2 else msrv + ".0"}
+
+
+def check_toolchain_sites(root):
+    """Every toolchain version written in a machine form is canonical and sits in a listed file."""
+    allowed = canonical_toolchains(versions(root))
+    found = set()
+    for directory, subdirectories, files in os.walk(root):
+        subdirectories[:] = sorted(d for d in subdirectories if d not in SKIPPED_DIRS)
+        for path in (Path(directory) / f for f in sorted(files)):
+            if path.is_file() and not path.is_symlink():
+                scan_toolchain_file(root, path, allowed, found)
+    if found != set(TOOLCHAIN_SITES):
+        extra, missing = sorted(found - set(TOOLCHAIN_SITES)), sorted(set(TOOLCHAIN_SITES) - found)
+        raise ValueError(f"toolchain sites differ from TOOLCHAIN_SITES (G-16): unlisted {extra}, absent {missing}")
+
+
+def scan_toolchain_file(root, path, allowed, found):
+    name = path.relative_to(root).as_posix()
+    if name in TOOLCHAIN_HISTORY:
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in TOOLCHAIN_FORM.finditer(line):
+            found.add(name)
+            if match.group(1) not in allowed:
+                raise ValueError(f"{name}:{number}: toolchain {match.group(1)} drifts from "
+                                 f"rust-toolchain.toml/Cargo.toml (G-16)")
+
+
+def check_toolchain(root, env=None, timeout=15):
+    """The compiler that runs the local gate is the pinned one, chosen by rust-toolchain.toml alone."""
+    env = dict(os.environ if env is None else env)
+    pinned = versions(root)["rust"]
+    if env.get("RUSTUP_TOOLCHAIN", pinned) != pinned:
+        raise ValueError(f"RUSTUP_TOOLCHAIN={env['RUSTUP_TOOLCHAIN']} overrides the pinned {pinned} "
+                         "for the gate (G-16)")
+    # A missing pinned toolchain must refuse here, offline, rather than be downloaded.
+    env["RUSTUP_AUTO_INSTALL"] = "0"
+    for argv, form in ((["rustc", "-Vv"], r"release: ([0-9.]+)"), (["cargo", "-V"], r"cargo ([0-9.]+)")):
+        try:
+            result = subprocess.run(argv, cwd=root, env=env, stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=timeout, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError(f"{argv[0]} is unavailable for the gate (G-16)") from error
+        found = re.findall(r"^" + form + r"\b", result.stdout, re.MULTILINE)
+        if result.returncode != 0 or len(found) != 1:
+            raise ValueError(f"{argv[0]} did not report one version; is toolchain {pinned} installed? (G-16)")
+        if found[0] != pinned:
+            raise ValueError(f"{argv[0]} is {found[0]}, but rust-toolchain.toml pins {pinned} (G-16)")
+
+
 if __name__ == "__main__":
     try:
         if sys.argv[1:] == ["--check"]:
             check(ROOT)
             check_ci_local(ROOT)
+            check_toolchain_sites(ROOT)
         elif sys.argv[1:] == ["--check-local-tools"]:
             check_local_tools(ROOT)
+            check_toolchain(ROOT)
+        elif sys.argv[1:] == ["--check-toolchain"]:
+            check_toolchain(ROOT)
         elif len(sys.argv) == 2:
             print(versions(ROOT)[sys.argv[1]])
         else:
-            raise ValueError("usage: tool_versions.py KEY | --check | --check-local-tools")
+            raise ValueError("usage: tool_versions.py KEY | --check | --check-local-tools | --check-toolchain")
     except (ValueError, KeyError, OSError) as error:
         sys.exit("tool versions: " + str(error))

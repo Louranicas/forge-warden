@@ -117,6 +117,104 @@ class LocalTools(unittest.TestCase):
         self.plant("ci_local: all gates passed", "ci_local: all available gates passed", "must not claim")
 
 
+RUSTC_SHIM = """#!/bin/sh
+[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 3
+[ "$1" = -Vv ] || exit 90
+[ -n "$RUSTC_RELEASE" ] || { echo "error: toolchain not installed" >&2; exit 1; }
+printf 'rustc %s (fixture)\\nbinary: rustc\\nrelease: %s\\nLLVM version: 21\\n' "$RUSTC_RELEASE" "$RUSTC_RELEASE"
+"""
+CARGO_V_SHIM = """#!/bin/sh
+[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 3
+[ "$1" = -V ] || exit 90
+printf 'cargo %s (fixture 2026-01-01)\\n' "$CARGO_RELEASE"
+"""
+
+
+# Toolchain-site text is assembled at run time, so this file is not itself a toolchain site.
+PLUS = "+"
+DEFAULT = "rustup " + "default "
+
+
+class Toolchain(unittest.TestCase):
+    """G-16: the gate's compiler is the pinned one, and every toolchain site names a canonical version."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="toolchain-")
+        self.root = Path(self.directory.name)
+        names = {*tool_versions.TOOLCHAIN_SITES, "scripts/tool-versions.toml", "rust-toolchain.toml", "Cargo.toml"}
+        for name in names:
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, self.root / name)
+        (self.root / "bin").mkdir()
+        for name, text in (("rustc", RUSTC_SHIM), ("cargo", CARGO_V_SHIM)):
+            (self.root / "bin" / name).write_text(text)
+            (self.root / "bin" / name).chmod(0o700)
+        self.pinned = tool_versions.versions(ROOT)["rust"]
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def env(self, **extra):
+        return {"PATH": f"{self.root / 'bin'}:/usr/bin:/bin", "RUSTC_RELEASE": self.pinned,
+                "CARGO_RELEASE": self.pinned, **extra}
+
+    def test_the_pinned_compiler_is_admitted_offline(self):
+        tool_versions.check_toolchain(self.root, self.env(), timeout=2)
+        tool_versions.check_toolchain(self.root, self.env(RUSTUP_TOOLCHAIN=self.pinned), timeout=2)
+
+    def test_another_compiler_is_refused(self):
+        for extra, pattern in [
+            ({"RUSTC_RELEASE": "1.99.0"}, "rustc is 1.99.0"),
+            ({"CARGO_RELEASE": "1.98.0"}, "cargo is 1.98.0"),
+            ({"RUSTUP_TOOLCHAIN": "1.88.0"}, "RUSTUP_TOOLCHAIN" + "=1.88.0 overrides"),
+            ({"RUSTC_RELEASE": ""}, "rustc did not report one version"),
+        ]:
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, pattern):
+                tool_versions.check_toolchain(self.root, self.env(**extra), timeout=2)
+
+    def test_no_compiler_on_the_path_is_refused(self):
+        empty = self.root / "empty"
+        empty.mkdir()
+        with self.assertRaisesRegex(ValueError, "rustc is unavailable"):
+            tool_versions.check_toolchain(self.root, {"PATH": str(empty)}, timeout=2)
+
+    def test_the_real_tree_names_only_canonical_toolchains_at_listed_sites(self):
+        tool_versions.check_toolchain_sites(ROOT)
+        tool_versions.check_toolchain_sites(self.root)
+
+    def edit(self, name, old, new):
+        path = self.root / name
+        text = path.read_text()
+        self.assertEqual(text.count(old), 1, (name, old))
+        path.write_text(text.replace(old, new))
+
+    def test_a_drifting_site_is_refused_with_its_line(self):
+        self.edit("plants/msrv_boundary.py", "'" + PLUS + "1.88.0'", "'" + PLUS + "1.87.0'")
+        with self.assertRaisesRegex(ValueError, r"plants/msrv_boundary\.py:\d+: toolchain 1\.87\.0 drifts"):
+            tool_versions.check_toolchain_sites(self.root)
+
+    def test_a_bump_that_misses_a_site_is_refused(self):
+        bumped = self.pinned.rsplit(".", 1)[0] + ".9"
+        self.edit("rust-toolchain.toml", f'channel = "{self.pinned}"', f'channel = "{bumped}"')
+        with self.assertRaisesRegex(ValueError, f"toolchain {self.pinned.replace('.', '[.]')} drifts"):
+            tool_versions.check_toolchain_sites(self.root)
+
+    def test_an_unlisted_or_vanished_site_is_refused(self):
+        (self.root / "scripts/new_bootstrap.sh").write_text(DEFAULT + self.pinned + "\n")
+        with self.assertRaisesRegex(ValueError, r"unlisted \['scripts/new_bootstrap\.sh'\]"):
+            tool_versions.check_toolchain_sites(self.root)
+        (self.root / "scripts/new_bootstrap.sh").unlink()
+        (self.root / "plants/msrv_boundary.py").write_text("# no toolchain here\n")
+        with self.assertRaisesRegex(ValueError, r"absent \['plants/msrv_boundary\.py'\]"):
+            tool_versions.check_toolchain_sites(self.root)
+
+    def test_history_and_build_output_are_not_sites(self):
+        (self.root / "CHANGELOG.md").write_text("- 2020: built with `cargo " + PLUS + "1.40.0`\n")
+        (self.root / "target").mkdir()
+        (self.root / "target/old.sh").write_text(DEFAULT + "1.40.0\n")
+        tool_versions.check_toolchain_sites(self.root)
+
+
 if __name__ == "__main__":
     os.environ.pop("CARGO_TARGET_DIR", None)
     unittest.main()
