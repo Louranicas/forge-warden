@@ -655,8 +655,31 @@ fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
 /// Q-DOOR-SPLIT: door rights are granted by exact listing, never by location. Every file under the
 /// door directory, of any kind, must be a listed door module, and every listed module must exist
 /// there. A file added under `src/doors/` therefore fails here until the protected list names it.
+///
+/// Nothing under the door directory may be a symlink. The listing below compares canonical paths,
+/// so a link `doors/alias.rs -> file.rs` would collapse onto the listed `file.rs` and pass as if it
+/// were not there (Touchstone F1): one module's rights under a second name. A linked directory is
+/// refused here by name as well, before any path is resolved.
 #[test]
 fn door_files_are_exactly_the_listed_modules() {
+    let mut links = Vec::new();
+    let mut pending = vec![root().join(common::DOOR_DIR)];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let kind = std::fs::symlink_metadata(&path).unwrap().file_type();
+            if kind.is_symlink() {
+                links.push(path.display().to_string());
+            } else if kind.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    links.sort();
+    assert!(
+        links.is_empty(),
+        "a door module is a real file and a door directory a real directory, never a symlink: {links:?}"
+    );
     let present: std::collections::BTreeSet<String> = files_under(common::DOOR_DIR, "")
         .iter()
         .map(|p| common::relative(p))
