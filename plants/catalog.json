@@ -676,8 +676,8 @@
       "guardrail": "G-14",
       "path": "crates/forge-warden-core/src/authority.rs",
       "diagnostic": "a_forged_ranking_with_the_real_patch_holds_instead_of_passing.*FAILED",
-      "old": "extra.extend(checked.notes());",
-      "new": "extra.extend(checked.notes().into_iter().filter(|note| note.code != NoteCode::RankIncomplete));",
+      "old": "extra.extend(disagreements.iter().map(disagreement_note));",
+      "new": "extra.extend(disagreements.iter().map(disagreement_note).filter(|note| note.code != NoteCode::RankIncomplete));",
       "cargo": [
         "test",
         "-p",
