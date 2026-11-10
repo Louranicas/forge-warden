@@ -864,8 +864,9 @@ fn names_after(text: &str, keyword: &str, out: &mut BTreeSet<String>) {
     }
 }
 
-/// The Rust `fn` and Python `def` names in the workspace, and the lints in the workspace tables.
-fn known_names() -> BTreeSet<String> {
+/// The Rust `fn` and Python `def` names in the workspace, and the lints in `cargo`'s workspace
+/// tables. A missing lint table adds no names, so more tokens are refused, never fewer.
+fn known_names(cargo: &toml::Value) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for path in files_under("crates", ".rs") {
         if !path.components().any(|c| c.as_os_str() == "target") {
@@ -877,16 +878,33 @@ fn known_names() -> BTreeSet<String> {
             names_after(&read(&common::relative(&path)), "def ", &mut names);
         }
     }
-    let cargo: toml::Value = toml::from_str(&read("Cargo.toml")).unwrap();
     let tables = cargo
         .get("workspace")
         .and_then(|w| w.get("lints"))
-        .and_then(toml::Value::as_table)
-        .expect("Cargo.toml has [workspace.lints]");
-    for table in tables.values().filter_map(toml::Value::as_table) {
+        .and_then(toml::Value::as_table);
+    for table in tables
+        .into_iter()
+        .flat_map(|t| t.values().filter_map(toml::Value::as_table))
+    {
         names.extend(table.keys().cloned());
     }
     names
+}
+
+/// The workspace member directories `cargo` lists, or `None` when the table is missing (the
+/// caller, a test, then fails rather than resolving nothing).
+fn workspace_members(cargo: &toml::Value) -> Option<Vec<String>> {
+    cargo
+        .get("workspace")
+        .and_then(|w| w.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
 }
 
 /// `## <n>. Amendment (<label>, YYYY-MM-DD)…`, the dated form of an ADR amendment.
@@ -911,24 +929,19 @@ fn history_heading(heading: &str) -> bool {
 }
 
 /// Whether a backticked `tests/…rs` reference names a file: as written from the root, or under a crate.
-fn test_path_exists(root: &std::path::Path, reference: &str) -> bool {
+fn test_path_exists(root: &std::path::Path, members: &[String], reference: &str) -> bool {
     if reference.starts_with("crates/") {
         return root.join(reference).is_file();
     }
-    let cargo: toml::Value = toml::from_str(&read("Cargo.toml")).unwrap();
-    cargo
-        .get("workspace")
-        .and_then(|w| w.get("members"))
-        .and_then(toml::Value::as_array)
-        .expect("Cargo.toml lists its workspace members")
+    members
         .iter()
-        .filter_map(toml::Value::as_str)
         .any(|member| root.join(member).join(reference).is_file())
 }
 
 /// Each stale reference in `documents` (name, text, whether it is Markdown with headings).
 fn stale_test_references(
     root: &std::path::Path,
+    members: &[String],
     documents: &[(String, String, bool)],
     known: &BTreeSet<String>,
 ) -> Vec<String> {
@@ -954,7 +967,7 @@ fn stale_test_references(
                     .is_some_and(|e| e == "rs")
                     && token.contains("tests/")
                     && !token.contains([' ', '*']);
-                if path_like && !test_path_exists(root, token) {
+                if path_like && !test_path_exists(root, members, token) {
                     stale.push(format!("{name}:{number}: `{token}` names no file"));
                 }
             }
@@ -995,7 +1008,13 @@ fn documentation() -> Vec<(String, String, bool)> {
 
 #[test]
 fn docs_name_only_tests_and_files_that_exist() {
-    let stale = stale_test_references(&common::root(), &documentation(), &known_names());
+    let cargo: toml::Value = toml::from_str(&read("Cargo.toml")).unwrap();
+    let stale = stale_test_references(
+        &common::root(),
+        &workspace_members(&cargo).unwrap(),
+        &documentation(),
+        &known_names(&cargo),
+    );
     assert_eq!(
         stale,
         Vec::<String>::new(),
@@ -1006,7 +1025,9 @@ fn docs_name_only_tests_and_files_that_exist() {
 #[test]
 fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
     let root = common::root();
-    let known = known_names();
+    let cargo: toml::Value = toml::from_str(&read("Cargo.toml")).unwrap();
+    let known = known_names(&cargo);
+    let members = workspace_members(&cargo).unwrap();
     let doc = |text: &str| vec![("plant.md".to_owned(), text.to_owned(), true)];
     for (case, text) in [
         (
@@ -1032,7 +1053,7 @@ fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
         ),
     ] {
         assert!(
-            !stale_test_references(&root, &doc(text), &known).is_empty(),
+            !stale_test_references(&root, &members, &doc(text), &known).is_empty(),
             "missed: {case}"
         );
     }
@@ -1065,7 +1086,7 @@ fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
         ),
     ] {
         assert_eq!(
-            stale_test_references(&root, &doc(text), &known),
+            stale_test_references(&root, &members, &doc(text), &known),
             Vec::<String>::new(),
             "false positive: {case}"
         );
@@ -1077,7 +1098,7 @@ fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
         false,
     )];
     assert_eq!(
-        stale_test_references(&root, &comment, &known).len(),
+        stale_test_references(&root, &members, &comment, &known).len(),
         2,
         "doc comments have no history headings"
     );
