@@ -1882,6 +1882,10 @@
         "9aa42d10d95aa0c60316854574658eed5d5546e0ffd165ecf7ce3f646d9c91e7"
       ],
       [
+        "crates/forge-warden-cli/src/doors/child/process.rs",
+        "069d18dc965999708acba390d552792252bc0e3bbe71913d41c6134581dfe190"
+      ],
+      [
         "crates/forge-warden-cli/src/doors/diagnose.rs",
         "21d7d2133f0f5664dbe25c6c5e7278dc5e37cc61302f70f73887740cfd73c25e"
       ],
