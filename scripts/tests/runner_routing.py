@@ -14,7 +14,8 @@ header. The shards also wait on the plan and run only after it succeeded. The ag
 RUNNER-ROUTING.1: the route job is pinned line for line (ROUTE_JOB_LINES), so it reads exactly
 event, ref and protected; the truth table also holds under a hostile ambient environment (every
 documented GITHUB_*/RUNNER_* variable, every workflow env key and every other name the script
-mentions).
+mentions). v3: every workflow file is listed and of a pinned shape (top level, workflow env, plain
+job keys, exactly one runs-on per job).
 
 This is routing only: anyone who can push a branch can also edit `runs-on` on it, so the trust
 boundary is repository write access plus runner-up's fork guard (docs/runner-up.md).
@@ -180,9 +181,9 @@ def route(text, event, ref, protected, ambient=None):
 # runner sets is invisible to it, and an open list of forbidden forms cannot close that (bash
 # arithmetic, grep of /proc/self/environ, awk ENVIRON, python3 and input reassignment all read or
 # rewrite inputs without a `$` expansion). So the list is closed. (1) Static: every non-comment line
-# of the route job is exactly the reviewed text below, and the workflow sets no `defaults:` (which
-# could change the shell). Changing routing therefore means editing this constant in the same
-# reviewed diff. (2) Dynamic, kept as a second check on whatever the constant says: the truth table
+# of the route job is exactly the reviewed text below, and the workflow's top level and env are
+# exactly the reviewed ones, so no `defaults:` shell template or BASH_ENV can wrap it. Changing routing therefore means editing this constant in the same
+# reviewed diff; the workflow's own shape is pinned too (TOP_LEVEL, below). (2) Dynamic, kept as a second check on whatever the constant says: the truth table
 # must route identically under a hostile ambient environment.
 ROUTE_JOB_LINES = (
     "    timeout-minutes: 5",
@@ -245,17 +246,16 @@ def workflow_env_names(text):
     return names
 
 
-def route_input_problems(text):
-    """Why the route job is not exactly the reviewed one (empty when it is)."""
+def route_input_problems(text, path):
+    """Why the route job, or the workflow around it, is not exactly the reviewed one."""
     body = job_bodies(text)["route"]
     lines = tuple(line for line in body.splitlines()
                   if line.strip() and not line.lstrip().startswith("#"))
     problems = []
     if lines != ROUTE_JOB_LINES:
         problems.append("route: every non-comment line must be ROUTE_JOB_LINES (edit it in review)")
-    if re.search(r"^defaults:", text, re.M):
-        problems.append("no workflow-level defaults: they could change the route shell")
-    return problems
+    # No `defaults:` shell template or BASH_ENV may wrap it: the top level is pinned (v3, Keel F1).
+    return problems + workflow_shape_problems(path, text)
 
 
 def hostile_ambient(text, value):
@@ -367,6 +367,105 @@ def routed_job_problems(text, routed):
     return problems
 
 
+# RUNNER-ROUTING.1 v3 (Keel's second attack, ATTACK-e4975c3e F1-F4): a rule that looks for a
+# forbidden spelling is open, because YAML reads `"defaults":`, `defaults :` and `defaults:` as one
+# key. So the shape of every workflow is pinned instead. (F1) A routed workflow's top-level lines,
+# and its workflow env, are exactly the reviewed ones, so no `defaults:` shell template and no
+# BASH_ENV can wrap the pinned route script. (F2/F3) In every workflow, each job key is a plain
+# `  name:` line, each job-level key is a plain `    key:` line, and a job has exactly one
+# `runs-on:`. (F4) Every workflow file is listed in ROUTED or HOSTED_ONLY.
+TOP_LEVEL = {
+    ".github/workflows/mutation-baseline.yml": (
+        "name: mutation-baseline", "on:", "permissions:", "concurrency:", "env:", "jobs:"),
+}
+WORKFLOW_ENV = {
+    ".github/workflows/mutation-baseline.yml": ('  CARGO_INCREMENTAL: "0"', "  CARGO_TERM_COLOR: always"),
+}
+JOB_KEY = re.compile(r"  [A-Za-z0-9_-]+:\Z")
+JOB_FIELD = re.compile(r"    [a-z][a-z-]*:(?: |\Z)")
+
+
+def content_lines(text):
+    return [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def workflow_shape_problems(path, text):
+    """Why a workflow file is not of the reviewed shape (empty when it is)."""
+    problems = []
+    lines = content_lines(text)
+    if path in TOP_LEVEL:
+        top = tuple(line for line in lines if not line.startswith(" "))
+        if top != TOP_LEVEL[path]:
+            problems.append(path + ": top-level keys must be exactly " + repr(TOP_LEVEL[path]))
+        env = []
+        if "\nenv:\n" in text:
+            for line in text.split("\nenv:\n", 1)[1].splitlines():
+                if line.strip() and not line.startswith(" "):
+                    break
+                if line.strip() and not line.lstrip().startswith("#"):
+                    env.append(line)
+        if tuple(env) != WORKFLOW_ENV[path]:
+            problems.append(path + ": workflow env must be exactly " + repr(WORKFLOW_ENV[path]))
+    if "\njobs:\n" not in text:
+        return problems + [path + ": no jobs section"]
+    jobs = content_lines(text.split("\njobs:\n", 1)[1])
+    for line in jobs:
+        indent = len(line) - len(line.lstrip(" "))
+        if indent in (1, 3, 5) or "\t" in line[:indent + 1]:
+            problems.append(path + ": odd indentation: " + line.strip())
+        elif indent == 2 and not JOB_KEY.match(line):
+            problems.append(path + ": a job key must be a plain `  name:` line: " + line.strip())
+        elif indent == 4 and not JOB_FIELD.match(line):
+            problems.append(path + ": a job field must be a plain `    key:` line: " + line.strip())
+    for job, body in job_bodies(text).items():
+        runs = [line for line in body.splitlines() if line.startswith("    runs-on:")]
+        if len(runs) != 1:
+            problems.append(path + ": " + job + ": exactly one runs-on")
+        elif job not in ROUTED.get(path, {}) and runs[0] != "    runs-on: ubuntu-latest":
+            problems.append(path + ": " + job + ": an unrouted job runs on the literal ubuntu-latest")
+    return problems
+
+
+def listed_workflow_problems(names):
+    """Workflow files that are in neither ROUTED nor HOSTED_ONLY."""
+    listed = set(ROUTED) | set(HOSTED_ONLY)
+    return sorted(name for name in names if name not in listed)
+
+
+DECOY = "        run: |\n          echo x\n          #    runs-on: ubuntu-latest\n"
+NEW_JOB = "  extra:\n    timeout-minutes: 5\n    runs-on: {runs}\n    steps:\n      - id: x\n" + DECOY
+SHELL_TEMPLATE = "  run:\n    shell: env EVENT=push REF=refs/heads/main PROTECTED=true bash {0}\n"
+BASELINE = ".github/workflows/mutation-baseline.yml"
+CI = ".github/workflows/ci.yml"
+SHAPE_EDITS = {
+    "K7 quoted defaults key (Keel)": (BASELINE, "\njobs:\n", '\n"defaults":\n' + SHELL_TEMPLATE + "\njobs:\n"),
+    "K8 spaced defaults key (Keel)": (BASELINE, "\njobs:\n", "\ndefaults :\n" + SHELL_TEMPLATE + "\njobs:\n"),
+    "plain defaults key": (BASELINE, "\njobs:\n", "\ndefaults:\n" + SHELL_TEMPLATE + "\njobs:\n"),
+    "K9 BASH_ENV in workflow env (Bastion N1)": (
+        BASELINE, "  CARGO_TERM_COLOR: always\n", "  CARGO_TERM_COLOR: always\n  BASH_ENV: /tmp/x\n"),
+    "quoted BASH_ENV in workflow env": (
+        BASELINE, "  CARGO_TERM_COLOR: always\n", '  CARGO_TERM_COLOR: always\n  "BASH_ENV": /tmp/x\n'),
+    "K1 self-hosted job with a decoy line, ci.yml (Keel)": (
+        CI, "\njobs:\n", "\njobs:\n" + NEW_JOB.format(runs="self-hosted")),
+    "K2 the same in the baseline (Keel)": (
+        BASELINE, "\njobs:\n", "\njobs:\n" + NEW_JOB.format(runs="self-hosted")),
+    "K3 index-syntax route output (Keel)": (
+        BASELINE, "\njobs:\n", "\njobs:\n" + NEW_JOB.format(runs="${{ needs['route'].outputs.runner }}")),
+    "K4 pool name built by format() (Keel)": (
+        CI, "\njobs:\n", "\njobs:\n" + NEW_JOB.format(runs="${{ format('runner-up-{0}', 'kinoite') }}")),
+    "K11 toJSON route output (Keel)": (
+        BASELINE, "\njobs:\n",
+        "\njobs:\n" + NEW_JOB.format(runs="${{ fromJSON(toJSON(needs)).route.outputs.runner }}")),
+    "K10 job key with a trailing comment (Keel)": (
+        CI, "\njobs:\n", "\njobs:\n  extra: # x\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n"),
+    "quoted runs-on key": (
+        CI, "\njobs:\n", '\njobs:\n  extra:\n    runs-on: ubuntu-latest\n    "runs-on": self-hosted\n    steps:\n'
+                         "      - run: echo x\n"),
+    "flow-mapping job": (CI, "\njobs:\n", "\njobs:\n  extra:\n    {runs-on: self-hosted}\n"),
+    "three-space job body": (
+        CI, "\njobs:\n", "\njobs:\n  extra:\n   runs-on: self-hosted\n   steps:\n     - run: echo x\n"),
+}
+
 def case(event, ref="refs/heads/main", protected="true"):
     return (event, ref, protected)
 
@@ -443,7 +542,7 @@ class Routing(unittest.TestCase):
     def test_the_route_job_is_exactly_the_reviewed_job(self):
         for path, text in self.workflows().items():
             with self.subTest(path=path):
-                self.assertEqual(route_input_problems(text), [])
+                self.assertEqual(route_input_problems(text, path), [])
 
     def test_routing_ignores_a_hostile_ambient_environment(self):
         for path, text in self.workflows().items():
@@ -460,9 +559,26 @@ class Routing(unittest.TestCase):
                 with self.subTest(path=path, edit=name):
                     self.assertEqual(text.count(old), 1, "anchor must be unique")
                     edited = text.replace(old, new, 1)
-                    self.assertNotEqual(route_input_problems(edited), [], "static layer")
+                    self.assertNotEqual(route_input_problems(edited, path), [], "static layer")
                     if dynamic:
                         self.assertNotEqual(ambient_routing_problems(edited), [], "dynamic layer")
+
+    def test_every_workflow_file_is_listed_and_of_the_reviewed_shape(self):
+        names = sorted(path.relative_to(ROOT).as_posix()
+                       for path in (ROOT / ".github/workflows").glob("*.y*ml"))
+        self.assertEqual(listed_workflow_problems(names), [])
+        for name in names:
+            with self.subTest(path=name):
+                self.assertEqual(workflow_shape_problems(name, (ROOT / name).read_text()), [])
+
+    def test_each_shape_edit_is_refused(self):
+        self.assertNotEqual(listed_workflow_problems([".github/workflows/new.yml"]), [])
+        for name, (path, old, new) in SHAPE_EDITS.items():
+            with self.subTest(edit=name):
+                text = (ROOT / path).read_text()
+                self.assertEqual(text.count(old), 1, "anchor must be unique")
+                edited = text.replace(old, new, 1)
+                self.assertNotEqual(workflow_shape_problems(path, edited), [], name)
 
     def test_a_routed_job_falls_back_to_hosted_without_a_route_output(self):
         self.assertEqual(evaluate(ROUTE, {"needs.route.outputs.runner": ""}), HOSTED)
