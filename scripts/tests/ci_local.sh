@@ -12,6 +12,7 @@ printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/plants/test_runner.py"
 printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_plants.py"
 printf 'schema = "forge-warden.policy.v0"\n' > "$sandbox/repo/warden.toml"
 printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/perimeter.py"
+printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/runner_routing.py"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"
 cat > "$sandbox/bin/git" <<'STUB'

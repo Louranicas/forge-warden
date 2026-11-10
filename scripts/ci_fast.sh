@@ -12,6 +12,7 @@ python3 -I scripts/tests/hold_ack.py
 python3 -I .claude/hooks/test_guard.py
 python3 -I scripts/tests/managed_review_bundle.py
 python3 -I scripts/tests/guardrails.py
+python3 -I scripts/tests/runner_routing.py
 python3 -I scripts/check_guardrails.py
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked --quiet

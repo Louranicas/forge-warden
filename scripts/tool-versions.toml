@@ -6,3 +6,8 @@ cargo_deny = "0.20.2"
 
 # Shared immutable installer revision; every declarative CI copy is checked.
 install_action = "c509219cf42fba86913069efd0ade2458c59337b"
+
+# WP-RUNNER-UP: rustup-init for self-hosted runner-up guests (hosted images ship rustup). The
+# sha256 is the archive's published checksum, verified against an independent download.
+rustup = "1.29.3"
+rustup_sha256 = "b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55"
