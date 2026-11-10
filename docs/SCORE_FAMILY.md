@@ -127,3 +127,15 @@ required, they need their own trust design, not filename matching.
 Passing core fixtures does not prove that a real producer ran. An offline recipe does not prove
 that a hosted admission rule exists. No measured score family shows that a score predicts risk.
 Those need separate evidence, recorded in a receipt as above.
+
+What each section rests on, restated so a reader of this section alone cannot mistake the
+specification for enforcement:
+
+| Section | Status |
+| --- | --- |
+| §3 Receipt contents | **specification only, not tested enforcement** |
+| §4.1 Policy arithmetic | tested (Z3 frozen cases, G-45 plants) |
+| §4.2 Real producer scores | **BLOCKED**, so not tested |
+| §4.3 Family separation | **specification only, not tested enforcement** |
+| §4.4 Scope and shape | partly tested; out-of-scope budgets are not tested |
+| §4.5 Receipt refusal | **specification only, not tested enforcement** |
