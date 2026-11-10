@@ -94,6 +94,102 @@ class Runner(unittest.TestCase):
             self.assertEqual(path.read_text(), 'planted\n')
             self.assertEqual(original, b'once\n')
 
+    def test_create_refuses_unsafe_or_existing_paths_by_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'; source.mkdir(); (source / 'dir').mkdir()
+            (source / 'existing').write_text('kept\n')
+            (source / 'dangling').symlink_to(root / 'nowhere')
+            outside = root / 'outside'; outside.mkdir()
+            (source / 'linkdir').symlink_to(outside)
+            refusals = {
+                '../escape': 'relative and normalised', str(root / 'abs'): 'relative and normalised',
+                './dot': 'relative and normalised', 'dir//double': 'relative and normalised',
+                'dir/../up': 'relative and normalised', 'dir/': 'relative and normalised',
+                '': 'relative and normalised', '.git/hooks/x': 'inside .git',
+                'existing': 'already exists', 'dangling': 'already exists',
+                'linkdir/x': 'missing or symlink parent', 'missing/x': 'missing or symlink parent',
+            }
+            before = sorted(p.name for p in source.iterdir())
+            for path, reason in refusals.items():
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, reason):
+                    RUN.edit(source, dict(path=path, create='breach\n'))
+            self.assertEqual(sorted(p.name for p in source.iterdir()), before)
+            self.assertEqual(list(outside.iterdir()), [])
+            self.assertEqual((source / 'existing').read_text(), 'kept\n')
+            self.assertFalse((root / 'nowhere').exists())
+
+    def test_recipe_has_exactly_one_kind(self):
+        for invalid in (dict(), dict(new='x'), dict(old='a'), dict(create='a', new='b'),
+                        dict(old='a', new='b', create='c'), dict(append='a', create='b'),
+                        dict(create=None), dict(append=['x'])):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'recipe'):
+                RUN.recipe_kind(invalid)
+        for valid, kind in ((dict(old='a', new='b'), 'old'), (dict(append='a'), 'append'),
+                            (dict(create=''), 'create')):
+            self.assertEqual(RUN.recipe_kind(valid), kind)
+
+    def test_create_then_restore_removes_exactly_that_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory); (source / 'dir').mkdir(); (source / 'dir' / 'kept').write_text('k\n')
+            path, before = RUN.edit(source, dict(path='dir/.hidden', create='breach\n'))
+            self.assertIsNone(before)
+            self.assertEqual(path.read_text(), 'breach\n')
+            RUN.restore(path, before)
+            self.assertFalse(os.path.lexists(path))
+            self.assertEqual(sorted(p.name for p in (source / 'dir').iterdir()), ['kept'])
+            # Something that cannot be unlinked as a file is a restore error, never silent.
+            (source / 'dir' / 'blocker').mkdir()
+            with self.assertRaises(OSError):
+                RUN.restore(source / 'dir' / 'blocker', None)
+
+    def test_create_case_is_caught_and_restored_even_when_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'; source.mkdir()
+            (source / 'Cargo.lock').write_text('fixture lock\n')
+            (source / '.gitignore').write_text('ignored.plant\n')
+            (source / 'check.py').write_text(
+                'from pathlib import Path\nimport sys\n'
+                'bad=[p for p in ("new.plant","ignored.plant") if Path(p).exists()]\n'
+                'print("named create breach" if bad else "clean create baseline")\n'
+                'sys.exit(101 if bad else 0)\n')
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null',
+                    '-C', str(source), *args], env=RUN.environment(), stderr=subprocess.PIPE)
+            git('init', '-q'); git('add', '--', 'Cargo.lock', '.gitignore', 'check.py')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            revision = git('rev-parse', 'HEAD').decode().strip()
+            (root / 'run.py').write_bytes(Path(__file__).with_name('run.py').read_bytes())
+            command = [sys.executable, '-I', 'check.py']
+            (root / 'catalog.json').write_text(json.dumps(dict(register={}, pending_guardrails=[], cases=[
+                dict(id='new', guardrail='G-06', path='new.plant', create='x\n', command=command,
+                     diagnostic='named create breach'),
+                dict(id='ignored', guardrail='G-06', path='ignored.plant', create='x\n', command=command,
+                     diagnostic='named create breach')])))
+            common = [sys.executable, '-I', str(root / 'run.py'), '--source', str(source),
+                      '--revision', revision]
+            result = subprocess.run([*common, '--output', str(root / 'ok')], capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads((root / 'ok' / 'report.json').read_text())
+            self.assertEqual([r['status'] for r in report['results']], ['CAUGHT', 'CAUGHT'])
+            # Plant: restore no longer removes the created file. Git status cannot see the ignored
+            # one; the existence check must still report ERROR_RESTORE and stop the run.
+            program = root / 'run.py'
+            original = program.read_text()
+            self.assertEqual(original.count('path.unlink(missing_ok=True)\n    if os.path.lexists'), 1)
+            program.write_text(original.replace('path.unlink(missing_ok=True)\n    if os.path.lexists',
+                                                'pass  # planted missing unlink\n    if os.path.lexists'))
+            result = subprocess.run([*common, '--output', str(root / 'broken'), '--case', 'ignored'],
+                                    capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            report = json.loads((root / 'broken' / 'report.json').read_text())
+            self.assertEqual(report['results'][0]['status'], 'ERROR_RESTORE')
+            self.assertIn('created plant file still present', report['results'][0]['detail'])
+            self.assertTrue(report['aborted_after_restore_error'])
+            self.assertEqual(git('status', '--porcelain'), b'')
+
     def test_commands_timeout_instead_of_counting_red(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
