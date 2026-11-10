@@ -18,9 +18,7 @@
     clippy::disallowed_methods,
     clippy::panic,
     clippy::unwrap_used,
-    reason = "test helpers read committed fixtures; each parse runs on a watchdog thread so a hang \
-              fails instead of stalling; HOSTILE_CASES raises the budget for a campaign; a panic \
-              here is a failed test"
+    reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
 )]
 #![expect(
     clippy::disallowed_types,

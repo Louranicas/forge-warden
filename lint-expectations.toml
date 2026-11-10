@@ -499,3 +499,27 @@ file = "crates/forge-warden-core/tests/z3_authority.rs"
 lint = "clippy::print_stderr"
 source_reason = "the executed and accepted counts are the law's receipt evidence"
 review_reason = "Test-only: each generated law prints its executed/accepted counts and seed to stderr as receipt evidence; nothing in production prints."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: the parser harness reads committed fixtures and corpus files, runs each parse on a watchdog thread so a hang fails the test instead of stalling it, and reads HOSTILE_CASES only to raise its case budget for a campaign; production core stays free of these effects."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::panic"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: a parse that does not return within the bound fails the test with a panic naming the parser; a hang must be a red test, not a stalled run."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: harness setup unwraps committed fixture reads and seed selection; missing seeds fail the test instead of shrinking the input space."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::disallowed_types"
+source_reason = "the harness bounds each parse by wall time: Instant is the clock it measures with"
+review_reason = "WP-HOSTILE-INPUT: Instant measures each parse against the 2 s bound; the harness is a test and does not reach production timing."
