@@ -7,6 +7,9 @@
 //! real parser (syn), so comments, whitespace and raw identifiers never reach it, and inspects every
 //! attribute by its parsed path: outer and inner, nested in `cfg_attr`, and inside macro
 //! invocations. A file that does not parse fails, and so does a lint attribute whose arguments do not.
+//! Production code also may not use `include!` (B-C1c-04) or `#[path]` (Q-DOOR-PATH): either would
+//! compile a file this check judges under another name. Inside a door module, `#[path]` may only
+//! bring test support into a test-only module.
 #![expect(
     clippy::disallowed_methods,
     reason = "test door: reads the CLI crate's source files"
@@ -45,9 +48,20 @@ fn last(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The offence a `path` attribute records (Q-DOOR-PATH).
+const PATH_ATTRIBUTE: &str = "path attribute";
+
 /// What one attribute (as its `Meta`) does to the door lints: a list of offences.
 fn check_meta(meta: &Meta, found: &mut Vec<String>) {
     let name = last(meta.path());
+    if name == "path" {
+        // Q-DOOR-PATH: `#[path]` compiles a file under another module path, so a protected door
+        // file could be compiled a second time outside the door modules, where these fences,
+        // which judge by file, would not see it. Only test code and one test-only door form
+        // (`a_door_module_names_only_test_support_by_path`) may use it.
+        found.push(PATH_ATTRIBUTE.to_owned());
+        return;
+    }
     let level = matches!(name.as_str(), "allow" | "expect" | "warn");
     if !level && name != "cfg_attr" {
         return;
@@ -254,6 +268,41 @@ fn the_parser_finds_every_suppression_form() {
     }
 }
 
+/// Q-DOOR-PATH: every way of writing a `path` attribute is an offence for the shipped-file scan.
+#[test]
+fn the_parser_finds_every_path_attribute_form() {
+    let forms = [
+        (
+            "a path attribute (Q-DOOR-PATH)",
+            "#[path = \"doors/file.rs\"]\nmod again;",
+        ),
+        (
+            "a path attribute through cfg_attr",
+            "#[cfg_attr(all(), path = \"doors/file.rs\")]\nmod again;",
+        ),
+        (
+            "a path attribute through nested cfg_attr",
+            "#[cfg_attr(all(), cfg_attr(unix, path = \"doors/file.rs\"))]\nmod again;",
+        ),
+        (
+            "a path attribute inside a macro invocation",
+            "some_macro! {\n    #[path = \"doors/file.rs\"]\n    mod again;\n}",
+        ),
+        (
+            "a path attribute on an inline module",
+            "#[path = \"doors\"]\nmod again {\n    mod file;\n}",
+        ),
+    ];
+    for (name, source) in forms {
+        assert!(
+            door_lint_controls(source)
+                .iter()
+                .any(|f| f == PATH_ATTRIBUTE),
+            "missed: {name}\n{source}"
+        );
+    }
+}
+
 #[test]
 fn the_parser_ignores_names_outside_lint_attributes() {
     for (name, source) in [
@@ -289,6 +338,11 @@ fn the_parser_ignores_names_outside_lint_attributes() {
             "a string in a macro",
             "fn f() { assert!(true, \"#[allow(warnings)]\"); }",
         ),
+        (
+            "path as an identifier, a reason or a doc",
+            "/// see path = \"doors/file.rs\"\n#[expect(dead_code, reason = \"path = x\")]\nfn path() -> u8 { let path = 1; path }",
+        ),
+        ("a module without a path attribute", "mod file;"),
     ] {
         assert_eq!(
             door_lint_controls(source),
@@ -321,10 +375,12 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
         let found: Vec<String> = door_lint_controls(&source)
             .into_iter()
             .filter(|f| {
-                // Test code may open test doors and include fixtures; production may not.
+                // Test code may open test doors and include fixtures or support files; production
+                // may not.
                 let test_door = f == "expect(clippy::disallowed_methods)"
                     || f == "expect(clippy::disallowed_types)"
-                    || f == "include!";
+                    || f == "include!"
+                    || f == PATH_ATTRIBUTE;
                 // macro_rules! is refused in the CLI crate only (core declares note codes by macro).
                 let core_macro = f == "macro_rules!" && !cli;
                 !((!shipped && test_door) || core_macro)
@@ -717,5 +773,215 @@ fn door_scanner_matches_its_role_in_the_shared_corpus() {
             .and_then(serde_json::Value::as_bool)
             .unwrap();
         assert_eq!(!door_lint_controls(source).is_empty(), expected, "{case}");
+    }
+}
+
+/// Whether `target` (repository-relative, as a door's `#[path]` resolves it) names a Rust file
+/// under some crate's `tests/`. Normalised lexically: `..` may not climb above the repository
+/// root, and an absolute path is refused. Nothing on disk is read or followed.
+fn names_test_support(target: &std::path::Path) -> bool {
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if parts.pop().is_none() {
+                    return false;
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return false,
+        }
+    }
+    matches!(parts.as_slice(), [crates, _, tests, _, ..] if *crates == "crates" && *tests == "tests")
+        && target.extension() == Some("rs".as_ref())
+}
+
+/// Every `path` attribute in a door module other than the admitted ones.
+struct DoorPaths<'ast> {
+    admitted: Vec<&'ast Attribute>,
+    found: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for DoorPaths<'ast> {
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        if !self.admitted.iter().any(|a| std::ptr::eq(*a, attribute)) {
+            let mut found = Vec::new();
+            check_meta(&attribute.meta, &mut found);
+            if found.iter().any(|f| f == PATH_ATTRIBUTE) {
+                self.found.push(
+                    "a path attribute that is not on a test-only top-level `mod name;` naming a \
+                     file under crates/*/tests/"
+                        .to_owned(),
+                );
+            }
+        }
+        syn::visit::visit_attribute(self, attribute);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let mut found = Vec::new();
+        check_tokens(mac.tokens.clone(), &mut found);
+        if found.iter().any(|f| f == PATH_ATTRIBUTE) {
+            self.found
+                .push("a path attribute inside a macro invocation".to_owned());
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Q-DOOR-PATH: inside the door module `door`, a `#[path]` is admitted only to bring test support
+/// into a test-only module. It must be written directly (not through `cfg_attr` or a macro) as a
+/// string literal on a top-level `mod name;` that is compiled only under `test`, and it must name a
+/// Rust file under `crates/<crate>/tests/`. Every other `path` attribute is an offence.
+fn door_path_offences(door: &str, source: &str) -> Vec<String> {
+    let Ok(file) = syn::parse_file(source) else {
+        return vec![format!("{door}: does not parse")];
+    };
+    let dir = std::path::Path::new(door)
+        .parent()
+        .unwrap_or(std::path::Path::new(""));
+    let mut admitted = Vec::new();
+    for item in &file.items {
+        let syn::Item::Mod(module) = item else {
+            continue;
+        };
+        if module.content.is_some() || !is_test_only(&module.attrs) {
+            continue;
+        }
+        for attribute in &module.attrs {
+            if let Meta::NameValue(pair) = &attribute.meta
+                && pair.path.segments.len() == 1
+                && last(&pair.path) == "path"
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(target),
+                    ..
+                }) = &pair.value
+                && names_test_support(&dir.join(target.value()))
+            {
+                admitted.push(attribute);
+            }
+        }
+    }
+    let mut scan = DoorPaths {
+        admitted,
+        found: Vec::new(),
+    };
+    scan.visit_file(&file);
+    scan.found
+        .into_iter()
+        .map(|f| format!("{door}: {f}"))
+        .collect()
+}
+
+/// Q-DOOR-PATH on the tree: no door module names another file by `#[path]`, except test support
+/// into a test-only module (today: `doors/mod.rs`'s `test_environment`).
+#[test]
+fn a_door_module_names_only_test_support_by_path() {
+    for door in common::DOOR_FILES {
+        let source = std::fs::read_to_string(root().join(door)).unwrap();
+        assert_eq!(
+            door_path_offences(door, &source),
+            Vec::<String>::new(),
+            "{door}"
+        );
+    }
+}
+
+#[test]
+fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
+    let door = "crates/forge-warden-cli/src/doors/mod.rs";
+    for (name, source) in [
+        (
+            "cfg(test)",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(test) plus another cfg, as in doors/mod.rs",
+            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(all(test, unix)) and a ./ segment",
+            "#[cfg(all(test, unix))]\n#[path = \"./../../tests/support/env.rs\"]\nmod env;",
+        ),
+        ("no path attribute at all", "mod child;"),
+    ] {
+        assert_eq!(
+            door_path_offences(door, source),
+            Vec::<String>::new(),
+            "refused: {name}\n{source}"
+        );
+    }
+    for (name, source) in [
+        (
+            "no cfg(test)",
+            "#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(not(test))",
+            "#[cfg(not(test))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(any(test, unix))",
+            "#[cfg(any(test, unix))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "a door file, not test support",
+            "#[cfg(test)]\n#[path = \"child/git.rs\"]\nmod again;",
+        ),
+        (
+            "the crate's own src",
+            "#[cfg(test)]\n#[path = \"../main.rs\"]\nmod again;",
+        ),
+        (
+            "climbs above the repository root, then into a tests/ dir",
+            "#[cfg(test)]\n#[path = \"../../../../../crates/forge-warden-cli/tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "an absolute path",
+            "#[cfg(test)]\n#[path = \"/crates/forge-warden-cli/tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "not a Rust file",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.txt\"]\nmod env;",
+        ),
+        (
+            "a tests/ directory itself",
+            "#[cfg(test)]\n#[path = \"../../tests\"]\nmod env;",
+        ),
+        (
+            "an inline module",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env {}",
+        ),
+        (
+            "nested in an inline test module",
+            "#[cfg(test)]\nmod t {\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+        ),
+        (
+            "through cfg_attr",
+            "#[cfg_attr(test, path = \"../../tests/support/env.rs\")]\nmod env;",
+        ),
+        (
+            "inside a macro invocation",
+            "some_macro! {\n    #[cfg(test)]\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+        ),
+        (
+            "not a string literal",
+            "#[cfg(test)]\n#[path = concat!(\"../../tests/\", \"env.rs\")]\nmod env;",
+        ),
+        (
+            "on a function",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nfn env() {}",
+        ),
+        (
+            "a second, unadmitted path beside an admitted one",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;\n#[path = \"file.rs\"]\nmod again;",
+        ),
+        ("unparseable", "fn f( {"),
+    ] {
+        assert!(
+            !door_path_offences(door, source).is_empty(),
+            "missed: {name}\n{source}"
+        );
     }
 }
