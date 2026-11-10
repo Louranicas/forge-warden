@@ -12,7 +12,7 @@ mod corpus_manifest;
 use forge_warden_core::authority::{
     AdvisoryOutcome, Produced, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
 };
-use forge_warden_core::facts::PatchFacts;
+use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankDoc, parse_rank};
 use forge_warden_core::testing::evaluate;
@@ -40,7 +40,7 @@ fn rank(name: &str) -> Option<RankDoc> {
     parse_rank(&read(&format!("{name}.rank.json"))).ok()
 }
 
-fn facts(name: &str) -> Result<PatchFacts, forge_warden_core::facts::Unverifiable> {
+fn facts(name: &str) -> Result<PatchFacts, Unverifiable> {
     PatchFacts::from_git(
         &read(&format!("{name}.numstat")),
         &read(&format!("{name}.summary")),
@@ -93,6 +93,21 @@ kind = "forbid_signal"
 severity = "fail"
 signals = ["deleted_file"]
 "#;
+
+/// The file must be its own companion: a rule a file trips unless it can stand as one.
+fn self_companion(path: &str) -> String {
+    format!(
+        r#"
+[[rule]]
+id = "asset-is-live"
+why = "A changed asset must still exist after the change."
+kind = "require_companion"
+severity = "fail"
+when = ["{path}"]
+require = ["{path}"]
+"#
+    )
+}
 
 fn codes(notes: &[forge_warden_core::verdict::Note]) -> Vec<&str> {
     notes.iter().map(|n| n.code.name()).collect()
@@ -352,4 +367,133 @@ fn advisory_git_admission_note_is_composed_by_core() {
         assert_eq!(note.detail, format!("{original}{suffix}"));
         assert_ne!(judged.verdict().outcome(), Outcome::Pass);
     }
+}
+
+/// The violations of the policy's only rule, judged on the authority path, with the verdict.
+fn companion_violations(name: &str, path: &str) -> (usize, forge_warden_core::Verdict) {
+    let doc = rank(name).unwrap();
+    assert_eq!(
+        doc.files()
+            .iter()
+            .map(|f| (f.path().as_str(), f.status().name(), f.signals().len()))
+            .collect::<Vec<_>>(),
+        [(path, "binary_changed", 1)],
+        "{name}: the producer ranked one binary file with `binary_change` only"
+    );
+    let p = policy(&self_companion(path));
+    let ranking = produced(doc);
+    let checked = check(&ranking, facts(name));
+    let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
+    assert_eq!(verdict.rules().len(), 1, "{name}");
+    let violations = verdict.rules().first().unwrap().violations.len();
+    (violations, verdict)
+}
+
+#[test]
+fn a_binary_addition_is_a_live_companion_once_git_adds_new_file() {
+    // Real producer output: `binary_changed` + `binary_change`, no `new_file` (ADR 0005 fact 3).
+    for (name, path) in [("m-binadd", "b.bin"), ("ts2-new-binary-add", "binary.bin")] {
+        // The raw engine cannot know the file exists afterwards, so the file trips its own rule.
+        let raw = evaluate(
+            &policy(&self_companion(path)),
+            &rank(name).unwrap(),
+            seals(),
+            today(),
+        );
+        assert_eq!(raw.rules()[0].violations.len(), 1, "{name}: raw engine");
+        // On the judged path Git's `new_file` makes it a live companion: the rule is satisfied.
+        let (violations, verdict) = companion_violations(name, path);
+        assert_eq!(violations, 0, "{name}");
+        // The producer still missed a fact, so the change holds for a person; it never passes.
+        assert_eq!(verdict.outcome(), Outcome::Hold, "{name}");
+        assert!(
+            codes(verdict.notes()).contains(&"status_mismatch"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_binary_deletion_triggers_no_companion_rule_once_git_adds_deleted_file() {
+    // Real producer output: `binary_changed` + `binary_change`, no `deleted_file`.
+    for (name, path) in [
+        ("new-bindel", "logo.png"),
+        ("ts-binary-deletion-1", "plain.bin"),
+    ] {
+        // The raw engine takes the deletion for a change that needs a companion.
+        let raw = evaluate(
+            &policy(&self_companion(path)),
+            &rank(name).unwrap(),
+            seals(),
+            today(),
+        );
+        assert_eq!(raw.rules()[0].violations.len(), 1, "{name}: raw engine");
+        // On the judged path Git's `deleted_file` makes it a deletion: it triggers nothing.
+        let (violations, verdict) = companion_violations(name, path);
+        assert_eq!(violations, 0, "{name}");
+        assert_eq!(verdict.outcome(), Outcome::Hold, "{name}");
+        assert!(
+            codes(verdict.notes()).contains(&"status_mismatch"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_binary_modification_is_never_a_companion() {
+    // `m-binmod` is covered (the producer and Git agree), and Git derives neither `new_file` nor
+    // `deleted_file`: the size of the change is unknowable, so the file cannot vouch for itself.
+    let (violations, verdict) = companion_violations("m-binmod", "b.bin");
+    assert_eq!(violations, 1);
+    assert_eq!(verdict.outcome(), Outcome::Fail);
+    assert!(!codes(verdict.notes()).contains(&"status_mismatch"));
+}
+
+#[test]
+fn a_facts_error_never_passes_anywhere_in_the_corpus() {
+    // `Checked::effective` has nothing to widen with when Git's facts are an error, so the rules
+    // read the ranking as written. The `patch_unverifiable` note is what keeps that from passing.
+    let index: serde_json::Value = serde_json::from_slice(&read("cases.json")).unwrap();
+    let p = policy(PERMISSIVE);
+    let mut raw_passes = 0_usize;
+    let mut judged = 0_usize;
+    for case in index["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let Some(doc) = rank(name) else { continue };
+        let raw = evaluate(&p, &doc, seals(), today()).outcome();
+        let ranking = produced(doc);
+        let checked = check(&ranking, Err(Unverifiable::Empty));
+        assert!(!checked.is_covered(), "{name}");
+        let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
+        assert_ne!(verdict.outcome(), Outcome::Pass, "{name}");
+        let notes = codes(verdict.notes());
+        assert!(notes.contains(&"patch_unverifiable"), "{name}: {notes:?}");
+        // No disagreement with Git is computed without Git's facts. A note the rule engine raises
+        // from the ranking alone (`duplicate_paths`) may still be there.
+        for from_facts in ["status_mismatch", "rank_incomplete", "rank_extraneous"] {
+            assert!(!notes.contains(&from_facts), "{name}: {notes:?}");
+        }
+        if raw == Outcome::Pass {
+            assert_eq!(verdict.outcome(), Outcome::Hold, "{name}");
+            raw_passes += 1;
+        }
+        judged += 1;
+    }
+    // Not vacuous: the corpus has rankings the raw engine passes.
+    assert!(
+        raw_passes > 0 && judged >= raw_passes,
+        "{raw_passes}/{judged}"
+    );
+}
+
+#[test]
+fn a_no_prefix_patch_is_refused_as_a_repeated_path() {
+    // The patch was made with `--no-prefix` and changes `other src/a` and `src/a`. Git strips one
+    // leading component from each, so its numstat lists the path `a` twice. The corpus pins only
+    // the class (`unverifiable`) and the message; this pins the variant and the path it names, on
+    // Git's real output (G8).
+    assert_eq!(
+        facts("ts-no-prefix").err(),
+        Some(Unverifiable::RepeatedPath("a".to_owned()))
+    );
 }

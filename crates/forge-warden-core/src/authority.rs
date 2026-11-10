@@ -160,8 +160,12 @@ impl<P> Checked<'_, P> {
 
     /// The checked ranking with each file's signals widened by Git's change-kind facts (T2: Git
     /// only adds). Infallible (Zen B4): `RankDoc::map_files` and `RankedFile::with_added_signals`
-    /// keep every constructor invariant by construction, so there is no fallback that could judge
-    /// an unwidened ranking.
+    /// keep every constructor invariant by construction, so widening itself has no failure path.
+    ///
+    /// When Git's facts are unavailable there is nothing to widen with, and the rules do read the
+    /// ranking as the producer wrote it. That verdict cannot pass: [`Self::notes`] returns a
+    /// `patch_unverifiable` note for the same `Err`, `judge` attaches it, and a note holds the
+    /// verdict (`a_facts_error_never_passes_anywhere_in_the_corpus`).
     fn effective(&self) -> RankDoc {
         let rank = &self.ranking.doc;
         let Ok(facts) = &self.facts else {
