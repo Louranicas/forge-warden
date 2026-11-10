@@ -11,12 +11,20 @@
 //! one such file the same day.
 //!
 //! Budget (recorded here and in `fixtures/hostile/README.md`): [`CASES`] cases per property,
-//! with proptest's default seeding.
+//! with proptest's default seeding; `HOSTILE_CASES=<n>` raises it for a longer campaign. A parse
+//! that does not return within the bound fails the test from a watchdog thread instead of hanging
+//! it, and shrinking is capped at [`SHRINK_MS`] so a slow input still ends the run.
 #![expect(
     clippy::disallowed_methods,
     clippy::panic,
     clippy::unwrap_used,
-    reason = "test helpers read committed fixtures; a panic here is a failed test"
+    reason = "test helpers read committed fixtures; each parse runs on a watchdog thread so a hang \
+              fails instead of stalling; HOSTILE_CASES raises the budget for a campaign; a panic \
+              here is a failed test"
+)]
+#![expect(
+    clippy::disallowed_types,
+    reason = "the harness bounds each parse by wall time: Instant is the clock it measures with"
 )]
 
 use forge_warden_core::facts::PatchFacts;
@@ -30,6 +38,23 @@ use std::time::{Duration, Instant};
 const CASES: u32 = 256;
 /// The longest any one parse may take in a debug test build.
 const TIME_BOUND: Duration = Duration::from_secs(2);
+/// The longest proptest may spend shrinking one failure.
+const SHRINK_MS: u32 = 60_000;
+
+fn config() -> ProptestConfig {
+    let cases = std::env::var("HOSTILE_CASES")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(CASES);
+    ProptestConfig {
+        cases,
+        max_shrink_time: SHRINK_MS,
+        // A failure is turned into a corpus file by hand, with a ledger row: nothing is written
+        // into the source tree by the test itself.
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    }
+}
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -127,37 +152,51 @@ fn apply(mut bytes: Vec<u8>, edits: &[Edit]) -> Vec<u8> {
     bytes
 }
 
-/// Run `parse` twice on `input`; it must finish in time and agree with itself.
-fn holds<T: std::fmt::Debug>(what: &str, parse: impl Fn() -> T) -> T {
-    let start = Instant::now();
-    let first = parse();
-    let took = start.elapsed();
+/// Run `parse` twice on its own input, on a watchdog thread: it must return within the bound and
+/// agree with itself. A parse that never returns fails here instead of hanging the test run.
+fn holds<T>(what: &str, parse: impl Fn() -> T + Send + 'static) -> T
+where
+    T: std::fmt::Debug + Send + 'static,
+{
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        let first = parse();
+        let took = start.elapsed();
+        let second = parse();
+        drop(send.send((took, format!("{first:?}") == format!("{second:?}"), first)));
+    });
+    let Ok((took, same, first)) = receive.recv_timeout(TIME_BOUND.saturating_mul(3)) else {
+        panic!("{what}: did not return within {:?}: a hang", TIME_BOUND.saturating_mul(3));
+    };
     assert!(took < TIME_BOUND, "{what}: took {took:?}");
-    let second = parse();
-    assert_eq!(format!("{first:?}"), format!("{second:?}"), "{what}: not deterministic");
+    assert!(same, "{what}: not deterministic");
     first
 }
 
 fn rank_holds(bytes: &[u8]) {
-    let result = holds("parse_rank", || parse_rank(bytes));
+    let owned = bytes.to_vec();
+    let result = holds("parse_rank", move || parse_rank(&owned));
     if let Err(forge_warden_core::rank::RankError::TooLarge(_)) = result {
         assert!(bytes.len() > forge_warden_core::MAX_INPUT_BYTES, "TooLarge under budget");
     }
 }
 
 fn policy_holds(bytes: &[u8]) {
-    let result = holds("parse_policy", || parse_policy(bytes));
+    let owned = bytes.to_vec();
+    let result = holds("parse_policy", move || parse_policy(&owned));
     if let Err(forge_warden_core::policy::PolicyError::TooLarge(_)) = result {
         assert!(bytes.len() > forge_warden_core::MAX_INPUT_BYTES, "TooLarge under budget");
     }
 }
 
 fn facts_holds(numstat: &[u8], summary: &[u8], patch: &[u8]) {
-    holds("PatchFacts::from_git", || PatchFacts::from_git(numstat, summary, patch));
+    let (numstat, summary, patch) = (numstat.to_vec(), summary.to_vec(), patch.to_vec());
+    drop(holds("PatchFacts::from_git", move || PatchFacts::from_git(&numstat, &summary, &patch)));
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(CASES))]
+    #![proptest_config(config())]
 
     #[test]
     fn rank_survives_arbitrary_bytes(bytes in proptest::collection::vec(any::<u8>(), 0..4096)) {
@@ -170,7 +209,7 @@ proptest! {
         edits in proptest::collection::vec(edit(), 1..8),
     ) {
         let seeds = rank_seeds();
-        let seed = seeds.get(pick % seeds.len()).unwrap().clone();
+        let seed = seeds.get(pick.checked_rem(seeds.len()).unwrap_or(0)).unwrap().clone();
         rank_holds(&apply(seed, &edits));
     }
 
@@ -185,7 +224,7 @@ proptest! {
         edits in proptest::collection::vec(edit(), 1..8),
     ) {
         let seeds = policy_seeds();
-        let seed = seeds.get(pick % seeds.len()).unwrap().clone();
+        let seed = seeds.get(pick.checked_rem(seeds.len()).unwrap_or(0)).unwrap().clone();
         policy_holds(&apply(seed, &edits));
     }
 
@@ -205,7 +244,7 @@ proptest! {
         edits in proptest::collection::vec(edit(), 1..8),
     ) {
         let seeds = facts_seeds();
-        let mut seed = seeds.get(pick % seeds.len()).unwrap().clone();
+        let mut seed = seeds.get(pick.checked_rem(seeds.len()).unwrap_or(0)).unwrap().clone();
         let part = seed.get_mut(which).unwrap();
         *part = apply(std::mem::take(part), &edits);
         let [numstat, summary, patch] = &seed;
