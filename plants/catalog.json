@@ -1114,7 +1114,7 @@
         "--nocapture"
       ],
       "old": "program: Program::Pinned(&git.executable),\n        args: &[\"--version\"],",
-      "new": "program: Program::Pinned(&pin_executable(&git.path)?),\n        args: &[\"--version\"],",
+      "new": "program: Program::Pinned(&super::pin_executable(&git.path)?),\n        args: &[\"--version\"],",
       "required_tools": [
         "cargo",
         "coreutils",
