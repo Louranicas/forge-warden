@@ -1780,6 +1780,78 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "route-pull-request",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "            push|schedule|workflow_dispatch)",
+      "new": "            push|schedule|workflow_dispatch|pull_request)",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-unprotected-main",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": " && [ \"$PROTECTED\" = true ]; then",
+      "new": "; then",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-case-folded-ref",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "[ \"$REF\" = refs/heads/main ]",
+      "new": "[ \"${REF,,}\" = refs/heads/main ]",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-pool-fallback",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_every_job_is_hosted_or_routed_through_the_route_job",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}",
+      "new": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'runner-up-kinoite' }}",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
     }
   ],
   "pending_guardrails": [
@@ -1812,12 +1884,6 @@
       "title": "Workflow hardening drift",
       "status": "PENDING",
       "reason": "Hosted zizmor audit exists, but the trusted offline execution image has no zizmor. No installation or weaker replacement audit is performed."
-    },
-    {
-      "id": "G-52",
-      "title": "Self-hosted runner routing drift",
-      "status": "PENDING",
-      "reason": "The control is scripts/tests/runner_routing.py, which arrives with RUNNER-UP v8. Its catalog cases land once v8 is on main (WP PLANTS-FENCES); until then no routing plant counts as caught."
     }
   ]
 }
