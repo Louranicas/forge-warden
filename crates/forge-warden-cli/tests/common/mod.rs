@@ -30,7 +30,8 @@ mod process_env;
 /// door lints, make an `ExitCode` or mint a produced ranking. The list is closed and exact.
 /// `door_files_are_exactly_the_listed_modules` refuses any other Rust file under [`DOOR_DIR`], so no
 /// file gains door rights just by where it lives.
-pub(crate) const DOOR_FILES: [&str; 5] = [
+pub(crate) const DOOR_FILES: [&str; 6] = [
+    "crates/forge-warden-cli/src/doors/child/git.rs",
     "crates/forge-warden-cli/src/doors/child/mod.rs",
     "crates/forge-warden-cli/src/doors/child/process.rs",
     "crates/forge-warden-cli/src/doors/diagnose.rs",
