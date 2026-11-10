@@ -502,6 +502,19 @@ SHAPE_EDITS = {
     "three-space job body": (
         CI, "\njobs:\n", "\njobs:\n  extra:\n   runs-on: self-hosted\n   steps:\n     - run: echo x\n"),
 }
+# FENCE-MUTATION (ledger Q36): edits that trip exactly one rule each, so that weakening that rule
+# alone is seen (a mutation pass found these rules were only ever hit together with another one).
+ISOLATED_SHAPE_EDITS = {
+    "a job's first field deeper than 4": (
+        "\njobs:\n  extra:\n      timeout-minutes: 5\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo x\n",
+        "a job's first field must be at indent 4"),
+    "odd indentation": (
+        "\njobs:\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n     - run: echo x\n", "odd indentation"),
+    "a tab in the indentation": (
+        "\njobs:\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n    \t- run: echo x\n", "odd indentation"),
+    "no runs-on": (
+        "\njobs:\n  extra:\n    timeout-minutes: 5\n    steps:\n      - run: echo x\n", "exactly one runs-on"),
+}
 
 def case(event, ref="refs/heads/main", protected="true"):
     return (event, ref, protected)
@@ -596,9 +609,9 @@ class Routing(unittest.TestCase):
                 with self.subTest(path=path, edit=name):
                     self.assertEqual(text.count(old), 1, "anchor must be unique")
                     edited = text.replace(old, new, 1)
-                    self.assertNotEqual(route_input_problems(edited, path), [], "static layer")
+                    self.assertTrue(route_input_problems(edited, path), "static layer")
                     if dynamic:
-                        self.assertNotEqual(ambient_routing_problems(edited), [], "dynamic layer")
+                        self.assertTrue(ambient_routing_problems(edited), "dynamic layer")
 
     def test_every_workflow_file_is_listed_and_of_the_reviewed_shape(self):
         names = sorted(path.relative_to(ROOT).as_posix()
@@ -607,6 +620,43 @@ class Routing(unittest.TestCase):
         for name in names:
             with self.subTest(path=name):
                 self.assertEqual(workflow_shape_problems(name, (ROOT / name).read_text()), [])
+
+    def test_each_shape_rule_refuses_alone(self):
+        text = (ROOT / CI).read_text()
+        for name, (new, message) in ISOLATED_SHAPE_EDITS.items():
+            with self.subTest(edit=name):
+                problems = workflow_shape_problems(CI, text.replace("\njobs:\n", new, 1))
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(message, problems[0])
+        problems = workflow_shape_problems(CI, text.replace("\njobs:\n", "\njobz:\n", 1))
+        self.assertTrue(problems and any("no jobs section" in p for p in problems), problems)
+
+    def test_the_unrouted_and_route_job_rules_refuse_alone(self):
+        text = (ROOT / BASELINE).read_text()
+        hosted = "    runs-on: ubuntu-latest\n    outputs:\n      runner: ${{ steps.pick"
+        self.assertEqual(text.count(hosted), 1)
+        problems = routed_job_problems(text.replace(hosted, hosted.replace("ubuntu-latest", "self-hosted"), 1),
+                                       ROUTED[BASELINE])
+        self.assertEqual(problems, ["route must run hosted"])
+        aggregate = "    needs: [mutation-plan, mutation-shards]\n    if: always()\n    runs-on: ubuntu-latest\n"
+        self.assertEqual(text.count(aggregate), 1)
+        reads = aggregate + "    env:\n      X: ${{ needs.route.outputs.runner }}\n"
+        self.assertEqual(routed_job_problems(text.replace(aggregate, reads, 1), ROUTED[BASELINE]),
+                         ["full-workspace: an unrouted job must run on ubuntu-latest"])
+
+    def test_the_route_runner_refuses_a_script_that_writes_other_than_one_runner_line(self):
+        text = (ROOT / BASELINE).read_text()
+        line = "printf 'runner=%s\\n' \"$runner\" >> \"$GITHUB_OUTPUT\""
+        self.assertEqual(text.count(line), 1)
+        for name, edited in {"twice": text.replace(line, line + "\n          " + line, 1),
+                             "misnamed": text.replace(line, line.replace("runner=%s", "runnr=%s"), 1)}.items():
+            with self.subTest(case=name), self.assertRaises(ValueError):
+                route(edited, "push", "refs/heads/main", "true")
+
+    def test_workflow_env_names_reads_exactly_the_workflow_env(self):
+        self.assertEqual(workflow_env_names((ROOT / BASELINE).read_text()),
+                         ["CARGO_INCREMENTAL", "CARGO_TERM_COLOR"])
+        self.assertEqual(workflow_env_names("name: x\njobs:\n"), [])
 
     def test_every_workflow_file_is_pinned_whole(self):
         names = sorted(path.relative_to(ROOT).as_posix()
@@ -619,7 +669,7 @@ class Routing(unittest.TestCase):
                                  "a workflow changed: review it, then update WORKFLOW_SHA256")
 
     def test_each_shape_edit_is_refused(self):
-        self.assertNotEqual(listed_workflow_problems([".github/workflows/new.yml"]), [])
+        self.assertTrue(listed_workflow_problems([".github/workflows/new.yml"]))
         for name, (path, old, new) in SHAPE_EDITS.items():
             with self.subTest(edit=name):
                 text = (ROOT / path).read_text()
@@ -628,7 +678,7 @@ class Routing(unittest.TestCase):
                 else:
                     self.assertEqual(text.count(old), 1, "anchor must be unique")
                     edited = text.replace(old, new, 1)
-                self.assertNotEqual(workflow_shape_problems(path, edited), [], name)
+                self.assertTrue(workflow_shape_problems(path, edited), name)
 
     def test_a_routed_job_falls_back_to_hosted_without_a_route_output(self):
         self.assertEqual(evaluate(ROUTE, {"needs.route.outputs.runner": ""}), HOSTED)
@@ -643,6 +693,12 @@ class Routing(unittest.TestCase):
             evaluate("${{ startsWith(github.ref, 'refs/') }}", {"github.ref": "r"})
         with self.assertRaises(ValueError):
             evaluate("${{ github.unknown }}", {})
+        # FENCE-MUTATION: paths the mutation pass found unexercised.
+        with self.assertRaises(ValueError):
+            evaluate("${{ 'a'", {})
+        self.assertEqual(evaluate("${{ ('a' == 'A') }}", {}), True)
+        self.assertEqual(evaluate("${{ true == true }}", {}), True)
+        self.assertEqual(evaluate("${{ true == 'true' }}", {}), False)
 
     def test_every_routed_job_refuses_a_moved_dropped_or_unguarded_bootstrap(self):
         boot = GUEST_BOOTSTRAP
@@ -663,6 +719,8 @@ class Routing(unittest.TestCase):
                     "header without its condition": body.replace(head, head.replace(condition, ""), 1),
                     "header without !cancelled()": body.replace(head, head.replace("!cancelled()", "success()"), 1),
                     "header hosted": body.replace(head, head.replace(ROUTE, HOSTED), 1),
+                    "checkout not first": body.replace("      - uses: actions/checkout@", "      - uses: actions/cache@", 1),
+                    "two bootstraps": body.replace(boot, boot + boot, 1),
                 }
                 if "needs.mutation-plan.result" in head:
                     bad["shards without the plan-success condition"] = body.replace(
@@ -672,8 +730,8 @@ class Routing(unittest.TestCase):
                 for name, mutated in bad.items():
                     with self.subTest(path=path, job=job, mutation=name):
                         self.assertNotEqual(mutated, body)
-                        self.assertNotEqual(
-                            routed_job_problems(text.replace(body, mutated, 1), ROUTED[path]), [])
+                        self.assertTrue(
+                            routed_job_problems(text.replace(body, mutated, 1), ROUTED[path]))
 
     def test_the_aggregate_check_stays_hosted_and_needs_plan_and_shards(self):
         body = job_bodies((ROOT / ".github/workflows/mutation-baseline.yml").read_text())["full-workspace"]
