@@ -65,8 +65,14 @@ case "$1" in
   cat > "$CARGO_TARGET_DIR/release/forge-warden" <<'JUDGE'
 #!/usr/bin/env bash
 case " $* " in
- *' --ranker '*) [ "$RANK_EXIT" = 0 ] || exit 3 ;;
- *' --advisory '*) [[ " $* " == *' --rank '* ]] || exit 97 ;;
+ *' --ranker '*)
+  [ "${EXPECT_MODE:-authority}" = authority ] || exit 98
+  # As the real judge does without an owner-enrolled Git allowlist: exit 3, no verdict.
+  if [ "${ALLOWLIST:-enrolled}" != enrolled ]; then echo 'Git admission: no Git allowlist enrolled' >&2; exit 3; fi
+  [ "$RANK_EXIT" = 0 ] || exit 3 ;;
+ *' --advisory '*)
+  [ "${EXPECT_MODE:-advisory}" = advisory ] || exit 98
+  [[ " $* " == *' --rank '* ]] || exit 97 ;;
  *) echo 'missing explicit judge mode' >&2; exit 97 ;;
 esac
 printf '{"fixture":true}\n'
@@ -127,6 +133,59 @@ for row in "other-bytes $OTHER_ARCHIVE 0 3" "download-fails $FIXTURE_ARCHIVE 22 
  echo "PASS archive $name exit=$actual"
 done
 export ARCHIVE="$FIXTURE_ARCHIVE" CURL_EXIT=0
+# DOGFOOD-HOSTED-MODE. The trusted policy here pins a producer. (1) Asked with --hosted-advisory,
+# the driver judges in advisory mode (the stub judge exits 98 if it is given --ranker), says why,
+# still fetches the pinned ranker, and cannot be acknowledged into a pass. (2) Without the
+# argument a pinned policy means authority mode, and a missing allowlist is the judge's exit 3 with
+# no verdict: no silent downgrade. (3) Nothing in the environment selects advisory mode.
+export BUILD_EXIT=0 RANK_EXIT=0 ACK_BASE="$base" ACK_HEAD="$head" ACK_EXIT=0
+for row in 'hold 8 8' 'judge-zero 0 0'; do
+ read -r name JUDGE_EXIT expected <<< "$row"
+ export JUDGE_EXIT EXPECT_MODE=advisory
+ out="$sandbox/hosted-$name"
+ set +e
+ bash "$trusted/scripts/dogfood.sh" --hosted-advisory "$base" "$head" "$candidate" "$out" \
+   "$sandbox/receipt.json" "$sandbox/receipt.sig" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL hosted $name: expected $expected got $actual"; exit 1; fi
+ grep -q 'explicit advisory mode (--hosted-advisory: a hosted runner has no owner-enrolled Git allowlist); this result cannot PASS' "$sandbox/output"
+ grep -qx 'mode=advisory' "$out/provenance.txt"
+ grep -q '^advisory_reason=--hosted-advisory' "$out/provenance.txt"
+ test -x "$out/ranker/bin/deep-diff-forge"
+ test -s "$out/rank.json"
+ test ! -e "$out/acknowledgement.json"
+ echo "PASS hosted advisory $name exit=$actual"
+done
+export JUDGE_EXIT=0 EXPECT_MODE=authority ALLOWLIST=absent
+out="$sandbox/no-allowlist"
+set +e
+bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+actual=$?
+set -e
+[ "$actual" = 3 ] || { cat "$sandbox/output"; echo "FAIL no-allowlist: got $actual"; exit 1; }
+grep -qx 'mode=authority' "$out/provenance.txt"
+test ! -s "$out/verdict.json"
+echo 'PASS a pinned policy without the argument is authority mode: a missing allowlist is exit 3'
+export ALLOWLIST=enrolled
+for variable in HOSTED_ADVISORY DOGFOOD_MODE DOGFOOD_HOSTED_ADVISORY FORGE_WARDEN_MODE hosted_advisory mode; do
+ out="$sandbox/env-$variable"
+ set +e
+ env "$variable=advisory" "DOGFOOD_ARGS=--hosted-advisory" bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ [ "$actual" = 0 ] || { cat "$sandbox/output"; echo "FAIL env $variable: got $actual (98 = the judge was asked for advisory mode)"; exit 1; }
+ grep -qx 'mode=authority' "$out/provenance.txt"
+done
+echo 'PASS no environment variable selects advisory mode'
+# The argument counts only in first place; anywhere else it is a usage error before any effect.
+set +e
+bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/misplaced" --hosted-advisory > "$sandbox/output" 2>&1
+misplaced=$?
+set -e
+[ "$misplaced" = 2 ] && test ! -e "$sandbox/misplaced"
+echo 'PASS a misplaced --hosted-advisory is a usage error'
+unset EXPECT_MODE
 # Receipt verification is independently tested with real signatures in hold_ack.py.
 # Here a stub proves the driver admits only successful verification of a HOLD.
 export ACK_BASE="$base" ACK_HEAD="$head" BUILD_EXIT=0 RANK_EXIT=0
