@@ -21,6 +21,9 @@ git --version
 
 ## 2. Install forge-warden at a pinned revision
 
+**NOT YET RUN** as written: no published revision carries 0.2.0 yet, and the verifier ran a local build of
+the branch instead.
+
 Pin what you deploy: a release tag, or a commit you have reviewed.
 
 ```bash
