@@ -2141,6 +2141,46 @@
       ]
     },
     {
+      "id": "effect-list-entry-removed",
+      "guardrail": "G-06",
+      "path": "clippy.toml",
+      "diagnostic": "the_effect_lists_name_every_reviewed_effect.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_effect_lists_name_every_reviewed_effect"
+      ],
+      "old": "    { path = \"std::fs::hard_link\", reason = \"forge-warden never writes files\" },\n",
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "git-oracle-entry-removed",
+      "guardrail": "G-06",
+      "path": "clippy.toml",
+      "diagnostic": "clippy_refuses_minting_a_git_oracle_outside_the_door.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "mint_lint",
+        "--",
+        "clippy_refuses_minting_a_git_oracle_outside_the_door"
+      ],
+      "old": "    { path = \"forge_warden_core::verdict::GitOracle::approved\", reason = \"only doors::child::AdmittedGit::oracle records a Git, from the admission that pinned it (Q-TYPES-2 B2; Q-TYPES-2.1)\" },\n",
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
       "id": "refusal-map-core-variant-swap",
       "guardrail": "G-53",
       "path": "crates/forge-warden-core/src/facts.rs",
