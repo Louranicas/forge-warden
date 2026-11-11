@@ -9,6 +9,8 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
 - **Breaking:** a policy file over 1 MiB is refused (exit 4, `invalid_input`, before parsing);
   it shared the ranking's 64 MiB budget before. New constant `MAX_POLICY_BYTES`. Measured: a
   64 MiB policy of half a million rules parsed in 6.5 s at a peak of 4 GiB. Size limits and

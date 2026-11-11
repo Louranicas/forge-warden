@@ -63,7 +63,7 @@ A change is done when all of these hold, and not before:
 
 ```bash
 scripts/ci_fast.sh                                   # the fast gate
-scripts/ci_local.sh                                  # everything CI runs that works offline
+scripts/ci_local.sh                                  # the offline build/lint/test part of CI (a subset)
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
 git diff --binary --no-renames main... > target/change.patch

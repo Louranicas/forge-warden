@@ -66,20 +66,23 @@ people, scripts, CI and agents together.
 ## Install
 
 ```bash
-cargo install --git https://github.com/Louranicas/forge-warden forge-warden-cli --locked
+cargo install --git https://github.com/Louranicas/forge-warden --tag v0.2.0 forge-warden-cli --locked
 cargo install --git https://github.com/Louranicas/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
 forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
 ```
 
-The first line builds the default branch. Pin what you deploy: add `--tag` with a forge-warden
-release tag (or `--rev` with a commit), as the deep-diff-forge line does with its `v0.8.2`
-release. Authority mode runs only the deep-diff-forge build whose SHA-256 your policy lists.
+Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.0 is a
+source release: there is no forge-warden binary to download. Authority mode runs only the
+deep-diff-forge binary whose SHA-256 your policy lists, and a binary you build yourself has other
+bytes than the released one ([runbook](docs/RUNBOOK.md), step 3).
 
 Coming from 0.1.0? [Upgrading to 0.2.0](docs/UPGRADING.md) lists what changed and what to do.
 
 forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
-Unix file metadata, and clean up child process groups with `/usr/bin/kill`.
+Unix file metadata, and clean up child process groups with `/usr/bin/kill`. It is built, tested and
+measured on x86_64 Linux only; the deep-diff-forge release this repository pins exists for that
+platform alone.
 
 MSRV is Rust 1.88. At run time forge-warden needs Git (`/usr/bin/git` by default; choose another
 absolute path with `--git`), which reads the patch's facts. Authority mode also needs the
@@ -260,7 +263,9 @@ contract.
 | **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), `just install-hooks` |
 | **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 
-Run the whole gate locally with `just ci` (or `scripts/ci_local.sh`).
+Run the offline build, lint, test and audit part of the gate locally with `just ci` (or
+`scripts/ci_local.sh`); it is a subset, and `scripts/ci_fast.sh` runs the script and fixture checks
+beside it.
 
 ## Working with Claude
 
