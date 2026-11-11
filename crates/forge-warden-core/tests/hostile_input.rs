@@ -6,6 +6,9 @@
 //! [`TIME_BOUND`], and the same bytes must give the same answer twice. An over-budget input is
 //! the only thing that may be refused as too large. Inputs are arbitrary bytes, plus the committed
 //! fixtures mutated by byte flips, deletions, insertions, duplications and truncations.
+//! One more property per parser keeps a real, valid input and makes ONE field hostile at a time, so
+//! that field's validation is reached on every case (HOSTILE-INPUT.1: a hang behind a long path
+//! escaped the default budget when every field was hostile at once).
 //! Deterministic cases cover deep nesting and size edges. Every file under
 //! `fixtures/hostile/` is replayed on every run; a crash, hang or wrong refusal found here becomes
 //! one such file the same day.
@@ -30,6 +33,7 @@ use forge_warden_core::facts::PatchFacts;
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
 use proptest::prelude::*;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -255,6 +259,110 @@ fn valid_shaped_ranking() -> impl Strategy<Value = Vec<u8>> {
         })
 }
 
+/// A hostile string with no known-good choice in it: arbitrary Unicode, short non-ASCII text with
+/// path punctuation, or a very long one (HOSTILE-INPUT.1: a long path never met a well-typed
+/// document in the all-fields-hostile property, so a hang behind it escaped the default budget).
+fn hostile_text() -> impl Strategy<Value = String> {
+    prop_oneof![
+        any::<String>(),
+        "[a-z0-9/._ \\x{80}-\\x{10FFFF}-]{0,40}",
+        (1usize..20_000).prop_map(|n| "é/".repeat(n)),
+    ]
+}
+
+/// A real ranking (`fixtures/demo.rank.json`) with ONE field replaced by a hostile value of the
+/// same JSON type: the document still deserialises, so that field's validation is reached on every
+/// case (HOSTILE-INPUT.1, ledger Q51).
+fn one_hostile_field_ranking() -> impl Strategy<Value = Vec<u8>> {
+    (0usize..10, hostile_text(), number()).prop_map(|(slot, text, num)| {
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root().join("fixtures/demo.rank.json")).unwrap())
+                .unwrap();
+        let text = serde_json::Value::from(text);
+        match slot {
+            0 => doc["ranked"][0]["path"] = text,
+            1 => doc["ranked"][0]["status"] = text,
+            2 => doc["ranked"][0]["score"] = num,
+            3 => doc["ranked"][0]["signals"][0] = text,
+            4 => doc["ranked"][0]["evidence"][0]["signal"] = text,
+            5 => doc["ranked"][0]["evidence"][0]["address"] = text,
+            6 => doc["ranked"][0]["evidence"][0]["side"] = text,
+            7 => doc["ranked"][0]["evidence"][0]["line"] = num,
+            8 => doc["tool"]["version"] = text,
+            _ => doc["input_sha256"] = text,
+        }
+        serde_json::to_vec(&doc).unwrap()
+    })
+}
+
+/// Well-formed `--numstat -z` and `--summary` output for one file, with ONE slot hostile: the
+/// numstat path, either count, the summary path or the mode.
+fn one_hostile_field_git_output() -> impl Strategy<Value = [Vec<u8>; 3]> {
+    (0usize..5, hostile_text()).prop_map(|(slot, text)| {
+        let mut slots = ["1", "1", "src/a.rs", "100644", "src/a.rs"].map(str::to_owned);
+        if let Some(chosen) = slots.get_mut(slot) {
+            *chosen = text;
+        }
+        let [added, deleted, path, mode, summary_path] = slots;
+        [
+            format!("{added}\t{deleted}\t{path}\0").into_bytes(),
+            format!(" create mode {mode} {summary_path}\n").into_bytes(),
+            Vec::new(),
+        ]
+    })
+}
+
+/// A TOML basic string holding `text` exactly.
+fn toml_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        if c == '"' || c == '\\' {
+            out.push('\\');
+            out.push(c);
+        } else if c.is_control() {
+            write!(out, "\\u{:04X}", u32::from(c)).unwrap();
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A valid policy (two rules and a waiver, as in `fixtures/rich.warden.toml`) with ONE value
+/// hostile: a rule's id, why, kind, severity or signal, the integer limit, or the waiver's rule,
+/// path glob, reason, owner or expiry date.
+fn one_hostile_field_policy() -> impl Strategy<Value = Vec<u8>> {
+    (0usize..11, hostile_text(), number()).prop_map(|(slot, text, num)| {
+        let mut values = [
+            "no-unsafe",
+            "Unsafe code needs a dedicated safety review.",
+            "forbid_signal",
+            "fail",
+            "unsafe_added",
+            "",
+            "no-unsafe",
+            "src/simd/**",
+            "Audited kernel.",
+            "@louranicas",
+            "2026-12-31",
+        ]
+        .map(toml_string);
+        values[5] = String::from("1");
+        if let Some(chosen) = values.get_mut(slot) {
+            *chosen = if slot == 5 { num.to_string() } else { toml_string(&text) };
+        }
+        let [id, why, kind, severity, signal, limit, rule, path, reason, owner, expires] = values;
+        format!(
+            "schema = \"forge-warden.policy.v0\"\n\
+             [[rule]]\nid = {id}\nwhy = {why}\nkind = {kind}\nseverity = {severity}\nsignals = [{signal}]\n\
+             [[rule]]\nid = \"small-changes\"\nwhy = \"Small changes get real review.\"\nkind = \"max_files\"\nseverity = \"hold\"\nlimit = {limit}\n\
+             [[waiver]]\nrule = {rule}\npaths = [{path}]\nreason = {reason}\nowner = {owner}\nexpires = {expires}\n"
+        )
+        .into_bytes()
+    })
+}
+
 /// Run `parse` twice on its own input, on a watchdog thread: it must return within the bound and
 /// agree with itself. A parse that never returns fails here instead of hanging the test run.
 fn holds<T>(what: &str, parse: impl Fn() -> T + Send + 'static) -> T
@@ -333,6 +441,22 @@ proptest! {
     #[test]
     fn rank_survives_hostile_values_in_valid_rankings(bytes in valid_shaped_ranking()) {
         rank_holds(&bytes);
+    }
+
+    #[test]
+    fn rank_survives_one_hostile_field_in_a_real_ranking(bytes in one_hostile_field_ranking()) {
+        rank_holds(&bytes);
+    }
+
+    #[test]
+    fn policy_survives_one_hostile_value_in_a_valid_policy(bytes in one_hostile_field_policy()) {
+        policy_holds(&bytes);
+    }
+
+    #[test]
+    fn facts_survive_one_hostile_slot_in_real_git_output(parts in one_hostile_field_git_output()) {
+        let [numstat, summary, patch] = &parts;
+        facts_holds(numstat, summary, patch);
     }
 
     #[test]
