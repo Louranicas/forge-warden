@@ -5,8 +5,9 @@ Every refusal variant and every exit, with the one test that observes it. Genera
 and checked byte for byte by
 `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.
 
-A row names its test by `path::function`. That the test exists is checked by name only; that
-it observes its variant is proven by one plant per row in `plants/catalog.json`.
+A row names its test by `path::function`; the test is checked to exist and to run (not ignored,
+not behind another cfg). That it observes its variant is proven by a plant for three sampled
+rows (guardrail G-53 in `plants/catalog.json`); for the others the test's assertion was read.
 
 | Refusal | Observing test |
 | --- | --- |
