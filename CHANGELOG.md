@@ -9,6 +9,10 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- A patch Git refuses is now judged in one code path that cannot finish without its
+  `patch_unverifiable` note (Q25; `Verdict::held_by`, crate-internal). For consumers nothing
+  changes: the verdict document, its schema and the exit codes are the same, a refused patch still
+  holds at least, and a failing rule on it still fails.
 - Verdict no longer implements Clone; CLI reporting borrows judged authority/advisory results without copying them (T-GITPIN-01).
 
 ### CLI machine contract
