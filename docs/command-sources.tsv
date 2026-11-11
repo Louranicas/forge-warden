@@ -21,6 +21,7 @@ docs/POLICY_REFERENCE.md	0
 docs/SCANNER_ROLES.md	0
 docs/SCORE_FAMILY.md	0
 docs/THREAT_MODEL.md	0
+docs/UPGRADING.md	0
 docs/adr/0001-pure-core-and-effect-doors.md	0
 docs/adr/0002-the-lint-wall.md	0
 docs/adr/0003-unknown-is-never-pass.md	0
