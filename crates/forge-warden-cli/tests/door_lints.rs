@@ -143,7 +143,7 @@ const ATTRIBUTE_EXPRESSION: &str = "an expression in an attribute";
 const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 4] = [
     r#"command(group(ArgGroup::new("mode").required(true).args(["ranker","advisory"])))"#,
     r#"error("policy refused with {} issue(s):\n{}",.0.len(),IssueList(.0))"#,
-    r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
+    r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_POLICY_BYTES)"#,
     r#"error("ranking is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
 ];
 

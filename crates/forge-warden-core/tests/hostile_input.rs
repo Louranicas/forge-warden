@@ -415,7 +415,7 @@ fn policy_holds(bytes: &[u8]) {
     let result = holds("parse_policy", move || parse_policy(&owned));
     if let Err(forge_warden_core::policy::PolicyError::TooLarge(_)) = result {
         assert!(
-            bytes.len() > forge_warden_core::MAX_INPUT_BYTES,
+            bytes.len() > forge_warden_core::MAX_POLICY_BYTES,
             "TooLarge under budget"
         );
     }
