@@ -2205,6 +2205,16 @@
       "diagnostic": "GIT_RUNTIME\\.md:[0-9]+: `planted_name_of_a_missing_test` names no fn, def or lint",
       "cargo": ["test", "-p", "forge-warden-cli", "--locked", "--offline", "--test", "docs_inventory", "--", "docs_name_only_tests_and_files_that_exist"],
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "widening-adds-nothing",
+      "guardrail": "G-14",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "old": "derived.get(file.path()).into_iter().flatten()))",
+      "new": "derived.get(file.path()).into_iter().flatten().take(0)))",
+      "diagnostic": "git_adds_the_deletion_the_producer_omitted.*FAILED",
+      "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--test", "authority", "--", "git_adds_the_deletion_the_producer_omitted"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     }
   ],
   "pending_guardrails": [
