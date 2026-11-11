@@ -328,8 +328,8 @@ review_reason = "E3a test-only external SHA256 reference object, parsed as JSON 
 
 [[data_input]]
 file = "fixtures/demo.verdict.json"
-sha256 = "c26dc675160c1af03a523c2eaee78bf4fc31b1767a0da1b205ed3aa996a14434"
-review_reason = "GIT-PIN v2 demo proposal preserves input seals and records unpinned advisory Git; measured executable identity is checked before normalization. Golden and producer/consumer changes remain subject to independent trusted-HOLD review."
+sha256 = "8068135b4bf40eea31fbf8f946b44fdba3ac6294f6a1b943ce1d86894d2b7e32"
+review_reason = "GIT-PIN v2 demo proposal preserves input seals and records unpinned advisory Git; measured executable identity is checked before normalization. 0.2.0 release preparation changed one line, tool.version 0.1.0 to 0.2.0 (blessed by Touchstone in 45dfb213, regenerated from the built binary). Golden and producer/consumer changes remain subject to independent trusted-HOLD review."
 
 [[data_input]]
 file = "fixtures/demo.rank.json"
