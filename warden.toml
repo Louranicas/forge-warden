@@ -3,6 +3,14 @@
 # `dogfood`). It is the starter policy tightened for a Rust crate whose core must stay pure.
 schema = "forge-warden.policy.v0"
 
+# The ranker `check --ranker` may run (authority mode): the released deep-diff-forge v0.8.2
+# binary for x86_64-unknown-linux-gnu, pinned by its bytes. It is the `deep-diff-forge` file inside
+# deep-diff-forge-v0.8.2-x86_64-unknown-linux-gnu.tar.gz (archive sha256 in
+# scripts/tool-versions.toml), built from tag commit fb5ffe15ae582f665d9de073d5231ecff8003a17.
+# A binary built from that source elsewhere has other bytes and is not admitted.
+[producer]
+sha256 = ["298e07511310b18051a4c8ed56c18fafa03e40dc8fc88bedf74edba0e2ba41ad"]
+
 [[rule]]
 id = "no-secrets"
 why = "A credential committed once is compromised forever, even after a revert."

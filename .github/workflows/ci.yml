@@ -24,7 +24,7 @@ env:
   RUSTFLAGS: "-D warnings"
   RUSTDOCFLAGS: "-D warnings"
   # deep-diff-forge, pinned by commit, for the dogfood job and the vocabulary check.
-  DDF_REV: 587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54
+  DDF_REV: fb5ffe15ae582f665d9de073d5231ecff8003a17
 
 jobs:
   gate:

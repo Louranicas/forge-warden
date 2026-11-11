@@ -20,6 +20,10 @@ def versions(root):
     values["msrv"] = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["rust-version"]
     if not re.fullmatch(r"[0-9a-f]{40}", values["ddf_rev"]):
         raise ValueError("invalid pinned DDF revision")
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", values["ddf_release"]):
+        raise ValueError("invalid pinned DDF release tag")
+    if not re.fullmatch(r"[0-9a-f]{64}", values["ddf_archive_sha256"]):
+        raise ValueError("invalid DDF release archive sha256")
     for name in ("rust", "zizmor", "cargo_mutants", "cargo_deny", "rustup"):
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values[name]):
             raise ValueError("invalid exact tool version: " + name)
@@ -71,7 +75,7 @@ LOCAL_PROBES = {
 # Why a step may be hosted-only. A name outside this table cannot be declared hosted-only.
 HOSTED_ONLY_REASONS = {
     "zizmor": "the trusted offline image has no zizmor (G-47)",
-    "deep-diff-forge": "warden.toml has no [producer] pin, so a local dogfood run can only be advisory",
+    "deep-diff-forge": "the dogfood gate fetches the pinned release archive; a local run needs that binary on PATH",
 }
 
 
