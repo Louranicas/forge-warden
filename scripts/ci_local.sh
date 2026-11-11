@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The build, lint, test and audit part of CI that runs offline, in CI's order: a subset of the gate.
 # Not run here, and run by scripts/ci_fast.sh or by CI itself: tool_versions.py --check-toolchain,
-# the mutation budget and environment tests, the local-tools check, the dogfood, hold-ack,
+# the mutation budget and environment tests, the local-tools tests, the dogfood, hold-ack,
 # hook-guard and managed-review-bundle tests, and the guardrails tests. `just ci` calls this.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"

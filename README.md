@@ -42,7 +42,9 @@ forge-warden 0.2.0: FAIL (exit 7 policy_fail, next: change_input)
 Real output of the advisory command above: `fixtures/demo.patch`, its recorded deep-diff-forge
 0.7.0 ranking, and `examples/starter.warden.toml`. The full JSON is the golden file
 `fixtures/demo.verdict.json`, and a test fails if it drifts. A second test holds authority mode
-to the same judgement.
+to the same judgement. `…` marks lines left out. The date is the day the command runs (this block
+was made with `--today 2026-11-05`), and the Git part of the NOTE line is what a machine without an
+enrolled Git allowlist prints.
 
 ---
 
