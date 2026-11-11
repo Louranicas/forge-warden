@@ -503,6 +503,34 @@ mod tests {
     }
 
     #[test]
+    fn each_unreadable_answer_from_git_is_refused_with_its_own_variant() {
+        // REFUSAL-MAP rows (refusal_rows.rs): each variant observed through from_git, by pattern.
+        assert_eq!(facts("", ""), Err(Unverifiable::Empty));
+        assert_eq!(
+            PatchFacts::from_git(b"1\t1\ta\xff\0", b"", b""),
+            Err(Unverifiable::NonUtf8Path)
+        );
+        assert_eq!(facts("1\t1\ta\nb\0", ""), Err(Unverifiable::NewlineInPath));
+        for (summary, path) in [
+            (" create mode 100644 b\n", "b"),
+            (" create mode 100644 ./a\n", "./a"),
+        ] {
+            assert_eq!(
+                facts("1\t1\ta\0", summary),
+                Err(Unverifiable::SummaryPathUnknown(path.to_owned())),
+                "{summary}"
+            );
+        }
+        assert_eq!(
+            facts(
+                "1\t1\ta\0",
+                " delete mode 100644 a\n create mode 120000 a\n"
+            ),
+            Err(Unverifiable::TypeChange("a".to_owned()))
+        );
+    }
+
+    #[test]
     fn renames_and_copies_refuse_in_either_output() {
         assert_eq!(facts("1\t1\t\0a\0b\0", ""), Err(Unverifiable::RenameOrCopy));
         for line in [" rename a => b (100%)\n", " copy a => b (100%)\n"] {

@@ -119,4 +119,23 @@ mod tests {
         assert_eq!(over.kind, DoorErrorKind::OverBudget);
         assert_eq!(read_within(Cursor::new(b"abc"), "t", 4).unwrap(), b"abc");
     }
+
+    #[test]
+    fn a_missing_file_is_an_io_failure_and_a_directory_is_refused() {
+        // REFUSAL-MAP rows DoorErrorKind::Io and ::Refused, observed by kind.
+        let missing = read_file(Path::new("/nonexistent/forge-warden/refusal-map")).unwrap_err();
+        assert_eq!(missing.kind, DoorErrorKind::Io, "{}", missing.message);
+        let directory = read_file(Path::new("/")).unwrap_err();
+        assert_eq!(
+            directory.kind,
+            DoorErrorKind::Refused,
+            "{}",
+            directory.message
+        );
+        assert!(
+            directory.message.contains("not a regular file"),
+            "{}",
+            directory.message
+        );
+    }
 }
