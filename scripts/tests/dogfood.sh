@@ -11,7 +11,27 @@ cp "$source_root/scripts/dogfood.sh" "$trusted/scripts/dogfood.sh"
 cp "$source_root/scripts/judge_mode.py" "$trusted/scripts/judge_mode.py"
 cp "$source_root/scripts/tool_versions.py" "$source_root/scripts/tool-versions.toml" "$trusted/scripts/"
 cp "$source_root/rust-toolchain.toml" "$source_root/Cargo.toml" "$trusted/"
-export EXPECTED_DDF_REV="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_rev)"
+# The release archive the driver fetches is a fixture: one stub ranker under the release's own
+# directory name. Its sha256 replaces the pinned one in the trusted checkout's tool-versions.toml,
+# so the driver's own check runs against real bytes.
+release="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_release)"
+ddf_name="deep-diff-forge-$release-x86_64-unknown-linux-gnu"
+mkdir -p "$sandbox/archive/$ddf_name"
+cat > "$sandbox/archive/$ddf_name/deep-diff-forge" <<'RANK'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '{}\n'
+exit "$RANK_EXIT"
+RANK
+chmod +x "$sandbox/archive/$ddf_name/deep-diff-forge"
+tar --create --gzip --file "$sandbox/release.tar.gz" --directory "$sandbox/archive" "$ddf_name"
+printf 'not the release\n' > "$sandbox/other.tar.gz"
+pinned="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_archive_sha256)"
+fixture="$(sha256sum < "$sandbox/release.tar.gz" | cut -d' ' -f1)"
+sed -i "s/$pinned/$fixture/" "$trusted/scripts/tool-versions.toml"
+test "$(python3 -I "$trusted/scripts/tool_versions.py" ddf_archive_sha256)" = "$fixture"
+export EXPECTED_URL="https://github.com/Louranicas/deep-diff-forge/releases/download/$release/$ddf_name.tar.gz"
+export FIXTURE_ARCHIVE="$sandbox/release.tar.gz" OTHER_ARCHIVE="$sandbox/other.tar.gz"
 cat > "$trusted/scripts/hold_ack.py" <<'ACK'
 import os, sys
 assert sys.argv[1:4] == ["verify", "--base", os.environ["ACK_BASE"]]
@@ -53,24 +73,26 @@ printf '{"fixture":true}\n'
 exit "$JUDGE_EXIT"
 JUDGE
   chmod +x "$CARGO_TARGET_DIR/release/forge-warden" ;;
- install)
-  [[ "$*" == *"--rev $EXPECTED_DDF_REV "* ]] || exit 95
-  while [ "$1" != --root ]; do shift; done
-  mkdir -p "$2/bin"
-  cat > "$2/bin/deep-diff-forge" <<'RANK'
-#!/usr/bin/env bash
-cat >/dev/null
-printf '{}\n'
-exit "$RANK_EXIT"
-RANK
-  chmod +x "$2/bin/deep-diff-forge" ;;
- *) exit 96 ;;
+ *) exit 96 ;; # the ranker is never built here: `cargo install` is refused
 esac
 STUB
-chmod +x "$sandbox/bin/cargo"
+# curl: only the pinned release URL over https, written where the driver asked; never the network.
+cat > "$sandbox/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ " $* " == *" --proto =https "* && " $* " == *" --fail "* ]] || exit 91
+[ "${!#}" = "$EXPECTED_URL" ] || exit 92
+output=
+while [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then output="$2"; fi; shift; done
+[ -n "$output" ] || exit 90
+[ "$CURL_EXIT" = 0 ] || exit "$CURL_EXIT"
+cp -- "$ARCHIVE" "$output"
+STUB
+chmod +x "$sandbox/bin/cargo" "$sandbox/bin/curl"
 export PATH="$sandbox/bin:$PATH" EXPECTED_TRUSTED="$trusted"
 # Attempt an environment override; trusted script must retain its file-owned producer pin.
 export DDF_REV=untrusted-override
+export ARCHIVE="$FIXTURE_ARCHIVE" CURL_EXIT=0
 for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'build-error 6 0 0 6'; do
  read -r name BUILD_EXIT RANK_EXIT JUDGE_EXIT expected <<< "$row"
  export BUILD_EXIT RANK_EXIT JUDGE_EXIT
@@ -88,6 +110,23 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'bu
  if [ "$RANK_EXIT" -ne 0 ] || [ "$BUILD_EXIT" -ne 0 ]; then test ! -s "$out/verdict.json"; fi
  echo "PASS $name exit=$actual"
 done
+# The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
+# the run before any ranker exists and before the judge runs, even when the judge would pass.
+export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
+for row in "other-bytes $OTHER_ARCHIVE 0 3" "download-fails $FIXTURE_ARCHIVE 22 22"; do
+ read -r name ARCHIVE CURL_EXIT expected <<< "$row"
+ export ARCHIVE CURL_EXIT
+ out="$sandbox/archive-$name"
+ set +e
+ bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL archive $name: expected $expected got $actual"; exit 1; fi
+ test ! -e "$out/ranker/bin/deep-diff-forge"
+ test ! -e "$out/verdict.json"
+ echo "PASS archive $name exit=$actual"
+done
+export ARCHIVE="$FIXTURE_ARCHIVE" CURL_EXIT=0
 # Receipt verification is independently tested with real signatures in hold_ack.py.
 # Here a stub proves the driver admits only successful verification of a HOLD.
 export ACK_BASE="$base" ACK_HEAD="$head" BUILD_EXIT=0 RANK_EXIT=0

@@ -81,7 +81,7 @@ Fields: `limit` (required, at least 1), `paths`, `except`.
 
 ## Signals
 
-deep-diff-forge 0.7.0's vocabulary. Path and shape: `public_api_surface`, `new_file`,
+deep-diff-forge 0.8.2's vocabulary (the same 21 signals as 0.7.0). Path and shape: `public_api_surface`, `new_file`,
 `deleted_file`, `binary_change`, `large_change`, `many_hunks`, `config_or_lockfile`, `test_only`,
 `generated_or_vendored`, `hazardous_text`, `symlink_change`, `executable_bit`. Code evidence:
 `unsafe_added`, `process_spawn`, `network_fetch`, `dynamic_eval`, `ci_privilege`, `build_hook`,
@@ -202,6 +202,9 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
   `patch_unverifiable` / `duplicate_paths`.
 - **deep-diff-forge 0.7.0 omissions**: a binary added without `new_file` or deleted without
   `deleted_file` → `status_mismatch` until the ranker reports them (Git's kind is still applied).
+- **A stricter producer** → exit 3, no verdict. deep-diff-forge 0.8.2 refuses some patches 0.7.0 ranked
+  (for example `fixtures/coverage/keel-c1b-v4-mode-line-tab.patch`: "file header out of place"). In
+  authority mode a patch the pinned ranker refuses ends as a ranker failure, never as a pass.
 
 Canonical terminology and the distinction between a document and its level are in the
 [glossary](GLOSSARY.md).
