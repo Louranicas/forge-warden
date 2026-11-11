@@ -76,8 +76,11 @@ your own account, so an allowlist there is only as strong as that account: prefe
 
 ## 5. Write and check the policy
 
+If the repository already has a `warden.toml` (you are upgrading), keep it and skip `init`: the
+redirection below would overwrite it.
+
 ```bash
-forge-warden init > warden.toml               # a starter policy
+forge-warden init > warden.toml               # a starter policy; only when there is none yet
 forge-warden lint warden.toml                 # lists every problem at once; exit 0 when valid
 ```
 

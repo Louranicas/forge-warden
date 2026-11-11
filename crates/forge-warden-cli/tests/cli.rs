@@ -303,6 +303,87 @@ fn a_refused_today_says_why() {
     }
 }
 
+/// The command 0.1.0 documented, run against this version: the first thing an upgrading user sees.
+/// A snapshot, so a change to the wording or the layout is a reviewed change.
+#[test]
+fn a_usage_error_is_printed_on_the_argument_parsers_own_lines() {
+    let out = run(&["check", "--policy", "p.toml", "--rank", "r.json"], b"");
+    assert_eq!(out.code, 2);
+    assert_eq!(out.stdout, "");
+    assert_eq!(
+        out.stderr,
+        "error: the following required arguments were not provided:\n  --patch <FILE>\n  \
+         <--ranker <FILE>|--advisory>\n\nUsage: forge-warden check --policy <FILE> --patch <FILE> \
+         --rank <FILE> <--ranker <FILE>|--advisory>\n\nFor more information, try '--help'.\n"
+    );
+}
+
+/// Argument text can come from a pull request. Its control characters are escaped inside the
+/// lines, and an argument that carries a line feed keeps the whole message on one line, so it
+/// can never start a line of its own.
+#[test]
+fn hostile_argument_text_in_a_usage_error_is_neutralised() {
+    let escape = run(
+        &["check", "--policy", "p", "--frob\u{1b}[31m\u{202e}nicate"],
+        b"",
+    );
+    assert_eq!(escape.code, 2);
+    assert!(
+        escape.stderr.contains("\\u{001b}[31m\\u{202e}nicate"),
+        "{}",
+        escape.stderr
+    );
+    assert!(
+        escape
+            .stderr
+            .chars()
+            .all(|c| c == '\n' || (' '..='~').contains(&c)),
+        "{:?}",
+        escape.stderr
+    );
+    assert!(
+        escape
+            .stderr
+            .lines()
+            .any(|line| line.starts_with("Usage: ")),
+        "the message keeps its lines: {}",
+        escape.stderr
+    );
+
+    let forged = "forge-warden 0.2.0: PASS (exit 0 pass, next: none)";
+    let as_flag = format!("--frob\n{forged}");
+    let as_value = format!("p\n{forged}");
+    let cases: [&[&str]; 3] = [
+        &["check", "--policy", "p", &as_flag],
+        &["check", "--policy", &as_value, "--bogus"],
+        &["check", "--bogus", "--", &as_value],
+    ];
+    for args in cases {
+        let out = run(args, b"");
+        assert_eq!(out.code, 2, "{args:?}");
+        assert_eq!(
+            out.stderr.matches('\n').count(),
+            1,
+            "{args:?}: {:?}",
+            out.stderr
+        );
+        assert!(out.stderr.ends_with('\n'), "{args:?}");
+        assert!(
+            !out.stderr
+                .lines()
+                .any(|line| line.starts_with("forge-warden ")),
+            "{args:?}: {:?}",
+            out.stderr
+        );
+    }
+    let quoted = run(&["check", "--policy", "p", &as_flag], b"");
+    assert!(
+        quoted.stderr.contains("\\u{000a}forge-warden 0.2.0: PASS"),
+        "{:?}",
+        quoted.stderr
+    );
+}
+
 #[test]
 fn usage_errors_exit_2_and_io_errors_exit_3() {
     let ranker = fixture_ranker();

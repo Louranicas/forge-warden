@@ -62,6 +62,7 @@ What to do:
 - Use a released deep-diff-forge binary and pin its digest. This repository pins v0.8.2 for
   x86_64 Linux. A binary you build yourself has other bytes (the build host's paths, linker and
   libc go into it), so pin what you actually run, and expect to re-pin after rebuilding.
+  The [runbook](RUNBOOK.md), step 3, has the download, check and install commands.
 - deep-diff-forge 0.8.2 refuses some patches 0.7.0 ranked. In authority mode a patch the pinned
   ranker refuses ends as exit 3 with no verdict, never as a pass.
 - A policy without `[producer]` still works, in advisory mode only.
@@ -72,7 +73,8 @@ forge-warden asks Git what the patch changes, and in authority mode it runs only
 executable digest the machine's owner has enrolled in `/etc/forge-warden/git-allowlist.toml`.
 There is no flag and no environment variable for another location.
 
-What to do: follow [Git runtime identity](GIT_RUNTIME.md) once per machine (it needs root).
+What to do: follow the [runbook](RUNBOOK.md), step 4, once per machine (it needs root);
+[Git runtime identity](GIT_RUNTIME.md) explains the rules behind it.
 Without the allowlist, authority mode stops with exit 3, "no Git allowlist enrolled", and
 advisory mode marks its evidence as unpinned. After a Git upgrade the digest changes and the
 allowlist has to be updated before authority mode works again.
