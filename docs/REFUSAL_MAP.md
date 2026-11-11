@@ -1,7 +1,8 @@
 # Refusal map
 
 Every refusal variant and every exit, with the one test that observes it. Generated from
-`crates/forge-warden-core/src/refusal_rows.rs` and checked byte for byte by
+`crates/forge-warden-core/src/refusal_rows.rs` and `crates/forge-warden-cli/src/refusal_rows.rs`,
+and checked byte for byte by
 `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.
 
 A row names its test by `path::function`. That the test exists is checked by name only; that
@@ -44,3 +45,20 @@ it observes its variant is proven by one plant per row in `plants/catalog.json`.
 | `Exit::PolicyFail` | `crates/forge-warden-cli/tests/adversarial.rs::protection_and_forbidden_signal_have_fail_controls` |
 | `Exit::PolicyHold` | `crates/forge-warden-cli/tests/adversarial.rs::matching_patch_and_known_ranking_hold_in_advisory_mode` |
 | `Exit::Internal` | MISSING |
+| `DoorErrorKind::Io` | `crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused` |
+| `DoorErrorKind::Environment` | `crates/forge-warden-cli/src/doors/mod.rs::the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling` |
+| `DoorErrorKind::OverBudget` | `crates/forge-warden-cli/src/doors/file.rs::the_budget_is_inclusive_and_one_byte_more_is_refused` |
+| `DoorErrorKind::Refused` | `crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused` |
+| `ChildFailure::Spawn` | `crates/forge-warden-cli/src/doors/mod.rs::a_relative_program_is_refused` |
+| `ChildFailure::Timeout` | `crates/forge-warden-cli/src/doors/mod.rs::a_timeout_kills_the_whole_group` |
+| `ChildFailure::StdoutOverflow` | `crates/forge-warden-cli/src/doors/mod.rs::output_over_either_cap_is_a_failure_not_a_truncation` |
+| `ChildFailure::StderrOverflow` | `crates/forge-warden-cli/src/doors/mod.rs::output_over_either_cap_is_a_failure_not_a_truncation` |
+| `ChildFailure::Signal` | `crates/forge-warden-cli/src/doors/mod.rs::a_nonzero_exit_or_a_signal_fails_even_with_valid_looking_output` |
+| `ChildFailure::Exit` | `crates/forge-warden-cli/src/doors/mod.rs::a_nonzero_exit_or_a_signal_fails_even_with_valid_looking_output` |
+| `ChildFailure::Io` | `crates/forge-warden-cli/src/doors/mod.rs::a_group_kill_that_cannot_run_or_fails_is_reported` |
+| `RankerFailure::NotAdmitted` | `crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_the_policy_does_not_list_is_refused_without_a_verdict` |
+| `RankerFailure::Door` | `crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_that_cannot_be_pinned_or_executed_is_refused` |
+| `RankerFailure::Failed` | `crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_failure_gives_exit_3_and_no_verdict` |
+| `GitFactsFailure::Door` | `crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git` |
+| `GitFactsFailure::Refused` | `crates/forge-warden-cli/src/doors/mod.rs::git_facts_reproduces_the_coverage_corpus_captures_byte_for_byte` |
+| `GitFactsFailure::Unavailable` | `crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git` |
