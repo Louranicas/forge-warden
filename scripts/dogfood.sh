@@ -51,8 +51,12 @@ case "$out/" in
   "$trusted/"*|"$candidate/"*) echo 'dogfood: evidence must be outside both checkouts' >&2; exit 2 ;;
 esac
 # Diff endpoints are immutable commits; no external diff or textconv can execute candidate config.
-git -C "$candidate" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv \
-  --binary --no-renames "$base...$head" > "$out/change.patch"
+# Attributes come from the empty tree, not the candidate's work tree: a candidate .gitattributes
+# (at any depth) saying `-diff` or `binary` would otherwise turn added text into a binary patch the
+# judge cannot read. --attr-source needs Git 2.40 or later; an older Git refuses the option.
+empty_tree="$(git hash-object -t tree /dev/null)"
+git -C "$candidate" --attr-source="$empty_tree" -c core.attributesFile=/dev/null diff --no-ext-diff \
+  --no-textconv --binary --no-renames "$base...$head" > "$out/change.patch"
 # Source, policy, lockfile and build configuration all come from the trusted checkout.
 cd "$trusted"
 cp -- warden.toml "$out/policy.toml"
