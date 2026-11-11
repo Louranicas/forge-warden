@@ -67,10 +67,17 @@ people, scripts, CI and agents together.
 
 ```bash
 cargo install --git https://github.com/Louranicas/forge-warden forge-warden-cli --locked
-cargo install --git https://github.com/Louranicas/deep-diff-forge deep-diff-forge-cli --locked
+cargo install --git https://github.com/Louranicas/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
 forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
 ```
+
+The first line builds the default branch. Pin what you deploy: add `--tag` with a forge-warden
+release tag (or `--rev` with a commit), as the deep-diff-forge line does with its `v0.8.2`
+release. Authority mode runs only the deep-diff-forge build whose SHA-256 your policy lists.
+
+forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
+Unix file metadata, and clean up child process groups with `/usr/bin/kill`.
 
 MSRV is Rust 1.88. At run time forge-warden needs Git (`/usr/bin/git` by default; choose another
 absolute path with `--git`), which reads the patch's facts. Authority mode also needs the

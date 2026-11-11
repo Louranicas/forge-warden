@@ -3,6 +3,12 @@
 Claims in this repository's README and ADRs, each with the command that constructs it and the
 result observed. Re-run them; do not take this file's word for it.
 
+Each section below is a dated record of what was measured then, on the toolchain and commit it
+names; its figures are not updated as the code moves. For example, the 0.1.0 section ran on Rust
+1.97.0 and counted 85 tests and 39 corpus rankings; the toolchain is now pinned to 1.99.1
+(`rust-toolchain.toml`) and `fixtures/corpus/` holds 40 rankings. Current figures come from
+re-running the commands. A section for the next release is measured on its release commit.
+
 ## 0.1.0 (2026-11-05)
 
 Environment: Linux x86_64, Rust 1.97.0 stable, deep-diff-forge 0.7.0 at

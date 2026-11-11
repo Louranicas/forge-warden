@@ -13,6 +13,7 @@ in the repository under review and is owned (CODEOWNERS, `protect_paths`).
 | A verdict for one patch attached to another | `--patch` recomputes the seal and refuses a mismatch (exit 4). |
 | Fail-open on new or empty input | ADR 0003: unknown vocabulary and empty rankings hold; they never pass. |
 | A pull request weakening the gate that judges it | The dogfood driver builds the judge and loads policy from a separate, clean **base checkout**; the candidate is diff data only. This requires a trusted workflow/runner enforced outside the candidate PR. A mutable repository-local workflow is not an independent approval boundary. See ADR 0006 for bootstrap, isolation and deployment prerequisites. |
+| A substituted ranker or Git | Authority mode runs only a deep-diff-forge whose SHA-256 is listed in the policy's `[producer] sha256`, and only a Git whose SHA-256 is enrolled in the owner's allowlist `/etc/forge-warden/git-allowlist.toml` (ADR 0011); with no allowlist, or an unlisted digest, it refuses. Each must be an executable ELF, run from the descriptor that was hashed. With no allowlist installed, advisory mode still runs Git and records `Unpinned` in the verdict; it can at best hold. With an allowlist installed, an unenrolled Git is refused in both modes. |
 | Supply chain | `cargo-deny` (sources, licences, advisories, bans), Dependabot, actions pinned by SHA, `zizmor` workflow audit. |
 | Panics as denial of service | No `unwrap`/`expect`/`panic`/indexing in production code (lint wall); a panic exits 101 and is a bug. |
 
@@ -21,7 +22,8 @@ process it starts goes through the door modules (`src/doors/`). Two run inside t
 environment, a timeout and capped output:
 - in authority mode, the deep-diff-forge binary the policy admits by SHA-256;
 - Git, which reads the patch's facts inside a private 0700 temporary directory that it removes
-  afterwards (ADR 0005, ADR 0010).
+  afterwards (ADR 0005, ADR 0010). In authority mode Git must be enrolled by SHA-256 in the
+  owner-installed allowlist (ADR 0011); the verdict records the admission.
 
 The third, `/usr/bin/kill`, cleans up the child's process group after every run, whether it
 finished, was refused, or timed out, and also when the child's pipes could not be set up. It has
@@ -41,7 +43,10 @@ tools (including MultiEdit, NotebookEdit, patch tools and delegation without a c
 Supported Edit/Write operations simulate the complete proposed text; manifest lint checks parse
 TOML. Shell tokenization catches known literal-path spellings, including concatenated quotes and
 absolute paths, but does not interpret arbitrary shell programs, scripts, aliases or interpreters.
-Rust text checks are conservative heuristics, not a Rust parser. A hook is not a sandbox: bypassing
+Rust text checks are conservative heuristics, not a Rust parser: the hook's shell refusals are a
+list of known spellings, and forms outside it (for example `#[ expect ]` with spaces, a `#[warn]`, or
+the allowed `cargo clippy --fix`) pass the hook and are left to the compiler and CI checks below.
+A hook is not a sandbox: bypassing
 the host, changing hook configuration or running an opaque script can avoid it.
 
 Compiler/clippy and CI repo invariants are the enforcing checks for unsafe code, suppressions and
