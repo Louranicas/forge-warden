@@ -76,6 +76,8 @@ The first line builds the default branch. Pin what you deploy: add `--tag` with 
 release tag (or `--rev` with a commit), as the deep-diff-forge line does with its `v0.8.2`
 release. Authority mode runs only the deep-diff-forge build whose SHA-256 your policy lists.
 
+Coming from 0.1.0? [Upgrading to 0.2.0](docs/UPGRADING.md) lists what changed and what to do.
+
 forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
 Unix file metadata, and clean up child process groups with `/usr/bin/kill`.
 

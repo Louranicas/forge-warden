@@ -9,6 +9,7 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- [Upgrading from 0.1.0](docs/UPGRADING.md) lists every change a 0.1.0 user must act on.
 - `scripts/dogfood.sh` (driver v2) takes `--hosted-advisory` as an optional first argument. The
   repository's hosted `dogfood` job passes it: a hosted runner has no owner-enrolled Git
   allowlist, so with the producer now pinned in `warden.toml` it could not judge in authority mode
