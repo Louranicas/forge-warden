@@ -1444,6 +1444,76 @@
     ]
   ],
   [
+    "effect-plants",
+    [
+      [
+        "form:std::fs::remove_dir",
+        "b5c47937dd0b5e5f940b0bd038beace495f65f15dba3946e49d5ae53f15f1f33"
+      ],
+      [
+        "form:std::fs::hard_link",
+        "c36018b5068982eed7d46097dbaf43157e0329f1d6ac343b318fff0228815818"
+      ],
+      [
+        "form:std::fs::set_permissions",
+        "52d696c900fe303ddb7e0d8cb8f4e2357f864856c4b3c7a54cb79b30df403650"
+      ],
+      [
+        "form:std::fs::DirBuilder::create",
+        "9424551da2a6a151c738af5f4af8649fe0653fea9dbd1d6fb5af583e07e7edc2"
+      ],
+      [
+        "form:std::path::Path::exists",
+        "79425e028208a9ff0dbf3c5e831b6be4efe1c34653688fbca3458fbc26739b0d"
+      ],
+      [
+        "form:std::path::Path::metadata",
+        "fd168029462ab4aadd38ba4401c134bd4eee32733c05b2bf6a5c5c206bddf5ec"
+      ],
+      [
+        "form:std::os::unix::fs::symlink",
+        "e8cd1107da34797592564dec22d472f387fb6fa0b3d8d89d6bda59aeeac49454"
+      ],
+      [
+        "form:std::os::unix::net::UnixStream::connect",
+        "5bdc18511ad7d8228e572068a565c194142c3b15465c963f8d5b88bd0a1d5578"
+      ],
+      [
+        "form:Path::exists UFCS",
+        "7a664bfd2d081a904e993efe1b55e90bf5a2f6d9d90a451775b6e8af1465a58f"
+      ],
+      [
+        "control:a question about the path that reads nothing",
+        "c1a6121d35e5e0a6ac4b63f8a4b53afe5b87ff98c3b59f2163183e7e38d9dadf"
+      ]
+    ]
+  ],
+  [
+    "git-oracle-plants",
+    [
+      [
+        "form:GitOracle::approved direct",
+        "8f6a322500527b4d5ce5c681de0ef87ebbf4f09d61a9be537bba2216b42a45e0"
+      ],
+      [
+        "form:GitOracle::unpinned direct",
+        "91318875b4f92a5281360e4dbc3cc50a6cb7f8e759aa08054e15f4e89b2d33ed"
+      ],
+      [
+        "form:GitOracle::approved alias binding",
+        "6ff19222ac44e5b7792aaf64de77bee0622e0f6ef1218c4486ab146d8de5bb80"
+      ],
+      [
+        "form:GitOracle::unpinned as fn pointer",
+        "8898aa4d6717ba8dcfc12703497cb8b5acef10ede54c93aa2894e34c195d4ab1"
+      ],
+      [
+        "control:an allowed function",
+        "b4a7d66711ea15fa0595f557853b113b4b5f887befe780b16ef9c67b763807ce"
+      ]
+    ]
+  ],
+  [
     "mint-plants",
     [
       [
