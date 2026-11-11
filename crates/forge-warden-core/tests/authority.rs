@@ -501,7 +501,10 @@ fn a_facts_error_never_passes_anywhere_in_the_corpus() {
             // No disagreement with Git is computed without Git's facts. A note the rule engine
             // raises from the ranking alone (`duplicate_paths`) may still be there.
             for from_facts in ["status_mismatch", "rank_incomplete", "rank_extraneous"] {
-                assert!(!notes.contains(&from_facts), "{name} {refusal:?}: {notes:?}");
+                assert!(
+                    !notes.contains(&from_facts),
+                    "{name} {refusal:?}: {notes:?}"
+                );
             }
             if raw == Outcome::Pass {
                 assert_eq!(verdict.outcome(), Outcome::Hold, "{name} {refusal:?}");
