@@ -20,7 +20,7 @@ forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.p
 ```
 
 ```text
-forge-warden 0.1.0: FAIL (exit 7 policy_fail, next: change_input)
+forge-warden 0.2.0: FAIL (exit 7 policy_fail, next: change_input)
   patch bbf580931c67, policy 9a08b3feaf2b, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
   4 file(s), 9 rule(s): 4 pass, 0 waived, 4 hold, 1 fail
   [PASS  ] no-secrets (forbid_signal, fail)
@@ -36,7 +36,7 @@ forge-warden 0.1.0: FAIL (exit 7 policy_fail, next: change_input)
                at new line 3 (hunk 063a52daefc5)
   [HOLD  ] no-silent-suppression (forbid_signal, hold)
   …
-  [NOTE] rank_unverified the ranking was supplied, not produced by forge-warden; it can inform, never approve
+  [NOTE] rank_unverified the ranking was supplied, not produced by forge-warden; it can inform, never approve; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved
 ```
 
 Real output of the advisory command above: `fixtures/demo.patch`, its recorded deep-diff-forge
