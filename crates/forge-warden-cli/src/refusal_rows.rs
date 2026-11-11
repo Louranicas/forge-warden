@@ -5,16 +5,13 @@
 //! Each function is an exhaustive `match` with no `_` arm, inside the crate that defines the enums
 //! (they are `pub(crate)`), so a new variant does not compile until it has a row. Each arm returns
 //! its own variant's name (checked against the pattern by the map test) and the observing test as
-//! `path::function`. `MISSING` marks a row whose observing test is still to be written.
+//! `path::function`. Every CLI row has its observing test.
 
 use crate::doors::DoorErrorKind;
 use crate::doors::child::{ChildFailure, GitFactsFailure, RankerFailure};
 
 /// A row: the variant's own name and the `path::function` of the test that observes it.
 pub(crate) type Row = (&'static str, &'static str);
-
-/// A row whose observing test is still to be written.
-pub(crate) const MISSING: &str = "MISSING";
 
 /// Rows for [`DoorErrorKind`], how a door refuses.
 pub(crate) const fn door(e: DoorErrorKind) -> Row {
