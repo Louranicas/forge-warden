@@ -205,18 +205,42 @@ mod child_tests {
     }
 
     fn test_git() -> super::child::AdmittedGit {
+        admitted(Path::new("/usr/bin/git"))
+    }
+
+    /// An executable admitted as the test Git, through a fixture allowlist that lists its digest.
+    fn admitted(program: &Path) -> super::child::AdmittedGit {
         use std::os::unix::fs::MetadataExt as _;
         let root = scratch("git-policy");
         let owner = std::fs::metadata(&root).unwrap().uid();
         let policy = root.join("allowlist.toml");
-        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read(program).unwrap());
         std::fs::write(&policy, format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n")).unwrap();
         let git =
-            super::child::fixture_git(Path::new("/usr/bin/git"), &policy, &root, owner, false)
+            super::child::fixture_git(program, &policy, &root, owner, false)
                 .unwrap();
         // Admission owns its descriptor and snapshot; only this call owns the fixture path.
         std::fs::remove_dir_all(&root).unwrap();
         git
+    }
+
+    #[test]
+    fn git_facts_name_a_door_failure_and_an_unavailable_git() {
+        // REFUSAL-MAP rows GitFactsFailure::Door and ::Unavailable, observed by variant.
+        use super::child::{GitFactsFailure, git_facts_in};
+        let door = git_facts_in(&test_git(), b"", Path::new("relative/base"));
+        assert!(
+            matches!(&door, Err(GitFactsFailure::Door(e)) if e.kind == DoorErrorKind::Environment),
+            "{door:?}"
+        );
+        // A "Git" that never stops writing: the stdout cap ends it, and that is Unavailable (the
+        // facts are missing), not Refused (Git rejected the patch).
+        let base = scratch("git-unavailable");
+        let endless = git_facts_in(&admitted(Path::new("/usr/bin/yes")), b"x", &base);
+        assert!(
+            matches!(&endless, Err(GitFactsFailure::Unavailable(why)) if why.contains("more than the budget")),
+            "{endless:?}"
+        );
     }
 
     #[test]
@@ -889,6 +913,10 @@ mod child_tests {
         let root = scratch("admit");
         let refused = |base: &Path| admit_base(base).unwrap_err().message;
         assert!(refused(Path::new("relative/dir")).ends_with("not absolute"));
+        assert_eq!(
+            admit_base(Path::new("relative/dir")).unwrap_err().kind,
+            DoorErrorKind::Environment
+        );
         let colon = root.join("colon:base");
         std::fs::create_dir_all(&colon).unwrap();
         assert!(

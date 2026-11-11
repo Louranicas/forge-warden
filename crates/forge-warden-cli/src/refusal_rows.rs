@@ -19,13 +19,22 @@ pub(crate) const MISSING: &str = "MISSING";
 /// Rows for [`DoorErrorKind`], how a door refuses.
 pub(crate) const fn door(e: DoorErrorKind) -> Row {
     match e {
-        DoorErrorKind::Io => ("Io", MISSING),
-        DoorErrorKind::Environment => ("Environment", MISSING),
+        DoorErrorKind::Io => (
+            "Io",
+            "crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused",
+        ),
+        DoorErrorKind::Environment => (
+            "Environment",
+            "crates/forge-warden-cli/src/doors/mod.rs::the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling",
+        ),
         DoorErrorKind::OverBudget => (
             "OverBudget",
             "crates/forge-warden-cli/src/doors/file.rs::the_budget_is_inclusive_and_one_byte_more_is_refused",
         ),
-        DoorErrorKind::Refused => ("Refused", MISSING),
+        DoorErrorKind::Refused => (
+            "Refused",
+            "crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused",
+        ),
     }
 }
 
@@ -56,21 +65,36 @@ pub(crate) const fn child(e: &ChildFailure) -> Row {
 /// Rows for [`RankerFailure`], why authority mode has no produced ranking.
 pub(crate) const fn ranker(e: &RankerFailure) -> Row {
     match e {
-        RankerFailure::NotAdmitted(..) => ("NotAdmitted", MISSING),
-        RankerFailure::Door(..) => ("Door", MISSING),
-        RankerFailure::Failed(..) => ("Failed", MISSING),
+        RankerFailure::NotAdmitted(..) => (
+            "NotAdmitted",
+            "crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_the_policy_does_not_list_is_refused_without_a_verdict",
+        ),
+        RankerFailure::Door(..) => (
+            "Door",
+            "crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_that_cannot_be_pinned_or_executed_is_refused",
+        ),
+        RankerFailure::Failed(..) => (
+            "Failed",
+            "crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_failure_gives_exit_3_and_no_verdict",
+        ),
     }
 }
 
 /// Rows for [`GitFactsFailure`], why Git produced no facts.
 pub(crate) const fn git(e: &GitFactsFailure) -> Row {
     match e {
-        GitFactsFailure::Door(..) => ("Door", MISSING),
+        GitFactsFailure::Door(..) => (
+            "Door",
+            "crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git",
+        ),
         GitFactsFailure::Refused(..) => (
             "Refused",
             "crates/forge-warden-cli/src/doors/mod.rs::git_facts_reproduces_the_coverage_corpus_captures_byte_for_byte",
         ),
-        GitFactsFailure::Unavailable(..) => ("Unavailable", MISSING),
+        GitFactsFailure::Unavailable(..) => (
+            "Unavailable",
+            "crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git",
+        ),
     }
 }
 
