@@ -11,6 +11,10 @@ registry is always listed, because consumers parse them.
 
 ## [0.2.0] - 2026-11-11
 
+- A usage error (exit 2) is printed on the argument parser's own lines again. It was one line with
+  `\u{000a}` where each line break belonged. Characters outside printable ASCII in an argument
+  are still escaped, and if any argument contains a line feed the whole message stays on one
+  line, so argument text cannot start a line of its own. `--json` errors are unchanged.
 - Schemas in this release: the verdict is `forge-warden.verdict.v2`. 0.1.0 shipped v0; v1 existed
   only between releases and no tagged release carries it (ADR 0011, amendment A1).
 - The policy schema stays `forge-warden.policy.v0`. The `[producer]` table is optional and
