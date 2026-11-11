@@ -14,6 +14,10 @@ pub(crate) struct PrivateDir {
 impl PrivateDir {
     /// A private directory under `base`, created exclusively: a name that already exists is
     /// never reused, and any other error is reported at once, not retried.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: create_in (the child door's one private directory)"
+    )]
     pub(in crate::doors) fn create_in(base: &Path) -> Result<Self, DoorError> {
         use std::os::unix::fs::DirBuilderExt as _;
         for _attempt in 0..64_u32 {
@@ -36,6 +40,10 @@ impl PrivateDir {
 }
 
 impl Drop for PrivateDir {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "door: drop (removes the private directory only when it is empty)"
+    )]
     fn drop(&mut self) {
         // Git writes nothing here; an unexpected leftover makes removal fail, which is left
         // visible on disk rather than deleted recursively.

@@ -81,6 +81,11 @@ implemented control for each property and why a stronger claim is unavailable.
 
 ## Explicit non-claims and deployment obligations
 
+- **The effect wall is a list of spellings, not a closed capability.** Outside the door
+  modules, clippy refuses the std and first-party functions that `clippy.toml` names
+  (the reviewed names are pinned by a test, and clippy's refusal of each is measured).
+  A std or third-party effect the list does not name is not refused. The closed design,
+  a doors crate with the rest of the code under `forbid` (ledger Q26), is deferred to 0.3.0.
 - **This is not a sandbox.** Process-group cleanup covers descendants remaining in
   that group. It does not contain a ranker that leaves the group. The admitted
   ranker is trusted to execute; OS isolation is a separate deployment decision.

@@ -146,6 +146,46 @@ fn raw_defaults_are_disallowed_in_both_crates() {
     }
 }
 
+#[test]
+fn the_effect_lists_name_every_reviewed_effect() {
+    // EFFECT-WALL.2 (review candidates C1 and C4, both reproduced). The effect wall is a list of
+    // spellings: an effect it does not name is not refused, so the reviewed names are pinned here
+    // as ACTIVE entries (a commented-out line keeps its text and disallows nothing). That clippy
+    // then refuses each of them is measured in tests/mint_lint.rs.
+    const BOTH: [&str; 8] = [
+        "std::fs::remove_dir",
+        "std::fs::hard_link",
+        "std::fs::set_permissions",
+        "std::fs::DirBuilder::create",
+        "std::path::Path::exists",
+        "std::path::Path::metadata",
+        "std::os::unix::fs::symlink",
+        "std::os::unix::net::UnixStream::connect",
+    ];
+    // Minted only inside the CLI's door modules; the core defines them, so only the root lists them.
+    const CLI_ONLY: [&str; 3] = [
+        "forge_warden_core::authority::Ranking::attest",
+        "forge_warden_core::verdict::GitOracle::approved",
+        "forge_warden_core::verdict::GitOracle::unpinned",
+    ];
+    for config in ["clippy.toml", "crates/forge-warden-core/clippy.toml"] {
+        let active = disallowed_method_paths(&read(config));
+        for method in BOTH {
+            assert!(
+                active.contains(method),
+                "{config} must actively disallow {method}"
+            );
+        }
+    }
+    let root_config = disallowed_method_paths(&read("clippy.toml"));
+    for method in CLI_ONLY {
+        assert!(
+            root_config.contains(method),
+            "clippy.toml must actively disallow {method}"
+        );
+    }
+}
+
 /// The `path` of every active `disallowed-methods` entry in a clippy.toml (table or string form).
 fn disallowed_method_paths(text: &str) -> std::collections::BTreeSet<String> {
     // An unparseable config activates nothing, so every required method is then reported missing.

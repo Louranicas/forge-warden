@@ -249,15 +249,24 @@ fn kebab_ids_are_exactly_specified() {
 
 #[test]
 fn the_policy_budget_is_enforced_before_parsing() {
-    let over = vec![b' '; crate::MAX_INPUT_BYTES + 1];
+    assert_eq!(crate::MAX_POLICY_BYTES, 1_048_576);
+    // One byte over is refused for its size although the bytes are not even UTF-8: the size is
+    // judged before anything is parsed.
+    let over = vec![0xff_u8; crate::MAX_POLICY_BYTES + 1];
     assert_eq!(
         parse_policy(&over).unwrap_err(),
-        PolicyError::TooLarge(crate::MAX_INPUT_BYTES + 1)
+        PolicyError::TooLarge(crate::MAX_POLICY_BYTES + 1)
     );
-    let at = vec![b' '; crate::MAX_INPUT_BYTES];
+    let at = vec![b' '; crate::MAX_POLICY_BYTES];
     assert!(
         matches!(parse_policy(&at), Err(PolicyError::Malformed { .. })),
         "at the budget it is parsed"
+    );
+    // The ranking budget is not the policy's: a policy that would fit the former is refused.
+    let between = vec![b' '; crate::MAX_INPUT_BYTES];
+    assert_eq!(
+        parse_policy(&between).unwrap_err(),
+        PolicyError::TooLarge(crate::MAX_INPUT_BYTES)
     );
 }
 
