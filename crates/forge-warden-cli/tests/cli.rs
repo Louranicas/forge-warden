@@ -323,7 +323,10 @@ fn a_usage_error_is_printed_on_the_argument_parsers_own_lines() {
 /// can never start a line of its own.
 #[test]
 fn hostile_argument_text_in_a_usage_error_is_neutralised() {
-    let escape = run(&["check", "--policy", "p", "--frob\u{1b}[31m\u{202e}nicate"], b"");
+    let escape = run(
+        &["check", "--policy", "p", "--frob\u{1b}[31m\u{202e}nicate"],
+        b"",
+    );
     assert_eq!(escape.code, 2);
     assert!(
         escape.stderr.contains("\\u{001b}[31m\\u{202e}nicate"),
@@ -331,12 +334,18 @@ fn hostile_argument_text_in_a_usage_error_is_neutralised() {
         escape.stderr
     );
     assert!(
-        escape.stderr.chars().all(|c| c == '\n' || (' '..='~').contains(&c)),
+        escape
+            .stderr
+            .chars()
+            .all(|c| c == '\n' || (' '..='~').contains(&c)),
         "{:?}",
         escape.stderr
     );
     assert!(
-        escape.stderr.lines().any(|line| line.starts_with("Usage: ")),
+        escape
+            .stderr
+            .lines()
+            .any(|line| line.starts_with("Usage: ")),
         "the message keeps its lines: {}",
         escape.stderr
     );
@@ -352,10 +361,17 @@ fn hostile_argument_text_in_a_usage_error_is_neutralised() {
     for args in cases {
         let out = run(args, b"");
         assert_eq!(out.code, 2, "{args:?}");
-        assert_eq!(out.stderr.matches('\n').count(), 1, "{args:?}: {:?}", out.stderr);
+        assert_eq!(
+            out.stderr.matches('\n').count(),
+            1,
+            "{args:?}: {:?}",
+            out.stderr
+        );
         assert!(out.stderr.ends_with('\n'), "{args:?}");
         assert!(
-            !out.stderr.lines().any(|line| line.starts_with("forge-warden ")),
+            !out.stderr
+                .lines()
+                .any(|line| line.starts_with("forge-warden ")),
             "{args:?}: {:?}",
             out.stderr
         );
