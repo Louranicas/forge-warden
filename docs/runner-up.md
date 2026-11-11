@@ -32,9 +32,8 @@ requires every routed job to provision the guest right after checkout.
 
 ## Containment decision
 
-Network containment of the pool is decided in the mission record
-`mission6/decisions/RUNNER-UP-CONTAINMENT-DECISION.md` (Option A, recorded 2026-11-10; sha256
-prefix 79c1ad43). It lives outside this repository:
+Network containment of the pool is decided in the project's runner-up containment decision record
+(Option A, recorded 2026-11-10; sha256 prefix 79c1ad43). It lives outside this repository:
 - Option A is restricted QEMU user networking plus an owner-enforced egress proxy with an
   exact-hostname allowlist. It is a funded prototype, not yet built or proven. Until it is, the
   exposure below stands as written.
