@@ -66,6 +66,11 @@ pub const TOOL_NAME: &str = "forge-warden";
 /// The version every forge-warden document carries in its `tool` member.
 pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The largest ranking or policy document forge-warden will read, in bytes (64 MiB, the same
-/// budget deep-diff-forge applies to a patch). Larger input is refused, never truncated.
+/// The largest ranking document forge-warden will read, in bytes (64 MiB, the same budget
+/// deep-diff-forge applies to a patch). Larger input is refused, never truncated.
 pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+
+/// The largest policy file forge-warden will read, in bytes (1 MiB). A policy is written by
+/// people and is kilobytes long; at the shared 64 MiB budget one of half a million rules parsed
+/// into about 4 GiB (measured, ledger Q44). Larger input is refused before parsing.
+pub const MAX_POLICY_BYTES: usize = 1024 * 1024;
