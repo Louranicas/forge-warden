@@ -1034,15 +1034,30 @@ fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
 }
 
 /// Q-DOOR-SPLIT: door rights are granted by exact listing, never by location. Every file under the
-/// door directory, of any kind, must be a listed door module, and every listed module must exist
-/// there. A file added under `src/doors/` therefore fails here until the protected list names it.
+/// door directory, of any kind, must be a listed door module. A file added under `src/doors/`
+/// therefore fails here until the protected list names it. The comparison is equality, so a listed
+/// module that is missing would fail too; but deleting a listed module is a compile error first (its
+/// `mod` line), and for that direction the compiler is the guard (ledger Q30).
 ///
-/// Nothing under the door directory may be a symlink. The listing below compares canonical paths,
+/// The door directory itself, and each directory above it, must be a real directory: a linked
+/// `src/doors` would be walked through the link and fail only as a mismatch or a panic in
+/// `common::relative`, not for its reason (ledger Q35). Nothing under the door directory may be a
+/// symlink. The listing below compares canonical paths,
 /// so a link `doors/alias.rs -> file.rs` would collapse onto the listed `file.rs` and pass as if it
 /// were not there (Touchstone F1): one module's rights under a second name. A linked directory is
 /// refused here by name as well, before any path is resolved.
 #[test]
 fn door_files_are_exactly_the_listed_modules() {
+    let mut ancestor = root();
+    for part in std::path::Path::new(common::DOOR_DIR).components() {
+        ancestor.push(part);
+        let kind = std::fs::symlink_metadata(&ancestor).unwrap().file_type();
+        assert!(
+            kind.is_dir() && !kind.is_symlink(),
+            "{}: the door directory and each directory above it are real directories, never symlinks",
+            ancestor.display()
+        );
+    }
     let mut links = Vec::new();
     let mut pending = vec![root().join(common::DOOR_DIR)];
     while let Some(dir) = pending.pop() {

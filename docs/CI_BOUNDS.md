@@ -11,18 +11,42 @@ Job durations are completedAt minus startedAt from GitHub Actions job records fe
 | Workflow/job | Measured job duration | Budget | Reason |
 | --- | --- | --- | --- |
 | mutation-baseline/route (WP-RUNNER-UP) | No hosted run yet; one hosted step of shell comparisons and two printf calls | 5min provisional | It does no checkout and no install, so job setup dominates. Five minutes bounds a stuck runner. If it times out, the routed jobs (mutation-plan and mutation-shards) still run hosted (`!cancelled()` and an `|| 'ubuntu-latest'` fallback). On runner-up the shard budgets stay the hosted-measured `matrix.minutes`; the guest bootstrap runs inside that budget's setup allowance. |
-| ci/gate | 374s successful; 384s before a plant failure | 20min | More than three times the successful run, accommodating cold build/cache and plant variability. |
+| ci/gate | 1086s successful at 98 plants; cancelled at the old 20min limit at 101 plants (see "The gate job grows with the plant catalogue") | 45min | 1.5 times the modelled worst run at 140 plants, the catalogue size `scripts/plant_tools.py` admits. |
 | ci/msrv | 21s and 33s successful | 10min | Allows substantial toolchain provisioning/network variability while bounding hangs. |
 | ci/supply-chain | 14s and 17s successful | 10min | Allows advisory/action provisioning variability; no unlimited wait. |
 | ci/workflow-audit | 4s and 7s successful | 10min | Tool installation and runner variability dominate these short observed runs. |
 | ci/mutation | 648s and 1448s successful | 60min | More than twice the larger diff run; a larger future diff may need a separately reviewed budget. |
 | ci/dogfood | 100s and 103s, HOLD exits | 10min | Roughly six times the observed judge run; HOLD is not relabeled a successful verdict. |
 | ci/vocabulary | 6s successful in both runs | 10min | Leaves room for the pinned-source fetch and external service delays. |
-| mutation-baseline/full-workspace | No hosted run available yet | 120min provisional | Existing local full baseline on6947afe took13m42s for556 mutants. The24m08s hosted diff is a cautionary comparator, not a full-baseline measurement. Two hours provides substantial initial headroom while reducing the old six-hour bound; measure the first successful scheduled hosted baseline and review if inadequate. |
+| mutation-baseline/full-workspace | No hosted run available yet | 5min aggregate (was 120min provisional, superseded by WP-Q-CI-BOUNDS.1: the work now runs in the shard jobs, budgeted below) | Existing local full baseline on 6947afe took 13m42s for 556 mutants. The 24m08s hosted diff is a cautionary comparator, not a full-baseline measurement. The 120min bound (itself down from six hours) applied while this one job ran the whole baseline; this job now only aggregates the shard results. Measure the first successful scheduled hosted baseline and review the shard budgets if inadequate. |
 
 Hosted sources: [run42484786431 on6947afe](https://github.com/Louranicas/forge-warden/actions/runs/42484786431) and [run42478310228 on5a25ef3](https://github.com/Louranicas/forge-warden/actions/runs/42478310228). The scheduled workflow was absent from GitHub's default branch when queried, so no hosted full-baseline duration is claimed. Local full-baseline evidence is Bastion's baseline record for 6947afe in the project's coordination records (not in this repository); it is not a hosted benchmark.
 
 Rung: workflow enforcement plus a gate contract. Domain types cannot bound an external GitHub runner job; the workflow owns cancellation, and the contract prevents a missing or unjustified value from quietly restoring the service default. Timeouts are failures/cancellations, never successful incomplete coverage. These budgets do not bound queue time or prove immediate termination of external services.
+
+## The gate job grows with the plant catalogue (WP-CI-GATE-BUDGET, ledger Q49)
+
+`ci/gate` runs every catalogued plant (`scripts/check_plants.py`), so its duration grows with `plants/catalog.json`. The 374 s recorded on 2026-11-08 was measured on a much smaller catalogue. Two hosted runs on 2026-11-11 (step durations are completedAt minus startedAt from `gh run view --json jobs`):
+
+| Run | Commit | Plants | Job | `cargo test --workspace` | `check_plants.py` | Everything else |
+| --- | --- | --- | --- | --- | --- | --- |
+| [42924334392](https://github.com/Louranicas/forge-warden/actions/runs/42924334392) | 26e7357a | 98 | 1086 s, success | 288 s | 672 s, complete | 126 s |
+| [42943254426](https://github.com/Louranicas/forge-warden/actions/runs/42943254426) | e1c70582 | 101 | cancelled at 1216 s (the 20min limit) | 367 s | 695 s, not finished | 154 s |
+
+Measured: 672 s for 98 plants is 6.9 s per plant, and the part of the job before the plants took 414 s in the first run and 521 s in the second. The second run was the slower runner throughout (its `cargo test` step took 1.27 times as long), and it also carried the hostile-input harness for the first time.
+
+Inferred, not measured: the second run's plant step never finished, so its rate is taken as 6.9 s times that same 1.27, which is 8.7 s per plant.
+
+The rule, from the slower run:
+
+```text
+seconds(plants) = 525 + 8.7 * plants
+budget_minutes  = ceil(1.5 * seconds(capacity) / 60)
+```
+
+For the admitted capacity of 140 plants that is 525 + 1218 = 1743 s, and 1.5 times it is 2615 s: 45 minutes. At today's 101 plants the model gives 1404 s (23.4 min), so the old 20-minute limit could not have held. `scripts/plant_tools.py` refuses a catalogue above 140 cases (`GATE_PLANT_CAPACITY`), in the fast gate: growing past it means re-deriving this budget from a new hosted run, in the same reviewed change as the workflow, its pin and the two budget tables.
+
+Limits: two runs, one of them incomplete; the fixed part will also grow as tests are added, which this rule does not model. The local parity model has a composite budget and no per-job hosted limit, which is why it did not see this.
 
 ## Scaling mutation budgets (WP-Q-CI-BOUNDS.1)
 

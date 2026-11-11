@@ -449,11 +449,36 @@ fn a_binary_modification_is_never_a_companion() {
     assert!(!codes(verdict.notes()).contains(&"status_mismatch"));
 }
 
+/// One of each `Unverifiable` variant (ledger Q13). The enum is `#[non_exhaustive]`, so this list
+/// cannot be checked for completeness from outside the core crate: that is planned work (REFUSAL-MAP,
+/// an exhaustive match inside core). Until then a new variant must be added here by hand.
+fn every_unverifiable() -> Vec<Unverifiable> {
+    vec![
+        Unverifiable::GitRefused("exit status 128".to_owned()),
+        Unverifiable::Empty,
+        Unverifiable::NonUtf8Path,
+        Unverifiable::NewlineInPath,
+        Unverifiable::NonCanonicalPath {
+            path: "./a".to_owned(),
+            why: forge_warden_core::path::PathError::NonCanonical,
+        },
+        Unverifiable::RepeatedPath("a".to_owned()),
+        Unverifiable::SummaryPathUnknown("a".to_owned()),
+        Unverifiable::TypeChange("a".to_owned()),
+        Unverifiable::RenameOrCopy,
+        Unverifiable::UnsupportedMode("160000".to_owned()),
+        Unverifiable::UnreadableModeHeader("new mode 7".to_owned()),
+        Unverifiable::SymlinkTargetEdit,
+        Unverifiable::UnreadableGitOutput("?".to_owned()),
+    ]
+}
+
 #[test]
 fn a_facts_error_never_passes_anywhere_in_the_corpus() {
     // With no facts from Git there is nothing to widen with, so the rules read the ranking as
     // written. `judge`'s refusal arm finishes through `Verdict::held_by`, which takes the
-    // `patch_unverifiable` note as a required argument; this checks the result over the corpus.
+    // `patch_unverifiable` note as a required argument; this checks the result over the corpus,
+    // for every kind of refusal Git's facts can give.
     let index: serde_json::Value = serde_json::from_slice(&read("cases.json")).unwrap();
     let p = policy(PERMISSIVE);
     let mut raw_passes = 0_usize;
@@ -463,19 +488,29 @@ fn a_facts_error_never_passes_anywhere_in_the_corpus() {
         let Some(doc) = rank(name) else { continue };
         let raw = evaluate(&p, &doc, seals(), today()).outcome();
         let ranking = produced(doc);
-        let checked = check(&ranking, Err(Unverifiable::Empty));
-        assert!(!checked.is_covered(), "{name}");
-        let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
-        assert_ne!(verdict.outcome(), Outcome::Pass, "{name}");
-        let notes = codes(verdict.notes());
-        assert!(notes.contains(&"patch_unverifiable"), "{name}: {notes:?}");
-        // No disagreement with Git is computed without Git's facts. A note the rule engine raises
-        // from the ranking alone (`duplicate_paths`) may still be there.
-        for from_facts in ["status_mismatch", "rank_incomplete", "rank_extraneous"] {
-            assert!(!notes.contains(&from_facts), "{name}: {notes:?}");
+        for refusal in every_unverifiable() {
+            let checked = check(&ranking, Err(refusal.clone()));
+            assert!(!checked.is_covered(), "{name} {refusal:?}");
+            let verdict = evaluate_authority(&p, &checked, SuppliedCopy::Absent, seals(), today());
+            assert_ne!(verdict.outcome(), Outcome::Pass, "{name} {refusal:?}");
+            let notes = codes(verdict.notes());
+            assert!(
+                notes.contains(&"patch_unverifiable"),
+                "{name} {refusal:?}: {notes:?}"
+            );
+            // No disagreement with Git is computed without Git's facts. A note the rule engine
+            // raises from the ranking alone (`duplicate_paths`) may still be there.
+            for from_facts in ["status_mismatch", "rank_incomplete", "rank_extraneous"] {
+                assert!(
+                    !notes.contains(&from_facts),
+                    "{name} {refusal:?}: {notes:?}"
+                );
+            }
+            if raw == Outcome::Pass {
+                assert_eq!(verdict.outcome(), Outcome::Hold, "{name} {refusal:?}");
+            }
         }
         if raw == Outcome::Pass {
-            assert_eq!(verdict.outcome(), Outcome::Hold, "{name}");
             raw_passes += 1;
         }
         judged += 1;
