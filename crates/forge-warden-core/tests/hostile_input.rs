@@ -278,19 +278,27 @@ fn one_hostile_field_ranking() -> impl Strategy<Value = Vec<u8>> {
         let mut doc: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root().join("fixtures/demo.rank.json")).unwrap())
                 .unwrap();
-        let text = serde_json::Value::from(text);
-        match slot {
-            0 => doc["ranked"][0]["path"] = text,
-            1 => doc["ranked"][0]["status"] = text,
-            2 => doc["ranked"][0]["score"] = num,
-            3 => doc["ranked"][0]["signals"][0] = text,
-            4 => doc["ranked"][0]["evidence"][0]["signal"] = text,
-            5 => doc["ranked"][0]["evidence"][0]["address"] = text,
-            6 => doc["ranked"][0]["evidence"][0]["side"] = text,
-            7 => doc["ranked"][0]["evidence"][0]["line"] = num,
-            8 => doc["tool"]["version"] = text,
-            _ => doc["input_sha256"] = text,
-        }
+        // Each slot names one field by JSON pointer; slots 2 and 7 are numbers, the rest strings.
+        let pointer = [
+            "/ranked/0/path",
+            "/ranked/0/status",
+            "/ranked/0/score",
+            "/ranked/0/signals/0",
+            "/ranked/0/evidence/0/signal",
+            "/ranked/0/evidence/0/address",
+            "/ranked/0/evidence/0/side",
+            "/ranked/0/evidence/0/line",
+            "/tool/version",
+            "/input_sha256",
+        ]
+        .get(slot)
+        .copied()
+        .unwrap();
+        *doc.pointer_mut(pointer).unwrap() = if slot == 2 || slot == 7 {
+            num
+        } else {
+            serde_json::Value::from(text)
+        };
         serde_json::to_vec(&doc).unwrap()
     })
 }
@@ -348,7 +356,7 @@ fn one_hostile_field_policy() -> impl Strategy<Value = Vec<u8>> {
             "2026-12-31",
         ]
         .map(toml_string);
-        values[5] = String::from("1");
+        *values.get_mut(5).unwrap() = String::from("1");
         if let Some(chosen) = values.get_mut(slot) {
             *chosen = if slot == 5 { num.to_string() } else { toml_string(&text) };
         }
