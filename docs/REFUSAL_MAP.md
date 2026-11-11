@@ -44,7 +44,7 @@ it observes its variant is proven by one plant per row in `plants/catalog.json`.
 | `Exit::InvalidInput` | `crates/forge-warden-cli/tests/adversarial.rs::a_hash_mismatch_refuses_without_emitting_a_verdict` |
 | `Exit::PolicyFail` | `crates/forge-warden-cli/tests/adversarial.rs::protection_and_forbidden_signal_have_fail_controls` |
 | `Exit::PolicyHold` | `crates/forge-warden-cli/tests/adversarial.rs::matching_patch_and_known_ranking_hold_in_advisory_mode` |
-| `Exit::Internal` | MISSING |
+| `Exit::Internal` | UNREACHABLE: only a registry serialisation failure (main.rs, schema) or a panic; no fault hook |
 | `DoorErrorKind::Io` | `crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused` |
 | `DoorErrorKind::Environment` | `crates/forge-warden-cli/src/doors/mod.rs::the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling` |
 | `DoorErrorKind::OverBudget` | `crates/forge-warden-cli/src/doors/file.rs::the_budget_is_inclusive_and_one_byte_more_is_refused` |
