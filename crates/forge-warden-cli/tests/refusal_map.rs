@@ -28,12 +28,14 @@ struct Row {
 }
 
 fn literal(expr: &syn::Expr) -> Option<String> {
-    match expr {
-        syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Str(text),
-            ..
-        }) => Some(text.value()),
-        _ => None,
+    if let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(text),
+        ..
+    }) = expr
+    {
+        Some(text.value())
+    } else {
+        None
     }
 }
 
@@ -49,11 +51,14 @@ fn constants<'a>(items: impl IntoIterator<Item = &'a syn::Item>, into: &mut BTre
 
 /// The arm's pattern as `Enum::Variant`.
 fn pattern_path(pat: &syn::Pat) -> Option<&syn::Path> {
-    match pat {
-        syn::Pat::Path(path) => Some(&path.path),
-        syn::Pat::TupleStruct(tuple) => Some(&tuple.path),
-        syn::Pat::Struct(fields) => Some(&fields.path),
-        _ => None,
+    if let syn::Pat::Path(path) = pat {
+        Some(&path.path)
+    } else if let syn::Pat::TupleStruct(tuple) = pat {
+        Some(&tuple.path)
+    } else if let syn::Pat::Struct(fields) = pat {
+        Some(&fields.path)
+    } else {
+        None
     }
 }
 
@@ -62,12 +67,12 @@ fn cited(expr: &syn::Expr, names: &BTreeMap<String, String>) -> Option<String> {
     if let Some(text) = literal(expr) {
         return Some(text);
     }
-    match expr {
-        syn::Expr::Path(path) => path
-            .path
+    if let syn::Expr::Path(path) = expr {
+        path.path
             .get_ident()
-            .and_then(|ident| names.get(&ident.to_string()).cloned()),
-        _ => None,
+            .and_then(|ident| names.get(&ident.to_string()).cloned())
+    } else {
+        None
     }
 }
 
@@ -82,9 +87,12 @@ fn rows() -> Result<Vec<Row>, String> {
         };
         let mut names = file_constants.clone();
         constants(
-            function.block.stmts.iter().filter_map(|stmt| match stmt {
-                syn::Stmt::Item(item) => Some(item),
-                _ => None,
+            function.block.stmts.iter().filter_map(|stmt| {
+                if let syn::Stmt::Item(declared) = stmt {
+                    Some(declared)
+                } else {
+                    None
+                }
             }),
             &mut names,
         );
