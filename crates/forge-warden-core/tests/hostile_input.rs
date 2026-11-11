@@ -9,9 +9,10 @@
 //! One more property per parser keeps a real, valid input and makes ONE field hostile at a time, so
 //! that field's validation is reached on every case (HOSTILE-INPUT.1: a hang behind a long path
 //! escaped the default budget when every field was hostile at once).
-//! Deterministic cases cover deep nesting and size edges. Every file under
-//! `fixtures/hostile/` is replayed on every run; a crash, hang or wrong refusal found here becomes
-//! one such file the same day.
+//! Deterministic cases cover deep nesting and size edges. Every file under `fixtures/hostile/rank/`
+//! and `fixtures/hostile/policy/` is replayed on every run through its parser; a crash, hang or
+//! wrong refusal of the ranking or policy parser becomes one such file the same day. Patch facts
+//! have no replay directory: a facts finding becomes a named test in this file instead.
 //!
 //! Budget (recorded here and in `fixtures/hostile/README.md`): [`CASES`] cases per property,
 //! with proptest's default seeding; `HOSTILE_CASES=<n>` raises it for a longer campaign (a value

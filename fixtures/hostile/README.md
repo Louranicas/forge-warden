@@ -13,3 +13,11 @@ valid JSON with the right schema and tool name but hostile field values (non-ASC
 numbers at and past the integer edges, repeated entries), so field validation is reached and not only the JSON reader.
 
 Seeds: `empty.json` and `empty.toml`, the empty input.
+
+Regression inputs:
+- `rank/long-path.rank.json` (EVIDENCE-0.2.0, ledger Q51): the demo ranking with one path of 10 006 bytes. HOSTILE-INPUT.1 found
+  that a hang planted in `RepoPath::parse` for paths over 10 000 bytes escaped the 256-case budget when every field was hostile at
+  once; the one-field-at-a-time properties now reach it, and this file replays that shape on every run.
+
+Patch facts (`PatchFacts::from_git`) have generated properties but no replay directory here: a facts finding becomes a named test
+in the harness instead.
