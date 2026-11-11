@@ -2286,21 +2286,29 @@
       "diagnostic": "git_adds_the_deletion_the_producer_omitted.*FAILED",
       "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--test", "authority", "--", "git_adds_the_deletion_the_producer_omitted"],
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "missing-required-tool-skipped",
+      "guardrail": "G-18",
+      "path": "scripts/tool_versions.py",
+      "old": "            raise ValueError(f\"required tool missing: {name}; install {values[key]} (G-18)\")",
+      "new": "            continue  # Deliberately let a missing required tool pass as a skip.",
+      "diagnostic": "FAIL: test_a_missing_required_tool_is_refused_by_name \\(",
+      "command": ["python3", "-I", "scripts/tests/local_tools.py", "LocalTools.test_a_missing_required_tool_is_refused_by_name"],
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "another-compiler-admitted",
+      "guardrail": "G-16",
+      "path": "scripts/tool_versions.py",
+      "old": "            raise ValueError(f\"{argv[0]} is {found[0]}, but rust-toolchain.toml pins {pinned} (G-16)\")",
+      "new": "            pass  # Deliberately admit a compiler other than the pinned one.",
+      "diagnostic": "FAIL: test_another_compiler_is_refused \\(",
+      "command": ["python3", "-I", "scripts/tests/local_tools.py", "Toolchain.test_another_compiler_is_refused"],
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     }
   ],
   "pending_guardrails": [
-    {
-      "id": "G-16",
-      "title": "Toolchain drift (R-08)",
-      "status": "PENDING",
-      "reason": "Exact toolchain pin exists, but no local CI toolchain-drift invariant is implemented; missing offline toolchains must not count as caught."
-    },
-    {
-      "id": "G-18",
-      "title": "A skipped gate reads as a passed gate",
-      "status": "PENDING",
-      "reason": "ci_local still permits optional-tool skips; a strict missing-required-tool refusal has not been implemented. No passing plant is claimed."
-    },
     {
       "id": "G-38",
       "title": "Required CI check names drift",
