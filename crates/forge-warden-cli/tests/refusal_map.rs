@@ -2,6 +2,7 @@
 //! that observes it.
 //!
 //! The rows are the arms of the exhaustive matches in `crates/forge-warden-core/src/refusal_rows.rs`
+//! and `crates/forge-warden-cli/src/refusal_rows.rs`
 //! (layer 1: the compiler refuses a variant without a row). This test parses that file and checks
 //! layer 2: every arm returns its own variant's name (so no arm borrows another variant's row),
 //! every cited test exists as a `#[test]` function in the file it names, and `docs/REFUSAL_MAP.md`
@@ -15,11 +16,15 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use syn::visit::Visit;
 
-const ROWS: &str = "crates/forge-warden-core/src/refusal_rows.rs";
+/// The rows files, core first: their rows render in this order.
+const ROWS: [&str; 2] = [
+    "crates/forge-warden-core/src/refusal_rows.rs",
+    "crates/forge-warden-cli/src/refusal_rows.rs",
+];
 const MAP: &str = "docs/REFUSAL_MAP.md";
 const MISSING: &str = "MISSING";
 /// Rows still without an observing test. It only goes down, and is zero when the package is READY.
-const MISSING_AT_MOST: usize = 1;
+const MISSING_AT_MOST: usize = 9;
 
 /// One row of the map, in the order the rows file declares it.
 struct Row {
@@ -81,10 +86,17 @@ fn cited(expr: &syn::Expr, names: &BTreeMap<String, String>) -> Option<String> {
 }
 
 fn rows() -> Result<Vec<Row>, String> {
-    let file = syn::parse_file(&read(ROWS)).map_err(|e| format!("{ROWS}: {e}"))?;
+    let mut out = Vec::new();
+    for path in ROWS {
+        rows_of(path, &mut out)?;
+    }
+    Ok(out)
+}
+
+fn rows_of(rows_file: &str, out: &mut Vec<Row>) -> Result<(), String> {
+    let file = syn::parse_file(&read(rows_file)).map_err(|e| format!("{rows_file}: {e}"))?;
     let mut file_constants = BTreeMap::new();
     constants(&file.items, &mut file_constants);
-    let mut out = Vec::new();
     for item in &file.items {
         let syn::Item::Fn(function) = item else {
             continue;
@@ -105,7 +117,7 @@ fn rows() -> Result<Vec<Row>, String> {
                 continue;
             };
             for arm in &matched.arms {
-                let where_ = format!("{ROWS}: fn {}", function.sig.ident);
+                let where_ = format!("{rows_file}: fn {}", function.sig.ident);
                 let path = pattern_path(&arm.pat)
                     .ok_or(format!("{where_}: an arm is not Enum::Variant"))?;
                 let segments: Vec<String> =
@@ -144,7 +156,7 @@ fn rows() -> Result<Vec<Row>, String> {
             }
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Every `#[test]` function name in a file, at any depth.
@@ -164,7 +176,8 @@ fn render(rows: &[Row]) -> Result<String, String> {
     let mut text = String::from(
         "# Refusal map\n\n\
          Every refusal variant and every exit, with the one test that observes it. Generated from\n\
-         `crates/forge-warden-core/src/refusal_rows.rs` and checked byte for byte by\n\
+         `crates/forge-warden-core/src/refusal_rows.rs` and `crates/forge-warden-cli/src/refusal_rows.rs`,\n\
+         and checked byte for byte by\n\
          `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.\n\n\
          A row names its test by `path::function`. That the test exists is checked by name only; that\n\
          it observes its variant is proven by one plant per row in `plants/catalog.json`.\n\n\
@@ -186,7 +199,7 @@ fn render(rows: &[Row]) -> Result<String, String> {
 fn every_row_names_its_own_variant_and_cites_a_test_that_exists() -> Result<(), String> {
     let rows = rows()?;
     if rows.is_empty() {
-        return Err(format!("{ROWS}: no rows found"));
+        return Err("no rows found".to_owned());
     }
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for row in rows.iter().filter(|row| row.test != MISSING) {

@@ -1918,6 +1918,10 @@
         "a6dae790eb0c5834a3edf5ff8712e2575760df9de6cbba6700cc7ada8df7fd2c"
       ],
       [
+        "crates/forge-warden-cli/src/refusal_rows.rs",
+        "9d509e24ca553bb0eaa4e1a84bbd9f208fc0c6dc367f77194fe35f8fdc98a719"
+      ],
+      [
         "crates/forge-warden-cli/tests/adversarial.rs",
         "678c04bc8c1de65df391db1d427e1b2c4ae5ce868b3d3541dbc6ff682c3ebe0f"
       ],
