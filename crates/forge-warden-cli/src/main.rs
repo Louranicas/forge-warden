@@ -14,6 +14,7 @@
 
 mod doors;
 #[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
 mod refusal_rows;
 
 #[cfg(test)]

@@ -226,6 +226,7 @@ mod child_tests {
     fn git_facts_name_a_door_failure_and_an_unavailable_git() {
         // REFUSAL-MAP rows GitFactsFailure::Door and ::Unavailable, observed by variant.
         use super::child::{GitFactsFailure, git_facts_in};
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         let door = git_facts_in(&test_git(), b"", Path::new("relative/base"));
         assert!(
             matches!(&door, Err(GitFactsFailure::Door(e)) if e.kind == super::DoorErrorKind::Environment),
@@ -234,7 +235,6 @@ mod child_tests {
         // A "Git" the kernel will not execute: it has the ELF magic and the execute bit, so
         // admission takes it, but exec fails. No Git ran, so the facts are Unavailable, not Refused
         // (which means Git ran and rejected the patch).
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         let root = scratch("git-unexecutable");
         let program = root.join("git");
         std::fs::write(&program, b"\x7fELF truncated").unwrap();
