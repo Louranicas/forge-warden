@@ -3,7 +3,7 @@
 This is the procedure for running forge-warden in **authority mode** on one Linux machine: the only
 mode whose verdict can be `pass`. Each step says what to run and how to check it worked; do them in
 order and stop at the first check that fails. Advisory mode (a supplied ranking, at best `hold`) needs
-only steps 1, 2 and 5.
+steps 1, 2, 3 and 5 and the advisory commands at the end of step 6; it needs no Git allowlist.
 
 Two steps are owner acts that need root: installing the Git allowlist (step 4) and, if you choose,
 pinning a different deep-diff-forge (step 3). Everything else runs as an ordinary user.
@@ -44,11 +44,13 @@ curl --fail --location --proto '=https' -O "https://github.com/Louranicas/deep-d
 sha256sum --check "$a.tar.gz.sha256"          # must print OK
 tar --extract --gzip --file "$a.tar.gz" "$a/deep-diff-forge"
 sha256sum "$a/deep-diff-forge"                # the digest the policy will list
+install -D -m 0755 "$a/deep-diff-forge" "$HOME/.local/share/forge-warden/deep-diff-forge"
 ```
 
 For v0.8.2 the archive digest is `f3898cc9065f856f151e9f2ecd72bfe8818c5e8bc0a3004bae654fad592f056b`
-and the binary's is `298e07511310b18051a4c8ed56c18fafa03e40dc8fc88bedf74edba0e2ba41ad`. Install the
-binary somewhere only you can write, and do not modify it afterwards.
+and the binary's is `298e07511310b18051a4c8ed56c18fafa03e40dc8fc88bedf74edba0e2ba41ad`. The last line
+installs it where step 6 runs it: a regular file only you can write (the door refuses a symlink, a FIFO
+or a file writable by group or others). Do not modify it afterwards.
 
 ## 4. Install the Git allowlist (owner, root)
 
@@ -91,17 +93,26 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 
 ## 6. Judge a change
 
-**NOT YET RUN** on any machine: it needs the owner's Git allowlist (step 4), which is not installed yet.
+**NOT YET RUN** in authority mode on any machine: it needs the owner's Git allowlist (step 4), which is
+not installed yet. The advisory commands below were run as written.
 
 ```bash
 git diff --binary --no-renames main... > change.patch
 forge-warden check --policy warden.toml --patch change.patch \
-  --ranker /opt/deep-diff-forge/deep-diff-forge --json > verdict.json
+  --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > verdict.json
 echo "exit $?"
 ```
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
-next step on stderr. `forge-warden schema exit-codes` lists them all.
+next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.
+
+Advisory mode instead (no allowlist needed; the best result is `hold`, exit 8): rank the patch
+yourself and hand the ranking over.
+
+```bash
+"$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < change.patch > rank.json
+forge-warden check --policy warden.toml --patch change.patch --advisory --rank rank.json --json > verdict.json
+```
 
 ## 7. Check that the verdict is an authority verdict
 
@@ -112,7 +123,7 @@ python3 -c 'import json,sys; v=json.load(open("verdict.json")); s=v["seals"]; pr
 sha256sum /etc/forge-warden/git-allowlist.toml
 ```
 
-Check: provenance is `produced`; `ranked_by.sha256` is the digest from step 3; `git.admission` is
+Run it only after exit 0, 7 or 8: on a refusal `verdict.json` is empty. Check: provenance is `produced`; `ranked_by.sha256` is the digest from step 3; `git.admission` is
 `approved`; and `git.allowlist_sha256` equals the file's SHA-256. A verdict without all four is not an
 authority verdict, whatever it says.
 
@@ -130,7 +141,7 @@ authority verdict, whatever it says.
 
 | You see | Meaning | Do |
 |---|---|---|
-| exit 3, `no Git allowlist enrolled` | step 4 not done on this machine | install the allowlist, or run advisory mode |
+| exit 3, `no Git allowlist enrolled` | step 4 not done on this machine. Git is admitted before the ranker is checked, so until step 4 every authority run stops here, even with a wrong ranker | install the allowlist, or run advisory mode |
 | exit 3, `executable digest is not enrolled` | Git changed (step 8) | add the new digest, new revision |
 | exit 4, the ranker's digest `does not list` | the binary is not the one the policy pins | use the pinned binary, or change the policy in review |
 | exit 4, `pinning …` | the ranker file is a symlink, a FIFO, or writable by others | install it as a plain file only you can write |
