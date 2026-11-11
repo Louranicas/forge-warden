@@ -11,7 +11,8 @@
 //! pattern (checked by `crates/forge-warden-cli/tests/refusal_map.rs`, which parses this file),
 //! so an arm cannot borrow another variant's row. That test also renders `docs/REFUSAL_MAP.md`
 //! from these arms and compares it byte for byte. The test is named `path::function`; that a
-//! test really observes its variant is proven per row by a plant (layer 3), not by this file.
+//! test really observes its variant is not proven by this file: three sampled variant-swap plants
+//! (guardrail G-53) prove it for three rows; for the others the test's assertion was read.
 //!
 //! Every row names its observing test, except one stated UNREACHABLE with its reason.
 

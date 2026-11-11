@@ -3,16 +3,19 @@
 //!
 //! The rows are the arms of the exhaustive matches in `crates/forge-warden-core/src/refusal_rows.rs`
 //! and `crates/forge-warden-cli/src/refusal_rows.rs`
-//! (layer 1: the compiler refuses a variant without a row). This test parses that file and checks
-//! layer 2: every arm returns its own variant's name (so no arm borrows another variant's row),
-//! every cited test exists as a `#[test]` function in the file it names, and `docs/REFUSAL_MAP.md`
-//! is exactly the rendering of the rows. Finding a test by name proves nothing about what it
-//! observes; layer 3, one plant per row in `plants/catalog.json`, proves that.
+//! (layer 1: the compiler refuses a variant without a row). This test parses both files, fails closed
+//! on anything in them that is not a row, a constant or a test, and checks layer 2: the rows cover
+//! exactly the refusal enums of the map's scope, every arm returns its own variant's name (so no arm
+//! borrows another variant's row), every cited test is a runnable `#[test]` function in the file it
+//! names (not ignored, not behind another cfg), and `docs/REFUSAL_MAP.md` is exactly the rendering of
+//! the rows. Finding a test by name proves nothing about what it observes: three sampled variant-swap
+//! plants (guardrail G-53 in `plants/catalog.json`) prove it for three rows; for the others the cited
+//! test's assertion was read, not proven by a plant.
 
 mod common;
 
 use common::read;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use syn::visit::Visit;
 
@@ -29,6 +32,22 @@ const UNREACHABLE: &str = "UNREACHABLE: ";
 const UNREACHABLE_AT_MOST: usize = 1;
 /// Rows still without an observing test. It only goes down, and is zero when the package is READY.
 const MISSING_AT_MOST: usize = 0;
+/// The enums the map covers (DESIGN scope: 10 refusal enums and Exit). Rows that drop one are red.
+const ENUMS: [&str; 11] = [
+    "Unverifiable",
+    "PathError",
+    "PolicyError",
+    "RankError",
+    "SealError",
+    "DateError",
+    "Exit",
+    "DoorErrorKind",
+    "ChildFailure",
+    "RankerFailure",
+    "GitFactsFailure",
+];
+/// The test-module gates the repository uses; any other `cfg` hides a test from the gate.
+const TEST_GATES: [&str; 2] = ["test", "not(fw_fixture_cli)"];
 
 /// One row of the map, in the order the rows file declares it.
 struct Row {
@@ -46,19 +65,6 @@ fn literal(expr: &syn::Expr) -> Option<String> {
         Some(text.value())
     } else {
         None
-    }
-}
-
-fn constants<'a>(
-    items: impl IntoIterator<Item = &'a syn::Item>,
-    into: &mut BTreeMap<String, String>,
-) {
-    for item in items {
-        if let syn::Item::Const(constant) = item
-            && let Some(text) = literal(&constant.expr)
-        {
-            into.insert(constant.ident.to_string(), text);
-        }
     }
 }
 
@@ -92,88 +98,180 @@ fn cited(expr: &syn::Expr, names: &BTreeMap<String, String>) -> Option<String> {
 fn rows() -> Result<Vec<Row>, String> {
     let mut out = Vec::new();
     for path in ROWS {
-        rows_of(path, &mut out)?;
+        out.extend(rows_from(path, &read(path))?);
+    }
+    covers_the_scope(&out)?;
+    Ok(out)
+}
+
+fn covers_the_scope(rows: &[Row]) -> Result<(), String> {
+    let found: BTreeSet<&str> = rows.iter().map(|row| row.refusal.as_str()).collect();
+    let expected: BTreeSet<&str> = ENUMS.into_iter().collect();
+    if found == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "the rows cover {found:?}; the map covers exactly {expected:?}"
+        ))
+    }
+}
+
+fn is_test(function: &syn::ItemFn) -> bool {
+    function.attrs.iter().any(|a| a.path().is_ident("test"))
+}
+
+/// Every row in one rows file. Fails closed: each top-level item must be a `use`, a string `const`,
+/// the `Row` alias, a `#[test] fn`, or a rows fn (local string consts, then exactly one `match`).
+fn rows_from(label: &str, source: &str) -> Result<Vec<Row>, String> {
+    let file = syn::parse_file(source).map_err(|e| format!("{label}: {e}"))?;
+    let mut file_constants = BTreeMap::new();
+    for item in &file.items {
+        if let syn::Item::Const(constant) = item {
+            let text = literal(&constant.expr).ok_or(format!(
+                "{label}: const {} is not a string literal",
+                constant.ident
+            ))?;
+            file_constants.insert(constant.ident.to_string(), text);
+        }
+    }
+    let mut out = Vec::new();
+    for item in &file.items {
+        if matches!(item, syn::Item::Use(_) | syn::Item::Const(_)) {
+            continue;
+        }
+        if let syn::Item::Type(alias) = item
+            && alias.ident == "Row"
+        {
+            continue;
+        }
+        let syn::Item::Fn(function) = item else {
+            return Err(format!(
+                "{label}: an item that is not a use, a const, the Row alias, a #[test] fn or a rows fn"
+            ));
+        };
+        if !is_test(function) {
+            rows_of_fn(label, function, &file_constants, &mut out)?;
+        }
     }
     Ok(out)
 }
 
-fn rows_of(rows_file: &str, out: &mut Vec<Row>) -> Result<(), String> {
-    let file = syn::parse_file(&read(rows_file)).map_err(|e| format!("{rows_file}: {e}"))?;
-    let mut file_constants = BTreeMap::new();
-    constants(&file.items, &mut file_constants);
-    for item in &file.items {
-        let syn::Item::Fn(function) = item else {
-            continue;
+fn rows_of_fn(
+    label: &str,
+    function: &syn::ItemFn,
+    file_constants: &BTreeMap<String, String>,
+    out: &mut Vec<Row>,
+) -> Result<(), String> {
+    let where_ = format!("{label}: fn {}", function.sig.ident);
+    let Some((last, before)) = function.block.stmts.split_last() else {
+        return Err(format!("{where_}: an empty rows fn"));
+    };
+    let mut names = file_constants.clone();
+    for stmt in before {
+        let syn::Stmt::Item(syn::Item::Const(constant)) = stmt else {
+            return Err(format!(
+                "{where_}: a rows fn holds only string consts before its one match"
+            ));
         };
-        let mut names = file_constants.clone();
-        constants(
-            function.block.stmts.iter().filter_map(|stmt| {
-                if let syn::Stmt::Item(declared) = stmt {
-                    Some(declared)
-                } else {
-                    None
-                }
-            }),
-            &mut names,
-        );
-        for stmt in &function.block.stmts {
-            let syn::Stmt::Expr(syn::Expr::Match(matched), _) = stmt else {
-                continue;
-            };
-            for arm in &matched.arms {
-                let where_ = format!("{rows_file}: fn {}", function.sig.ident);
-                let path = pattern_path(&arm.pat)
-                    .ok_or(format!("{where_}: an arm is not Enum::Variant"))?;
-                let segments: Vec<String> =
-                    path.segments.iter().map(|s| s.ident.to_string()).collect();
-                let [refusal, variant] = segments.as_slice() else {
-                    return Err(format!(
-                        "{where_}: pattern {segments:?} is not Enum::Variant"
-                    ));
-                };
-                let syn::Expr::Tuple(pair) = &*arm.body else {
-                    return Err(format!(
-                        "{where_}: {refusal}::{variant} does not return (name, test)"
-                    ));
-                };
-                let elems: Vec<&syn::Expr> = pair.elems.iter().collect();
-                let [name, test] = elems.as_slice() else {
-                    return Err(format!(
-                        "{where_}: {refusal}::{variant} does not return a pair"
-                    ));
-                };
-                let name =
-                    literal(name).ok_or(format!("{where_}: {variant}'s name is not a literal"))?;
-                if name != *variant {
-                    return Err(format!(
-                        "{where_}: the arm for {refusal}::{variant} names {name:?}; each arm names its own variant"
-                    ));
-                }
-                let test = cited(test, &names).ok_or(format!(
-                    "{where_}: {variant}'s test is not a literal or a constant"
-                ))?;
-                out.push(Row {
-                    refusal: refusal.clone(),
-                    variant: variant.clone(),
-                    test,
-                });
-            }
+        let text = literal(&constant.expr).ok_or(format!(
+            "{where_}: const {} is not a string literal",
+            constant.ident
+        ))?;
+        names.insert(constant.ident.to_string(), text);
+    }
+    let syn::Stmt::Expr(syn::Expr::Match(matched), None) = last else {
+        return Err(format!("{where_}: a rows fn ends in exactly one match"));
+    };
+    for arm in &matched.arms {
+        let path =
+            pattern_path(&arm.pat).ok_or(format!("{where_}: an arm is not Enum::Variant"))?;
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let [refusal, variant] = segments.as_slice() else {
+            return Err(format!(
+                "{where_}: pattern {segments:?} is not Enum::Variant"
+            ));
+        };
+        let syn::Expr::Tuple(pair) = &*arm.body else {
+            return Err(format!(
+                "{where_}: {refusal}::{variant} does not return (name, test)"
+            ));
+        };
+        let elems: Vec<&syn::Expr> = pair.elems.iter().collect();
+        let [name, test] = elems.as_slice() else {
+            return Err(format!(
+                "{where_}: {refusal}::{variant} does not return a pair"
+            ));
+        };
+        let name = literal(name).ok_or(format!("{where_}: {variant}'s name is not a literal"))?;
+        if name != *variant {
+            return Err(format!(
+                "{where_}: the arm for {refusal}::{variant} names {name:?}; each arm names its own variant"
+            ));
         }
+        let test = cited(test, &names).ok_or(format!(
+            "{where_}: {variant}'s test is not a literal or a constant"
+        ))?;
+        out.push(Row {
+            refusal: refusal.clone(),
+            variant: variant.clone(),
+            test,
+        });
     }
     Ok(())
 }
 
-/// Every `#[test]` function name in a file, at any depth.
+/// Whether an attribute list hides an item from the gate: any `cfg_attr`, or a `cfg` other than
+/// the repository's test-module gates.
+fn gated(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attribute| {
+        let path = attribute.path();
+        if path.is_ident("cfg_attr") {
+            return true;
+        }
+        if !path.is_ident("cfg") {
+            return false;
+        }
+        let condition: String = attribute
+            .meta
+            .require_list()
+            .map(|list| list.tokens.to_string())
+            .unwrap_or_default()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        !TEST_GATES.contains(&condition.as_str())
+    })
+}
+
+/// The runnable `#[test]` fns of a file: not `#[ignore]`d, and neither the fn nor an enclosing `mod`
+/// behind a `cfg` other than the repository's test-module gates.
 #[derive(Default)]
-struct Tests(Vec<String>);
+struct Tests {
+    runnable: Vec<String>,
+    hidden: Vec<bool>,
+}
 
 impl<'ast> Visit<'ast> for Tests {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.hidden.push(gated(&item.attrs));
+        syn::visit::visit_item_mod(self, item);
+        self.hidden.pop();
+    }
+
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        if item.attrs.iter().any(|a| a.path().is_ident("test")) {
-            self.0.push(item.sig.ident.to_string());
+        let ignored = item.attrs.iter().any(|a| a.path().is_ident("ignore"));
+        if is_test(item) && !ignored && !gated(&item.attrs) && !self.hidden.iter().any(|h| *h) {
+            self.runnable.push(item.sig.ident.to_string());
         }
         syn::visit::visit_item_fn(self, item);
     }
+}
+
+fn runnable_tests(label: &str, source: &str) -> Result<Vec<String>, String> {
+    let file = syn::parse_file(source).map_err(|e| format!("{label}: {e}"))?;
+    let mut tests = Tests::default();
+    tests.visit_file(&file);
+    Ok(tests.runnable)
 }
 
 fn render(rows: &[Row]) -> Result<String, String> {
@@ -183,8 +281,9 @@ fn render(rows: &[Row]) -> Result<String, String> {
          `crates/forge-warden-core/src/refusal_rows.rs` and `crates/forge-warden-cli/src/refusal_rows.rs`,\n\
          and checked byte for byte by\n\
          `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.\n\n\
-         A row names its test by `path::function`. That the test exists is checked by name only; that\n\
-         it observes its variant is proven by one plant per row in `plants/catalog.json`.\n\n\
+         A row names its test by `path::function`; the test is checked to exist and to run (not ignored,\n\
+         not behind another cfg). That it observes its variant is proven by a plant for three sampled\n\
+         rows (guardrail G-53 in `plants/catalog.json`); for the others the test's assertion was read.\n\n\
          | Refusal | Observing test |\n| --- | --- |\n",
     );
     for row in rows {
@@ -215,17 +314,14 @@ fn every_row_names_its_own_variant_and_cites_a_test_that_exists() -> Result<(), 
             row.refusal, row.variant, row.test
         ))?;
         if !found.contains_key(path) {
-            let file = syn::parse_file(&read(path)).map_err(|e| format!("{path}: {e}"))?;
-            let mut tests = Tests::default();
-            tests.visit_file(&file);
-            found.insert(path.to_owned(), tests.0);
+            found.insert(path.to_owned(), runnable_tests(path, &read(path))?);
         }
         if !found
             .get(path)
             .is_some_and(|names| names.iter().any(|n| n == function))
         {
             return Err(format!(
-                "{}::{}: no #[test] fn {function} in {path}",
+                "{}::{}: no runnable #[test] fn {function} in {path}",
                 row.refusal, row.variant
             ));
         }
@@ -264,4 +360,57 @@ fn rows_without_an_observing_test_only_go_down() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[test]
+fn a_rows_file_holding_anything_but_rows_is_refused() -> Result<(), String> {
+    // R3 (Touchstone): rows moved into a module, a second match, other statements, a non-string
+    // const, or an enum dropped from the rows must all be red, never silently skipped.
+    for (what, source) in [
+        (
+            "rows in a module",
+            "mod hidden { pub(crate) const fn seal(e: &SealError) -> Row { match e { SealError::Length { .. } => (\"Length\", \"a::b\") } } }",
+        ),
+        (
+            "two matches",
+            "const fn f(e: &E) -> Row { match e { E::A => (\"A\", \"a::b\") }; match e { E::A => (\"A\", \"a::b\") } }",
+        ),
+        (
+            "a let before the match",
+            "const fn f(e: &E) -> Row { let x = 1; match e { E::A => (\"A\", \"a::b\") } }",
+        ),
+        ("a non-string const", "const N: usize = 1;"),
+        ("a struct", "struct S;"),
+    ] {
+        if rows_from(what, source).is_ok() {
+            return Err(format!("{what}: admitted"));
+        }
+    }
+    let dropped: Vec<Row> = rows()?
+        .into_iter()
+        .filter(|row| row.refusal != "SealError")
+        .collect();
+    if covers_the_scope(&dropped).is_ok() {
+        return Err("rows without SealError cover the scope".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ignored_or_otherwise_gated_test_is_not_runnable() -> Result<(), String> {
+    // R2 (Touchstone): an #[ignore]d cited test passed the whole gate.
+    let source = "
+        #[test] #[ignore = \"x\"] fn ignored() {}
+        #[cfg(feature = \"x\")] #[test] fn behind_a_feature() {}
+        #[cfg_attr(unix, ignore)] #[test] fn conditionally_ignored() {}
+        #[cfg(unix)] mod gated { #[test] fn in_a_gated_module() {} }
+        #[cfg(test)] #[cfg(not(fw_fixture_cli))] mod tests { #[test] fn runs() {} }
+        #[test] fn also_runs() {}
+    ";
+    let runnable = runnable_tests("control", source)?;
+    if runnable == ["runs", "also_runs"] {
+        Ok(())
+    } else {
+        Err(format!("runnable tests were {runnable:?}"))
+    }
 }
