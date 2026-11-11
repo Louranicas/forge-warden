@@ -231,13 +231,24 @@ mod child_tests {
             matches!(&door, Err(GitFactsFailure::Door(e)) if e.kind == super::DoorErrorKind::Environment),
             "{door:?}"
         );
-        // A "Git" that never stops writing: the stdout cap ends it, and that is Unavailable (the
-        // facts are missing), not Refused (Git rejected the patch).
+        // A "Git" the kernel will not execute: it has the ELF magic and the execute bit, so
+        // admission takes it, but exec fails. No Git ran, so the facts are Unavailable, not Refused
+        // (which means Git ran and rejected the patch).
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let root = scratch("git-unexecutable");
+        let program = root.join("git");
+        std::fs::write(&program, b"\x7fELF truncated").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let policy = root.join("allowlist.toml");
+        let digest = forge_warden_core::seal::sha256_hex(&std::fs::read(&program).unwrap());
+        std::fs::write(&policy, format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n")).unwrap();
+        let owner = std::fs::metadata(&root).unwrap().uid();
+        let broken = super::child::fixture_git(&program, &policy, &root, owner, false).unwrap();
         let base = scratch("git-unavailable");
-        let endless = git_facts_in(&admitted(Path::new("/usr/bin/yes")), b"x", &base);
+        let unavailable = git_facts_in(&broken, b"x", &base);
         assert!(
-            matches!(&endless, Err(GitFactsFailure::Unavailable(why)) if why.contains("more than the budget")),
-            "{endless:?}"
+            matches!(&unavailable, Err(GitFactsFailure::Unavailable(why)) if why.starts_with("git apply: ")),
+            "{unavailable:?}"
         );
     }
 
