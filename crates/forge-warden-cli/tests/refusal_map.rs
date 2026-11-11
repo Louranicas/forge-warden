@@ -231,11 +231,13 @@ fn gated(attrs: &[syn::Attribute]) -> bool {
         if !path.is_ident("cfg") {
             return false;
         }
-        let condition: String = attribute
-            .meta
-            .require_list()
-            .map(|list| list.tokens.to_string())
-            .unwrap_or_default()
+        // A cfg whose condition cannot be read is treated as hiding the test (fail closed).
+        let Ok(list) = attribute.meta.require_list() else {
+            return true;
+        };
+        let condition: String = list
+            .tokens
+            .to_string()
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
