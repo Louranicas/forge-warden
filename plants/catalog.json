@@ -2306,6 +2306,16 @@
       "diagnostic": "FAIL: test_another_compiler_is_refused \\(",
       "command": ["python3", "-I", "scripts/tests/local_tools.py", "Toolchain.test_another_compiler_is_refused"],
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "policy-severity-lowered",
+      "guardrail": "G-40",
+      "path": "warden.toml",
+      "old": "id = \"no-unsafe\"\nwhy = \"unsafe_code is forbidden workspace-wide; a diff that adds it is already wrong.\"\nkind = \"forbid_signal\"\nseverity = \"fail\"",
+      "new": "id = \"no-unsafe\"\nwhy = \"unsafe_code is forbidden workspace-wide; a diff that adds it is already wrong.\"\nkind = \"forbid_signal\"\nseverity = \"hold\"",
+      "diagnostic": "documented_rule_severities_equal_the_policies.*FAILED",
+      "cargo": ["test", "-p", "forge-warden-cli", "--locked", "--offline", "--test", "docs_inventory", "--", "documented_rule_severities_equal_the_policies"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     }
   ],
   "pending_guardrails": [

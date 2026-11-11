@@ -1103,3 +1103,77 @@ fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
         "doc comments have no history headings"
     );
 }
+
+/// `(id, kind, severity)` of every rule in a policy file, in file order.
+fn policy_rules(path: &str) -> Vec<(String, String, String)> {
+    let policy: toml::Value = toml::from_str(&read(path)).unwrap();
+    policy
+        .get("rule")
+        .and_then(toml::Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|rule| {
+            let field = |name: &str| {
+                rule.get(name)
+                    .and_then(toml::Value::as_str)
+                    .unwrap()
+                    .to_owned()
+            };
+            (field("id"), field("kind"), field("severity"))
+        })
+        .collect()
+}
+
+/// A Markdown table row of three backticked cells, `| `a` | `b` | `c` |`, as its three values.
+fn backticked_row(line: &str) -> Option<(String, String, String)> {
+    let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+    let ["", a, b, c, ""] = cells.as_slice() else {
+        return None;
+    };
+    let unquote = |cell: &str| {
+        cell.strip_prefix('`')
+            .and_then(|rest| rest.strip_suffix('`'))
+            .map(str::to_owned)
+    };
+    Some((unquote(a)?, unquote(b)?, unquote(c)?))
+}
+
+/// A rule line of the README's sample output, `  [STATUS] id (kind, severity)`.
+fn sample_rule(line: &str) -> Option<(String, String, String)> {
+    let rest = line.trim_start().strip_prefix('[')?;
+    let (status, rest) = rest.split_once(']')?;
+    if !["PASS", "FAIL", "HOLD", "WAIVED"].contains(&status.trim()) {
+        return None;
+    }
+    let (id, rest) = rest.trim().split_once(" (")?;
+    let (kind, severity) = rest.strip_suffix(')')?.split_once(", ")?;
+    Some((id.to_owned(), kind.to_owned(), severity.to_owned()))
+}
+
+/// EVIDENCE-0.2.0 item 11: a rule cannot be weakened unnoticed. In the freeze review a seed that
+/// lowered a rule from fail to hold went unseen by every reviewer; now the policy and the table in
+/// docs/POLICY_REFERENCE.md must change together, and the README's sample output must name the
+/// kinds and severities of the starter policy it was made with.
+#[test]
+fn documented_rule_severities_equal_the_policies() {
+    let reference = read("docs/POLICY_REFERENCE.md");
+    let (_, section) = reference
+        .split_once("## This repository's own policy (`warden.toml`)")
+        .expect("POLICY_REFERENCE has the own-policy section");
+    let section = section.split("\n## ").next().unwrap_or_default();
+    let documented: Vec<_> = section.lines().filter_map(backticked_row).collect();
+    assert_eq!(
+        documented,
+        policy_rules("warden.toml"),
+        "docs/POLICY_REFERENCE.md's own-policy table and warden.toml disagree: change both together"
+    );
+    let starter = policy_rules("examples/starter.warden.toml");
+    let sampled: Vec<_> = read("README.md").lines().filter_map(sample_rule).collect();
+    assert!(!sampled.is_empty(), "the README sample output has rule lines");
+    for rule in &sampled {
+        assert!(
+            starter.contains(rule),
+            "README sample {rule:?} does not match examples/starter.warden.toml"
+        );
+    }
+}

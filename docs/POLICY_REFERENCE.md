@@ -246,3 +246,27 @@ policy permits only unpinned advisory output with an explicit `rank_unverified` 
 or unsafe policy refuses both modes. See [Git runtime admission](GIT_RUNTIME.md) for owner
 enrollment, revision/revocation rules, and execution-boundary limitations. GitOracle in the
 pure core is serialized evidence, not a capability to open or execute an artifact.
+
+## This repository's own policy (`warden.toml`)
+
+The rules this repository judges its own changes with, and how strictly. Lowering a severity from
+`fail` to `hold`, or changing a kind, is a change to the gate: the table must change in the same
+commit, and `documented_rule_severities_equal_the_policies` (`crates/forge-warden-cli/tests/docs_inventory.rs`)
+fails when the two disagree. The same test holds the README's sample output to
+`examples/starter.warden.toml`.
+
+| Rule | Kind | Severity |
+| --- | --- | --- |
+| `no-secrets` | `forbid_signal` | `fail` |
+| `no-hidden-text` | `forbid_signal` | `fail` |
+| `no-unsafe` | `forbid_signal` | `fail` |
+| `core-stays-pure` | `forbid_signal` | `fail` |
+| `no-ci-privilege` | `forbid_signal` | `fail` |
+| `no-silent-suppression` | `forbid_signal` | `hold` |
+| `keep-the-tests` | `forbid_signal` | `hold` |
+| `tests-travel-with-code` | `require_companion` | `hold` |
+| `schema-changes-are-versioned` | `require_companion` | `fail` |
+| `quality-config-is-owned` | `protect_paths` | `hold` |
+| `reviewable-size` | `max_score` | `hold` |
+| `one-thing-at-a-time` | `max_files` | `hold` |
+| `golden-output-needs-review` | `protect_paths` | `hold` |
