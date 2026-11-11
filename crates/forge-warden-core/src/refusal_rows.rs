@@ -71,8 +71,7 @@ pub(crate) const fn unverifiable(e: &Unverifiable) -> Row {
 
 /// Rows for [`PathError`].
 pub(crate) const fn path(e: PathError) -> Row {
-    const T: &str =
-        "crates/forge-warden-core/src/path.rs::every_non_canonical_spelling_is_refused_with_its_reason";
+    const T: &str = "crates/forge-warden-core/src/path.rs::every_non_canonical_spelling_is_refused_with_its_reason";
     match e {
         PathError::Empty => ("Empty", T),
         PathError::Nul => ("Nul", T),
@@ -155,7 +154,10 @@ fn every_row_function_answers_with_a_name_and_a_test() {
         date(DateError::BadShape),
         exit(Exit::Pass),
     ];
-    assert!(rows.iter().all(|(name, test)| !name.is_empty() && !test.is_empty()));
+    assert!(
+        rows.iter()
+            .all(|(name, test)| !name.is_empty() && !test.is_empty())
+    );
     assert_eq!(policy(&PolicyError::TooLarge(1)).0, "TooLarge");
     assert_eq!(rank(&RankError::TooLarge(1)).0, "TooLarge");
     assert_eq!(seal(&SealError::Length { len: 1 }).0, "Length");

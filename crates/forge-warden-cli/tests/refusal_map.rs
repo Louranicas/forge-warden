@@ -40,7 +40,10 @@ fn literal(expr: &syn::Expr) -> Option<String> {
     }
 }
 
-fn constants<'a>(items: impl IntoIterator<Item = &'a syn::Item>, into: &mut BTreeMap<String, String>) {
+fn constants<'a>(
+    items: impl IntoIterator<Item = &'a syn::Item>,
+    into: &mut BTreeMap<String, String>,
+) {
     for item in items {
         if let syn::Item::Const(constant) = item
             && let Some(text) = literal(&constant.expr)
@@ -103,25 +106,36 @@ fn rows() -> Result<Vec<Row>, String> {
             };
             for arm in &matched.arms {
                 let where_ = format!("{ROWS}: fn {}", function.sig.ident);
-                let path = pattern_path(&arm.pat).ok_or(format!("{where_}: an arm is not Enum::Variant"))?;
-                let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+                let path = pattern_path(&arm.pat)
+                    .ok_or(format!("{where_}: an arm is not Enum::Variant"))?;
+                let segments: Vec<String> =
+                    path.segments.iter().map(|s| s.ident.to_string()).collect();
                 let [refusal, variant] = segments.as_slice() else {
-                    return Err(format!("{where_}: pattern {segments:?} is not Enum::Variant"));
+                    return Err(format!(
+                        "{where_}: pattern {segments:?} is not Enum::Variant"
+                    ));
                 };
                 let syn::Expr::Tuple(pair) = &*arm.body else {
-                    return Err(format!("{where_}: {refusal}::{variant} does not return (name, test)"));
+                    return Err(format!(
+                        "{where_}: {refusal}::{variant} does not return (name, test)"
+                    ));
                 };
                 let elems: Vec<&syn::Expr> = pair.elems.iter().collect();
                 let [name, test] = elems.as_slice() else {
-                    return Err(format!("{where_}: {refusal}::{variant} does not return a pair"));
+                    return Err(format!(
+                        "{where_}: {refusal}::{variant} does not return a pair"
+                    ));
                 };
-                let name = literal(name).ok_or(format!("{where_}: {variant}'s name is not a literal"))?;
+                let name =
+                    literal(name).ok_or(format!("{where_}: {variant}'s name is not a literal"))?;
                 if name != *variant {
                     return Err(format!(
                         "{where_}: the arm for {refusal}::{variant} names {name:?}; each arm names its own variant"
                     ));
                 }
-                let test = cited(test, &names).ok_or(format!("{where_}: {variant}'s test is not a literal or a constant"))?;
+                let test = cited(test, &names).ok_or(format!(
+                    "{where_}: {variant}'s test is not a literal or a constant"
+                ))?;
                 out.push(Row {
                     refusal: refusal.clone(),
                     variant: variant.clone(),
@@ -176,17 +190,20 @@ fn every_row_names_its_own_variant_and_cites_a_test_that_exists() -> Result<(), 
     }
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for row in rows.iter().filter(|row| row.test != MISSING) {
-        let (path, function) = row
-            .test
-            .split_once("::")
-            .ok_or(format!("{}::{}: test {:?} is not path::function", row.refusal, row.variant, row.test))?;
+        let (path, function) = row.test.split_once("::").ok_or(format!(
+            "{}::{}: test {:?} is not path::function",
+            row.refusal, row.variant, row.test
+        ))?;
         if !found.contains_key(path) {
             let file = syn::parse_file(&read(path)).map_err(|e| format!("{path}: {e}"))?;
             let mut tests = Tests::default();
             tests.visit_file(&file);
             found.insert(path.to_owned(), tests.0);
         }
-        if !found.get(path).is_some_and(|names| names.iter().any(|n| n == function)) {
+        if !found
+            .get(path)
+            .is_some_and(|names| names.iter().any(|n| n == function))
+        {
             return Err(format!(
                 "{}::{}: no #[test] fn {function} in {path}",
                 row.refusal, row.variant
@@ -202,7 +219,9 @@ fn the_refusal_map_is_the_rendering_of_the_rows() -> Result<(), String> {
     if read(MAP) == rendered {
         Ok(())
     } else {
-        Err(format!("{MAP} differs from the rows; re-render it as:\n{rendered}"))
+        Err(format!(
+            "{MAP} differs from the rows; re-render it as:\n{rendered}"
+        ))
     }
 }
 
@@ -212,6 +231,8 @@ fn rows_without_an_observing_test_only_go_down() -> Result<(), String> {
     if missing <= MISSING_AT_MOST {
         Ok(())
     } else {
-        Err(format!("{missing} rows are MISSING; at most {MISSING_AT_MOST} may be"))
+        Err(format!(
+            "{missing} rows are MISSING; at most {MISSING_AT_MOST} may be"
+        ))
     }
 }
