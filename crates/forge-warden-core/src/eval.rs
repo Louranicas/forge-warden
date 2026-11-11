@@ -16,7 +16,7 @@ use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::policy::{Check, PathSet, Policy, Rule, Scope, ScorePer, Waiver};
-use crate::rank::{RankDoc, RankedFile};
+use crate::rank::{RankDoc, RankShape, RankedFile};
 use crate::verdict::{
     Citation, Note, NoteCode, RuleOutcome, RuleResult, Seals, Verdict, Violation, WaiverNote,
 };
@@ -191,16 +191,19 @@ fn forbidden_signals(signals: &[Signal], scope: &Scope, files: &[RankedFile]) ->
     out
 }
 
-/// Whether a file was removed by the change. deep-diff-forge classifies a deleted binary file as
-/// `binary_changed` and marks the deletion only with the `deleted_file` signal, so the status
-/// alone is not enough.
+/// Whether a file was removed by the change. deep-diff-forge (0.7.0 and 0.8.2) ranks a deleted
+/// binary file as `binary_changed` with only `binary_change`: it never writes `deleted_file` for
+/// it. The signal read here comes from Git's facts, which `authority::judge` adds (see `widened`)
+/// before any rule runs (ADR 0005 §2.8), so the status alone is not enough. This raw engine,
+/// given an unwidened ranking, cannot see a binary deletion.
 fn is_deleted(file: &RankedFile) -> bool {
     *file.status() == Status::Deleted || file.signals().contains(&Signal::DeletedFile)
 }
 
 /// Whether a file can stand as a companion: it must exist after the change, and its change must be
-/// knowable. A `binary_changed` file without `new_file` may be a deletion deep-diff-forge could not
-/// label, so it does not count.
+/// knowable. For a `binary_changed` file only a Git-derived `new_file` (ADR 0005 §2.8) shows that:
+/// the producer writes neither `new_file` nor `deleted_file` for a binary, so without it the entry
+/// may be a deletion or a modification of unknowable size, and it does not count.
 fn is_live_companion(file: &RankedFile) -> bool {
     !is_deleted(file)
         && (*file.status() != Status::BinaryChanged || file.signals().contains(&Signal::NewFile))
@@ -254,28 +257,25 @@ fn classify_waivers(
 
 fn notes_for(rank: &RankDoc) -> Vec<Note> {
     let mut notes = Vec::new();
-    if rank.files().is_empty() {
-        notes.push(Note {
+    // A real producer lists one path twice for a type change (file -> symlink: an addition and a
+    // deletion; MATRIX.md). Which entry a rule sees would then be an accident of order, so hold.
+    match rank.shape() {
+        RankShape::Empty => notes.push(Note {
             code: NoteCode::EmptyRanking,
             path: None,
             detail: "the ranking lists no files; there is nothing to judge, so nothing passes by default".to_owned(),
-        });
-    }
-    // A real producer lists one path twice for a type change (file -> symlink: an addition and a
-    // deletion; MATRIX.md). Which entry a rule sees would then be an accident of order, so hold.
-    let mut seen = BTreeSet::new();
-    let mut duplicated = BTreeSet::new();
-    for file in rank.files() {
-        if !seen.insert(file.path().as_str()) {
-            duplicated.insert(file.path().as_str());
+        }),
+        RankShape::Duplicates(paths) => {
+            let duplicated = paths.iter();
+            for path in duplicated {
+                notes.push(Note {
+                    code: NoteCode::DuplicatePaths,
+                    path: Some(path.to_string()),
+                    detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
+                });
+            }
         }
-    }
-    for path in duplicated {
-        notes.push(Note {
-            code: NoteCode::DuplicatePaths,
-            path: Some(path.to_owned()),
-            detail: "the ranking lists this path more than once (a type change, or a forged ranking); rules cannot tell which entry is the file".to_owned(),
-        });
+        RankShape::Clean => {}
     }
     for file in rank.files() {
         for signal in file.signals().iter().filter(|s| !s.is_known()) {

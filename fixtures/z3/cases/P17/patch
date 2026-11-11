@@ -1,0 +1,14 @@
+diff --git a/src/a.rs b/src/a.rs
+index 1111111..2222222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/tests/a.rs b/tests/a.rs
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/tests/a.rs
+@@ -0,0 +1 @@
++new

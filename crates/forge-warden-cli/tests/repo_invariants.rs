@@ -97,12 +97,12 @@ fn suppressions_are_expectations_with_reasons() {
 fn only_doors_rs_opens_doors_in_production_code() {
     for (path, text) in rust_sources() {
         let is_test = !is_production(&path);
-        if is_test || path.ends_with("src/doors.rs") {
+        if is_test || common::is_door_file(&path) {
             continue;
         }
         assert!(
             !text.contains("disallowed_methods") && !text.contains("disallowed_types"),
-            "{path}: effects go through crates/forge-warden-cli/src/doors.rs (ADR 0001), not a local exemption"
+            "{path}: effects go through the door modules (common::DOOR_FILES, ADR 0001), not a local exemption"
         );
     }
 }
@@ -143,6 +143,46 @@ fn raw_defaults_are_disallowed_in_both_crates() {
                 "{config} must actively disallow {method}"
             );
         }
+    }
+}
+
+#[test]
+fn the_effect_lists_name_every_reviewed_effect() {
+    // EFFECT-WALL.2 (review candidates C1 and C4, both reproduced). The effect wall is a list of
+    // spellings: an effect it does not name is not refused, so the reviewed names are pinned here
+    // as ACTIVE entries (a commented-out line keeps its text and disallows nothing). That clippy
+    // then refuses each of them is measured in tests/mint_lint.rs.
+    const BOTH: [&str; 8] = [
+        "std::fs::remove_dir",
+        "std::fs::hard_link",
+        "std::fs::set_permissions",
+        "std::fs::DirBuilder::create",
+        "std::path::Path::exists",
+        "std::path::Path::metadata",
+        "std::os::unix::fs::symlink",
+        "std::os::unix::net::UnixStream::connect",
+    ];
+    // Minted only inside the CLI's door modules; the core defines them, so only the root lists them.
+    const CLI_ONLY: [&str; 3] = [
+        "forge_warden_core::authority::Ranking::attest",
+        "forge_warden_core::verdict::GitOracle::approved",
+        "forge_warden_core::verdict::GitOracle::unpinned",
+    ];
+    for config in ["clippy.toml", "crates/forge-warden-core/clippy.toml"] {
+        let active = disallowed_method_paths(&read(config));
+        for method in BOTH {
+            assert!(
+                active.contains(method),
+                "{config} must actively disallow {method}"
+            );
+        }
+    }
+    let root_config = disallowed_method_paths(&read("clippy.toml"));
+    for method in CLI_ONLY {
+        assert!(
+            root_config.contains(method),
+            "clippy.toml must actively disallow {method}"
+        );
     }
 }
 
@@ -355,17 +395,17 @@ fn the_dependency_scan_reads_every_cargo_form() {
 
 #[test]
 fn exit_statuses_come_from_the_registry() {
-    // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door in `doors.rs`
+    // R-20: a literal `ExitCode::from(2)` bypassed the registry. Only the exit door (a door module)
     // turns an `Exit` into a process status; everything else returns an `Exit`, so a code cannot
     // drift from the table.
     for (path, text) in rust_sources() {
-        if !is_production(&path) || path.ends_with("crates/forge-warden-cli/src/doors.rs") {
+        if !is_production(&path) || common::is_door_file(&path) {
             continue;
         }
         for (line, code) in code_lines(&text) {
             assert!(
                 !code.contains("ExitCode"),
-                "{path}:{}: return an `Exit` from the registry (forge_warden_core::Exit); only doors.rs makes an `ExitCode`",
+                "{path}:{}: return an `Exit` from the registry (forge_warden_core::Exit); only a door module makes an `ExitCode`",
                 line.saturating_add(1)
             );
         }
@@ -447,24 +487,163 @@ fn readme_exit_table_tracks_the_registry() {
     }
 }
 
+/// EFFECT-WALL (review candidate C3, measured twice): which lint configuration clippy reads can be
+/// changed without touching the reviewed one. A `clippy.toml` beside a crate replaces the root
+/// file for that crate, and a committed `.cargo/config.toml` can point `CLIPPY_CONF_DIR` at any
+/// directory (Touchstone R1); in both cases a copy of the root file without one
+/// `disallowed-methods` line let `std::env::var` through with clippy clean. So, anywhere in the
+/// tree: the only files named `clippy.toml` or `.clippy.toml` are the root one (the CLI's effect
+/// wall) and the core's (its purity wall), both regular files, and no `.cargo` directory holds a
+/// `config` or `config.toml`. Skipped: `.git` at any depth, and `target`, `mutants.out` and
+/// `mutants.out.old` in the root. A symlinked directory is itself a problem: it is not followed.
+fn lint_configuration_problems(base: &std::path::Path) -> Vec<String> {
+    fn walk(base: &std::path::Path, dir: &std::path::Path, found: &mut Vec<String>) {
+        // Whatever cannot be read is a problem, never a silent skip.
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            found.push(format!("{}: cannot be read", dir.display()));
+            return;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                found.push(format!("{}: an entry cannot be read", dir.display()));
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let (Ok(relative), Ok(kind)) = (path.strip_prefix(base), entry.file_type()) else {
+                found.push(format!("{}: cannot be examined", path.display()));
+                continue;
+            };
+            let relative = relative.to_string_lossy().into_owned();
+            let at_root = dir == base;
+            if name == ".git"
+                || (at_root
+                    && ["target", "mutants.out", "mutants.out.old"].contains(&name.as_str()))
+            {
+                continue;
+            }
+            let in_cargo_dir = dir.file_name().is_some_and(|d| d == ".cargo");
+            if name == "clippy.toml" || name == ".clippy.toml" {
+                let reviewed = ["clippy.toml", "crates/forge-warden-core/clippy.toml"]
+                    .contains(&relative.as_str());
+                if !reviewed {
+                    found.push(format!(
+                        "{relative}: a lint configuration that is not a reviewed one"
+                    ));
+                } else if !kind.is_file() {
+                    found.push(format!(
+                        "{relative}: a reviewed lint configuration is a regular file"
+                    ));
+                }
+            } else if in_cargo_dir && (name == "config" || name == "config.toml") {
+                found.push(format!(
+                    "{relative}: a cargo configuration can point CLIPPY_CONF_DIR elsewhere"
+                ));
+            } else if kind.is_symlink() && path.is_dir() {
+                found.push(format!("{relative}: a symlinked directory is not searched"));
+            } else if kind.is_dir() {
+                walk(base, &path, found);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(base, base, &mut found);
+    for reviewed in ["clippy.toml", "crates/forge-warden-core/clippy.toml"] {
+        if std::fs::symlink_metadata(base.join(reviewed)).is_err() {
+            found.push(format!(
+                "{reviewed}: the reviewed lint configuration is missing"
+            ));
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn the_lint_configuration_is_exactly_the_two_reviewed_files() {
+    assert_eq!(lint_configuration_problems(&root()), Vec::<String>::new());
+}
+
+#[test]
+fn every_way_of_redirecting_the_lint_configuration_is_refused() {
+    let reviewed = |dir: &std::path::Path| {
+        common::write(dir, "clippy.toml", b"");
+        common::write(dir, "crates/forge-warden-core/clippy.toml", b"");
+        common::write(dir, "crates/forge-warden-cli/src/main.rs", b"");
+    };
+    let clean = common::scratch("lint-configuration-clean");
+    reviewed(&clean);
+    common::write(&clean, ".git/clippy.toml", b"");
+    common::write(&clean, "target/debug/clippy.toml", b"");
+    common::write(&clean, ".cargo/README", b"");
+    assert_eq!(lint_configuration_problems(&clean), Vec::<String>::new());
+    for (name, planted) in [
+        (
+            "beside the CLI crate",
+            "crates/forge-warden-cli/clippy.toml",
+        ),
+        (
+            "hidden beside the CLI crate",
+            "crates/forge-warden-cli/.clippy.toml",
+        ),
+        ("in any other directory (Touchstone R1)", "lax/clippy.toml"),
+        ("deep in the tree", "docs/a/b/.clippy.toml"),
+        (
+            "a target directory that is not the root one",
+            "crates/target/clippy.toml",
+        ),
+        (
+            "a cargo configuration in the root (Touchstone R1)",
+            ".cargo/config.toml",
+        ),
+        ("a legacy cargo configuration", ".cargo/config"),
+        (
+            "a cargo configuration beside a crate",
+            "crates/forge-warden-cli/.cargo/config.toml",
+        ),
+    ] {
+        let tree = common::scratch("lint-configuration-planted");
+        reviewed(&tree);
+        common::write(&tree, planted, b"");
+        let problems = lint_configuration_problems(&tree);
+        assert_eq!(problems.len(), 1, "{name}: {problems:?}");
+        assert!(
+            problems.iter().all(|p| p.starts_with(planted)),
+            "{name}: {problems:?}"
+        );
+    }
+    let missing = common::scratch("lint-configuration-missing");
+    common::write(&missing, "clippy.toml", b"");
+    assert_eq!(
+        lint_configuration_problems(&missing),
+        ["crates/forge-warden-core/clippy.toml: the reviewed lint configuration is missing"]
+    );
+}
+
 #[test]
 fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
-    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in doors.rs, right after the pinned
-    // ranker ran; and the binary judges only through `evaluate_authority`/`evaluate_advisory`.
+    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in the door modules, exactly once in
+    // all of them together, right after the pinned ranker ran; and the binary judges only through
+    // `evaluate_authority`/`evaluate_advisory`.
+    let mut door_attests = 0_usize;
     for (path, text) in rust_sources() {
         if !is_production(&path) || path.ends_with("crates/forge-warden-core/src/authority.rs") {
             continue;
         }
         let attests = text.matches("attest(").count();
-        if path.ends_with("crates/forge-warden-cli/src/doors.rs") {
-            assert_eq!(
-                attests, 1,
-                "{path}: exactly one attest call, in produce_ranking"
-            );
+        if common::is_door_file(&path) {
+            door_attests = door_attests.checked_add(attests).unwrap();
         } else {
-            assert_eq!(attests, 0, "{path}: only doors.rs may call Ranking::attest");
+            assert_eq!(
+                attests, 0,
+                "{path}: only a door module may call Ranking::attest"
+            );
         }
     }
+    assert_eq!(
+        door_attests, 1,
+        "exactly one attest call across the door modules, in produce_ranking"
+    );
     let main = read("crates/forge-warden-cli/src/main.rs");
     for (index, line) in main.lines().enumerate() {
         let raw = line
@@ -993,11 +1172,8 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
             let mut operations = ScratchOperations::default();
             operations.visit_block(&function.block);
             let is_allocator = name == "scratch"
-                && matches!(
-                    self.path,
-                    "crates/forge-warden-cli/src/doors.rs"
-                        | "crates/forge-warden-cli/tests/common/runtime.rs"
-                );
+                && (common::is_door_file(self.path)
+                    || self.path == "crates/forge-warden-cli/tests/common/runtime.rs");
             if is_allocator {
                 self.scratch_count = self.scratch_count.checked_add(1).unwrap();
                 for required in ["temp_dir", "create_dir"] {
@@ -1027,7 +1203,7 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
                 // Production bases delegate to random/exclusive PrivateDir creation; the
                 // vocabulary test passes the root only as Git's discovery ceiling.
                 assert!(
-                    (self.path == "crates/forge-warden-cli/src/doors.rs"
+                    (common::is_door_file(self.path)
                         && matches!(
                             name.as_str(),
                             "git_facts" | "git_version" | "produce_ranking"

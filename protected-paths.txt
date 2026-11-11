@@ -10,7 +10,7 @@ clippy.toml
 crates/*/Cargo.toml
 crates/*/clippy.toml
 crates/*/tests/**
-crates/forge-warden-cli/src/doors.rs
+crates/forge-warden-cli/src/doors/**
 crates/forge-warden-cli/tests/repo_invariants.rs
 deny.toml
 fixtures/**

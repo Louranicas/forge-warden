@@ -18,8 +18,12 @@ docs/CI_BOUNDS.md	0
 docs/GIT_RUNTIME.md	0
 docs/GLOSSARY.md	0
 docs/POLICY_REFERENCE.md	0
+docs/REFUSAL_MAP.md	0
+docs/RUNBOOK.md	5
 docs/SCANNER_ROLES.md	0
+docs/SCORE_FAMILY.md	0
 docs/THREAT_MODEL.md	0
+docs/UPGRADING.md	0
 docs/adr/0001-pure-core-and-effect-doors.md	0
 docs/adr/0002-the-lint-wall.md	0
 docs/adr/0003-unknown-is-never-pass.md	0
@@ -33,6 +37,8 @@ docs/adr/0010-isolated-git-data-contract.md	0
 docs/adr/0011-admitted-git-runtime.md	0
 docs/claude-project/INSTRUCTIONS.md	0
 docs/claude-project/README.md	0
+docs/runner-up.md	0
+fixtures/hostile/README.md	0
 justfile	1
 plants/README.md	0
 schemas/README.md	0

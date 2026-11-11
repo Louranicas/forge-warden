@@ -3,6 +3,12 @@
 Claims in this repository's README and ADRs, each with the command that constructs it and the
 result observed. Re-run them; do not take this file's word for it.
 
+Each section below is a dated record of what was measured then, on the toolchain and commit it
+names; its figures are not updated as the code moves. For example, the 0.1.0 section ran on Rust
+1.97.0 and counted 85 tests and 39 corpus rankings; the toolchain is now pinned to 1.99.1
+(`rust-toolchain.toml`) and `fixtures/corpus/` holds 40 rankings. Current figures come from
+re-running the commands. A section for the next release is measured on its release commit.
+
 ## 0.1.0 (2026-11-05)
 
 Environment: Linux x86_64, Rust 1.97.0 stable, deep-diff-forge 0.7.0 at
@@ -12,7 +18,7 @@ Environment: Linux x86_64, Rust 1.97.0 stable, deep-diff-forge 0.7.0 at
 | --- | --- | --- |
 | The lint wall, tests and docs are green | `scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | green |
 | Every test passes | `cargo test --workspace` | 85 passed, 0 failed |
-| The tests catch every viable mutant | `cargo mutants -p forge-warden-core`; `cargo mutants -p forge-warden-cli --file crates/forge-warden-cli/src/doors.rs` | 0 missed in both (first runs: 32 missed in the core, 7 in the doors; each closed by a test or by deleting dead code) |
+| The tests catch every viable mutant | `cargo mutants -p forge-warden-core`; `cargo mutants -p forge-warden-cli --file 'crates/forge-warden-cli/src/doors/**'` | 0 missed in both (first runs: 32 missed in the core, 7 in the doors; each closed by a test or by deleting dead code) |
 | Supply chain is clean | `cargo deny check` | advisories, bans, licences, sources ok |
 | Workflows have no audit findings | `zizmor --persona=pedantic .github/workflows` | no findings (first run flagged a superfluous toolchain action, replaced with `rustup`) |
 | The vocabulary equals deep-diff-forge's | `scripts/check_vocab.sh 587a6af… <checkout>` | 21 signals match; renaming one fails with a diff |

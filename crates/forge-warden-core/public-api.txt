@@ -10,7 +10,7 @@ crate::authority impl<P> Ranking<P>
 crate::authority Ranking::#[must_use] pub const fn doc(&self) -> &RankDoc
 crate::authority Ranking::#[must_use] pub const fn producer_sha256(&self) -> Option<&Sha256Hex>
 crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Checked<'r, P>
-crate::authority Checked.<3 private field(s)>
+crate::authority Checked.<2 private field(s)>
 crate::authority #[must_use] pub fn check<P>(ranking: &Ranking<P>, facts: Result<PatchFacts, Unverifiable>) -> Checked<'_, P>
 crate::authority impl<P> Checked<'_, P>
 crate::authority Checked::#[must_use] pub const fn ranking(&self) -> &Ranking<P>
@@ -157,6 +157,7 @@ crate::testing #[must_use] pub fn evaluate(policy: &Policy, rank: &RankDoc, seal
 crate pub const TOOL_NAME: &str = "forge-warden";
 crate pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 crate pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+crate pub const MAX_POLICY_BYTES: usize = 1024 * 1024;
 crate::nonempty #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct NonEmpty<T>
 crate::nonempty NonEmpty.<2 private field(s)>
 crate::nonempty impl<T> NonEmpty<T>
@@ -178,7 +179,7 @@ crate::path RepoPath::#[must_use] pub fn as_str(&self) -> &str
 crate::path impl fmt::Display for RepoPath
 crate::path RepoPath::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::policy::error #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum PolicyError
-crate::policy::error PolicyError::#[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)] TooLarge(usize),
+crate::policy::error PolicyError::#[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_POLICY_BYTES)] TooLarge(usize),
 crate::policy::error PolicyError::#[error("policy is not valid TOML of the forge-warden.policy.v0 shape: {message}")] Malformed { /// The parser's message. message: String, /// Where, as (line, column), both 1-based; `None` when the parser gave no span. at: Option<(usize, usize)>, },
 crate::policy::error PolicyError::#[error("policy refused with {} issue(s):\\n{}", .0.len(), IssueList(.0))] Invalid(Vec<PolicyIssue>),
 crate::policy::error #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PolicyIssue
@@ -273,6 +274,10 @@ crate::policy::validate pub fn parse_policy(bytes: &[u8]) -> Result<Policy, Poli
 crate::rank pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
 crate::rank #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct RankDoc
 crate::rank RankDoc.<3 private field(s)>
+crate::rank #[derive(Debug, Clone, PartialEq, Eq)] pub enum RankShape<'a>
+crate::rank RankShape::Empty,
+crate::rank RankShape::Duplicates(NonEmpty<&'a RepoPath>),
+crate::rank RankShape::Clean,
 crate::rank #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct RankedFile
 crate::rank RankedFile.<6 private field(s)>
 crate::rank #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub struct Evidence
@@ -282,6 +287,7 @@ crate::rank RankDoc::pub fn new( input_sha256: Sha256Hex, tool_version: String, 
 crate::rank RankDoc::#[must_use] pub const fn input_sha256(&self) -> &Sha256Hex
 crate::rank RankDoc::#[must_use] pub fn tool_version(&self) -> &str
 crate::rank RankDoc::#[must_use] pub fn files(&self) -> &[RankedFile]
+crate::rank RankDoc::#[must_use] pub fn shape(&self) -> RankShape<'_>
 crate::rank impl RankedFile
 crate::rank RankedFile::pub fn new( path: RepoPath, status: Status, score: u32, signals: Vec<Signal>, evidence: Vec<Evidence>, evidence_truncated: bool, ) -> Result<Self, RankInvalid>
 crate::rank RankedFile::#[must_use] pub const fn path(&self) -> &RepoPath

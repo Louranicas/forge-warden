@@ -1,0 +1,9 @@
+diff --git a/src/a.rs b/src/a.rs
+index 1111111..2222222 120000
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1 @@
+-old
+\ No newline at end of file
++new
+\ No newline at end of file

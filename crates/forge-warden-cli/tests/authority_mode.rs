@@ -479,6 +479,13 @@ fn git_still_checks_the_producer_and_refusals_hold() {
     assert_eq!(refused.code, 8, "{}", refused.stderr);
     let held = verdict(&refused);
     assert_eq!(notes(&held), ["patch_unverifiable"]);
+    // The note names Git's refusal itself (Unverifiable::GitRefused), not another unverifiable form.
+    assert!(
+        held["notes"][0]["detail"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("git refused the patch: ")),
+        "{held}"
+    );
     assert_eq!(held["seals"]["patch_facts_sha256"], Value::Null);
 }
 

@@ -24,11 +24,11 @@ env:
   RUSTFLAGS: "-D warnings"
   RUSTDOCFLAGS: "-D warnings"
   # deep-diff-forge, pinned by commit, for the dogfood job and the vocabulary check.
-  DDF_REV: 587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54
+  DDF_REV: fb5ffe15ae582f665d9de073d5231ecff8003a17
 
 jobs:
   gate:
-    timeout-minutes: 20
+    timeout-minutes: 45
     name: gate (fmt, clippy, test, doc)
     runs-on: ubuntu-latest
     steps:
@@ -45,10 +45,13 @@ jobs:
       - name: Prepare locked dependencies for offline script fixtures
         run: cargo fetch --locked
       - run: python3 -I scripts/tool_versions.py --check
+      - run: python3 -I scripts/tool_versions.py --check-toolchain
       - run: python3 -I scripts/tests/perimeter.py
       - run: python3 -I scripts/tests/mutation_budget.py
+      - run: python3 -I scripts/tests/runner_routing.py
       - run: bash scripts/tests/ci_local.sh
       - run: python3 -I scripts/tests/mutation_env.py
+      - run: python3 -I scripts/tests/local_tools.py
       - run: bash scripts/tests/dogfood.sh
       - run: python3 -I scripts/tests/hold_ack.py
       - run: python3 -I .claude/hooks/test_guard.py
@@ -196,6 +199,9 @@ jobs:
   dogfood:
     timeout-minutes: 10
     name: dogfood (trusted base judges candidate data)
+    # Hosted dogfood is advisory by decision: this runner has no owner-enrolled Git allowlist, so
+    # it cannot judge in authority mode, and its result cannot PASS. A base whose driver is v2 is
+    # asked for that explicitly; an older base (v1, no producer pin) is advisory already.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
@@ -217,8 +223,13 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           RUSTUP_TOOLCHAIN: 1.99.1
         run: |
-          grep -qx '# forge-warden trusted-dogfood-driver v1' trusted/scripts/dogfood.sh
-          bash trusted/scripts/dogfood.sh "$BASE_SHA" "$HEAD_SHA" \
+          if grep -qx '# forge-warden trusted-dogfood-driver v2' trusted/scripts/dogfood.sh; then
+            set -- --hosted-advisory
+          else
+            grep -qx '# forge-warden trusted-dogfood-driver v1' trusted/scripts/dogfood.sh
+            set --
+          fi
+          bash trusted/scripts/dogfood.sh "$@" "$BASE_SHA" "$HEAD_SHA" \
             "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/warden-evidence"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

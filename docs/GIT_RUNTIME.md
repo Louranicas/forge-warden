@@ -9,7 +9,11 @@ both modes. A genuinely absent policy permits advisory output only: `git.admissi
 unapproved Git identity. Advisory evidence cannot authorize an acknowledgement.
 
 This is the Mission 6 R2 amendment to ADR 0011: hosted advisory dogfood can report evidence
-without enrolling the runner's Git. Authority still requires the owner policy. Current
+without enrolling the runner's Git. Authority still requires the owner policy. Since the
+repository's own policy pins a producer, `scripts/dogfood.sh` would choose authority mode; the
+hosted job therefore passes `--hosted-advisory`, written in the workflow, and the driver says why
+in its output and in `provenance.txt`. Without that argument a pinned policy and no enrolled
+allowlist end in exit 3 (`no Git allowlist enrolled`), never in a quiet downgrade. Current
 output is verdict v2; the historical v1 schema is retained, not emitted.
 
 ## Owner enrollment

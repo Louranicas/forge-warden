@@ -81,7 +81,7 @@ Fields: `limit` (required, at least 1), `paths`, `except`.
 
 ## Signals
 
-deep-diff-forge 0.7.0's vocabulary. Path and shape: `public_api_surface`, `new_file`,
+deep-diff-forge 0.8.2's vocabulary (the same 21 signals as 0.7.0). Path and shape: `public_api_surface`, `new_file`,
 `deleted_file`, `binary_change`, `large_change`, `many_hunks`, `config_or_lockfile`, `test_only`,
 `generated_or_vendored`, `hazardous_text`, `symlink_change`, `executable_bit`. Code evidence:
 `unsafe_added`, `process_spawn`, `network_fetch`, `dynamic_eval`, `ci_privilege`, `build_hook`,
@@ -113,8 +113,11 @@ renewed or deleted. An active waiver that covered nothing is listed in `unused_w
 
 | Mode | Command | What is judged | Best outcome |
 | --- | --- | --- | --- |
-| Authority (default) | `check --policy P --patch C --ranker R` | the ranking forge-warden produced by running R on C | `pass` (exit 0) |
+| Authority | `check --policy P --patch C --ranker R` | the ranking forge-warden produced by running R on C | `pass` (exit 0) |
 | Advisory | `check --policy P --patch C --advisory --rank FILE` (`-` reads stdin) | the supplied ranking | `hold` (exit 8) |
+
+There is no default mode: `check` requires exactly one of `--ranker` and `--advisory` (a required
+argument group in `src/main.rs`), and refuses with a usage error (exit 2) when neither is given.
 
 - `--patch` is required in both modes, and is read once: the same bytes are hashed, given to the
   ranker and given to Git. Produce it with `git diff --binary --no-renames` (not `format-patch`).
@@ -144,7 +147,7 @@ renewed or deleted. An active waiver that covered nothing is listed in `unused_w
 | `patch_facts_sha256` | SHA-256 of Git's facts: `--numstat -z` output, one 0x00 byte, `--summary` output. `null` when Git refused the patch. |
 | `provenance` | `produced` (authority) or `supplied` (advisory). |
 | `ranked_by` | `{version, sha256}`: the version the ranking reports, and the ranker binary's SHA-256 (`null` when supplied). |
-| `git` | `{path, version}` of the Git that read the patch: recorded for audit, not attested. |
+| `git` | The Git that read the patch: `{path, version, sha256, admission, allowlist_sha256}`. `sha256` is the executable read through the descriptor every Git call used; `admission` is `approved` when that digest is enrolled in the owner's allowlist and `unpinned` only in advisory mode with no allowlist installed (with an allowlist, an unenrolled digest is refused in both modes); `allowlist_sha256` is the SHA-256 of the admitted allowlist bytes, `null` when unpinned. `path` and `version` are recorded for audit, not attested. |
 | `claims` | Only when `--base`/`--head` were given: `{base?, head?, verified: false}`. |
 
 `sha256sum` reproduces every digest. v0's `patch_verified` is gone: the patch is always hashed.
@@ -178,7 +181,7 @@ A **refusal** prints nothing on stdout, explains on stderr, and exits without a 
 | No mode, both modes, `--advisory` without `--rank`, no `--patch`, relative `--git`, malformed `--base`/`--head`/`--today` | refused | 2 `usage` |
 | A file cannot be read; Git cannot run; the temporary directory is relative, contains `:` or is not UTF-8; `/proc/self/fd` is missing | refused | 3 `io` |
 | The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB), cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
-| The policy is invalid; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
+| The policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
 | Any note above | hold (or fail, if a rule fails) | 8 (7) |
 | A rule of severity `hold` is violated | hold | 8 |
 | A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |
@@ -199,6 +202,37 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
   `patch_unverifiable` / `duplicate_paths`.
 - **deep-diff-forge 0.7.0 omissions**: a binary added without `new_file` or deleted without
   `deleted_file` → `status_mismatch` until the ranker reports them (Git's kind is still applied).
+- **A stricter producer** → exit 3, no verdict. deep-diff-forge 0.8.2 refuses some patches 0.7.0 ranked
+  (for example `fixtures/coverage/keel-c1b-v4-mode-line-tab.patch`: "file header out of place"). In
+  authority mode a patch the pinned ranker refuses ends as a ranker failure, never as a pass.
+
+## Size limits, and what was measured
+
+| Input | Limit | Over the limit |
+| --- | --- | --- |
+| Policy file | 1 MiB (1 048 576 bytes) | exit 4, before parsing |
+| Ranking | 64 MiB | exit 4, before parsing |
+| Patch | 64 MiB | exit 4 |
+| Patch, through the pinned ranker (authority mode) | 1 000 000 lines (deep-diff-forge 0.8.2's own budget) | the ranker refuses it: exit 3, no verdict |
+
+Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2, on one idle
+16-core x86_64 Linux machine (Fedora 44 toolbox), advisory mode, each command alone:
+
+| Case | Time | Peak memory |
+| --- | --- | --- |
+| Ranker, 140 000 new files (980 000 patch lines, 22 MiB) | 0.7 s | 217 MiB |
+| `check` on that patch and its 12.6 MiB ranking | 0.9 s | 172 MiB |
+| The same with 200 `**`-heavy globs in a `protect_paths` rule | 1.7 s | 174 MiB |
+| `check` on one file of 990 000 added lines | 0.1 s | 29 MiB |
+| A patch or ranking one byte over 64 MiB | 0.04 s | 67 MiB |
+| `lint` on a policy just under 1 MiB (8 152 small rules) | 0.1 s | 69 MiB |
+| `check` with that policy | 0.2 s | 82 MiB |
+| `check` on a hand-written ranking at the 64 MiB limit (about 440 000 entries, none in the patch) | 1.0 s | 368 MiB, and a 74 MiB verdict |
+
+Not measured: authority mode itself (it needs an owner-enrolled Git), a loaded or smaller
+machine, the worst case of the glob matcher, and the child timeouts (10 s each for the ranker
+and for Git). Before the policy limit existed, `lint` on a 64 MiB policy of 506 626 rules took
+6.5 s and 4 GiB; that is why the policy has its own limit.
 
 Canonical terminology and the distinction between a document and its level are in the
 [glossary](GLOSSARY.md).

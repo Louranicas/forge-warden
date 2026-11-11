@@ -77,19 +77,99 @@ def classify(baseline, planted, diagnostic):
 
 
 def check_restore(root, output, case_id, row):
-    """A dirty checkout invalidates the case and stops later plants from consuming it."""
+    """A dirty checkout invalidates the case and stops later plants from consuming it. Ignored files
+    count too (C12): a command that leaves, say, an ignored `verdict.json` in the checkout would
+    otherwise leak into every later case unseen. Only the root `target/` directory is exempt, by
+    name: it is build output, and cargo's own target directory is outside the checkout anyway."""
     log = output / (case_id + '-restore.log')
     result = execute(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
-                      'status', '--porcelain=v1', '--untracked-files=all'], root, log, timeout=30)
+                      'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'],
+                     root, log, timeout=30)
     row['restore'] = result
-    if result['error'] or result['exit'] or log.stat().st_size:
+    left = [line for line in log.read_text(encoding='utf-8', errors='replace').splitlines()
+            if line != '!! target/']
+    if result['error'] or result['exit'] or left:
         row['status'] = 'ERROR_RESTORE'
         return False
     return True
 
 
+def recipe_kind(recipe):
+    """Exactly one of an anchored replacement (`old`/`new`), an `append` or a new-file `create`."""
+    kinds = [k for k in ('old', 'append', 'create') if k in recipe]
+    if len(kinds) != 1 or ('new' in recipe) != (kinds == ['old']):
+        raise ValueError('recipe must have exactly one of old/new, append or create')
+    texts = [recipe[field] for field in ('old', 'new', 'append', 'create') if field in recipe]
+    if not all(isinstance(text, str) for text in texts) or not isinstance(recipe.get('path'), str):
+        raise ValueError('recipe path and text must be strings')
+    try:
+        for text in [*texts, recipe['path']]:
+            text.encode('utf-8')
+    except UnicodeEncodeError:
+        # A text the write cannot encode is refused before any checkout or file exists.
+        raise ValueError('recipe path and text must be UTF-8 encodable') from None
+    return kinds[0]
+
+
+def create(root, recipe):
+    """Plant a NEW file. The path must be relative, already normalised, outside .git, under real
+    (non-symlink) directories that exist, and absent: O_CREAT|O_EXCL refuses any existing name, a
+    dangling symlink included (POSIX), so no O_NOFOLLOW is needed. Returns the path; restore removes
+    exactly it (before = None)."""
+    raw = recipe['path']
+    relative = Path(raw)
+    if (not raw or relative.is_absolute() or relative.as_posix() != raw
+            or any(part in ('', '.', '..') for part in raw.split('/'))):
+        raise ValueError('create path must be relative and normalised')
+    if '.git' in relative.parts:
+        raise ValueError('create path is inside .git')
+    # Each directory below the checkout root must be real; the root itself may sit under a
+    # symlinked ancestor (/home -> /var/home) without refusing every create.
+    directory = root
+    for part in relative.parts[:-1]:
+        directory = directory / part
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError('create path has a missing or symlink parent')
+    path = root / relative
+    try:
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        raise ValueError('create path already exists') from None
+    # From here the file exists: every failure removes it and proves it absent before raising, so a
+    # plant that never reached the caller cannot outlive its case (Keel F1).
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as out:
+            out.write(recipe['create'])
+    except BaseException as error:
+        restore(path, None)
+        if isinstance(error, Exception):
+            raise ValueError('create plant write failed: ' + str(error)) from error
+        raise
+    return path
+
+
+class RestoreError(OSError):
+    """A plant could not be undone; the checkout is no longer the subject and the run must stop."""
+
+
+def restore(path, before):
+    """Put back an edited file's bytes, or remove a created file (before is None) and prove it is
+    gone: `git status` would not see a created file that happens to be ignored."""
+    if before is not None:
+        path.write_bytes(before)
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        raise RestoreError('created plant file could not be removed: ' + str(error)) from error
+    if os.path.lexists(path):
+        raise RestoreError('created plant file still present: ' + str(path))
+
+
 def edit(root, recipe):
     """Exact once-only edits. Refuse changed anchors and paths outside the private checkout."""
+    if recipe_kind(recipe) == 'create':
+        return create(root, recipe), None
     relative = Path(recipe['path'])
     if relative.is_absolute() or '..' in relative.parts or relative.parts[0] == '.git':
         raise ValueError('unsafe plant path')
@@ -157,6 +237,7 @@ def main():
         if case['id'] in selected:
             try:
                 command_for(case, Path('/validation'), Path('/validation-target'), runner, exec_runner)
+                recipe_kind(case)
             except ValueError as error:
                 parser.error(str(error))
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -209,12 +290,14 @@ def main():
                     planted['text'] = (output / planted['log']).read_bytes()[:LIMIT].decode('utf-8', errors='replace')
                     row['status'] = classify(positive, planted, case['diagnostic'])
                     planted.pop('text')
+                except RestoreError as error:
+                    row.update(status='ERROR_RESTORE', detail=str(error))
                 except (ValueError, OSError) as error:
                     row.update(status='ERROR_RECIPE', detail=str(error))
                 finally:
                     for path, before in snapshots.items():
                         try:
-                            path.write_bytes(before)
+                            restore(path, before)
                         except OSError as error:
                             row.update(status='ERROR_RESTORE', detail=str(error))
                 clean = check_restore(root, output, case['id'], row)

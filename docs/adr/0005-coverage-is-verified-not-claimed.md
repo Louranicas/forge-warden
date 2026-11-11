@@ -4,9 +4,9 @@ Status: Accepted
 Owner-deployment: Not-required
 
 Historical status record: **Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
-attack); record `mission4/lanes/lodestar/C0-ACCEPT.md`. Author: Keel (O2). Text unchanged from v3 (59b89ac) except
-this line. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`, `c0v4.cases.json` (51 cases),
-`c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`. Implementation: WP-C1 (C1a doors and bounds, C1b
+attack); recorded as Lodestar's C0 acceptance in the project's coordination records (not in this repository). Author: Keel (O2). Text unchanged from v3 (59b89ac) except
+this line. Evidence, in the same records: Keel's C0 prototype oracle (v4), its 51-case set, the v4 results and
+case matrix, and the v3/v4 inputs. Implementation: WP-C1 (C1a doors and bounds, C1b
 facts and comparison, C1c verdict v1 and provenance); nothing here is accepted as fact until C1 measures it.
 
 ## 1. Context
@@ -142,8 +142,9 @@ Nothing in this ADR claims that an in-repository workflow alone establishes auth
   The outcome type of `Verdict<Supplied>` is `AdvisoryOutcome { Hold, Fail }`, **which has no `Pass` variant**, so
   "a supplied ranking can never approve" is a type fact, not a test fact.
 - `Ranking<Produced>` is minted only by `Produced::attest(rank_bytes, producer_sha256)`. The core cannot know that
-  a door ran; so this one is rung 4: a `repo_invariants` test refuses any call to `attest` outside
-  `crates/forge-warden-cli/src/doors.rs`. A *library* caller can still call `attest`. The guarantee is the binary's,
+  a door ran; so this one is rung 4: clippy's `disallowed-methods` (root `clippy.toml`) refuses any call to `attest`
+  outside the door function `doors::child::produce_ranking` (`crates/forge-warden-cli/src/doors/child/ranker.rs`; see
+  §10). A *library* caller can still call `attest`. The guarantee is the binary's,
   and the doc comment says so.
 
 ### 2.8 Rules read Git's facts; Git may only add change-kind signals (T2)
@@ -174,15 +175,18 @@ signal, on real producer output.
 For each path in both, the ranking must match the measured producer behaviour (`MATRIX.md`); otherwise note
 `status_mismatch` (HOLD):
 
-| Git `FileChange` | allowed ranking status | required signals | forbidden signals |
+| Git `FileChange` | allowed ranking status | required signals (= `derived_signals`, §2.8) | forbidden signals |
 |---|---|---|---|
-| Added, text | `added` | `new_file` (+ `symlink_change` if Symlink) | `deleted_file` |
-| Added, binary | `binary_changed` | — | `deleted_file` |
+| Added, text | `added` | `new_file` (+ `symlink_change` if Symlink; + `executable_bit` if added as Exec) | `deleted_file` |
+| Added, binary | `binary_changed` | `new_file`, `binary_change` (+ `symlink_change` if Symlink; + `executable_bit` if added as Exec) | `deleted_file` |
 | Deleted, text | `deleted` | `deleted_file` (+ `symlink_change` if Symlink) | `new_file` |
-| Deleted, binary | `binary_changed` | — | `new_file` |
-| Modified, binary | `binary_changed` | — | `new_file`, `deleted_file` |
-| Modified, mode changed, no content | `mode_changed` | — | `new_file`, `deleted_file` |
-| Modified, content (± mode) | `modified` | — | `new_file`, `deleted_file` |
+| Deleted, binary | `binary_changed` | `deleted_file`, `binary_change` (+ `symlink_change` if Symlink) | `new_file` |
+| Modified, binary | `binary_changed` | `binary_change` (+ `symlink_change` if either mode is Symlink; + `executable_bit` if Exec gained) | `new_file`, `deleted_file` |
+| Modified, mode changed, no content | `mode_changed` | none, except `symlink_change` if either mode is Symlink and `executable_bit` if Exec gained | `new_file`, `deleted_file` |
+| Modified, content (± mode) | `modified` | none, except `symlink_change` if either mode is Symlink and `executable_bit` if Exec gained | `new_file`, `deleted_file` |
+
+The required column is exactly `derived_signals` (§2.8): a ranking that lacks any of them is `status_mismatch`.
+This column was corrected on 2026-11-10 by the amendment in §9, which quotes the original.
 
 The product implements the matrix, the derived signals and the comparison with an **exhaustive destructure of
 `FileChange` without `..`** at every site that reads it (`let FileChange { path, kind, old_mode, new_mode, binary,
@@ -223,11 +227,12 @@ site. A tuple match over selected fields would not give this guarantee and is no
   `--git`). Goldens change (Luke L1). CHANGELOG/README are Lodestar's.
 - Two new doors (`rank_patch`, `git_facts`), each with the bounds of §2.5. The core stays pure; `PatchFacts`,
   `Covered` and the matrix are core types.
-- `binary_deletions_and_unknowable_binary_changes_are_not_companions` is replaced by a test on a real binary
-  deletion ranked by the real producer (MATRIX row).
+- `binary_deletions_and_unknowable_binary_changes_are_not_companions` is joined by tests on real producer output
+  (`tests/authority.rs`, WP-Q-RANK-BINARY). [Corrected 2026-11-10; §9 quotes the original plan.]
 - **WP-B2 change:** duplicate ranked paths are a real producer output (type change), so the rank parser must not
   refuse them as malformed (exit 4). The coverage check turns them into `patch_unverifiable` HOLD. A3's
-  `duplicate_ranked_paths_are_refused` should expect HOLD, not refusal (Touchstone owns it).
+  `duplicate_ranked_paths_hold` should expect HOLD, not refusal (Touchstone owns it). [Renamed 2026-11-10;
+  §9 quotes the original name.]
 - Upstream for Luke (DDF): facts 3, 4 and 6.
 
 ## 6. Planted controls C1 must pass (Bastion's list, each with an expected result)
@@ -258,7 +263,7 @@ site. A tuple match over selected fields would not give this guarantee and is no
 | Bastion 6: proof-carrying types with private constructors | §2.7, §4 |
 | Touchstone C0-O3-01: suffix collision | §2.2 whole-line parse; v3 case `ts-mode-collision-real` (facts per path correct) |
 | Touchstone C0-O3-02: mode and binary axes | §2.9 matrix; v3 cases `ts-forged-mode`, `ts-text-as-binary` → `status_mismatch` |
-| Touchstone: `--no-prefix` must HOLD, not auto-repair | v3 refuses (`repeated_operation_on_path`) |
+| Touchstone: `--no-prefix` must HOLD, not auto-repair | v3 refuses (the prototype's repeated-operation refusal; §9 says what pins it now) |
 | Touchstone: bounded capture, typed refusals, empty ≠ valid | §2.5; `empty_patch` refusal |
 | **v3, T1** (Touchstone C0v2-O3-01): an unchanged submodule update read as covered | §2.2 header-line modes; v4 cases `ts2-new-submodule-update`, `keel-submodule-update` (and both additions) refuse |
 | **v3, T2** (Lodestar): Git may only add change-kind signals | §2.8 union rule + table; v4 effective signals per derived signal |
@@ -305,3 +310,59 @@ On `e1d74bc` (before) the first four of those bypasses compiled.
 | A coverage proof judges only the ranking it checked | **2, type** (`Checked<'_, P>` borrows it) |
 | A library caller cannot judge without provenance | **2, visibility** (`evaluate` crate-private; test feature off by default) |
 | Only `doors.rs` mints in the binary | 4, clippy `disallowed-methods` (unchanged) |
+
+## 9. Amendment (ADR-0005-G4, 2026-11-10): §2.9's required-signals column
+
+**What was wrong.** From ADR v2 (2f65891, 2026-11-06) until this amendment, §2.9's "required signals" column listed
+only `new_file`/`deleted_file` (+ `symlink_change` if Symlink) for text adds and deletes, and "—" for every other
+row. That contradicted §2.8. The original column read:
+
+| Git `FileChange` | required signals (original) |
+|---|---|
+| Added, text | `new_file` (+ `symlink_change` if Symlink) |
+| Added, binary | — |
+| Deleted, text | `deleted_file` (+ `symlink_change` if Symlink) |
+| Deleted, binary | — |
+| Modified, binary | — |
+| Modified, mode changed, no content | — |
+| Modified, content (± mode) | — |
+
+**What the behaviour always was.** §2.8 is the rule, and the implementation has followed it since `facts.rs` was
+created (1367b79, WP-C1b, 2026-11-06): `facts::agrees` refuses a ranking unless every signal in
+`derived_signals(change)` is present. That includes `binary_change` for every binary file, `executable_bit` when
+Exec is gained, and `symlink_change` on Modified files. With deep-diff-forge 0.7.0 through 0.8.2, which mark a binary
+add or delete with `binary_change` only, every binary addition and deletion therefore HOLDs by `status_mismatch`
+(§2.8, producer facts 3 and 3b). Only the table was wrong. No behaviour, test, golden or policy changes with this
+amendment; §2.9's table now states the required column as `derived_signals`.
+
+**Two stale names elsewhere in this ADR (G-40, measured 2026-11-10).** Each line now carries
+the current name or a description, with a pointer here; the original names are quoted only in this section:
+- §5 named A3's test `duplicate_ranked_paths_are_refused`. It was renamed `duplicate_ranked_paths_hold` and changed to
+  expect HOLD in 7ae3807 (WP-A3.1, 2026-11-06; `crates/forge-warden-core/tests/adversarial.rs`). The consequence §5
+  asked for was carried out.
+- §7 cited `repeated_operation_on_path`, the refusal string of the C0 prototype
+  (Keel's v4 prototype oracle, in the project's coordination records), not a test. The implementation refuses the case with
+  `Unverifiable::RepeatedPath` (`facts.rs`). Until WP-Q-RANK-BINARY (2026-11-10) no test pinned that variant: the
+  corpus case `ts-no-prefix` pins only the class, and `every_refusal_says_why` only the message.
+  `a_no_prefix_patch_is_refused_as_a_repeated_path` (`tests/authority.rs`) now pins the variant and the path it names.
+
+**A consequence that was not carried out as written.** §5 said
+`binary_deletions_and_unknowable_binary_changes_are_not_companions` "is replaced by a test on a real binary deletion
+ranked by the real producer (MATRIX row)". It was not replaced: the test still exists (`tests/eval.rs`), and
+WP-Q-RANK-BINARY adds real-producer tests beside it in `tests/authority.rs`. §5 now says so.
+
+**Pinned record.** The JEV Z3 frozen record (`fixtures/adversarial/z3_oracle.rs` `SOURCE_IDENTITY`, emitted into
+`fixtures/z3/manifest.json`) pins this file's pre-amendment bytes, sha256
+`4663916ecafd9ecf7384346db2358dd0005f785956b2aaf72be692e3289d3fb1`, as reviewed at implementation base
+04bbf7b5. That record is left as is: it names what its reviewers read. The next Z3 frozen revision (B6) re-pins.
+
+Found by Keel's Q-RANK-BINARY brief (row G4), confirmed on source by Bastion (O4); decided by Lodestar (O1), Option 1.
+
+## 10. Amendment (SMALL-CLOSES, 2026-11-10): the door file after Q-DOOR-SPLIT
+
+WP-Q-DOOR-SPLIT (2026-11-10) replaced `src/doors.rs` with the listed door modules under `src/doors/` (ADR 0001,
+amended the same day). §2 now names the door that mints a produced ranking: `doors::child::produce_ranking` in
+`crates/forge-warden-cli/src/doors/child/ranker.rs`, whose helper `produce_ranking_in` holds the one
+`#[expect(clippy::disallowed_methods)]` that admits the call to `Ranking::attest`. §2 had also said a `repo_invariants` test held this; the rule is, and was in §8, the
+`disallowed-methods` entry in the root `clippy.toml`. §8's two mentions of `doors.rs` are kept as written: they record
+the code of 2026-11-07. No behaviour, test or policy changes with this amendment (ledger Q16).

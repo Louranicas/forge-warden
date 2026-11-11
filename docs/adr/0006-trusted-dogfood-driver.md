@@ -53,3 +53,29 @@ subject and exact verdict digest.
 ci_local uses the same explicit selection against its working policy; it is a local development
 check, not the independently trusted policy/driver authority described above. Both entrypoints
 propagate ranker/admission failures; neither retries a refusal in a weaker mode.
+
+## Amendment (DOGFOOD-ATTR, 2026-11-11): the candidate's attributes do not shape the patch
+
+**What was wrong.** The driver ran its diff inside the candidate checkout with only
+`core.attributesFile=/dev/null`. Git still read the candidate's own `.gitattributes`: a candidate
+adding `* -diff` (or `binary`, at any depth) turned every added line into a `GIT binary patch`
+hunk, so the judge never saw them as text (ledger candidate C2).
+
+**Decision.** The driver passes `--attr-source=<the empty tree>`, so attributes come from no file
+in the candidate tree. It needs Git 2.40 or later; an older Git refuses the option and the
+driver stops before judging. `scripts/tests/dogfood.sh` holds a candidate with a root `* -diff`
+and a subdirectory `* binary` whose two secret-shaped added lines must reach the patch as text;
+the plant `candidate-attributes-honoured` (G-35) removes the option and that test fails.
+
+**What Git still honours when the base diffs the candidate** (measured with Git 2.56.0 on a
+scratch candidate, one added secret-shaped line each):
+
+- `.gitattributes` in the candidate tree, at the root or in a subdirectory: no longer honoured.
+- `filter=` attributes: not run; a diff of two commits compares blobs and applies no filter.
+- `diff=<driver>` with a textconv or external command: not run (`--no-textconv`, `--no-ext-diff`).
+- `.git/info/attributes` in the candidate checkout: **still honoured** (`* -diff` there hides the
+  line even with the fix). It is local repository state that no commit can write; whoever creates
+  the candidate checkout controls it, which in CI is the trusted workflow.
+- `.git/config` in the candidate checkout (for example `diff.noprefix`): **still honoured**, except
+  `core.attributesFile`, which the command line overrides. Same owner as the line above.
+- System and global configuration: not read (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`).

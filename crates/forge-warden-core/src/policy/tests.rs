@@ -137,6 +137,28 @@ fn waivers_must_name_a_rule_an_owner_a_reason_and_a_date() {
 }
 
 #[test]
+fn a_refused_waiver_date_says_why() {
+    for (expires, why) in [
+        ("2026-13-01", "it is not a calendar date"),
+        ("2026-02-30", "it is not a calendar date"),
+        ("1969-12-31", "it is outside 1970-01-01..=9999-12-31"),
+        ("2026-1-01", "it is not YYYY-MM-DD"),
+    ] {
+        let text = format!(
+            "{}[[waiver]]\nrule = \"no-secrets\"\npaths = [\"a\"]\nreason = \"{}\"\nowner = \"@o\"\nexpires = \"{expires}\"\n",
+            rule(GOOD),
+            "y".repeat(MIN_WHY_CHARS)
+        );
+        let wanted = format!("expires {expires:?} is not a YYYY-MM-DD date: {why}");
+        let issues = issues_of(&text);
+        assert!(
+            issues.iter().any(|i| i.contains(&wanted)),
+            "missing {wanted:?} in {issues:?}"
+        );
+    }
+}
+
+#[test]
 fn max_score_needs_limit_and_per() {
     let base = r#"id = "budget"
 why = "Large risky changes are reviewed in pieces."
@@ -227,15 +249,24 @@ fn kebab_ids_are_exactly_specified() {
 
 #[test]
 fn the_policy_budget_is_enforced_before_parsing() {
-    let over = vec![b' '; crate::MAX_INPUT_BYTES + 1];
+    assert_eq!(crate::MAX_POLICY_BYTES, 1_048_576);
+    // One byte over is refused for its size although the bytes are not even UTF-8: the size is
+    // judged before anything is parsed.
+    let over = vec![0xff_u8; crate::MAX_POLICY_BYTES + 1];
     assert_eq!(
         parse_policy(&over).unwrap_err(),
-        PolicyError::TooLarge(crate::MAX_INPUT_BYTES + 1)
+        PolicyError::TooLarge(crate::MAX_POLICY_BYTES + 1)
     );
-    let at = vec![b' '; crate::MAX_INPUT_BYTES];
+    let at = vec![b' '; crate::MAX_POLICY_BYTES];
     assert!(
         matches!(parse_policy(&at), Err(PolicyError::Malformed { .. })),
         "at the budget it is parsed"
+    );
+    // The ranking budget is not the policy's: a policy that would fit the former is refused.
+    let between = vec![b' '; crate::MAX_INPUT_BYTES];
+    assert_eq!(
+        parse_policy(&between).unwrap_err(),
+        PolicyError::TooLarge(crate::MAX_INPUT_BYTES)
     );
 }
 

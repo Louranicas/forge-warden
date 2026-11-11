@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Everything CI runs that can run offline, in CI's order. `just ci` calls this.
+# The build, lint, test and audit part of CI that runs offline, in CI's order: a subset of the gate.
+# Not run here, and run by scripts/ci_fast.sh or by CI itself: tool_versions.py --check-toolchain,
+# the mutation budget and environment tests, the local-tools tests, the dogfood, hold-ack,
+# hook-guard and managed-review-bundle tests, and the guardrails tests. `just ci` calls this.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 # Hook-exported Git state must not redirect scratch-repository commands.
@@ -9,23 +12,25 @@ mkdir -p target
 export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
 step tool-versions; python3 -I scripts/tool_versions.py --check
+# G-18: a required tool that is missing or at another version is a refusal, not a skip.
+# G-16: the compiler running this gate is the one rust-toolchain.toml pins (no override, no download).
+step local-tools; python3 -I scripts/tool_versions.py --check-local-tools
 step perimeter; python3 -I scripts/tests/perimeter.py
+step runner-routing; python3 -I scripts/tests/runner_routing.py
 step plant-runner; python3 -I plants/test_runner.py
 step guardrails; python3 -I scripts/check_guardrails.py
 step fmt;     cargo fmt --all --check
 step clippy;  cargo clippy --workspace --all-targets --locked
 step test;    cargo test --workspace --locked
 step doc;     cargo doc --workspace --no-deps --locked --quiet
-if command -v cargo-deny >/dev/null; then step deny; cargo deny check; else echo "skip deny: cargo install cargo-deny --locked"; fi
-if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else echo "skip zizmor: pipx install zizmor"; fi
-if command -v cargo-mutants >/dev/null; then
-  step mutation
-  base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
-  git diff "$base" -- 'crates/*/src/**.rs' > target/pr.diff
-  if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
-else
-  echo "skip mutation: cargo install cargo-mutants --locked"
-fi
+# Steps that cannot run here (scripts/tool-versions.toml [local_gate] hosted_only) are named at the end.
+hosted_only_not_run=""
+step deny; cargo deny check
+if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else hosted_only_not_run+=" zizmor"; fi
+step mutation
+base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
+git diff "$base" -- 'crates/*/src/**.rs' > target/pr.diff
+if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
 if command -v deep-diff-forge >/dev/null; then
   step dogfood
   base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
@@ -44,6 +49,12 @@ if command -v deep-diff-forge >/dev/null; then
         --advisory --rank target/rank.json --patch target/change.patch
     fi
   fi
+else
+  hosted_only_not_run+=" deep-diff-forge"
 fi
 step plants; python3 -I scripts/check_plants.py
-printf '\nci_local: all available gates passed\n'
+if [ -n "$hosted_only_not_run" ]; then
+  printf '\nci_local: offline gates passed; hosted-only, not run here:%s\n' "$hosted_only_not_run"
+else
+  printf '\nci_local: all gates passed\n'
+fi

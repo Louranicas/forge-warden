@@ -6,8 +6,8 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum PolicyError {
-    /// More than [`crate::MAX_INPUT_BYTES`].
-    #[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_INPUT_BYTES)]
+    /// More than [`crate::MAX_POLICY_BYTES`].
+    #[error("policy is {0} bytes, over the {max} byte budget", max = crate::MAX_POLICY_BYTES)]
     TooLarge(usize),
     /// Not UTF-8, or not TOML of the policy shape (including unknown keys). `at` is the 1-based
     /// line and column of the problem when the TOML parser located it (Q-TYPES-2, Q1-05: the span

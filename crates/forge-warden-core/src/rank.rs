@@ -5,10 +5,12 @@
 //! relies on is checked: the schema name, the seal, the tool, and each file's path, status, score,
 //! signals and evidence. A document that fails any check is refused as a whole.
 
+use crate::nonempty::NonEmpty;
 use crate::path::{PathError, RepoPath};
 use crate::seal::Sha256Hex;
 use crate::vocab::{Side, Signal, Status};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 
 /// The only ranking schema this version reads.
 pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
@@ -20,6 +22,23 @@ pub struct RankDoc {
     input_sha256: Sha256Hex,
     tool_version: String,
     files: Vec<RankedFile>,
+}
+
+/// What a ranking's file list is, before any rule reads it (Q1-12).
+///
+/// A ranking with no files, or with one path listed more than once, is valid input: a real producer
+/// writes both (an empty patch; a file/symlink type change is an addition and a deletion of one path).
+/// Neither may pass. With no files there is nothing to judge, and with a repeated path a rule cannot
+/// tell which entry is the file. [`RankDoc::shape`] is the one place this is decided, and the enum is
+/// exhaustive, so a consumer that reads the files has to say what it does with each shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RankShape<'a> {
+    /// No files.
+    Empty,
+    /// At least one path is listed more than once: each such path once, in path order.
+    Duplicates(NonEmpty<&'a RepoPath>),
+    /// At least one file, and every path listed once.
+    Clean,
 }
 
 /// One ranked file. Only [`RankedFile::new`] makes one, and it validates.
@@ -86,6 +105,26 @@ impl RankDoc {
     #[must_use]
     pub fn files(&self) -> &[RankedFile] {
         &self.files
+    }
+
+    /// Whether this ranking is empty, repeats a path, or is clean. Derived from the files, which
+    /// cannot change after construction, so it is the same every time it is asked.
+    #[must_use]
+    pub fn shape(&self) -> RankShape<'_> {
+        if self.files.is_empty() {
+            return RankShape::Empty;
+        }
+        let mut seen = BTreeSet::new();
+        let repeated: BTreeSet<&RepoPath> = self
+            .files
+            .iter()
+            .map(RankedFile::path)
+            .filter(|path| !seen.insert(*path))
+            .collect();
+        match NonEmpty::from_vec(repeated.into_iter().collect()) {
+            Some(paths) => RankShape::Duplicates(paths),
+            None => RankShape::Clean,
+        }
     }
 
     /// This ranking with each file replaced by `widen(file)`, keeping the seal and the version.
@@ -467,6 +506,76 @@ mod tests {
         format!(
             r#"{{"schema":"deep-diff-forge.rank.v0","input_sha256":"{SEAL}","tool":{{"name":"deep-diff-forge","version":"0.7.0"}},"ranked":[{ranked}]}}"#
         )
+    }
+
+    fn ranking(paths: &[&str]) -> RankDoc {
+        let files = paths
+            .iter()
+            .map(|p| {
+                RankedFile::new(
+                    RepoPath::parse(p).unwrap(),
+                    Status::parse("added"),
+                    1,
+                    vec![],
+                    vec![],
+                    false,
+                )
+                .unwrap()
+            })
+            .collect();
+        RankDoc::new(Sha256Hex::parse(SEAL).unwrap(), "0.7.0".to_owned(), files).unwrap()
+    }
+
+    fn repeated(doc: &RankDoc) -> Option<Vec<&str>> {
+        match doc.shape() {
+            RankShape::Duplicates(paths) => Some(paths.iter().map(|p| p.as_str()).collect()),
+            RankShape::Empty | RankShape::Clean => None,
+        }
+    }
+
+    #[test]
+    fn a_ranking_is_empty_clean_or_names_each_repeated_path_once_in_order() {
+        assert_eq!(ranking(&[]).shape(), RankShape::Empty);
+        assert_eq!(ranking(&["a"]).shape(), RankShape::Clean);
+        assert_eq!(ranking(&["b", "a"]).shape(), RankShape::Clean);
+        assert_eq!(repeated(&ranking(&["a", "a"])), Some(vec!["a"]));
+        assert_eq!(
+            repeated(&ranking(&["z", "b", "z", "b", "z", "c"])),
+            Some(vec!["b", "z"])
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn the_shape_is_exactly_what_the_paths_say(
+            picks in proptest::collection::vec(0usize..4, 0..12)
+        ) {
+            let names = ["a", "b", "c/d", "e"];
+            let paths: Vec<&str> = picks.iter().filter_map(|i| names.get(*i).copied()).collect();
+            let doc = ranking(&paths);
+            let mut counts = std::collections::BTreeMap::new();
+            for p in &paths {
+                let n = counts.entry(*p).or_insert(0u32);
+                *n = n.saturating_add(1);
+            }
+            let twice: Vec<&str> = counts.iter().filter(|(_, n)| **n > 1).map(|(p, _)| *p).collect();
+            let expected = if paths.is_empty() {
+                "empty"
+            } else if twice.is_empty() {
+                "clean"
+            } else {
+                "duplicates"
+            };
+            let found = match doc.shape() {
+                RankShape::Empty => "empty",
+                RankShape::Clean => "clean",
+                RankShape::Duplicates(_) => "duplicates",
+            };
+            proptest::prop_assert_eq!(found, expected);
+            if !twice.is_empty() {
+                proptest::prop_assert_eq!(repeated(&doc), Some(twice));
+            }
+        }
     }
 
     #[test]

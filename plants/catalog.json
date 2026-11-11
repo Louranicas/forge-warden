@@ -2,13 +2,15 @@
   "schema": "forge-warden.plants.catalog.v1",
   "register": {
     "name": "Mission4 guardrail register draft",
-    "sha256": "25c4520d63d0319bed5d0650c67acc35e1b6d4be6e52ef8d97ecc1db308e8dd8",
+    "sha256": "0e975350f6004c560154b61f30dc1ce1d7c5fc24c81b8781c547966dcb078086",
     "supersessions": [
       "G-11 duplicate paths -> HOLD, per measured producer; blank version remains refusal.",
       "G-15 authenticates exact producer binary, not version string.",
       "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
-      "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants."
+      "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
+      "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
+      "G-53 refusal map: row added 2026-11-11 under Lodestar's REFUSAL-MAP ruling (WORKBOARD 04:15Z): every refusal variant and exit has a row in docs/REFUSAL_MAP.md naming the test that observes it; three sampled variant-swap plants, not one per row."
     ]
   },
   "cases": [
@@ -436,6 +438,24 @@
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
+      "id": "policy-budget-removed",
+      "guardrail": "G-44",
+      "path": "crates/forge-warden-core/src/policy/validate.rs",
+      "diagnostic": "the_policy_budget_is_enforced_before_parsing.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "the_policy_budget_is_enforced_before_parsing",
+        "--locked",
+        "--offline"
+      ],
+      "old": "if bytes.len() > crate::MAX_POLICY_BYTES {",
+      "new": "if bytes.len() > crate::MAX_INPUT_BYTES {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
       "id": "serde-additive-refusal",
       "guardrail": "G-50",
       "path": "crates/forge-warden-core/src/rank.rs",
@@ -522,6 +542,19 @@
       ],
       "old": "cd \"$trusted\"",
       "new": "cd \"$candidate\"",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
+      "id": "candidate-attributes-honoured",
+      "guardrail": "G-35",
+      "path": "scripts/dogfood.sh",
+      "diagnostic": "FAIL attributes: the candidate's \\.gitattributes shaped the patch",
+      "command": [
+        "bash",
+        "scripts/tests/dogfood.sh"
+      ],
+      "old": "git -C \"$candidate\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null diff",
+      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null diff",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
@@ -675,8 +708,8 @@
       "guardrail": "G-14",
       "path": "crates/forge-warden-core/src/authority.rs",
       "diagnostic": "a_forged_ranking_with_the_real_patch_holds_instead_of_passing.*FAILED",
-      "old": "extra.extend(checked.notes());",
-      "new": "extra.extend(checked.notes().into_iter().filter(|note| note.code != NoteCode::RankIncomplete));",
+      "old": "extra.extend(disagreements.iter().map(disagreement_note));",
+      "new": "extra.extend(disagreements.iter().map(disagreement_note).filter(|note| note.code != NoteCode::RankIncomplete));",
       "cargo": [
         "test",
         "-p",
@@ -694,7 +727,7 @@
     {
       "id": "unadmitted-producer",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
       "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
       "old": "let Some(admitted) = policy.admit_producer(&pinned.sha256) else {",
       "new": "let Some(admitted) = policy.producers().first().and_then(|listed| policy.admit_producer(listed)) else {",
@@ -875,7 +908,7 @@
     {
       "id": "git-owner",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_metadata_requires_the_exact_owner_and_unwritable_ancestors.*FAILED",
       "cargo": [
         "test",
@@ -903,7 +936,7 @@
     {
       "id": "git-write-mode",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -931,7 +964,7 @@
     {
       "id": "git-symlink",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -959,7 +992,7 @@
     {
       "id": "git-regular-file",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/file.rs",
       "diagnostic": "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize.*FAILED",
       "cargo": [
         "test",
@@ -987,7 +1020,7 @@
     {
       "id": "git-byte-budget",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading.*FAILED",
       "cargo": [
         "test",
@@ -1015,7 +1048,7 @@
     {
       "id": "git-missing-policy",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -1043,7 +1076,7 @@
     {
       "id": "git-unlisted-digest",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
@@ -1071,7 +1104,7 @@
     {
       "id": "git-policy-snapshot",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
@@ -1099,7 +1132,7 @@
     {
       "id": "git-descriptor-version",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
@@ -1113,8 +1146,8 @@
         "--",
         "--nocapture"
       ],
-      "old": "program: Program::Pinned(&git.executable),\n            args: &[\"--version\"],",
-      "new": "program: Program::Pinned(&pin_executable(&git.path)?),\n            args: &[\"--version\"],",
+      "old": "program: Program::Pinned(&git.executable),\n        args: &[\"--version\"],",
+      "new": "program: Program::Pinned(&super::pin_executable(&git.path)?),\n        args: &[\"--version\"],",
       "required_tools": [
         "cargo",
         "coreutils",
@@ -1127,7 +1160,7 @@
     {
       "id": "git-script",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
@@ -1191,7 +1224,7 @@
     {
       "id": "git-policy-exact-limit",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_policy_budget_is_exactly_64_kib.*FAILED",
       "cargo": [
         "test",
@@ -1219,7 +1252,7 @@
     {
       "id": "git-parent-traversal",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_paths_refuse_parent_traversal_before_metadata_walk.*FAILED",
       "cargo": [
         "test",
@@ -1233,8 +1266,8 @@
         "--",
         "--nocapture"
       ],
-      "old": "if !path.is_absolute()\n            || path",
-      "new": "if !path.is_absolute()\n            && path",
+      "old": "if !path.is_absolute()\n        || path",
+      "new": "if !path.is_absolute()\n        && path",
       "required_tools": [
         "cargo",
         "coreutils",
@@ -1327,7 +1360,7 @@
     {
       "id": "git-parent-error-class",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
       "diagnostic": "git_parent_absence_is_distinct_from_metadata_failure.*FAILED",
       "cargo": [
         "test",
@@ -1378,7 +1411,7 @@
     {
       "id": "git-test-scratch-identity",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "scratch_calls_never_replace_a_live_directory.*FAILED",
       "cargo": [
         "test",
@@ -1405,7 +1438,7 @@
     {
       "id": "git-test-scratch-exclusive",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors.rs",
+      "path": "crates/forge-warden-cli/src/doors/mod.rs",
       "diagnostic": "scratch_helpers_require_per_call_identity_and_exclusive_creation.*FAILED",
       "cargo": [
         "test",
@@ -1428,6 +1461,831 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "z3-clean-copy-forced-hold",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.P01\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "SuppliedCopy::Absent | SuppliedCopy::Identical => Vec::new(),",
+      "new": "SuppliedCopy::Absent | SuppliedCopy::Identical => vec![Note { code: NoteCode::RankMismatch, path: None, detail: String::new() }],",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-no-rank-unverified",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.N01\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let verdict = judge(policy, checked, vec![unverified], seals, today);",
+      "new": "let verdict = judge(policy, checked, vec![unverified].into_iter().filter(|_| false).collect(), seals, today);",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-no-missing-note",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "Z3\\.N04\\.notes:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "None => out.push(Disagreement::Missing(path.clone())),",
+      "new": "None => {}",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-no-git-deletion-signal",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "Z3\\.N14\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "out.insert(Signal::DeletedFile);",
+      "new": "{}",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-git-only-union",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/rank.rs",
+      "diagnostic": "Z3\\.N15\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "let mut signals = self.signals.clone();",
+      "new": "let mut signals: Vec<Signal> = Vec::new();",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-notes-overwrite-fail",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/verdict.rs",
+      "diagnostic": "Z3\\.N03\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": ".map(|_| Outcome::Hold)\n            .fold(self.verdict, Outcome::max);",
+      "new": ".map(|_| Outcome::Hold)\n            .fold(self.verdict, |_, hold| hold);",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-ge-instead-of-gt",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.P12\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "scope.contains(f.path().as_str()) && f.score() > *limit",
+      "new": "scope.contains(f.path().as_str()) && f.score() >= *limit",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-u32-change-sum",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.N23\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": ".fold(0_u64, |sum, f| sum.saturating_add(u64::from(f.score())));",
+      "new": ".fold(0_u32, |sum, f| sum.saturating_add(f.score())).into();",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-deleted-companion-live",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.N17\\.rules:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "    !is_deleted(file)\n        && (",
+      "new": "    (true || !is_deleted(file))\n        && (",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-expiry-le",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/eval.rs",
+      "diagnostic": "Z3\\.P16\\.overall:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "w.rule == rule.id && w.expires >= today",
+      "new": "w.rule == rule.id && w.expires > today",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-caller-provenance",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.P20\\.provenance:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "    seals.provenance = kind;\n",
+      "new": "    seals.provenance = if matches!(kind, Provenance::Produced) { seals.provenance } else { kind };\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-caller-ranked-by",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "Z3\\.P20\\.provenance:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "    seals.ranked_by = RankedBy {",
+      "new": "    let _discarded = RankedBy {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "z3-symlink-kind-mislabel",
+      "guardrail": "G-45",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "Z3\\.N20\\.refusal_kind:",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--test",
+        "z3_authority",
+        "every_frozen_case_meets_its_independent_expectation",
+        "--locked",
+        "--offline",
+        "--",
+        "--nocapture"
+      ],
+      "old": "                    return Err(Unverifiable::SymlinkTargetEdit);",
+      "new": "                    return Err(Unverifiable::UnreadableModeHeader(line.trim_end().to_owned()));",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "route-pull-request",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "            push|schedule|workflow_dispatch)",
+      "new": "            push|schedule|workflow_dispatch|pull_request)",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-unprotected-main",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": " && [ \"$PROTECTED\" = true ]; then",
+      "new": "; then",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-case-folded-ref",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "[ \"$REF\" = refs/heads/main ]",
+      "new": "[ \"${REF,,}\" = refs/heads/main ]",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-pool-fallback",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_every_job_is_hosted_or_routed_through_the_route_job",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}",
+      "new": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'runner-up-kinoite' }}",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-ambient-env",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_routing_ignores_a_hostile_ambient_environment",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "              if [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; then",
+      "new": "              if { [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; } || [ -n \"${GITHUB_HEAD_REF:-}\" ]; then",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-ambient-arith",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_the_route_job_is_exactly_the_reviewed_job",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "          runner=ubuntu-latest\n",
+      "new": "          runner=ubuntu-latest\n          (( GITHUB_RUN_ATTEMPT > 1 )) && { EVENT=push; REF=refs/heads/main; PROTECTED=true; }\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-defaults-template",
+      "guardrail": "G-52",
+      "path": ".github/workflows/mutation-baseline.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "\njobs:\n",
+      "new": "\n\"defaults\":\n  run:\n    shell: env EVENT=push REF=refs/heads/main PROTECTED=true bash {0}\n\njobs:\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-indented-job",
+      "guardrail": "G-52",
+      "path": ".github/workflows/ci.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "append": "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "route-repeated-job",
+      "guardrail": "G-52",
+      "path": ".github/workflows/ci.yml",
+      "diagnostic": "FAIL: test_every_workflow_file_is_pinned_whole",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/tests/runner_routing.py"
+      ],
+      "old": "\njobs:\n",
+      "new": "\njobs:\n  sneak:\n    name: \"a\n    runs-on: ubuntu-latest\n  vocabulary:\n    env: \"\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n",
+      "required_tools": [
+        "bash",
+        "coreutils",
+        "python3"
+      ]
+    },
+    {
+      "id": "door-list-drops-module",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/tests/common/mod.rs",
+      "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "door_files_are_exactly_the_listed_modules"
+      ],
+      "old": "pub(crate) const DOOR_FILES: [&str; 9] = [\n    \"crates/forge-warden-cli/src/doors/child/entropy.rs\",\n",
+      "new": "pub(crate) const DOOR_FILES: [&str; 8] = [\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-dir-widened",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/tests/common/mod.rs",
+      "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "door_files_are_exactly_the_listed_modules"
+      ],
+      "old": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-cli/src/doors\";",
+      "new": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-cli/src\";",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-second-attest",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/doors/file.rs",
+      "diagnostic": "only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "only_the_door_mints_a_produced_ranking"
+      ],
+      "old": "//! File admission doors: the one named-file open ([`open_regular`]) and the bounded readers.",
+      "new": "//! File admission doors: the one named-file open ([`open_regular`]) and the bounded readers.\n// Ranking::attest(doc, admitted) a second mint in another door module",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-unlisted-module",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/doors/extra.rs",
+      "create": "//! An unlisted module under doors/: it must gain no door rights.\n",
+      "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "door_files_are_exactly_the_listed_modules"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "door-clap-attribute-effect",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "shipped_code_writes_no_expression_in_an_attribute.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "shipped_code_writes_no_expression_in_an_attribute"
+      ],
+      "old": "#[derive(Parser)]\n",
+      "new": "#[derive(Parser)]\n#[command(after_help = std::env::var(\"FW_PLANT\").is_ok().to_string())]\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "crate-local-clippy-config",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/clippy.toml",
+      "create": "# A lint configuration beside the crate: it would replace the reviewed root file for this crate.\ndisallowed-methods = []\n",
+      "diagnostic": "the_lint_configuration_is_exactly_the_two_reviewed_files.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_lint_configuration_is_exactly_the_two_reviewed_files"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "stray-clippy-config",
+      "guardrail": "G-06",
+      "path": "scripts/clippy.toml",
+      "create": "# A lint configuration in another directory: a cargo [env] CLIPPY_CONF_DIR could point clippy at it.\ndisallowed-methods = []\n",
+      "diagnostic": "the_lint_configuration_is_exactly_the_two_reviewed_files.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_lint_configuration_is_exactly_the_two_reviewed_files"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "effect-list-entry-removed",
+      "guardrail": "G-06",
+      "path": "clippy.toml",
+      "diagnostic": "the_effect_lists_name_every_reviewed_effect.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_effect_lists_name_every_reviewed_effect"
+      ],
+      "old": "    { path = \"std::fs::hard_link\", reason = \"forge-warden never writes files\" },\n",
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "git-oracle-entry-removed",
+      "guardrail": "G-06",
+      "path": "clippy.toml",
+      "diagnostic": "clippy_refuses_minting_a_git_oracle_outside_the_door.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "mint_lint",
+        "--",
+        "clippy_refuses_minting_a_git_oracle_outside_the_door"
+      ],
+      "old": "    { path = \"forge_warden_core::verdict::GitOracle::approved\", reason = \"only doors::child::AdmittedGit::oracle records a Git, from the admission that pinned it (Q-TYPES-2 B2; Q-TYPES-2.1)\" },\n",
+      "new": "",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "refusal-map-core-variant-swap",
+      "guardrail": "G-53",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "each_unreadable_answer_from_git_is_refused_with_its_own_variant.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--locked",
+        "--offline",
+        "--lib",
+        "--",
+        "each_unreadable_answer_from_git_is_refused_with_its_own_variant"
+      ],
+      "old": "                return Err(Unverifiable::NewlineInPath);",
+      "new": "                return Err(Unverifiable::Empty);",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "refusal-map-cli-variant-swap",
+      "guardrail": "G-53",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "diagnostic": "git_facts_name_a_door_failure_and_an_unavailable_git.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "git_facts_name_a_door_failure_and_an_unavailable_git"
+      ],
+      "old": "GitFactsFailure::Unavailable(format!(\"git apply: {why}\"))",
+      "new": "GitFactsFailure::Refused(format!(\"git apply: {why}\"))",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "refusal-map-variant-not-just-effect",
+      "guardrail": "G-53",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "git_still_checks_the_producer_and_refusals_hold.*FAILED",
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import json,subprocess,sys\nsteps=[[\"cargo\",\"build\",\"--workspace\",\"--examples\",\"--locked\",\"--offline\"],[\"cargo\",\"test\",\"-p\",\"forge-warden-cli\",\"--test\",\"authority_mode\",\"git_still_checks_the_producer_and_refusals_hold\",\"--locked\",\"--offline\",\"--\",\"--nocapture\"]]\nfor cmd in steps:\n print(\"COMMAND \"+json.dumps(cmd),flush=True)\n result=subprocess.run(cmd)\n if result.returncode: sys.exit(result.returncode)"
+      ],
+      "old": "Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::GitRefused(why)), None)),",
+      "new": "Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::UnreadableGitOutput(why)), None)),",
+      "required_tools": [
+        "bash",
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup",
+        "sh"
+      ]
+    },
+    {
+      "id": "docs-name-missing-test",
+      "guardrail": "G-40",
+      "path": "docs/GIT_RUNTIME.md",
+      "append": "\nPinned by `planted_name_of_a_missing_test`.\n",
+      "diagnostic": "GIT_RUNTIME\\.md:[0-9]+: `planted_name_of_a_missing_test` names no fn, def or lint",
+      "cargo": ["test", "-p", "forge-warden-cli", "--locked", "--offline", "--test", "docs_inventory", "--", "docs_name_only_tests_and_files_that_exist"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "widening-adds-nothing",
+      "guardrail": "G-14",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "old": "derived.get(file.path()).into_iter().flatten()))",
+      "new": "derived.get(file.path()).into_iter().flatten().take(0)))",
+      "diagnostic": "git_adds_the_deletion_the_producer_omitted.*FAILED",
+      "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--test", "authority", "--", "git_adds_the_deletion_the_producer_omitted"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     }
   ],
   "pending_guardrails": [
@@ -1447,19 +2305,13 @@
       "id": "G-38",
       "title": "Required CI check names drift",
       "status": "PENDING",
-      "reason": "Required-check names are enforced by hosted admission, but this offline runner has no approved check-name snapshot/identity adapter."
-    },
-    {
-      "id": "G-40",
-      "title": "Docs and comments that name non-existent tests (R-15)",
-      "status": "PENDING",
-      "reason": "No general documentation/test-reference invariant is implemented. Naming a nonexistent test is still a review obligation."
+      "reason": "Waits on owner input (Luke; ledger Q23): an exported copy of the GitHub ruleset's required check names, to pin offline. Required-check names are enforced by hosted admission; this offline runner has no approved snapshot, so no plant is claimed."
     },
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
       "status": "PENDING",
-      "reason": "Hosted zizmor audit exists, but the trusted offline execution image has no zizmor. No installation or weaker replacement audit is performed."
+      "reason": "Waits on owner input (Luke; ledger Q23): zizmor installed in the trusted offline gate image, or a ruling that G-47 is enforced hosted-only. The hosted zizmor audit exists; no installation or weaker replacement audit is performed offline."
     }
   ]
 }

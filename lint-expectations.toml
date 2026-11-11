@@ -1,25 +1,25 @@
 schema = "forge-warden.lint-expectations.v1"
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/file.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: read_stdin"
 review_reason = "Reviewed effect boundary: door: read_stdin; I/O remains confined to its named door."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/mod.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: today"
 review_reason = "Reviewed effect boundary: door: today; I/O remains confined to its named door."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/diagnose.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: emit"
 review_reason = "Reviewed effect boundary: door: emit; I/O remains confined to its named door."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/diagnose.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: diagnose"
 review_reason = "Reviewed effect boundary: door: diagnose; I/O remains confined to its named door."
@@ -127,52 +127,64 @@ source_reason = "test harness: builds a scratch repository and runs the script; 
 review_reason = "B3 test-only scratch Git repositories exercise vocabulary provenance against committed synthetic revisions."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/process.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: pin_executable"
 review_reason = "Q-DOOR: pin_within reads /proc/self metadata for the current UID; opening and descriptor metadata admission are delegated to open_regular before byte hashing."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/process.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: run_child"
 review_reason = "C1a bounded child execution is the reviewed sole process spawn boundary."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/process.rs"
 lint = "clippy::disallowed_methods"
-source_reason = "door: run_child (poll sleep, /proc/<pid>/stat)"
-review_reason = "Q-DOOR: reads only the spawned child PID status to observe exit without reaping before group cleanup; polling sleeps remain inside the child deadline."
+source_reason = "door: run_child (/proc/<pid>/stat)"
+review_reason = "Q-DOOR: reads only the spawned child PID status to observe exit without reaping before group cleanup. Q-DOOR-SPLIT (Q2-14): the probe is read_exited; the poll sleep and the deadline clock moved into run_child_killing_with's door, so wait_bounded is pure and carries no expectation."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/process.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: kill_group (spawn, poll sleep)"
 review_reason = "Q-DOOR: starts the explicit group-kill helper with a cleared environment and null streams; polls against a two-second helper deadline before killing and reaping it; reports failure."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/mod.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "tests build fixtures and inspect processes; a panic is a failed test"
 review_reason = "C1a test-only process and file operations exercise descriptor admission and bounded execution refusals."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/mod.rs"
 lint = "clippy::disallowed_types"
 source_reason = "tests build fixtures and inspect processes; a panic is a failed test"
 review_reason = "C1a test-only process and file operations exercise descriptor admission and bounded execution refusals."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/git.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: git_facts (the system temp dir)"
 review_reason = "C1b git_facts reads the system temp base only before admission and isolated Git execution; no ambient candidate repository authority is accepted."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/isolation.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: admit_base (canonicalize)"
 review_reason = "C1b base admission canonicalizes the absolute temp path before requiring non-lossy UTF-8 and a colon-free Git ceiling; refusal prevents repository discovery escapes."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/isolation.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: create_in (the child door's one private directory)"
+review_reason = "EFFECT-WALL.2 lists std::fs::DirBuilder::create; this existing door code creates the child's private directory exclusively with mode 0700 and reuses no existing name. Behaviour unchanged; the annotation names an effect that was already there."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/isolation.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: drop (removes the private directory only when it is empty)"
+review_reason = "EFFECT-WALL.2 lists std::fs::remove_dir; this existing door code removes its own private directory non-recursively on drop, so an unexpected leftover stays visible. Behaviour unchanged."
 
 [[expectation]]
 file = "crates/forge-warden-core/tests/coverage.rs"
@@ -241,25 +253,25 @@ source_reason = "test door: writes a scratch crate and runs cargo clippy on it; 
 review_reason = "C1c compiler-refusal regression writes a disposable crate and invokes Clippy; setup errors and missing diagnostics must fail the test."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/git.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: git_version (the system temp dir)"
 review_reason = "C1c Git version door reads the temp base before isolated execution to record tool provenance without inheriting candidate configuration."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/ranker.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: produce_ranking (the system temp dir)"
 review_reason = "C1c ranker entry door obtains the temp base before isolation admission; producer execution remains bounded and policy-pinned."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/ranker.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: produce_ranking mints Ranking<Produced> (the only place the binary may)"
 review_reason = "C1c sole authority mint follows policy digest admission, bounded isolated producer execution and patch-seal validation; the exemption stays in the named door."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/git.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: AdmittedGit::oracle records the admitted Git (the only place the binary may)"
 review_reason = "Q-TYPES-2.1: the named AdmittedGit::oracle door records the executable digest and descriptor-derived version from its admission, selecting approved only when an allowlist digest is present and unpinned otherwise; both constructors remain disallowed elsewhere in the binary."
@@ -316,8 +328,8 @@ review_reason = "E3a test-only external SHA256 reference object, parsed as JSON 
 
 [[data_input]]
 file = "fixtures/demo.verdict.json"
-sha256 = "c26dc675160c1af03a523c2eaee78bf4fc31b1767a0da1b205ed3aa996a14434"
-review_reason = "GIT-PIN v2 demo proposal preserves input seals and records unpinned advisory Git; measured executable identity is checked before normalization. Golden and producer/consumer changes remain subject to independent trusted-HOLD review."
+sha256 = "8068135b4bf40eea31fbf8f946b44fdba3ac6294f6a1b943ce1d86894d2b7e32"
+review_reason = "GIT-PIN v2 demo proposal preserves input seals and records unpinned advisory Git; measured executable identity is checked before normalization. 0.2.0 release preparation changed one line, tool.version 0.1.0 to 0.2.0 (blessed by Touchstone in 45dfb213, regenerated from the built binary). Golden and producer/consumer changes remain subject to independent trusted-HOLD review."
 
 [[data_input]]
 file = "fixtures/demo.rank.json"
@@ -336,7 +348,7 @@ source_reason = "test environment door: reads only explicit tool locations befor
 review_reason = "Q-PERIMETER test-only shared helper reads PATH and Cargo/rustup locations; all Git variables and ambient child configuration are discarded. Production has no dependency on this cfg(test) helper."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/file.rs"
 lint = "clippy::disallowed_types"
 source_reason = "door: open_regular (every named-file open)"
 review_reason = "Q-DOOR: central read-only OpenOptions open uses O_NONBLOCK and requires descriptor metadata is_file before reads; executable pins additionally use O_NOFOLLOW. This check does not exclude procfs files reporting regular-file metadata."
@@ -367,8 +379,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "8d4eb9e2f2ec1543f6456be8272b828abb5482bde62772243f6c91cd52150460"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust."
+sha256 = "70cd6adb9dca567ef8d25a7a97a1c78e1c840d16ff86b94f62376ac4321c033a"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged. WP-EFFECT-WALL.2 adds two groups, effect-plants (ten lines: eight std effects, one UFCS form, one control) and git-oracle-plants (five lines), for the new clippy controls in tests/mint_lint.rs; no existing entry changes."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
@@ -377,43 +389,55 @@ source_reason = "test fixture: resolve scratch executable identity and child cwd
 review_reason = "Q-HERMETIC.1: canonicalize only owned scratch paths and read the test cwd to prove a relative executable retains identity after child chdir; no production exemption or copied repository mode dependency."
 
 [[expectation]]
+file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test fixture: looks at whether the scratch directory still exists"
+review_reason = "EFFECT-WALL.2 lists std::path::Path::exists; this test asks only whether its own scratch directory is gone after drop and after an unwind. Test-only."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test fixture: makes a symlink to a scratch executable"
+review_reason = "EFFECT-WALL.2 lists std::os::unix::fs::symlink; this test links a scratch executable to prove the invocation name is preserved. Test-only, inside owned scratch."
+
+[[expectation]]
 file = "crates/forge-warden-cli/tests/public_api.rs"
 lint = "clippy::wildcard_enum_match_arm"
 source_reason = "syn::Item is #[non_exhaustive]: an item kind this reader does not model is refused as UNSUPPORTED, which fails the snapshot test"
 review_reason = "Reviewed on Q-TYPES-1 v7 cf7eef5: test-only non-exhaustive syn::Item fallback emits UNSUPPORTED; unvouched() refuses it before snapshot comparison. This admits the required fallback, not general semantic API equivalence or macro expansion completeness."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/git.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: git_parents (protected ancestors)"
 review_reason = "Metadata-only walk checks every parent against the fixed root owner and write-mode policy, refusing symlinks."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/git.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: git_policy (distinguish absent policy)"
 review_reason = "lstat distinguishes genuine absence from an unsafe policy; authority never accepts absence."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/mod.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test door: fixture CLI dispatch"
 review_reason = "cfg(test)-only marker dispatch for the isolated fixture executable; omitted from release."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/child/git.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test door: fixture Git policy context"
 review_reason = "cfg(test)-only owner and path context for disposable policies; no production override."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/mod.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: arguments"
 review_reason = "WP-Q-CLI-CONTRACT: one OS argv capture; pure clap parsing and exact flag classification remain in main.rs (O1 #921)."
 
 [[expectation]]
-file = "crates/forge-warden-cli/src/doors.rs"
+file = "crates/forge-warden-cli/src/doors/diagnose.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: diagnose_json"
 review_reason = "WP-Q-CLI-CONTRACT: fixed error-envelope stderr sink; fields terminal-sanitized before JSON encoding, one line, no raw stderr bypass (O1 #921)."
@@ -457,3 +481,69 @@ review_reason = "Q-TYPES-1.1 test-only Rust-text input for the extern-block memb
 file = "fixtures/public_api/probe-extern-after.rs.txt"
 sha256 = "bdd42d4c7be7b6288c674a4fedadec8f4237d0ad84df2c9155ec5294400e4f1b"
 review_reason = "Q-TYPES-1.1 test-only Rust-text input for the extern-block member probe (after side), moved byte-exact out of a string literal. Parsed by syn as data; never compiled as source."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::panic"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::indexing_slicing"
+source_reason = "test helpers read committed fixtures; a panic is a failed test"
+review_reason = "Z3 test-only harness: reads committed fixtures/z3 bytes and unwraps setup; a panic fails the case. The independent oracle is std-only (Q-ORACLE registry); production core stays effect-free."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::too_many_lines"
+source_reason = "the oracle's case table and manifest entry are one row per case or field"
+review_reason = "The std-only oracle may carry no attributes (registry isolation), so its two long table functions are expected on the harness's `mod oracle;` declaration; splitting the frozen case table would hide it."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::too_many_lines"
+source_reason = "one block per assertion facet keeps the IDs visible"
+review_reason = "The per-case judge lists one block per literal assertion ID (setup, refusal_kind, coverage, overall, summary, rules, notes, waivers, provenance); splitting it would hide the ID-to-check map."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/z3_authority.rs"
+lint = "clippy::print_stderr"
+source_reason = "the executed and accepted counts are the law's receipt evidence"
+review_reason = "Test-only: each generated law prints its executed/accepted counts and seed to stderr as receipt evidence; nothing in production prints."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: the parser harness reads committed fixtures and corpus files, runs each parse on a watchdog thread so a hang fails the test instead of stalling it, and reads HOSTILE_CASES only to raise its case budget for a campaign; production core stays free of these effects."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::panic"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: a parse that does not return within the bound fails the test with a panic naming the parser; a hang must be a red test, not a stalled run."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: harness setup unwraps committed fixture reads and seed selection; missing seeds fail the test instead of shrinking the input space."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::disallowed_types"
+source_reason = "the harness bounds each parse by wall time: Instant is the clock it measures with"
+review_reason = "WP-HOSTILE-INPUT: Instant measures each parse against the 2 s bound; the harness is a test and does not reach production timing."

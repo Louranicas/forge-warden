@@ -3,11 +3,34 @@
 All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). A change to a published schema
-(`forge-warden.policy.v0`, `forge-warden.verdict.v0`) or to the exit-code registry is always
-listed, because consumers parse them.
+(today `forge-warden.policy.v0`, `forge-warden.verdict.v2` and the Git allowlist
+`forge-warden.git-allowlist.v1`; 0.1.0 shipped `forge-warden.verdict.v0`) or to the exit-code
+registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
+- Schemas in this release: the verdict is `forge-warden.verdict.v2`. 0.1.0 shipped v0; v1 existed
+  only between releases and no tagged release carries it (ADR 0011, amendment A1).
+- The policy schema stays `forge-warden.policy.v0`. The `[producer]` table is optional and
+  additive: a policy without it still works, in advisory mode only. Two 0.1.0 policies are now
+  refused all the same (no rules; a file over 1 MiB): see
+  [Upgrading from 0.1.0](docs/UPGRADING.md), section 6.
+- **Breaking:** a policy file over 1 MiB is refused (exit 4, `invalid_input`, before parsing);
+  it shared the ranking's 64 MiB budget before. New constant `MAX_POLICY_BYTES`. Measured: a
+  64 MiB policy of half a million rules parsed in 6.5 s at a peak of 4 GiB. Size limits and
+  measurements are in [the policy reference](docs/POLICY_REFERENCE.md).
+- [Upgrading from 0.1.0](docs/UPGRADING.md) lists every change a 0.1.0 user must act on.
+- `scripts/dogfood.sh` (driver v2) takes `--hosted-advisory` as an optional first argument. The
+  repository's hosted `dogfood` job passes it: a hosted runner has no owner-enrolled Git
+  allowlist, so with the producer now pinned in `warden.toml` it could not judge in authority mode
+  (exit 3). Hosted dogfood is advisory by decision and cannot PASS; without the argument a pinned
+  policy still means authority mode. No schema or exit code changes.
+- A patch Git refuses is now judged in one code path that cannot finish without its
+  `patch_unverifiable` note (Q25; `Verdict::held_by`, crate-internal). For consumers nothing
+  changes: the verdict document, its schema and the exit codes are the same, a refused patch still
+  holds at least, and a failing rule on it still fails.
 - Verdict no longer implements Clone; CLI reporting borrows judged authority/advisory results without copying them (T-GITPIN-01).
 
 ### CLI machine contract
