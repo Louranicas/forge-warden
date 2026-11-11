@@ -2178,25 +2178,23 @@
       "guardrail": "G-53",
       "path": "crates/forge-warden-cli/src/main.rs",
       "diagnostic": "git_still_checks_the_producer_and_refusals_hold.*FAILED",
-      "cargo": [
-        "test",
-        "-p",
-        "forge-warden-cli",
-        "--locked",
-        "--offline",
-        "--test",
-        "authority_mode",
-        "--",
-        "git_still_checks_the_producer_and_refusals_hold"
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import json,subprocess,sys\nsteps=[[\"cargo\",\"build\",\"--workspace\",\"--examples\",\"--locked\",\"--offline\"],[\"cargo\",\"test\",\"-p\",\"forge-warden-cli\",\"--test\",\"authority_mode\",\"git_still_checks_the_producer_and_refusals_hold\",\"--locked\",\"--offline\",\"--\",\"--nocapture\"]]\nfor cmd in steps:\n print(\"COMMAND \"+json.dumps(cmd),flush=True)\n result=subprocess.run(cmd)\n if result.returncode: sys.exit(result.returncode)"
       ],
       "old": "Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::GitRefused(why)), None)),",
       "new": "Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::UnreadableGitOutput(why)), None)),",
       "required_tools": [
+        "bash",
         "cargo",
+        "coreutils",
         "git",
         "python3",
         "rustc",
-        "rustup"
+        "rustup",
+        "sh"
       ]
     }
   ],
