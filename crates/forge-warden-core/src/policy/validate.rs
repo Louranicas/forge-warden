@@ -29,7 +29,7 @@ pub const MAX_ID_CHARS: usize = 64;
 /// [`PolicyError`]: over budget, not UTF-8 TOML of the right shape, or invalid, with every issue
 /// listed.
 pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
-    if bytes.len() > crate::MAX_INPUT_BYTES {
+    if bytes.len() > crate::MAX_POLICY_BYTES {
         return Err(PolicyError::TooLarge(bytes.len()));
     }
     let text = std::str::from_utf8(bytes).map_err(|e| PolicyError::Malformed {

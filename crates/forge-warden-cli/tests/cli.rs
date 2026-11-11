@@ -186,6 +186,36 @@ fn a_ranking_from_another_tool_is_refused() {
 }
 
 #[test]
+fn a_policy_over_its_own_budget_is_refused_by_lint_and_by_check() {
+    // POLICY-CAP (ledger Q44): the policy has its own 1 MiB budget, far under the ranking's. A
+    // valid policy padded past it is refused for its size (exit 4) by both commands.
+    let dir = scratch("policy-cap");
+    let mut bytes = read_bytes(POLICY);
+    bytes.resize(forge_warden_core::MAX_POLICY_BYTES, b'\n');
+    let at = write(&dir, "at.warden.toml", &bytes);
+    assert_eq!(
+        run(&["lint", text(&at)], b"").code,
+        0,
+        "at the budget it is read"
+    );
+    bytes.push(b'\n');
+    let over = write(&dir, "over.warden.toml", &bytes);
+    for out in [
+        run(&["lint", text(&over), "--json"], b""),
+        advisory(text(&over), PATCH, RANK, b""),
+    ] {
+        assert_eq!(out.code, 4, "{}", out.stderr);
+        assert!(
+            out.stderr
+                .contains("policy is 1048577 bytes, over the 1048576 byte budget"),
+            "{}",
+            out.stderr
+        );
+        assert_eq!(out.stdout, "");
+    }
+}
+
+#[test]
 fn over_budget_input_is_invalid_input_not_an_io_error() {
     // One byte over the budget is the caller's input problem (exit 4, change_input), not the
     // environment's (exit 3, check_environment): the action differs, so the code must too.

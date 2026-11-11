@@ -100,6 +100,7 @@ What to do: a wrapper that mapped "not 7" to success must be rewritten to accept
 ## 6. Policies
 
 - A policy with no rules is refused (exit 4). Add at least one rule.
+- A policy file over 1 MiB is refused (exit 4). 0.1.0 read up to 64 MiB.
 - Duplicate paths in a ranking hold the verdict.
 - `lint --json` prints `forge-warden.lint.v1`.
 

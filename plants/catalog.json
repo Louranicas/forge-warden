@@ -438,6 +438,24 @@
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     },
     {
+      "id": "policy-budget-removed",
+      "guardrail": "G-44",
+      "path": "crates/forge-warden-core/src/policy/validate.rs",
+      "diagnostic": "the_policy_budget_is_enforced_before_parsing.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--lib",
+        "the_policy_budget_is_enforced_before_parsing",
+        "--locked",
+        "--offline"
+      ],
+      "old": "if bytes.len() > crate::MAX_POLICY_BYTES {",
+      "new": "if bytes.len() > crate::MAX_INPUT_BYTES {",
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
       "id": "serde-additive-refusal",
       "guardrail": "G-50",
       "path": "crates/forge-warden-core/src/rank.rs",

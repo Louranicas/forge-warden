@@ -181,7 +181,7 @@ A **refusal** prints nothing on stdout, explains on stderr, and exits without a 
 | No mode, both modes, `--advisory` without `--rank`, no `--patch`, relative `--git`, malformed `--base`/`--head`/`--today` | refused | 2 `usage` |
 | A file cannot be read; Git cannot run; the temporary directory is relative, contains `:` or is not UTF-8; `/proc/self/fd` is missing | refused | 3 `io` |
 | The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB), cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
-| The policy is invalid; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
+| The policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
 | Any note above | hold (or fail, if a rule fails) | 8 (7) |
 | A rule of severity `hold` is violated | hold | 8 |
 | A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |
@@ -205,6 +205,31 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
 - **A stricter producer** → exit 3, no verdict. deep-diff-forge 0.8.2 refuses some patches 0.7.0 ranked
   (for example `fixtures/coverage/keel-c1b-v4-mode-line-tab.patch`: "file header out of place"). In
   authority mode a patch the pinned ranker refuses ends as a ranker failure, never as a pass.
+
+## Size limits, and what was measured
+
+| Input | Limit | Over the limit |
+| --- | --- | --- |
+| Policy file | 1 MiB (1 048 576 bytes) | exit 4, before parsing |
+| Ranking | 64 MiB | exit 4, before parsing |
+| Patch | 64 MiB | exit 4 |
+| Patch, through the pinned ranker (authority mode) | 1 000 000 lines (deep-diff-forge 0.8.2's own budget) | the ranker refuses it: exit 3, no verdict |
+
+Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2, on one idle
+16-core x86_64 Linux machine (Fedora 44 toolbox), advisory mode, each command alone:
+
+| Case | Time | Peak memory |
+| --- | --- | --- |
+| Ranker, 140 000 new files (980 000 patch lines, 22 MiB) | 0.7 s | 217 MiB |
+| `check` on that patch and its 12.6 MiB ranking | 0.9 s | 172 MiB |
+| The same with 200 `**`-heavy globs in a `protect_paths` rule | 1.7 s | 174 MiB |
+| `check` on one file of 990 000 added lines | 0.1 s | 29 MiB |
+| A patch or ranking one byte over 64 MiB | 0.04 s | 67 MiB |
+
+Not measured: authority mode itself (it needs an owner-enrolled Git), a loaded or smaller
+machine, the worst case of the glob matcher, and the child timeouts (10 s each for the ranker
+and for Git). Before the policy limit existed, `lint` on a 64 MiB policy of 506 626 rules took
+6.5 s and 4 GiB; that is why the policy has its own limit.
 
 Canonical terminology and the distinction between a document and its level are in the
 [glossary](GLOSSARY.md).

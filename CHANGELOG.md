@@ -9,6 +9,10 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- **Breaking:** a policy file over 1 MiB is refused (exit 4, `invalid_input`, before parsing);
+  it shared the ranking's 64 MiB budget before. New constant `MAX_POLICY_BYTES`. Measured: a
+  64 MiB policy of half a million rules parsed in 6.5 s at a peak of 4 GiB. Size limits and
+  measurements are in [the policy reference](docs/POLICY_REFERENCE.md).
 - [Upgrading from 0.1.0](docs/UPGRADING.md) lists every change a 0.1.0 user must act on.
 - `scripts/dogfood.sh` (driver v2) takes `--hosted-advisory` as an optional first argument. The
   repository's hosted `dogfood` job passes it: a hosted runner has no owner-enrolled Git
