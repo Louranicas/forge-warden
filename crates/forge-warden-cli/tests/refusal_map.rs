@@ -12,6 +12,7 @@ mod common;
 
 use common::read;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use syn::visit::Visit;
 
 const ROWS: &str = "crates/forge-warden-core/src/refusal_rows.rs";
@@ -145,7 +146,7 @@ impl<'ast> Visit<'ast> for Tests {
     }
 }
 
-fn render(rows: &[Row]) -> String {
+fn render(rows: &[Row]) -> Result<String, String> {
     let mut text = String::from(
         "# Refusal map\n\n\
          Every refusal variant and every exit, with the one test that observes it. Generated from\n\
@@ -155,19 +156,16 @@ fn render(rows: &[Row]) -> String {
          it observes its variant is proven by one plant per row in `plants/catalog.json`.\n\n\
          | Refusal | Observing test |\n| --- | --- |\n",
     );
-    let table: String = rows
-        .iter()
-        .map(|row| {
-            let cell = if row.test == MISSING {
-                MISSING.to_owned()
-            } else {
-                format!("`{}`", row.test)
-            };
-            format!("| `{}::{}` | {cell} |\n", row.refusal, row.variant)
-        })
-        .collect();
-    text.push_str(&table);
-    text
+    for row in rows {
+        let cell = if row.test == MISSING {
+            MISSING.to_owned()
+        } else {
+            format!("`{}`", row.test)
+        };
+        writeln!(text, "| `{}::{}` | {cell} |", row.refusal, row.variant)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(text)
 }
 
 #[test]
@@ -200,7 +198,7 @@ fn every_row_names_its_own_variant_and_cites_a_test_that_exists() -> Result<(), 
 
 #[test]
 fn the_refusal_map_is_the_rendering_of_the_rows() -> Result<(), String> {
-    let rendered = render(&rows()?);
+    let rendered = render(&rows()?)?;
     if read(MAP) == rendered {
         Ok(())
     } else {
