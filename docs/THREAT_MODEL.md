@@ -1,11 +1,34 @@
 # Threat model
 
-## Scope and evidence status
+## Scope and evidence status (0.2.0)
 
-Scope (2026-11-10): this record was written for commit `a68506f` and has not been
-re-baselined since. Later changes (the effect-door split, Git admission, verdict v2, runner
-routing) are described by their ADRs and tests, not here; the risk table below links current
-tests, which are the check. The record is re-measured on the release commit before 0.2.0.
+Re-baselined 2026-11-11 to the 0.2.0 release candidate: the frozen tree of commit `8555bf6c`
+(hub main `6682ed53`, a merge whose tree is identical). The pinned producer is deep-diff-forge
+v0.8.2, the release binary with SHA-256 `298e0751…41ad` (the full digest is in
+[RUNBOOK.md](RUNBOOK.md), step 3). What was measured on that tree, beyond the tests:
+
+- **Authority mode, end to end, once.** With the pinned release ranker and an enrolled Git
+  allowlist, a docs-only candidate gave `pass` (exit 0, provenance `produced`, Git admission
+  `approved`), a candidate touching a protected path gave `hold` (exit 8), a policy whose
+  `[producer]` digest did not match was refused (exit 4), and an unowned or unenrolled Git was
+  refused (exit 3). The allowlist for that run was installed by an agent through the root of a
+  rootless container, which is the user's own uid on the host: the run proves the admission path,
+  the producer pin and the refusals, **not** an owner-held boundary. An owner installing the
+  allowlist with `sudo` on the host as [RUNBOOK.md](RUNBOOK.md) step 4 says has not been run.
+- **Resource bounds.** Input limits and the time and peak memory of `lint` and `check` at those
+  limits (advisory mode, one machine) are in [POLICY_REFERENCE.md](POLICY_REFERENCE.md), "Size
+  limits, and what was measured".
+- **Hostile input.** The three parsers that read untrusted bytes run under generated inputs on
+  every gate run (256 cases per property, including one-hostile-field-at-a-time properties) and
+  replay [fixtures/hostile](../fixtures/hostile/README.md); one longer campaign (20 000 cases per
+  property) found nothing on an earlier commit of the same harness.
+
+How to read the tables below: where the evidence column names a test, the test is the evidence
+(the gate runs it on every change, so it describes the current code); where it names a source file,
+an ADR or a design document only, the row is a design statement and was not separately measured.
+Plants that prove a test bites are in [plants/README.md](../plants/README.md).
+
+## Earlier record: scope at `a68506f` (2026-11-07, dated)
 
 This WP-D5 design record describes merged hub main `a68506f`, including C1c v4.4,
 D6/D8, B5, E3a and the reviewed expectation/data ledger. Source integration is
