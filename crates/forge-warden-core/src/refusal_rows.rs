@@ -13,7 +13,7 @@
 //! from these arms and compares it byte for byte. The test is named `path::function`; that a
 //! test really observes its variant is proven per row by a plant (layer 3), not by this file.
 //!
-//! `MISSING` marks a row whose observing test is still to be written.
+//! Every row names its observing test, except one stated UNREACHABLE with its reason.
 
 use crate::date::DateError;
 use crate::exit::Exit;
@@ -25,9 +25,6 @@ use crate::seal::SealError;
 
 /// A row: the variant's own name and the `path::function` of the test that observes it.
 pub(crate) type Row = (&'static str, &'static str);
-
-/// A row whose observing test is still to be written.
-pub(crate) const MISSING: &str = "MISSING";
 
 /// The facts test that observes the unreadable-answer variants.
 const GIT_ANSWERS: &str = "crates/forge-warden-core/src/facts.rs::each_unreadable_answer_from_git_is_refused_with_its_own_variant";
@@ -141,6 +138,11 @@ pub(crate) const fn date(e: DateError) -> Row {
     }
 }
 
+/// `Exit::Internal` has no test that reaches it from the binary: it is returned only when
+/// serializing the built-in registry fails (`schema` in main.rs) and is the status of a panic.
+/// Reaching either would need a fault-injection hook, which is not worth its code (REFUSAL-MAP).
+const INTERNAL: &str = "UNREACHABLE: only a registry serialisation failure (main.rs, schema) or a panic; no fault hook";
+
 /// Rows for [`Exit`]: the CLI test that runs the binary and observes the status number.
 pub(crate) const fn exit(e: Exit) -> Row {
     match e {
@@ -168,7 +170,7 @@ pub(crate) const fn exit(e: Exit) -> Row {
             "PolicyHold",
             "crates/forge-warden-cli/tests/adversarial.rs::matching_patch_and_known_ranking_hold_in_advisory_mode",
         ),
-        Exit::Internal => ("Internal", MISSING),
+        Exit::Internal => ("Internal", INTERNAL),
     }
 }
 

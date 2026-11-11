@@ -23,8 +23,12 @@ const ROWS: [&str; 2] = [
 ];
 const MAP: &str = "docs/REFUSAL_MAP.md";
 const MISSING: &str = "MISSING";
+/// A row with no reachable trigger states why, after this prefix, instead of naming a test.
+const UNREACHABLE: &str = "UNREACHABLE: ";
+/// Rows stated unreachable. It only goes down.
+const UNREACHABLE_AT_MOST: usize = 1;
 /// Rows still without an observing test. It only goes down, and is zero when the package is READY.
-const MISSING_AT_MOST: usize = 1;
+const MISSING_AT_MOST: usize = 0;
 
 /// One row of the map, in the order the rows file declares it.
 struct Row {
@@ -184,8 +188,8 @@ fn render(rows: &[Row]) -> Result<String, String> {
          | Refusal | Observing test |\n| --- | --- |\n",
     );
     for row in rows {
-        let cell = if row.test == MISSING {
-            MISSING.to_owned()
+        let cell = if row.test == MISSING || row.test.starts_with(UNREACHABLE) {
+            row.test.clone()
         } else {
             format!("`{}`", row.test)
         };
@@ -202,7 +206,10 @@ fn every_row_names_its_own_variant_and_cites_a_test_that_exists() -> Result<(), 
         return Err("no rows found".to_owned());
     }
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for row in rows.iter().filter(|row| row.test != MISSING) {
+    for row in rows
+        .iter()
+        .filter(|row| row.test != MISSING && !row.test.starts_with(UNREACHABLE))
+    {
         let (path, function) = row.test.split_once("::").ok_or(format!(
             "{}::{}: test {:?} is not path::function",
             row.refusal, row.variant, row.test
@@ -240,12 +247,21 @@ fn the_refusal_map_is_the_rendering_of_the_rows() -> Result<(), String> {
 
 #[test]
 fn rows_without_an_observing_test_only_go_down() -> Result<(), String> {
-    let missing = rows()?.iter().filter(|row| row.test == MISSING).count();
-    if missing <= MISSING_AT_MOST {
-        Ok(())
-    } else {
-        Err(format!(
+    let rows = rows()?;
+    let missing = rows.iter().filter(|row| row.test == MISSING).count();
+    let unreachable = rows
+        .iter()
+        .filter(|row| row.test.starts_with(UNREACHABLE))
+        .count();
+    if missing > MISSING_AT_MOST {
+        return Err(format!(
             "{missing} rows are MISSING; at most {MISSING_AT_MOST} may be"
-        ))
+        ));
     }
+    if unreachable > UNREACHABLE_AT_MOST {
+        return Err(format!(
+            "{unreachable} rows are stated UNREACHABLE; at most {UNREACHABLE_AT_MOST} may be"
+        ));
+    }
+    Ok(())
 }
