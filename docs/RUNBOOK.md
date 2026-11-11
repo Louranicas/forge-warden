@@ -49,6 +49,8 @@ binary somewhere only you can write, and do not modify it afterwards.
 
 ## 4. Install the Git allowlist (owner, root)
 
+**NOT YET RUN** on any machine: it needs the owner's Git allowlist (step 4), which is not installed yet.
+
 Authority mode admits Git only if `/etc/forge-warden/git-allowlist.toml` lists the SHA-256 of the
 Git it runs (`--git`, default `/usr/bin/git`). Without the file, authority mode refuses (exit 3).
 See [the Git runtime](GIT_RUNTIME.md) and ADR 0011.
@@ -86,6 +88,8 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 
 ## 6. Judge a change
 
+**NOT YET RUN** on any machine: it needs the owner's Git allowlist (step 4), which is not installed yet.
+
 ```bash
 git diff --binary --no-renames main... > change.patch
 forge-warden check --policy warden.toml --patch change.patch \
@@ -97,6 +101,8 @@ Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a r
 next step on stderr. `forge-warden schema exit-codes` lists them all.
 
 ## 7. Check that the verdict is an authority verdict
+
+**NOT YET RUN** on any machine: it needs the owner's Git allowlist (step 4), which is not installed yet.
 
 ```bash
 python3 -c 'import json,sys; v=json.load(open("verdict.json")); s=v["seals"]; print(v["verdict"], s["provenance"], s["ranked_by"]["sha256"], s["git"]["admission"], s["git"]["allowlist_sha256"])'
