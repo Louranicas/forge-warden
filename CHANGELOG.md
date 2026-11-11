@@ -9,6 +9,14 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
+- Schemas in this release: the verdict is `forge-warden.verdict.v2`. 0.1.0 shipped v0; v1 existed
+  only between releases and no tagged release carries it (ADR 0011, amendment A1).
+- The policy schema stays `forge-warden.policy.v0`. The `[producer]` table is optional and
+  additive: a policy without it still works, in advisory mode only. Two 0.1.0 policies are now
+  refused all the same (no rules; a file over 1 MiB): see
+  [Upgrading from 0.1.0](docs/UPGRADING.md), section 6.
 - **Breaking:** a policy file over 1 MiB is refused (exit 4, `invalid_input`, before parsing);
   it shared the ranking's 64 MiB budget before. New constant `MAX_POLICY_BYTES`. Measured: a
   64 MiB policy of half a million rules parsed in 6.5 s at a peak of 4 GiB. Size limits and
