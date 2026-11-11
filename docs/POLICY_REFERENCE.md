@@ -225,6 +225,9 @@ Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2
 | The same with 200 `**`-heavy globs in a `protect_paths` rule | 1.7 s | 174 MiB |
 | `check` on one file of 990 000 added lines | 0.1 s | 29 MiB |
 | A patch or ranking one byte over 64 MiB | 0.04 s | 67 MiB |
+| `lint` on a policy just under 1 MiB (8 152 small rules) | 0.1 s | 69 MiB |
+| `check` with that policy | 0.2 s | 82 MiB |
+| `check` on a hand-written ranking at the 64 MiB limit (about 440 000 entries, none in the patch) | 1.0 s | 368 MiB, and a 74 MiB verdict |
 
 Not measured: authority mode itself (it needs an owner-enrolled Git), a loaded or smaller
 machine, the worst case of the glob matcher, and the child timeouts (10 s each for the ranker
