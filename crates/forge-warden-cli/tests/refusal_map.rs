@@ -19,7 +19,7 @@ const ROWS: &str = "crates/forge-warden-core/src/refusal_rows.rs";
 const MAP: &str = "docs/REFUSAL_MAP.md";
 const MISSING: &str = "MISSING";
 /// Rows still without an observing test. It only goes down, and is zero when the package is READY.
-const MISSING_AT_MOST: usize = 14;
+const MISSING_AT_MOST: usize = 1;
 
 /// One row of the map, in the order the rows file declares it.
 struct Row {

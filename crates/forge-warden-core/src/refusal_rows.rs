@@ -29,13 +29,19 @@ pub(crate) type Row = (&'static str, &'static str);
 /// A row whose observing test is still to be written.
 pub(crate) const MISSING: &str = "MISSING";
 
+/// The facts test that observes the unreadable-answer variants.
+const GIT_ANSWERS: &str = "crates/forge-warden-core/src/facts.rs::each_unreadable_answer_from_git_is_refused_with_its_own_variant";
+
 /// Rows for [`Unverifiable`], the reasons patch facts cannot be verified.
 pub(crate) const fn unverifiable(e: &Unverifiable) -> Row {
     match e {
-        Unverifiable::GitRefused(..) => ("GitRefused", MISSING),
-        Unverifiable::Empty => ("Empty", MISSING),
-        Unverifiable::NonUtf8Path => ("NonUtf8Path", MISSING),
-        Unverifiable::NewlineInPath => ("NewlineInPath", MISSING),
+        Unverifiable::GitRefused(..) => (
+            "GitRefused",
+            "crates/forge-warden-cli/tests/authority_mode.rs::git_still_checks_the_producer_and_refusals_hold",
+        ),
+        Unverifiable::Empty => ("Empty", GIT_ANSWERS),
+        Unverifiable::NonUtf8Path => ("NonUtf8Path", GIT_ANSWERS),
+        Unverifiable::NewlineInPath => ("NewlineInPath", GIT_ANSWERS),
         Unverifiable::NonCanonicalPath { .. } => (
             "NonCanonicalPath",
             "crates/forge-warden-core/src/facts.rs::a_non_canonical_git_path_keeps_its_reason",
@@ -44,8 +50,8 @@ pub(crate) const fn unverifiable(e: &Unverifiable) -> Row {
             "RepeatedPath",
             "crates/forge-warden-core/tests/authority.rs::a_no_prefix_patch_is_refused_as_a_repeated_path",
         ),
-        Unverifiable::SummaryPathUnknown(..) => ("SummaryPathUnknown", MISSING),
-        Unverifiable::TypeChange(..) => ("TypeChange", MISSING),
+        Unverifiable::SummaryPathUnknown(..) => ("SummaryPathUnknown", GIT_ANSWERS),
+        Unverifiable::TypeChange(..) => ("TypeChange", GIT_ANSWERS),
         Unverifiable::RenameOrCopy => (
             "RenameOrCopy",
             "crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output",
@@ -91,7 +97,10 @@ pub(crate) const fn policy(e: &PolicyError) -> Row {
             "Malformed",
             "crates/forge-warden-core/src/policy/tests.rs::non_utf8_is_malformed",
         ),
-        PolicyError::Invalid(..) => ("Invalid", MISSING),
+        PolicyError::Invalid(..) => (
+            "Invalid",
+            "crates/forge-warden-core/src/policy/tests.rs::empty_policy_is_refused",
+        ),
     }
 }
 
@@ -135,12 +144,30 @@ pub(crate) const fn date(e: DateError) -> Row {
 /// Rows for [`Exit`]: the CLI test that runs the binary and observes the status number.
 pub(crate) const fn exit(e: Exit) -> Row {
     match e {
-        Exit::Pass => ("Pass", MISSING),
-        Exit::Usage => ("Usage", MISSING),
-        Exit::Io => ("Io", MISSING),
-        Exit::InvalidInput => ("InvalidInput", MISSING),
-        Exit::PolicyFail => ("PolicyFail", MISSING),
-        Exit::PolicyHold => ("PolicyHold", MISSING),
+        Exit::Pass => (
+            "Pass",
+            "crates/forge-warden-cli/tests/authority_mode.rs::a_produced_ranking_that_covers_the_patch_passes_and_says_who_produced_it",
+        ),
+        Exit::Usage => (
+            "Usage",
+            "crates/forge-warden-cli/tests/cli.rs::usage_errors_exit_2_and_io_errors_exit_3",
+        ),
+        Exit::Io => (
+            "Io",
+            "crates/forge-warden-cli/tests/authority_mode.rs::a_ranker_failure_gives_exit_3_and_no_verdict",
+        ),
+        Exit::InvalidInput => (
+            "InvalidInput",
+            "crates/forge-warden-cli/tests/adversarial.rs::a_hash_mismatch_refuses_without_emitting_a_verdict",
+        ),
+        Exit::PolicyFail => (
+            "PolicyFail",
+            "crates/forge-warden-cli/tests/adversarial.rs::protection_and_forbidden_signal_have_fail_controls",
+        ),
+        Exit::PolicyHold => (
+            "PolicyHold",
+            "crates/forge-warden-cli/tests/adversarial.rs::matching_patch_and_known_ranking_hold_in_advisory_mode",
+        ),
         Exit::Internal => ("Internal", MISSING),
     }
 }
