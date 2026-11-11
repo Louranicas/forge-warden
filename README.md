@@ -247,7 +247,9 @@ grants nothing.
 
 forge-warden is a gate, so it is built behind one. Nothing below is a guideline; each item is
 enforced by the compiler, a test, CI, or a hook, and [`CLAUDE.md`](CLAUDE.md) gives agents the same
-contract.
+contract. Two limits, stated where each layer is described: the effect wall is a list of the
+spellings it refuses (a form outside the list passes until it is added), and the agent hook layer
+is a convenience that catches mistakes early, not a boundary (CI and the build checks are).
 
 | Layer | What it stops | Where |
 | --- | --- | --- |

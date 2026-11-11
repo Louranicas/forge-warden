@@ -229,7 +229,8 @@ Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2
 | `check` with that policy | 0.2 s | 82 MiB |
 | `check` on a hand-written ranking at the 64 MiB limit (about 440 000 entries, none in the patch) | 1.0 s | 368 MiB, and a 74 MiB verdict |
 
-Not measured: authority mode itself (it needs an owner-enrolled Git), a loaded or smaller
+Not measured here: the time and memory of authority mode (it has been run once end to end, in a
+container with an agent-installed allowlist: see [RUNBOOK.md](RUNBOOK.md) step 6), a loaded or smaller
 machine, the worst case of the glob matcher, and the child timeouts (10 s each for the ranker
 and for Git). Before the policy limit existed, `lint` on a 64 MiB policy of 506 626 rules took
 6.5 s and 4 GiB; that is why the policy has its own limit.

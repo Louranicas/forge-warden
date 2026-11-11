@@ -96,8 +96,12 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 
 ## 6. Judge a change
 
-**NOT YET RUN** in authority mode on any machine: it needs the owner's Git allowlist (step 4), which is
-not installed yet. The advisory commands below were run as written.
+**Run once in authority mode, not yet as written by an owner.** On 2026-11-11 a verifier ran it on the
+0.2.0 release candidate inside a toolbox container, with an allowlist an agent installed through the
+container's root (which is the user's own uid on the host): a docs-only change gave `pass` (exit 0), a
+change to a protected path `hold` (exit 8), a wrong `[producer]` digest exit 4, and an unowned or
+unenrolled Git exit 3. That proves the commands and the refusals, not an owner-held allowlist. The
+advisory commands below were run as written.
 
 ```bash
 git diff --binary --no-renames main... > change.patch
@@ -119,7 +123,9 @@ forge-warden check --policy warden.toml --patch change.patch --advisory --rank r
 
 ## 7. Check that the verdict is an authority verdict
 
-**NOT YET RUN** on any machine: it needs the owner's Git allowlist (step 4), which is not installed yet.
+**Not yet run as written.** The verdict of the authority run described in step 6 records what this step
+checks (provenance `produced`, the pinned ranker digest, Git admission `approved` and the allowlist's
+digest), but the commands below were not run on it, and not on a host with the owner's allowlist (step 4).
 
 ```bash
 python3 -c 'import json,sys; v=json.load(open("verdict.json")); s=v["seals"]; print(v["verdict"], s["provenance"], s["ranked_by"]["sha256"], s["git"]["admission"], s["git"]["allowlist_sha256"])'
