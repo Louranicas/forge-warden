@@ -147,7 +147,7 @@ argument group in `src/main.rs`), and refuses with a usage error (exit 2) when n
 | `patch_facts_sha256` | SHA-256 of Git's facts: `--numstat -z` output, one 0x00 byte, `--summary` output. `null` when Git refused the patch. |
 | `provenance` | `produced` (authority) or `supplied` (advisory). |
 | `ranked_by` | `{version, sha256}`: the version the ranking reports, and the ranker binary's SHA-256 (`null` when supplied). |
-| `git` | The Git that read the patch: `{path, version, sha256, admission, allowlist_sha256}`. `sha256` is the executable read through the descriptor every Git call used; `admission` is `approved` when that digest is enrolled in the owner's allowlist, `unpinned` otherwise (advisory only); `allowlist_sha256` is the SHA-256 of the admitted allowlist bytes, `null` when unpinned. `path` and `version` are recorded for audit, not attested. |
+| `git` | The Git that read the patch: `{path, version, sha256, admission, allowlist_sha256}`. `sha256` is the executable read through the descriptor every Git call used; `admission` is `approved` when that digest is enrolled in the owner's allowlist and `unpinned` only in advisory mode with no allowlist installed (with an allowlist, an unenrolled digest is refused in both modes); `allowlist_sha256` is the SHA-256 of the admitted allowlist bytes, `null` when unpinned. `path` and `version` are recorded for audit, not attested. |
 | `claims` | Only when `--base`/`--head` were given: `{base?, head?, verified: false}`. |
 
 `sha256sum` reproduces every digest. v0's `patch_verified` is gone: the patch is always hashed.
