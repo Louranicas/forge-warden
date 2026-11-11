@@ -67,12 +67,28 @@ def preflight(required, root, env):
 # Reviewed bounds, not candidate-provided ranges. Evidence/headroom: docs/CI_BOUNDS.md.
 # A budget change needs the same protected-code review as a workflow change.
 CI_TIMEOUTS = {
-    "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10, "workflow-audit": 10,
+    "ci.yml": {"gate": 45, "msrv": 10, "supply-chain": 10, "workflow-audit": 10,
                "mutation": 5, "mutation-plan": 10, "mutation-shards": "${{ matrix.minutes }}",
                "dogfood": 10, "vocabulary": 10},
     "mutation-baseline.yml": {"route": 5, "full-workspace": 5, "mutation-plan": 10,
                               "mutation-shards": "${{ matrix.minutes }}"},
 }
+
+
+# CI-GATE-BUDGET (ledger Q49): the gate job's time grows with the plant catalogue, and at 101
+# plants it no longer fitted 20 minutes on a hosted runner. The 45-minute budget above holds, with
+# the headroom docs/CI_BOUNDS.md derives, for at most this many catalogue cases. A catalogue that
+# outgrows it fails here, in the fast gate, instead of being cancelled on a hosted runner.
+GATE_PLANT_CAPACITY = 140
+
+
+def check_gate_capacity(root):
+    """Refuse a catalogue larger than the one the gate job's reviewed budget was derived for."""
+    count = len(json.loads((root / 'plants/catalog.json').read_text())['cases'])
+    if count > GATE_PLANT_CAPACITY:
+        raise ValueError(
+            f'plant catalogue has {count} cases; the ci/gate budget was derived for at most '
+            f'{GATE_PLANT_CAPACITY}: re-derive it (docs/CI_BOUNDS.md) before adding more')
 
 
 def workflow_lines(text):
@@ -193,6 +209,7 @@ def check_mutation_contract(root):
 def check_ci(root):
     """Conservative check of this repository's owned workflow shape, not a general YAML parser."""
     check_timeouts(root)
+    check_gate_capacity(root)
     check_mutation_contract(root)
     cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
     required = requirements(cases)

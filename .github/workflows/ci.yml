@@ -28,7 +28,7 @@ env:
 
 jobs:
   gate:
-    timeout-minutes: 20
+    timeout-minutes: 45
     name: gate (fmt, clippy, test, doc)
     runs-on: ubuntu-latest
     steps:
