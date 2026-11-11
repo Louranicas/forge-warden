@@ -13,6 +13,9 @@
 //! in the registry (`forge-warden schema exit-codes`), with the next action to take.
 
 mod doors;
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+mod refusal_rows;
 
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]

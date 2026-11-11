@@ -9,7 +9,8 @@
       "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
-      "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a."
+      "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
+      "G-53 refusal map: row added 2026-11-11 under Lodestar's REFUSAL-MAP ruling (WORKBOARD 04:15Z): every refusal variant and exit has a row in docs/REFUSAL_MAP.md naming the test that observes it; three sampled variant-swap plants, not one per row."
     ]
   },
   "cases": [
@@ -2119,6 +2120,81 @@
         "python3",
         "rustc",
         "rustup"
+      ]
+    },
+    {
+      "id": "refusal-map-core-variant-swap",
+      "guardrail": "G-53",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "diagnostic": "each_unreadable_answer_from_git_is_refused_with_its_own_variant.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--locked",
+        "--offline",
+        "--lib",
+        "--",
+        "each_unreadable_answer_from_git_is_refused_with_its_own_variant"
+      ],
+      "old": "                return Err(Unverifiable::NewlineInPath);",
+      "new": "                return Err(Unverifiable::Empty);",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "refusal-map-cli-variant-swap",
+      "guardrail": "G-53",
+      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "diagnostic": "git_facts_name_a_door_failure_and_an_unavailable_git.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "git_facts_name_a_door_failure_and_an_unavailable_git"
+      ],
+      "old": "GitFactsFailure::Unavailable(format!(\"git apply: {why}\"))",
+      "new": "GitFactsFailure::Refused(format!(\"git apply: {why}\"))",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "refusal-map-variant-not-just-effect",
+      "guardrail": "G-53",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "git_still_checks_the_producer_and_refusals_hold.*FAILED",
+      "command": [
+        "python3",
+        "-I",
+        "-c",
+        "import json,subprocess,sys\nsteps=[[\"cargo\",\"build\",\"--workspace\",\"--examples\",\"--locked\",\"--offline\"],[\"cargo\",\"test\",\"-p\",\"forge-warden-cli\",\"--test\",\"authority_mode\",\"git_still_checks_the_producer_and_refusals_hold\",\"--locked\",\"--offline\",\"--\",\"--nocapture\"]]\nfor cmd in steps:\n print(\"COMMAND \"+json.dumps(cmd),flush=True)\n result=subprocess.run(cmd)\n if result.returncode: sys.exit(result.returncode)"
+      ],
+      "old": "Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::GitRefused(why)), None)),",
+      "new": "Err(GitFactsFailure::Refused(why)) => Ok((Err(Unverifiable::UnreadableGitOutput(why)), None)),",
+      "required_tools": [
+        "bash",
+        "cargo",
+        "coreutils",
+        "git",
+        "python3",
+        "rustc",
+        "rustup",
+        "sh"
       ]
     },
     {

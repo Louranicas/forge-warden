@@ -1918,6 +1918,10 @@
         "a6dae790eb0c5834a3edf5ff8712e2575760df9de6cbba6700cc7ada8df7fd2c"
       ],
       [
+        "crates/forge-warden-cli/src/refusal_rows.rs",
+        "9d509e24ca553bb0eaa4e1a84bbd9f208fc0c6dc367f77194fe35f8fdc98a719"
+      ],
+      [
         "crates/forge-warden-cli/tests/adversarial.rs",
         "678c04bc8c1de65df391db1d427e1b2c4ae5ce868b3d3541dbc6ff682c3ebe0f"
       ],
@@ -1980,6 +1984,10 @@
       [
         "crates/forge-warden-cli/tests/public_api.rs",
         "6a3697ddd558b4cb0bf75f573c07ae76e415ee706ff0a6b62f80bdf60e1fe1b0"
+      ],
+      [
+        "crates/forge-warden-cli/tests/refusal_map.rs",
+        "994ae7f60ab57471b7f60c33f9bda99b300c4f8cf969fb503414c89e94121501"
       ],
       [
         "crates/forge-warden-cli/tests/repo_invariants.rs",
@@ -2072,6 +2080,10 @@
       [
         "crates/forge-warden-core/src/rank.rs",
         "d4e736ace1a6ae7127744c964d3aa0843f62916e59b3d74a1475616e8111510b"
+      ],
+      [
+        "crates/forge-warden-core/src/refusal_rows.rs",
+        "a7596989ac86e966f005b1a8e10d3b3efd22a1ee6618fd2c8b460297101cca8b"
       ],
       [
         "crates/forge-warden-core/src/render.rs",

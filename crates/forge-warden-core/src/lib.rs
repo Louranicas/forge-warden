@@ -32,6 +32,8 @@ pub mod nonempty;
 pub mod path;
 pub mod policy;
 pub mod rank;
+#[cfg(test)]
+mod refusal_rows;
 pub mod render;
 pub mod seal;
 pub mod verdict;
