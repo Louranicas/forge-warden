@@ -217,7 +217,11 @@ Take the policy from the **base** checkout, not from the pull request. Otherwise
 can loosen the rules that judge it. This repository's own workflow
 ([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) runs [`scripts/dogfood.sh`](scripts/dogfood.sh)
 from a separate base checkout. The candidate is only diff data, and the driver picks authority or
-advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). A workflow file in
+advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). On a hosted runner
+it is asked for advisory mode (`--hosted-advisory`): the runner has no owner-enrolled Git allowlist
+([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)), so that job reports evidence and cannot PASS. It
+still fetches the pinned deep-diff-forge release and checks its bytes. Authority mode is claimed
+only for a machine whose owner enrolled the allowlist. A workflow file in
 the repository is not an independent approval boundary, so the trust root must be enforced
 outside the pull request (see [`SECURITY.md`](SECURITY.md)).
 

@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# forge-warden trusted-dogfood-driver v1
+# forge-warden trusted-dogfood-driver v2
 # Run from a clean trusted base checkout. The candidate is Git data, never executable code.
-# Usage: dogfood.sh <base-sha> <head-sha> <candidate-checkout> <new-evidence-directory> [ack.json ack.sig]
+# Usage: dogfood.sh [--hosted-advisory] <base-sha> <head-sha> <candidate-checkout> <new-evidence-directory> [ack.json ack.sig]
+# --hosted-advisory, first and written by the caller, asks for advisory mode although the trusted
+# policy pins a producer. It is for a hosted runner, which has no owner-enrolled Git allowlist and
+# so cannot judge in authority mode; the result cannot PASS. Nothing in the environment selects
+# it, and without it a pinned policy means authority mode: a missing allowlist is then exit 3.
 set -euo pipefail
+hosted_advisory=false
+if [ "${1:-}" = --hosted-advisory ]; then
+  hosted_advisory=true
+  shift
+fi
 if [ "$#" -ne 4 ] && [ "$#" -ne 6 ]; then
-  echo "dogfood: expected four arguments, optionally followed by signed acknowledgement and signature" >&2
+  echo "dogfood: expected [--hosted-advisory] and four arguments, optionally followed by signed acknowledgement and signature" >&2
   exit 2
 fi
 base="${1:?base sha}"
@@ -69,10 +78,15 @@ tar --extract --gzip --no-same-owner --file "$out/ranker/$ddf_name.tar.gz" \
   --directory "$out/ranker" --strip-components=1 "$ddf_name/deep-diff-forge"
 mv -- "$out/ranker/deep-diff-forge" "$out/ranker/bin/deep-diff-forge"
 mode="$(python3 -I "$trusted/scripts/judge_mode.py" "$out/policy.toml")"
+advisory_reason='trusted policy has no producer pin'
+if [ "$hosted_advisory" = true ]; then
+  mode=advisory
+  advisory_reason='--hosted-advisory: a hosted runner has no owner-enrolled Git allowlist'
+fi
 if [ "$mode" = authority ]; then
   judge_mode=(--ranker "$out/ranker/bin/deep-diff-forge")
 else
-  echo 'dogfood: explicit advisory mode (trusted policy has no producer pin); this result cannot PASS' >&2
+  echo "dogfood: explicit advisory mode ($advisory_reason); this result cannot PASS" >&2
   "$out/ranker/bin/deep-diff-forge" --stdin-patch --rank --json < "$out/change.patch" > "$out/rank.json"
   judge_mode=(--advisory --rank "$out/rank.json")
 fi
@@ -81,6 +95,7 @@ printf 'base=%s\nhead=%s\nddf_rev=%s\nddf_release=%s\nddf_archive_sha256=%s\n' \
 sha256sum "$out/target/release/forge-warden" "$out/ranker/bin/deep-diff-forge" \
   "$out/change.patch" "$out/policy.toml" >> "$out/provenance.txt"
 printf 'mode=%s\n' "$mode" >> "$out/provenance.txt"
+if [ "$mode" = advisory ]; then printf 'advisory_reason=%s\n' "$advisory_reason" >> "$out/provenance.txt"; fi
 if [ "$mode" = advisory ]; then sha256sum "$out/rank.json" >> "$out/provenance.txt"; fi
 # Preserve the raw verdict; a signed acknowledgement is a separate admission decision.
 set +e

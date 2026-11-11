@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- `scripts/dogfood.sh` (driver v2) takes `--hosted-advisory` as an optional first argument. The
+  repository's hosted `dogfood` job passes it: a hosted runner has no owner-enrolled Git
+  allowlist, so with the producer now pinned in `warden.toml` it could not judge in authority mode
+  (exit 3). Hosted dogfood is advisory by decision and cannot PASS; without the argument a pinned
+  policy still means authority mode. No schema or exit code changes.
 - A patch Git refuses is now judged in one code path that cannot finish without its
   `patch_unverifiable` note (Q25; `Verdict::held_by`, crate-internal). For consumers nothing
   changes: the verdict document, its schema and the exit codes are the same, a refused patch still
