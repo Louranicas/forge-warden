@@ -175,6 +175,18 @@ source_reason = "door: admit_base (canonicalize)"
 review_reason = "C1b base admission canonicalizes the absolute temp path before requiring non-lossy UTF-8 and a colon-free Git ceiling; refusal prevents repository discovery escapes."
 
 [[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/isolation.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: create_in (the child door's one private directory)"
+review_reason = "EFFECT-WALL.2 lists std::fs::DirBuilder::create; this existing door code creates the child's private directory exclusively with mode 0700 and reuses no existing name. Behaviour unchanged; the annotation names an effect that was already there."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/isolation.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: drop (removes the private directory only when it is empty)"
+review_reason = "EFFECT-WALL.2 lists std::fs::remove_dir; this existing door code removes its own private directory non-recursively on drop, so an unexpected leftover stays visible. Behaviour unchanged."
+
+[[expectation]]
 file = "crates/forge-warden-core/tests/coverage.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test helpers read committed fixtures; a panic here is a failed test"
@@ -367,14 +379,26 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "0ac9f99bd00b77a11d3df148345aa3f228e209c2a935af25b4a9fb1e1f0eb7f9"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged."
+sha256 = "70cd6adb9dca567ef8d25a7a97a1c78e1c840d16ff86b94f62376ac4321c033a"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged. WP-EFFECT-WALL.2 adds two groups, effect-plants (ten lines: eight std effects, one UFCS form, one control) and git-oracle-plants (five lines), for the new clippy controls in tests/mint_lint.rs; no existing entry changes."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "test fixture: resolve scratch executable identity and child cwd independently of repository modes"
 review_reason = "Q-HERMETIC.1: canonicalize only owned scratch paths and read the test cwd to prove a relative executable retains identity after child chdir; no production exemption or copied repository mode dependency."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test fixture: looks at whether the scratch directory still exists"
+review_reason = "EFFECT-WALL.2 lists std::path::Path::exists; this test asks only whether its own scratch directory is gone after drop and after an unwind. Test-only."
+
+[[expectation]]
+file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test fixture: makes a symlink to a scratch executable"
+review_reason = "EFFECT-WALL.2 lists std::os::unix::fs::symlink; this test links a scratch executable to prove the invocation name is preserved. Test-only, inside owned scratch."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/public_api.rs"
