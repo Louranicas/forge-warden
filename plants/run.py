@@ -77,12 +77,18 @@ def classify(baseline, planted, diagnostic):
 
 
 def check_restore(root, output, case_id, row):
-    """A dirty checkout invalidates the case and stops later plants from consuming it."""
+    """A dirty checkout invalidates the case and stops later plants from consuming it. Ignored files
+    count too (C12): a command that leaves, say, an ignored `verdict.json` in the checkout would
+    otherwise leak into every later case unseen. Only the root `target/` directory is exempt, by
+    name: it is build output, and cargo's own target directory is outside the checkout anyway."""
     log = output / (case_id + '-restore.log')
     result = execute(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
-                      'status', '--porcelain=v1', '--untracked-files=all'], root, log, timeout=30)
+                      'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'],
+                     root, log, timeout=30)
     row['restore'] = result
-    if result['error'] or result['exit'] or log.stat().st_size:
+    left = [line for line in log.read_text(encoding='utf-8', errors='replace').splitlines()
+            if line != '!! target/']
+    if result['error'] or result['exit'] or left:
         row['status'] = 'ERROR_RESTORE'
         return False
     return True

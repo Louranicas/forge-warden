@@ -232,6 +232,45 @@ class Runner(unittest.TestCase):
             self.assertTrue(report['aborted_after_restore_error'])
             self.assertEqual(git('status', '--porcelain'), b'')
 
+    def test_an_ignored_file_left_by_a_command_stops_the_run_but_target_does_not(self):
+        # C12: git status without --ignored hid an ignored file a command left in the checkout.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'; source.mkdir()
+            (source / 'Cargo.lock').write_text('fixture lock\n')
+            (source / '.gitignore').write_text('/target\n/verdict.json\n')
+            (source / 'check.py').write_text(
+                'from pathlib import Path\nimport sys\n'
+                'out = Path(sys.argv[1]); out.parent.mkdir(exist_ok=True); out.write_text("x")\n'
+                'bad = Path("new.plant").exists()\n'
+                'print("named create breach" if bad else "clean create baseline")\n'
+                'sys.exit(101 if bad else 0)\n')
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'core.hooksPath=/dev/null',
+                    '-C', str(source), *args], env=RUN.environment(), stderr=subprocess.PIPE)
+            git('init', '-q'); git('add', '--', 'Cargo.lock', '.gitignore', 'check.py')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            revision = git('rev-parse', 'HEAD').decode().strip()
+            (root / 'run.py').write_bytes(Path(__file__).with_name('run.py').read_bytes())
+            (root / 'catalog.json').write_text(json.dumps(dict(register={}, pending_guardrails=[], cases=[
+                dict(id='leaves-ignored', guardrail='G-06', path='new.plant', create='x\n',
+                     command=[sys.executable, '-I', 'check.py', 'verdict.json'], diagnostic='named create breach'),
+                dict(id='leaves-target', guardrail='G-06', path='new.plant', create='x\n',
+                     command=[sys.executable, '-I', 'check.py', 'target/out'], diagnostic='named create breach')])))
+            common = [sys.executable, '-I', str(root / 'run.py'), '--source', str(source), '--revision', revision]
+            result = subprocess.run([*common, '--output', str(root / 'target-ok'), '--case', 'leaves-target'],
+                                    capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads((root / 'target-ok' / 'report.json').read_text())
+            self.assertEqual(report['results'][0]['status'], 'CAUGHT')
+            result = subprocess.run([*common, '--output', str(root / 'leak'), '--case', 'leaves-ignored'],
+                                    capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            report = json.loads((root / 'leak' / 'report.json').read_text())
+            self.assertEqual(report['results'][0]['status'], 'ERROR_RESTORE')
+            self.assertTrue(report['aborted_after_restore_error'])
+
     def test_no_create_outlives_its_case_even_when_its_write_fails(self):
         # F1 (Keel): a create whose write fails, at an ignored path git status cannot see, must not
         # leave its file for the next case. Pinned through run.py main, case after case.
