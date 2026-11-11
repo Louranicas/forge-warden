@@ -2044,6 +2044,82 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "door-clap-attribute-effect",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "shipped_code_writes_no_expression_in_an_attribute.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "shipped_code_writes_no_expression_in_an_attribute"
+      ],
+      "old": "#[derive(Parser)]\n",
+      "new": "#[derive(Parser)]\n#[command(after_help = std::env::var(\"FW_PLANT\").is_ok().to_string())]\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "crate-local-clippy-config",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/clippy.toml",
+      "create": "# A lint configuration beside the crate: it would replace the reviewed root file for this crate.\ndisallowed-methods = []\n",
+      "diagnostic": "the_lint_configuration_is_exactly_the_two_reviewed_files.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_lint_configuration_is_exactly_the_two_reviewed_files"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "stray-clippy-config",
+      "guardrail": "G-06",
+      "path": "scripts/clippy.toml",
+      "create": "# A lint configuration in another directory: a cargo [env] CLIPPY_CONF_DIR could point clippy at it.\ndisallowed-methods = []\n",
+      "diagnostic": "the_lint_configuration_is_exactly_the_two_reviewed_files.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "the_lint_configuration_is_exactly_the_two_reviewed_files"
+      ],
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [

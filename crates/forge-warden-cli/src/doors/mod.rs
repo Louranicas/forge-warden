@@ -16,7 +16,7 @@ pub(crate) enum DoorErrorKind {
     /// The host is not set up as the door requires: an unsafe temporary directory, an unusable
     /// clock (exit 3, `check_environment`).
     Environment,
-    /// The input is over its byte budget (exit 4, `change_input`).
+    /// The input is over its byte budget (exit 4, `reduce_input_size`).
     OverBudget,
     /// The door refuses the input itself: not a regular file, a symbolic link it does not follow,
     /// unsafe ownership or mode (exit 4, `change_input`).

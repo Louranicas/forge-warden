@@ -2122,6 +2122,10 @@
         "83085dffea141ff3922f0b60dfbc2bf8b21555a05288351ea76d914d6e904b5c"
       ],
       [
+        "crates/forge-warden-core/tests/hostile_input.rs",
+        "23084db44313a704d1f6b3ef5555147b5566e7b352ebc6f7cca262166d67144a"
+      ],
+      [
         "crates/forge-warden-core/tests/laws.rs",
         "0cca0e5fa53c94f24f473d1c5373705c89ce87135832c6b4fc43d5fa738497ed"
       ],

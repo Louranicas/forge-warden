@@ -367,8 +367,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "349a54b75e649d7be20f5c25f2f28ab2706f13d8d7d4d428cd4a54fab121aa0e"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged."
+sha256 = "0ac9f99bd00b77a11d3df148345aa3f228e209c2a935af25b4a9fb1e1f0eb7f9"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
@@ -499,3 +499,27 @@ file = "crates/forge-warden-core/tests/z3_authority.rs"
 lint = "clippy::print_stderr"
 source_reason = "the executed and accepted counts are the law's receipt evidence"
 review_reason = "Test-only: each generated law prints its executed/accepted counts and seed to stderr as receipt evidence; nothing in production prints."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: the parser harness reads committed fixtures and corpus files, runs each parse on a watchdog thread so a hang fails the test instead of stalling it, and reads HOSTILE_CASES only to raise its case budget for a campaign; production core stays free of these effects."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::panic"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: a parse that does not return within the bound fails the test with a panic naming the parser; a hang must be a red test, not a stalled run."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers read committed fixtures, run each parse on a watchdog thread and read HOSTILE_CASES; a panic here is a failed test"
+review_reason = "WP-HOSTILE-INPUT: harness setup unwraps committed fixture reads and seed selection; missing seeds fail the test instead of shrinking the input space."
+
+[[expectation]]
+file = "crates/forge-warden-core/tests/hostile_input.rs"
+lint = "clippy::disallowed_types"
+source_reason = "the harness bounds each parse by wall time: Instant is the clock it measures with"
+review_reason = "WP-HOSTILE-INPUT: Instant measures each parse against the 2 s bound; the harness is a test and does not reach production timing."

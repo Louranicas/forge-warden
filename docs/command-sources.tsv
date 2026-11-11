@@ -36,6 +36,7 @@ docs/adr/0011-admitted-git-runtime.md	0
 docs/claude-project/INSTRUCTIONS.md	0
 docs/claude-project/README.md	0
 docs/runner-up.md	0
+fixtures/hostile/README.md	0
 justfile	1
 plants/README.md	0
 schemas/README.md	0
