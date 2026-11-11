@@ -142,8 +142,9 @@ Nothing in this ADR claims that an in-repository workflow alone establishes auth
   The outcome type of `Verdict<Supplied>` is `AdvisoryOutcome { Hold, Fail }`, **which has no `Pass` variant**, so
   "a supplied ranking can never approve" is a type fact, not a test fact.
 - `Ranking<Produced>` is minted only by `Produced::attest(rank_bytes, producer_sha256)`. The core cannot know that
-  a door ran; so this one is rung 4: a `repo_invariants` test refuses any call to `attest` outside
-  `crates/forge-warden-cli/src/doors.rs`. A *library* caller can still call `attest`. The guarantee is the binary's,
+  a door ran; so this one is rung 4: clippy's `disallowed-methods` (root `clippy.toml`) refuses any call to `attest`
+  outside the door function `doors::child::produce_ranking` (`crates/forge-warden-cli/src/doors/child/ranker.rs`; see
+  §10). A *library* caller can still call `attest`. The guarantee is the binary's,
   and the doc comment says so.
 
 ### 2.8 Rules read Git's facts; Git may only add change-kind signals (T2)
@@ -356,3 +357,12 @@ WP-Q-RANK-BINARY adds real-producer tests beside it in `tests/authority.rs`. §5
 04bbf7b5. That record is left as is: it names what its reviewers read. The next Z3 frozen revision (B6) re-pins.
 
 Found by Keel's Q-RANK-BINARY brief (row G4), confirmed on source by Bastion (O4); decided by Lodestar (O1), Option 1.
+
+## 10. Amendment (SMALL-CLOSES, 2026-11-10): the door file after Q-DOOR-SPLIT
+
+WP-Q-DOOR-SPLIT (2026-11-10) replaced `src/doors.rs` with the listed door modules under `src/doors/` (ADR 0001,
+amended the same day). §2 now names the door that mints a produced ranking: `doors::child::produce_ranking` in
+`crates/forge-warden-cli/src/doors/child/ranker.rs`, whose helper `produce_ranking_in` holds the one
+`#[expect(clippy::disallowed_methods)]` that admits the call to `Ranking::attest`. §2 had also said a `repo_invariants` test held this; the rule is, and was in §8, the
+`disallowed-methods` entry in the root `clippy.toml`. §8's two mentions of `doors.rs` are kept as written: they record
+the code of 2026-11-07. No behaviour, test or policy changes with this amendment (ledger Q16).

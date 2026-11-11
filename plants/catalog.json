@@ -2120,6 +2120,15 @@
         "rustc",
         "rustup"
       ]
+    },
+    {
+      "id": "docs-name-missing-test",
+      "guardrail": "G-40",
+      "path": "docs/GIT_RUNTIME.md",
+      "append": "\nPinned by `planted_name_of_a_missing_test`.\n",
+      "diagnostic": "GIT_RUNTIME\\.md:[0-9]+: `planted_name_of_a_missing_test` names no fn, def or lint",
+      "cargo": ["test", "-p", "forge-warden-cli", "--locked", "--offline", "--test", "docs_inventory", "--", "docs_name_only_tests_and_files_that_exist"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     }
   ],
   "pending_guardrails": [
@@ -2139,19 +2148,13 @@
       "id": "G-38",
       "title": "Required CI check names drift",
       "status": "PENDING",
-      "reason": "Required-check names are enforced by hosted admission, but this offline runner has no approved check-name snapshot/identity adapter."
-    },
-    {
-      "id": "G-40",
-      "title": "Docs and comments that name non-existent tests (R-15)",
-      "status": "PENDING",
-      "reason": "No general documentation/test-reference invariant is implemented. Naming a nonexistent test is still a review obligation."
+      "reason": "Waits on owner input (Luke; ledger Q23): an exported copy of the GitHub ruleset's required check names, to pin offline. Required-check names are enforced by hosted admission; this offline runner has no approved snapshot, so no plant is claimed."
     },
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
       "status": "PENDING",
-      "reason": "Hosted zizmor audit exists, but the trusted offline execution image has no zizmor. No installation or weaker replacement audit is performed."
+      "reason": "Waits on owner input (Luke; ledger Q23): zizmor installed in the trusted offline gate image, or a ruling that G-47 is enforced hosted-only. The hosted zizmor audit exists; no installation or weaker replacement audit is performed offline."
     }
   ]
 }
