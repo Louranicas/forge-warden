@@ -216,9 +216,7 @@ mod child_tests {
         let policy = root.join("allowlist.toml");
         let digest = forge_warden_core::seal::sha256_hex(&std::fs::read(program).unwrap());
         std::fs::write(&policy, format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n")).unwrap();
-        let git =
-            super::child::fixture_git(program, &policy, &root, owner, false)
-                .unwrap();
+        let git = super::child::fixture_git(program, &policy, &root, owner, false).unwrap();
         // Admission owns its descriptor and snapshot; only this call owns the fixture path.
         std::fs::remove_dir_all(&root).unwrap();
         git
@@ -230,7 +228,7 @@ mod child_tests {
         use super::child::{GitFactsFailure, git_facts_in};
         let door = git_facts_in(&test_git(), b"", Path::new("relative/base"));
         assert!(
-            matches!(&door, Err(GitFactsFailure::Door(e)) if e.kind == DoorErrorKind::Environment),
+            matches!(&door, Err(GitFactsFailure::Door(e)) if e.kind == super::DoorErrorKind::Environment),
             "{door:?}"
         );
         // A "Git" that never stops writing: the stdout cap ends it, and that is Unavailable (the
@@ -915,7 +913,7 @@ mod child_tests {
         assert!(refused(Path::new("relative/dir")).ends_with("not absolute"));
         assert_eq!(
             admit_base(Path::new("relative/dir")).unwrap_err().kind,
-            DoorErrorKind::Environment
+            super::DoorErrorKind::Environment
         );
         let colon = root.join("colon:base");
         std::fs::create_dir_all(&colon).unwrap();

@@ -126,7 +126,16 @@ mod tests {
         let missing = read_file(Path::new("/nonexistent/forge-warden/refusal-map")).unwrap_err();
         assert_eq!(missing.kind, DoorErrorKind::Io, "{}", missing.message);
         let directory = read_file(Path::new("/")).unwrap_err();
-        assert_eq!(directory.kind, DoorErrorKind::Refused, "{}", directory.message);
-        assert!(directory.message.contains("not a regular file"), "{}", directory.message);
+        assert_eq!(
+            directory.kind,
+            DoorErrorKind::Refused,
+            "{}",
+            directory.message
+        );
+        assert!(
+            directory.message.contains("not a regular file"),
+            "{}",
+            directory.message
+        );
     }
 }
