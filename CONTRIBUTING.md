@@ -164,6 +164,8 @@ The receipt binds the artifact SHA-256, source-input subject and test cfg set. M
 mismatching receipts refuse before execution; the producer executes the verified descriptor
 with an explicit empty policy root. The subject works in dirty and Git-less source copies;
 it is not a Git commit or a signed attestation. Reviewers still bind the source to the reviewed commit.
+The subject is the SHA-256 of the receipt's own `inputs` map of file digests; `golden_output.py`
+checks that the two agree but does not recompute those digests from the source files.
 Admission state is never normalized away.
 The explicit operator-only `scripts/bless.sh --binary PATH --receipt PATH --subject source-sha256:HEX`
 entrypoint uses the same artifact receipt and can regenerate after intended changes;

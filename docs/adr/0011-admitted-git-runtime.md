@@ -68,3 +68,12 @@ Before implementation is READY, an independent verifier must demonstrate:
 6. ADR0010 regressions plus the current mandatory fw-verify gate (plants, mutants, MSRV); controlled fixture policy is test-only and is not enrollment into Luke's deployment.
 
 Implementation sequencing (A2): begin only after Q-TYPES-1 merges because both change the authority/provenance boundary. Keel builds; Touchstone independently verifies; Bastion reviews the boundary as ADR author, not builder. Freeze the actual post-merge implementation base before work starts. Luke's first and subsequent enrollment remain separate explicit owner acts. This accepted decision contains no enrolled hashes and performs no runtime deployment.
+
+## Amendment (2026-11-10): what shipped differs from the migration plan
+
+The implementation emits `forge-warden.verdict.v2` unconditionally. The `--verdict-schema v2` flag proposed under
+Migration was not built, and no code path emits a v1 or v0 verdict (no `verdict.v1` or `verdict.v0` string in
+`crates/*/src`). So a caller cannot request v1, and the downgrade the Migration bullets guard against has no route.
+Consumers that still read v1 must move to v2; the 0.2.0 upgrade notes state it. Git admission itself is as designed:
+the allowlist is read from `/etc/forge-warden/git-allowlist.toml` (`doors/child/git.rs`) and the verdict records
+the admission (`Approved` or `Unpinned`, `verdict.rs`).

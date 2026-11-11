@@ -447,6 +447,139 @@ fn readme_exit_table_tracks_the_registry() {
     }
 }
 
+/// EFFECT-WALL (review candidate C3, measured twice): which lint configuration clippy reads can be
+/// changed without touching the reviewed one. A `clippy.toml` beside a crate replaces the root
+/// file for that crate, and a committed `.cargo/config.toml` can point `CLIPPY_CONF_DIR` at any
+/// directory (Touchstone R1); in both cases a copy of the root file without one
+/// `disallowed-methods` line let `std::env::var` through with clippy clean. So, anywhere in the
+/// tree: the only files named `clippy.toml` or `.clippy.toml` are the root one (the CLI's effect
+/// wall) and the core's (its purity wall), both regular files, and no `.cargo` directory holds a
+/// `config` or `config.toml`. Skipped: `.git` at any depth, and `target`, `mutants.out` and
+/// `mutants.out.old` in the root. A symlinked directory is itself a problem: it is not followed.
+fn lint_configuration_problems(base: &std::path::Path) -> Vec<String> {
+    fn walk(base: &std::path::Path, dir: &std::path::Path, found: &mut Vec<String>) {
+        // Whatever cannot be read is a problem, never a silent skip.
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            found.push(format!("{}: cannot be read", dir.display()));
+            return;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                found.push(format!("{}: an entry cannot be read", dir.display()));
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let (Ok(relative), Ok(kind)) = (path.strip_prefix(base), entry.file_type()) else {
+                found.push(format!("{}: cannot be examined", path.display()));
+                continue;
+            };
+            let relative = relative.to_string_lossy().into_owned();
+            let at_root = dir == base;
+            if name == ".git"
+                || (at_root
+                    && ["target", "mutants.out", "mutants.out.old"].contains(&name.as_str()))
+            {
+                continue;
+            }
+            let in_cargo_dir = dir.file_name().is_some_and(|d| d == ".cargo");
+            if name == "clippy.toml" || name == ".clippy.toml" {
+                let reviewed = ["clippy.toml", "crates/forge-warden-core/clippy.toml"]
+                    .contains(&relative.as_str());
+                if !reviewed {
+                    found.push(format!(
+                        "{relative}: a lint configuration that is not a reviewed one"
+                    ));
+                } else if !kind.is_file() {
+                    found.push(format!(
+                        "{relative}: a reviewed lint configuration is a regular file"
+                    ));
+                }
+            } else if in_cargo_dir && (name == "config" || name == "config.toml") {
+                found.push(format!(
+                    "{relative}: a cargo configuration can point CLIPPY_CONF_DIR elsewhere"
+                ));
+            } else if kind.is_symlink() && path.is_dir() {
+                found.push(format!("{relative}: a symlinked directory is not searched"));
+            } else if kind.is_dir() {
+                walk(base, &path, found);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(base, base, &mut found);
+    for reviewed in ["clippy.toml", "crates/forge-warden-core/clippy.toml"] {
+        if std::fs::symlink_metadata(base.join(reviewed)).is_err() {
+            found.push(format!(
+                "{reviewed}: the reviewed lint configuration is missing"
+            ));
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn the_lint_configuration_is_exactly_the_two_reviewed_files() {
+    assert_eq!(lint_configuration_problems(&root()), Vec::<String>::new());
+}
+
+#[test]
+fn every_way_of_redirecting_the_lint_configuration_is_refused() {
+    let reviewed = |dir: &std::path::Path| {
+        common::write(dir, "clippy.toml", b"");
+        common::write(dir, "crates/forge-warden-core/clippy.toml", b"");
+        common::write(dir, "crates/forge-warden-cli/src/main.rs", b"");
+    };
+    let clean = common::scratch("lint-configuration-clean");
+    reviewed(&clean);
+    common::write(&clean, ".git/clippy.toml", b"");
+    common::write(&clean, "target/debug/clippy.toml", b"");
+    common::write(&clean, ".cargo/README", b"");
+    assert_eq!(lint_configuration_problems(&clean), Vec::<String>::new());
+    for (name, planted) in [
+        (
+            "beside the CLI crate",
+            "crates/forge-warden-cli/clippy.toml",
+        ),
+        (
+            "hidden beside the CLI crate",
+            "crates/forge-warden-cli/.clippy.toml",
+        ),
+        ("in any other directory (Touchstone R1)", "lax/clippy.toml"),
+        ("deep in the tree", "docs/a/b/.clippy.toml"),
+        (
+            "a target directory that is not the root one",
+            "crates/target/clippy.toml",
+        ),
+        (
+            "a cargo configuration in the root (Touchstone R1)",
+            ".cargo/config.toml",
+        ),
+        ("a legacy cargo configuration", ".cargo/config"),
+        (
+            "a cargo configuration beside a crate",
+            "crates/forge-warden-cli/.cargo/config.toml",
+        ),
+    ] {
+        let tree = common::scratch("lint-configuration-planted");
+        reviewed(&tree);
+        common::write(&tree, planted, b"");
+        let problems = lint_configuration_problems(&tree);
+        assert_eq!(problems.len(), 1, "{name}: {problems:?}");
+        assert!(
+            problems.iter().all(|p| p.starts_with(planted)),
+            "{name}: {problems:?}"
+        );
+    }
+    let missing = common::scratch("lint-configuration-missing");
+    common::write(&missing, "clippy.toml", b"");
+    assert_eq!(
+        lint_configuration_problems(&missing),
+        ["crates/forge-warden-core/clippy.toml: the reviewed lint configuration is missing"]
+    );
+}
+
 #[test]
 fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
     // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in the door modules, exactly once in

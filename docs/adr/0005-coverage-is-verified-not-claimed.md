@@ -4,9 +4,9 @@ Status: Accepted
 Owner-deployment: Not-required
 
 Historical status record: **Status:** accepted, 2026-11-06 ~12:45Z by Lodestar (O1) after three review rounds (Bastion: threat model; Touchstone:
-attack); record `mission4/lanes/lodestar/C0-ACCEPT.md`. Author: Keel (O2). Text unchanged from v3 (59b89ac) except
-this line. Evidence: `mission4/lanes/keel/C0/`: `oracle_proto_v4.py`, `c0v4.cases.json` (51 cases),
-`c0v4.v4.results.json`, `MATRIX.md`, `v3-inputs/`, `v4-inputs/`. Implementation: WP-C1 (C1a doors and bounds, C1b
+attack); recorded as Lodestar's C0 acceptance in the project's coordination records (not in this repository). Author: Keel (O2). Text unchanged from v3 (59b89ac) except
+this line. Evidence, in the same records: Keel's C0 prototype oracle (v4), its 51-case set, the v4 results and
+case matrix, and the v3/v4 inputs. Implementation: WP-C1 (C1a doors and bounds, C1b
 facts and comparison, C1c verdict v1 and provenance); nothing here is accepted as fact until C1 measures it.
 
 ## 1. Context
@@ -341,7 +341,7 @@ the current name or a description, with a pointer here; the original names are q
   expect HOLD in 7ae3807 (WP-A3.1, 2026-11-06; `crates/forge-warden-core/tests/adversarial.rs`). The consequence §5
   asked for was carried out.
 - §7 cited `repeated_operation_on_path`, the refusal string of the C0 prototype
-  (`mission4/lanes/keel/C0/oracle_proto_v4.py`), not a test. The implementation refuses the case with
+  (Keel's v4 prototype oracle, in the project's coordination records), not a test. The implementation refuses the case with
   `Unverifiable::RepeatedPath` (`facts.rs`). Until WP-Q-RANK-BINARY (2026-11-10) no test pinned that variant: the
   corpus case `ts-no-prefix` pins only the class, and `every_refusal_says_why` only the message.
   `a_no_prefix_patch_is_refused_as_a_repeated_path` (`tests/authority.rs`) now pins the variant and the path it names.

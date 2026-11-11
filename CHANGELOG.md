@@ -3,11 +3,16 @@
 All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). A change to a published schema
-(`forge-warden.policy.v0`, `forge-warden.verdict.v0`) or to the exit-code registry is always
-listed, because consumers parse them.
+(today `forge-warden.policy.v0`, `forge-warden.verdict.v2` and the Git allowlist
+`forge-warden.git-allowlist.v1`; 0.1.0 shipped `forge-warden.verdict.v0`) or to the exit-code
+registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- A patch Git refuses is now judged in one code path that cannot finish without its
+  `patch_unverifiable` note (Q25; `Verdict::held_by`, crate-internal). For consumers nothing
+  changes: the verdict document, its schema and the exit codes are the same, a refused patch still
+  holds at least, and a failing rule on it still fails.
 - Verdict no longer implements Clone; CLI reporting borrows judged authority/advisory results without copying them (T-GITPIN-01).
 
 ### CLI machine contract

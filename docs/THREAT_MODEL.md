@@ -2,6 +2,11 @@
 
 ## Scope and evidence status
 
+Scope (2026-11-10): this record was written for commit `a68506f` and has not been
+re-baselined since. Later changes (the effect-door split, Git admission, verdict v2, runner
+routing) are described by their ADRs and tests, not here; the risk table below links current
+tests, which are the check. The record is re-measured on the release commit before 0.2.0.
+
 This WP-D5 design record describes merged hub main `a68506f`, including C1c v4.4,
 D6/D8, B5, E3a and the reviewed expectation/data ledger. Source integration is
 accepted; this does not assert deployment or acceptance of later work packages.
@@ -14,9 +19,9 @@ verdict records 1000/1000 complete workspace invocations (176000 test observatio
 zero failures, ignored tests or retries) on that subject. Lodestar's exact merged-tree
 gate on `a68506f`, parent `d214a8b`, is GREEN: 192 tests, zero ignored, MSRV checked;
 120 mutants comprise 66 caught, 54 unviable and zero missed. These receipts have
-different subjects and must not be conflated. Evidence: `mission4/WORKBOARD.md`,
-`mission4/lanes/touchstone/C1c/v44/VERDICT.md` and
-`mission4/lanes/lodestar/fwv-merge-C1c-stack/receipt.json`.
+different subjects and must not be conflated. Evidence: the project's coordination records
+(not in this repository): the mission-4 work board, Touchstone's C1c v4.4 verdict and the
+C1c-stack merge receipt.
 
 Repository links below identify implementation and repeatable tests. Mission evidence
 paths are relative to the separate forge-warden coordination root, not files shipped
@@ -131,7 +136,7 @@ this stack; historical receipts retain their own exact subject identities.
 | R-06 noncanonical paths | B2 implemented | 2 RepoPath after 3 admission | [path.rs](../crates/forge-warden-core/src/path.rs), `dot_prefixed_paths_are_refused_at_the_cli_boundary` in [adversarial.rs](../crates/forge-warden-cli/tests/adversarial.rs). |
 | R-07 rule-kind drift | B1 implemented | 2 Kind enum/exhaustive dispatch | [kind.rs](../crates/forge-warden-core/src/policy/kind.rs), [policy tests](../crates/forge-warden-core/src/policy/tests.rs). |
 | R-08 unpinned/red toolchain | A1 implemented | 4 pinned build/lint gate | [rust-toolchain.toml](../rust-toolchain.toml), [ci_fast.sh](../scripts/ci_fast.sh); pin does not authenticate tool distribution. |
-| R-09 vocabulary revision not attested | B3 + B3.1 implemented | 3 revision resolution/byte comparison | `the_script_attests_exactly_what_the_commit_labels` in [check_vocab.rs](../crates/forge-warden-cli/tests/check_vocab.rs). |
+| R-09 vocabulary revision not attested | B3 + B3.1 implemented | 3 revision resolution/byte comparison | `the_script_attests_exactly_what_the_commit_labels` in [check_vocab.rs](../crates/forge-warden-cli/tests/check_vocab.rs). The script resolves its argument with `rev-parse`, so a branch name is accepted and attests whatever that branch points to; CI passes the full pinned commit (`DDF_REV`). |
 | R-10 swallowed local failures | A2 + D8 implemented | 3 exact exit propagation, 5 regression evidence | [ci_local.sh fixtures](../scripts/tests/ci_local.sh), including pre-push, judge/ranker and early-failure controls. |
 | R-11 malformed hook input passes | D4 implemented | 3 request parsing | [test_guard.py](../.claude/hooks/test_guard.py); rejection is not shell containment. |
 | R-12 semantic edits evade hook | D4 + B6 + D6 checks implemented | 4 compiler/lint/repository invariants | [repo_invariants.rs](../crates/forge-warden-cli/tests/repo_invariants.rs), [guardrails.py](../scripts/tests/guardrails.py); trusted enforcement required. |
@@ -144,6 +149,6 @@ this stack; historical receipts retain their own exact subject identities.
 | R-19 mutable unvalidated library values | B2 implemented | 2 private validated types/nonempty policy | [core adversarial tests](../crates/forge-warden-core/tests/adversarial.rs), [policy model](../crates/forge-warden-core/src/policy/model.rs); library provenance attestation still trusts its caller. |
 | R-20 literal/misspelled exit routes | B4 implemented | 2 Exit enum + 4 sole exit-door invariant | [exit.rs](../crates/forge-warden-core/src/exit.rs), `exit_statuses_come_from_the_registry` in [repo_invariants.rs](../crates/forge-warden-cli/tests/repo_invariants.rs), over-budget test in [cli.rs](../crates/forge-warden-cli/tests/cli.rs). |
 
-Historical review context: `review/REPORT.md`, `mission4/WORKBOARD.md`, and
-`mission4/lanes/bastion/C1c/BOUNDARY-VERDICT-v44.md` (boundary PASS with exact
-subject receipt). These coordination records are not runtime authority inputs.
+Historical review context, in the project's coordination records (not in this repository):
+the mission-3 review report, the mission-4 work board and Bastion's C1c v4.4 boundary verdict
+(boundary PASS with exact subject receipt). These records are not runtime authority inputs.

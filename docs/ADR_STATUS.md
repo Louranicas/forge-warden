@@ -3,7 +3,10 @@
 Every numbered ADR has exactly one active line: `Status: Proposed`, `Status: Accepted`,
 `Status: Superseded-by-NNNN`, or `Status: Deprecated`. Historical status records are preserved
 below it. Acceptance records a design decision; it does not assert deployment, completion or
-release. ADR 0011 is accepted design with implementation still queued, as its text states.
+release. ADR 0011 is implemented (2026-11-10): `check` admits Git through the allowlist at
+`/etc/forge-warden/git-allowlist.toml` (`crates/forge-warden-cli/src/doors/child/git.rs`) and the
+`forge-warden.verdict.v2` document records the admission (`Approved` or `Unpinned`,
+`crates/forge-warden-core/src/verdict.rs`); installing the allowlist is the owner's step.
 ADRs 0006–0010 describe accepted contracts already used by the gate; their earlier proposal
 labels remain dated history. External deployment and owner provisioning remain separate.
 

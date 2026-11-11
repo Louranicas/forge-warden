@@ -10,6 +10,8 @@
 //! Production code also may not use `include!` (B-C1c-04) or `#[path]` (Q-DOOR-PATH): either would
 //! compile a file this check judges under another name. Inside a door module, `#[path]` may only
 //! bring test support into a test-only module.
+//! Shipped code also may not write an expression in an attribute (Q37): a derive macro may place
+//! it in generated code under its own `allow`, where clippy says nothing about a disallowed call.
 #![expect(
     clippy::disallowed_methods,
     reason = "test door: reads the CLI crate's source files"
@@ -129,6 +131,177 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
                 Err(_) => found.push("an attribute in a macro that does not parse".to_owned()),
             }
         }
+    }
+}
+
+/// The offence an expression in an attribute records (Q37).
+const ATTRIBUTE_EXPRESSION: &str = "an expression in an attribute";
+
+/// Attributes that may carry an expression, each written exactly so (whitespace aside). Reviewed:
+/// the first builds a clap `ArgGroup` from literals; the second formats a count and a list of the
+/// variant's own field; the last two name the crate's own size constant. None reaches an effect.
+const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 4] = [
+    r#"command(group(ArgGroup::new("mode").required(true).args(["ranker","advisory"])))"#,
+    r#"error("policy refused with {} issue(s):\n{}",.0.len(),IssueList(.0))"#,
+    r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
+    r#"error("ranking is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
+];
+
+/// `text` without whitespace (inside string literals too: spacing never makes an expression).
+fn squeeze(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Attributes whose `name(value)` arguments are expressions (clap's derive reads them so).
+const CLAP_ATTRIBUTES: [&str; 5] = ["command", "arg", "clap", "group", "value"];
+
+/// Q37: whether an attribute's arguments hold anything but names, paths, literals, lists of those
+/// and `name = value` pairs. A derive macro may put an argument's expression into code it
+/// generates under `#[allow(clippy::style)]`, which contains `disallowed_methods`: a call written
+/// there reaches an effect and clippy reports nothing (measured on clap's derive). So a call, a
+/// method call, a macro call, a block, a closure and every operator are refused wherever they
+/// stand in an attribute. A value (after `=`, or inside a clap `name(value)`) must be a literal,
+/// `true`, `false`, `None` or a list of those: a bare name or path there may be a function the macro
+/// calls for us, and `value_parser = std::env::var` is as much an effect as a call written out
+/// (Bastion). `depth` counts enclosing parentheses; `literal_only` carries a value position into
+/// a bracketed list.
+fn holds_an_expression(tokens: TokenStream, depth: usize, clap: bool, literal_only: bool) -> bool {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut value = false;
+    for (index, tree) in trees.iter().enumerate() {
+        let before = index.checked_sub(1).and_then(|at| trees.get(at));
+        let strict = literal_only || value || (clap && depth >= 1);
+        match tree {
+            TokenTree::Punct(punct) => match punct.as_char() {
+                '=' => value = true,
+                ',' => value = false,
+                '-' => {}
+                ':' if !strict => {}
+                _ => return true,
+            },
+            TokenTree::Ident(ident) => {
+                let name = ident.unraw().to_string();
+                if strict && !["true", "false", "None"].contains(&name.as_str()) {
+                    return true;
+                }
+            }
+            TokenTree::Group(group) => {
+                let inner = group.stream();
+                let (nested, nested_clap, nested_literal) = match group.delimiter() {
+                    Delimiter::Brace => return true,
+                    Delimiter::Parenthesis => {
+                        let name = match before {
+                            Some(TokenTree::Ident(ident)) => Some(ident.unraw().to_string()),
+                            _ => None,
+                        };
+                        let named = name.is_some();
+                        let path_end = index
+                            .checked_sub(2)
+                            .and_then(|at| trees.get(at))
+                            .is_some_and(
+                                |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ':'),
+                            );
+                        if !named || path_end || value || (clap && depth >= 1) {
+                            return true;
+                        }
+                        // A clap attribute met inside another attribute (`cfg_attr`) starts here.
+                        let starts_clap =
+                            !clap && name.is_some_and(|n| CLAP_ATTRIBUTES.contains(&n.as_str()));
+                        if starts_clap {
+                            (0, true, false)
+                        } else {
+                            (depth.saturating_add(1), clap, false)
+                        }
+                    }
+                    Delimiter::Bracket | Delimiter::None => (depth, clap, strict),
+                };
+                if holds_an_expression(inner, nested, nested_clap, nested_literal) {
+                    return true;
+                }
+            }
+            TokenTree::Literal(_) => {}
+        }
+    }
+    false
+}
+
+/// Q37 for one attribute: an offence unless it holds no expression or is admitted verbatim.
+fn check_expression(meta: &Meta, found: &mut Vec<String>) {
+    let list = match meta {
+        Meta::Path(_) => return,
+        Meta::List(list) => list,
+        Meta::NameValue(pair) => {
+            // `name = value` on the attribute itself (`#[doc = "…"]`): only a literal.
+            if !matches!(pair.value, syn::Expr::Lit(_)) {
+                found.push(ATTRIBUTE_EXPRESSION.to_owned());
+            }
+            return;
+        }
+    };
+    let name = last(meta.path());
+    let clap = CLAP_ATTRIBUTES.contains(&name.as_str());
+    if !holds_an_expression(list.tokens.clone(), 0, clap, false) {
+        return;
+    }
+    let written = squeeze(&format!("{name}({})", list.tokens));
+    if !ADMITTED_ATTRIBUTE_EXPRESSIONS
+        .iter()
+        .any(|admitted| squeeze(admitted) == written)
+    {
+        found.push(ATTRIBUTE_EXPRESSION.to_owned());
+    }
+}
+
+/// `#[…]` / `#![…]` written as tokens inside a macro invocation, checked for expressions. An
+/// attribute there that does not parse is already an offence of `check_tokens`.
+fn check_expression_tokens(tokens: TokenStream, found: &mut Vec<String>) {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            check_expression_tokens(group.stream(), found);
+        }
+        if !matches!(tree, TokenTree::Punct(p) if p.as_char() == '#') {
+            continue;
+        }
+        let mut next = index.saturating_add(1);
+        if matches!(trees.get(next), Some(TokenTree::Punct(p)) if p.as_char() == '!') {
+            next = next.saturating_add(1);
+        }
+        if let Some(TokenTree::Group(group)) = trees.get(next)
+            && group.delimiter() == Delimiter::Bracket
+            && let Ok(meta) = syn::parse2::<Meta>(group.stream())
+        {
+            check_expression(&meta, found);
+        }
+    }
+}
+
+struct Expressions {
+    found: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Expressions {
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        check_expression(&attribute.meta, &mut self.found);
+        syn::visit::visit_attribute(self, attribute);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        check_expression_tokens(mac.tokens.clone(), &mut self.found);
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Q37: one offence per attribute in `source` that holds an expression; a file that does not
+/// parse is one offence.
+fn attribute_expressions(source: &str) -> Vec<String> {
+    match syn::parse_file(source) {
+        Ok(file) => {
+            let mut scan = Expressions { found: Vec::new() };
+            scan.visit_file(&file);
+            scan.found
+        }
+        Err(e) => vec![format!("does not parse: {e}")],
     }
 }
 
@@ -264,6 +437,158 @@ fn the_parser_finds_every_suppression_form() {
         assert!(
             !door_lint_controls(source).is_empty(),
             "missed: {name}\n{source}"
+        );
+    }
+}
+
+/// Q37 on the tree: no source compiled into production, outside the door modules, writes an
+/// expression in an attribute, except the admitted ones.
+#[test]
+fn shipped_code_writes_no_expression_in_an_attribute() {
+    let production = common::production_sources();
+    assert!(
+        production.len() >= 10,
+        "found only {} files",
+        production.len()
+    );
+    let mut admitted_seen = 0_usize;
+    for name in production {
+        if common::is_door_file(&name) {
+            continue;
+        }
+        let source = std::fs::read_to_string(root().join(&name)).unwrap();
+        assert_eq!(
+            attribute_expressions(&source),
+            Vec::<String>::new(),
+            "{name}: an attribute holds an expression (Q37)"
+        );
+        let squeezed = squeeze(&source);
+        admitted_seen = admitted_seen.saturating_add(
+            ADMITTED_ATTRIBUTE_EXPRESSIONS
+                .iter()
+                .filter(|admitted| squeezed.contains(&squeeze(admitted)))
+                .count(),
+        );
+    }
+    assert_eq!(
+        admitted_seen,
+        ADMITTED_ATTRIBUTE_EXPRESSIONS.len(),
+        "every admitted expression is still in the tree, once; drop the ones that are gone"
+    );
+}
+
+/// Q37: every way of writing an expression in an attribute is an offence for the shipped-file scan.
+#[test]
+fn the_parser_finds_every_attribute_expression_form() {
+    let forms = [
+        (
+            "a method call in a clap value (the measured escape)",
+            "#[command(after_help = std::env::var(\"X\").is_ok().to_string())]\nstruct Cli;",
+        ),
+        (
+            "a path call after =",
+            "#[arg(long, default_value_os_t = std::env::var_os(\"X\"))]\nstruct Cli;",
+        ),
+        (
+            "an imported function called after =",
+            "#[arg(long, default_value_os_t = v(\"X\"))]\nstruct Cli;",
+        ),
+        (
+            "clap's name(value) form holding a call",
+            "#[command(after_help(v(\"X\")))]\nstruct Cli;",
+        ),
+        (
+            "a std function named as a value, not called (Bastion)",
+            "#[arg(long, value_parser = std::fs::read_to_string)]\nstruct Cli;",
+        ),
+        (
+            "an imported function named as a value",
+            "#[arg(long, value_parser = v)]\nstruct Cli;",
+        ),
+        (
+            "a function named in clap's name(value) form",
+            "#[arg(long, value_parser(std::env::var))]\nstruct Cli;",
+        ),
+        (
+            "a name inside a list value",
+            "#[arg(long, value_parser = [v, \"b\"])]\nstruct Cli;",
+        ),
+        (
+            "a block",
+            "#[arg(long, default_value_t = { 1 })]\nstruct Cli;",
+        ),
+        (
+            "a macro call",
+            "#[command(about = concat!(\"a\", \"b\"))]\nstruct Cli;",
+        ),
+        (
+            "a closure",
+            "#[arg(long, value_parser = |s: &str| s.len())]\nstruct Cli;",
+        ),
+        (
+            "an operator",
+            "#[arg(long, default_value_t = 1 + 1)]\nstruct Cli;",
+        ),
+        (
+            "through cfg_attr",
+            "#[cfg_attr(all(), command(after_help = v(\"X\")))]\nstruct Cli;",
+        ),
+        (
+            "through cfg_attr, clap's name(value) form",
+            "#[cfg_attr(all(), command(after_help(v(\"X\"))))]\nstruct Cli;",
+        ),
+        (
+            "inside a macro invocation",
+            "some_macro! {\n    #[command(after_help = v(\"X\"))]\n    struct Cli;\n}",
+        ),
+        (
+            "a non-literal value on the attribute itself",
+            "#[doc = concat!(\"a\", \"b\")]\nstruct Cli;",
+        ),
+        (
+            "the admitted group expression with one word changed",
+            "#[command(group(ArgGroup::new(\"mode\").required(false).args([\"ranker\", \"advisory\"])))]\nstruct Cli;",
+        ),
+    ];
+    for (name, source) in forms {
+        assert!(
+            attribute_expressions(source)
+                .iter()
+                .any(|f| f == ATTRIBUTE_EXPRESSION),
+            "missed: {name}\n{source}"
+        );
+    }
+}
+
+/// Q37: what an attribute may hold without being an expression.
+#[test]
+fn the_parser_admits_names_literals_and_lists_of_literals() {
+    let plain = [
+        (
+            "literals, flags and a list of literals",
+            "#[arg(long, value_name = \"FILE\", default_value = \"/usr/bin/git\", value_parser = [\"a\", \"b\"])]\nstruct Cli;",
+        ),
+        (
+            "true, false, None and clap's name(literal) form",
+            "#[arg(long, required = true, hide = false, long_help = None, value_name(\"FILE\"))]\nstruct Cli;",
+        ),
+        (
+            "nested lists in a non-clap attribute",
+            "#[cfg_attr(all(test, unix), derive(Debug), expect(dead_code, reason = \"x\"))]\nstruct Cli;",
+        ),
+        (
+            "a negative number and a doc string",
+            "/// text\n#[arg(long, default_value_t = -1)]\nstruct Cli;",
+        ),
+        (
+            "the admitted group expression, spaced differently",
+            "#[command(group(ArgGroup::new(\"mode\").required(true).args([\"ranker\",\n    \"advisory\"])))]\nstruct Cli;",
+        ),
+    ];
+    for (name, source) in plain {
+        assert!(
+            attribute_expressions(source).is_empty(),
+            "refused: {name}\n{source}"
         );
     }
 }
