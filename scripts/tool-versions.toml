@@ -1,5 +1,9 @@
 # Canonical tool inputs. Rust is owned by rust-toolchain.toml; MSRV by Cargo.toml.
-ddf_rev = "587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54"
+ddf_rev = "fb5ffe15ae582f665d9de073d5231ecff8003a17"
+# The release built from ddf_rev, and the sha256 of its x86_64-unknown-linux-gnu archive. The
+# dogfood gate fetches that archive and refuses other bytes; warden.toml pins the binary inside it.
+ddf_release = "v0.8.2"
+ddf_archive_sha256 = "f3898cc9065f856f151e9f2ecd72bfe8818c5e8bc0a3004bae654fad592f056b"
 zizmor = "1.30.1"
 cargo_mutants = "27.1.0"
 cargo_deny = "0.20.2"
