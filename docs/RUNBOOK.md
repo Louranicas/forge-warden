@@ -49,7 +49,7 @@ binary somewhere only you can write, and do not modify it afterwards.
 
 ## 4. Install the Git allowlist (owner, root)
 
-**NOT YET RUN** on any machine: it needs the owner's Git allowlist (step 4), which is not installed yet.
+**NOT YET RUN** on any machine: it is the owner's step, and no allowlist is installed yet.
 
 Authority mode admits Git only if `/etc/forge-warden/git-allowlist.toml` lists the SHA-256 of the
 Git it runs (`--git`, default `/usr/bin/git`). Without the file, authority mode refuses (exit 3).
