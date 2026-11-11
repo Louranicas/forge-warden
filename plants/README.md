@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 102 named plants over 48 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 4 register rows are explicitly PENDING
+This revision implements 105 named plants over 49 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 4 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -111,7 +111,7 @@ prove script exit propagation; they do not qualify a live ranker or hosted admis
 
 The five pending rows have individual reasons in the catalog: unavailable local enforcement for
 CI toolchain/name drift or documentation references, the unimplemented strict skip contract, and
-a missing offline zizmor backend. G-52 (runner routing) has nine script plants (five from RUNNER-ROUTING.1: two read an ambient variable, one wraps the route script in a shell template, one hides a pool job in an over-indented body, one behind a repeated job id; the workflow files are pinned whole) against
+a missing offline zizmor backend. G-53 (refusal map) has three sampled plants, each swapping one refusal variant for a sibling so that the test `docs/REFUSAL_MAP.md` names for it must fail; per Lodestar's ruling it is sampled, not one plant per row. G-52 (runner routing) has nine script plants (five from RUNNER-ROUTING.1: two read an ambient variable, one wraps the route script in a shell template, one hides a pool job in an over-indented body, one behind a repeated job id; the workflow files are pinned whole) against
 `scripts/tests/runner_routing.py`. G-06 has four door-list plants (WP-PLANTS-FENCES 3b), one of them a
 `create` of an unlisted module under `doors/`. G-06 also plants a disallowed call inside a clap
 attribute (WP-EFFECT-WALL, Q37) and a lint configuration created beside the CLI crate or in another directory (C3). A `.cargo/config.toml` is refused by the same test; it has no catalogue case because `create` needs an existing parent directory (its self-test plants it). Missing tools and missing checks are never counted as caught.
