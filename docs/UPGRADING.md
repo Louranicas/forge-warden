@@ -33,7 +33,7 @@ What to do:
 ## 2. The verdict document is `forge-warden.verdict.v2`
 
 The v0 document 0.1.0 printed is withdrawn; v1 existed only between releases and is neither
-produced nor accepted. A consumer that parses `--json` output must change:
+produced nor accepted (`schemas/verdict.v1.schema.json` stays in the tree for reference only). A consumer that parses `--json` output must change:
 
 - `seals.patch_verified` is gone. Read `seals.provenance` (`produced` or `supplied`) and
   `seals.patch_facts_sha256` instead.
@@ -87,10 +87,12 @@ The registry is unchanged: 0 `pass`, 2 `usage`, 3 `io`, 4 `invalid_input`, 7 `po
 
 - 0 can only come from authority mode.
 - 2 now also means a missing mode or `--rank` without `--advisory`.
-- 3 now also means the ranker or Git could not be run: the ranker file cannot be pinned, it
-  exits nonzero or times out, or no Git allowlist is enrolled. No verdict is written.
-- 4 now also means the ranker's digest is not in `[producer]`, or authority mode was asked of a
-  policy that has no `[producer]`.
+- 3 now also means the ranker or Git could not be run: the ranker file is missing or
+  unreadable, it exits nonzero or times out, or no Git allowlist is enrolled. No verdict is
+  written.
+- 4 now also means the ranker itself is refused as input: its digest is not in `[producer]`,
+  the file is a symlink, not a regular file, or writable by group or others; or authority mode
+  was asked of a policy that has no `[producer]`.
 - 8 is what advisory mode returns when nothing failed.
 
 What to do: a wrapper that mapped "not 7" to success must be rewritten to accept only 0.
@@ -105,7 +107,7 @@ What to do: a wrapper that mapped "not 7" to success must be rewritten to accept
 
 `forge-warden-core` is not a stable API yet. Since 0.1.0: `Policy`, `RankDoc`, `RankedFile`
 and `Evidence` have private fields and are built only through the parsers; rule kinds are the
-exhaustive enum `Kind`; `Verdict` is no longer `Clone`; a ranking is judged only through the
+enum `Kind` (non-exhaustive: match it with a wildcard arm); `Verdict` is no longer `Clone`; a ranking is judged only through the
 authority and advisory entry points, which take a checked ranking.
 
 ## Not covered here
