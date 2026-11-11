@@ -180,8 +180,8 @@ A **refusal** prints nothing on stdout, explains on stderr, and exits without a 
 | --- | --- | --- |
 | No mode, both modes, `--advisory` without `--rank`, no `--patch`, relative `--git`, malformed `--base`/`--head`/`--today` | refused | 2 `usage` |
 | A file cannot be read; Git cannot run; the temporary directory is relative, contains `:` or is not UTF-8; `/proc/self/fd` is missing | refused | 3 `io` |
-| The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB), cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
-| The policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
+| The ranker cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
+| The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB); the policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
 | Any note above | hold (or fail, if a rule fails) | 8 (7) |
 | A rule of severity `hold` is violated | hold | 8 |
 | A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |

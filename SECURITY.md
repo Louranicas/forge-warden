@@ -27,7 +27,10 @@ environment, a timeout and capped output:
 
 The third, `/usr/bin/kill`, cleans up the child's process group after every run, whether it
 finished, was refused, or timed out, and also when the child's pipes could not be set up. It has
-a cleared environment but runs outside that timeout wrapper, and a failed kill is not reported.
+a cleared environment and its own limit of 2 seconds (`KILL_TIMEOUT` in `doors/child/process.rs`):
+a kill that cannot start, exits nonzero or does not finish in time is reported as an error. The
+one exception is the path where the child's pipes could not be set up: that run already fails,
+and the kill's own result is not checked there.
 
 It writes no other files.
 
