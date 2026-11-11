@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 109 named plants over 49 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 4 register rows are explicitly PENDING
+This revision implements 110 named plants over 49 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 4 register rows are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
