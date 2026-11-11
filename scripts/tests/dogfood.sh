@@ -116,6 +116,30 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'bu
  if [ "$RANK_EXIT" -ne 0 ] || [ "$BUILD_EXIT" -ne 0 ]; then test ! -s "$out/verdict.json"; fi
  echo "PASS $name exit=$actual"
 done
+# DOGFOOD-ATTR (C2): the candidate's own attributes do not shape the patch. A candidate that adds
+# `* -diff` at the root and `binary` in a subdirectory, with a secret-shaped added line, must still
+# reach the judge as readable added text, not as `GIT binary patch` hunks.
+git clone -q --no-local "$trusted" "$sandbox/attr-candidate"
+attr="$sandbox/attr-candidate"
+mkdir -p "$attr/sub"
+printf '* -diff\n' > "$attr/.gitattributes"
+printf '* binary\n' > "$attr/sub/.gitattributes"
+key="AKIA$(printf 'ABCDEFGHIJKLMNOP')"
+printf 'trusted-build\nfn planted() { let k = "%s"; }\n' "$key" > "$attr/build.rs"
+printf 'fn sub() { let k = "%s"; }\n' "$key" > "$attr/sub/k.rs"
+git -C "$attr" add -- .gitattributes sub/.gitattributes sub/k.rs build.rs
+git -C "$attr" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm attributes -- .gitattributes sub/.gitattributes sub/k.rs build.rs
+attr_head="$(git -C "$attr" rev-parse HEAD)"
+export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
+out="$sandbox/evidence-attributes"
+bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+visible="$(grep -c "^+.*$key" "$out/change.patch" || true)"
+binary="$(grep -c '^GIT binary patch' "$out/change.patch" || true)"
+if [ "$visible" != 2 ] || [ "$binary" != 0 ]; then
+ echo "FAIL attributes: the candidate's .gitattributes shaped the patch ($visible of 2 added lines readable, $binary binary patches)"
+ exit 1
+fi
+echo 'PASS candidate .gitattributes (root -diff, subdirectory binary) do not hide added text'
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
 # the run before any ranker exists and before the judge runs, even when the judge would pass.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0

@@ -545,6 +545,19 @@
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
+      "id": "candidate-attributes-honoured",
+      "guardrail": "G-35",
+      "path": "scripts/dogfood.sh",
+      "diagnostic": "FAIL attributes: the candidate's \\.gitattributes shaped the patch",
+      "command": [
+        "bash",
+        "scripts/tests/dogfood.sh"
+      ],
+      "old": "git -C \"$candidate\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null diff",
+      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null diff",
+      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+    },
+    {
       "id": "ack-head-replay",
       "guardrail": "G-36",
       "path": "scripts/hold_ack.py",
