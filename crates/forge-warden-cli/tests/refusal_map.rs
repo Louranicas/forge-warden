@@ -37,7 +37,7 @@ fn literal(expr: &syn::Expr) -> Option<String> {
     }
 }
 
-fn constants(items: &[syn::Item], into: &mut BTreeMap<String, String>) {
+fn constants<'a>(items: impl IntoIterator<Item = &'a syn::Item>, into: &mut BTreeMap<String, String>) {
     for item in items {
         if let syn::Item::Const(constant) = item
             && let Some(text) = literal(&constant.expr)
@@ -81,16 +81,13 @@ fn rows() -> Result<Vec<Row>, String> {
             continue;
         };
         let mut names = file_constants.clone();
-        let items: Vec<syn::Item> = function
-            .block
-            .stmts
-            .iter()
-            .filter_map(|stmt| match stmt {
-                syn::Stmt::Item(item) => Some(item.clone()),
+        constants(
+            function.block.stmts.iter().filter_map(|stmt| match stmt {
+                syn::Stmt::Item(item) => Some(item),
                 _ => None,
-            })
-            .collect();
-        constants(&items, &mut names);
+            }),
+            &mut names,
+        );
         for stmt in &function.block.stmts {
             let syn::Stmt::Expr(syn::Expr::Match(matched), _) = stmt else {
                 continue;
@@ -151,12 +148,12 @@ fn render(rows: &[Row]) -> String {
          | Refusal | Observing test |\n| --- | --- |\n",
     );
     for row in rows {
-        let test = if row.test == MISSING {
+        let cell = if row.test == MISSING {
             MISSING.to_owned()
         } else {
             format!("`{}`", row.test)
         };
-        text.push_str(&format!("| `{}::{}` | {test} |\n", row.refusal, row.variant));
+        text.push_str(&format!("| `{}::{}` | {cell} |\n", row.refusal, row.variant));
     }
     text
 }
