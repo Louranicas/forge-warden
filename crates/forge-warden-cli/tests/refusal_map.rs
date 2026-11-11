@@ -155,14 +155,18 @@ fn render(rows: &[Row]) -> String {
          it observes its variant is proven by one plant per row in `plants/catalog.json`.\n\n\
          | Refusal | Observing test |\n| --- | --- |\n",
     );
-    for row in rows {
-        let cell = if row.test == MISSING {
-            MISSING.to_owned()
-        } else {
-            format!("`{}`", row.test)
-        };
-        text.push_str(&format!("| `{}::{}` | {cell} |\n", row.refusal, row.variant));
-    }
+    let table: String = rows
+        .iter()
+        .map(|row| {
+            let cell = if row.test == MISSING {
+                MISSING.to_owned()
+            } else {
+                format!("`{}`", row.test)
+            };
+            format!("| `{}::{}` | {cell} |\n", row.refusal, row.variant)
+        })
+        .collect();
+    text.push_str(&table);
     text
 }
 
