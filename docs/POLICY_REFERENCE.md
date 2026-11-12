@@ -181,8 +181,8 @@ A **refusal** prints nothing on stdout, explains on stderr, and exits without a 
 | --- | --- | --- |
 | No mode, both modes, `--advisory` without `--rank`, no `--patch`, relative `--git`, malformed `--base`/`--head`/`--today` | refused | 2 `usage` |
 | A file cannot be read; Git cannot run; the temporary directory is relative, contains `:` or is not UTF-8; `/proc/self/fd` is missing | refused | 3 `io` |
-| The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB), cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
-| The policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
+| The ranker cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
+| The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB); the policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
 | Any note above | hold (or fail, if a rule fails) | 8 (7) |
 | A rule of severity `hold` is violated | hold | 8 |
 | A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |
@@ -236,7 +236,8 @@ Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2
 | `check` with that policy | 0.2 s | 82 MiB |
 | `check` on a hand-written ranking at the 64 MiB limit (about 440 000 entries, none in the patch) | 1.0 s | 368 MiB, and a 74 MiB verdict |
 
-Not measured: authority mode itself (it needs an owner-enrolled Git), a loaded or smaller
+Not measured here: the time and memory of authority mode (it has been run once end to end, in a
+container with an allowlist an agent installed on the owner's instruction: see [RUNBOOK.md](RUNBOOK.md) step 6), a loaded or smaller
 machine, the worst case of the glob matcher, and the child timeouts (10 s each for the ranker
 and for Git). Before the policy limit existed, `lint` on a 64 MiB policy of 506 626 rules took
 6.5 s and 4 GiB; that is why the policy has its own limit.
@@ -252,3 +253,27 @@ policy permits only unpinned advisory output with an explicit `rank_unverified` 
 or unsafe policy refuses both modes. See [Git runtime admission](GIT_RUNTIME.md) for owner
 enrollment, revision/revocation rules, and execution-boundary limitations. GitOracle in the
 pure core is serialized evidence, not a capability to open or execute an artifact.
+
+## This repository's own policy (`warden.toml`)
+
+The rules this repository judges its own changes with, and how strictly. Lowering a severity from
+`fail` to `hold`, or changing a kind, is a change to the gate: the table must change in the same
+commit, and `documented_rule_severities_equal_the_policies` (`crates/forge-warden-cli/tests/docs_inventory.rs`)
+fails when the two disagree. The same test holds the README's sample output to
+`examples/starter.warden.toml`.
+
+| Rule | Kind | Severity |
+| --- | --- | --- |
+| `no-secrets` | `forbid_signal` | `fail` |
+| `no-hidden-text` | `forbid_signal` | `fail` |
+| `no-unsafe` | `forbid_signal` | `fail` |
+| `core-stays-pure` | `forbid_signal` | `fail` |
+| `no-ci-privilege` | `forbid_signal` | `fail` |
+| `no-silent-suppression` | `forbid_signal` | `hold` |
+| `keep-the-tests` | `forbid_signal` | `hold` |
+| `tests-travel-with-code` | `require_companion` | `hold` |
+| `schema-changes-are-versioned` | `require_companion` | `fail` |
+| `quality-config-is-owned` | `protect_paths` | `hold` |
+| `reviewable-size` | `max_score` | `hold` |
+| `one-thing-at-a-time` | `max_files` | `hold` |
+| `golden-output-needs-review` | `protect_paths` | `hold` |
