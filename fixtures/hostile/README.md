@@ -21,3 +21,9 @@ Regression inputs:
 
 Patch facts (`PatchFacts::from_git`) have generated properties but no replay directory here: a facts finding becomes a named test
 in the harness instead.
+
+Header shapes are not generated here. The properties put hostile values inside headers of the shape Git writes by
+default; a header Git writes under another setting (`diff.noprefix`, other `diff.srcPrefix`/`dstPrefix`, external diff
+output) was never produced, and that is how a prefix-less patch reached an authority pass on the frozen commit. Those shapes
+are covered by PATCH-PREFIX's own tests and regression patches, and by an attack that lets Git write the patch under each
+documented setting and judges it in authority mode (recorded in docs/THREAT_MODEL.md, scope section).

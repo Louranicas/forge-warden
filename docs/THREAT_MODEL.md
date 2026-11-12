@@ -22,6 +22,14 @@ v0.8.2, the release binary with SHA-256 `298e0751…41ad` (the full digest is in
   every gate run (256 cases per property, including one-hostile-field-at-a-time properties) and
   replay [fixtures/hostile](../fixtures/hostile/README.md); one longer campaign (20 000 cases per
   property) found nothing on an earlier commit of the same harness.
+- **Patch shapes Git itself writes.** Patches written by Git 2.56 under 17 documented settings
+  (`diff.noprefix`, custom, empty and swapped `diff.srcPrefix`/`dstPrefix`, `diff.relative` from a
+  subdirectory, `diff.external`, `color.ui=always`, `format.noprefix` and others), each with the
+  0.1.0 command, a command with explicit prefixes and the documented command, were judged in
+  authority mode against a protected change: 103 patches. On the frozen tree 10 of them passed
+  (the prefix and external-diff shapes this release now refuses). After the fix only `diff.relative`
+  with a command lacking `--no-relative` passes, which is the limit stated under "Explicit
+  non-claims" below; the documented command fails that change, as it should.
 
 How to read the tables below: where the evidence column names a test, the test is the evidence
 (the gate runs it on every change, so it describes the current code); where it names a source file,
