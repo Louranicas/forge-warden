@@ -22,15 +22,16 @@ mode. It reports the same rule results as before, and it can no longer print PAS
 
 What to do:
 
-- Save the patch to a file; `--patch -` is refused (stdin is reserved for `--rank -`). Use
-  `git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/` output. A patch whose paths
-  do not start with `a/` and `b/` is unverifiable (exit 8): if your Git configuration has
-  `diff.noprefix` or `diff.mnemonicPrefix`, the two prefix options are what makes the command
-  work. Run it from the top level of the repository: `--no-relative` stops a `diff.relative`
-  setting from leaving out every change outside the current directory, which no check of the
-  patch can detect. A verdict is about the patch bytes it was given; forge-warden does not check
-  that they are the whole change between two commits. A `git format-patch` message line that
-  looks like a mode header makes the patch unverifiable too.
+- Save the patch to a file; `--patch -` is refused (stdin is reserved for `--rank -`). Make it
+  with `scripts/make_patch.sh <base> <head>` from the revision you installed
+  ([runbook](RUNBOOK.md), steps 2 and 6). A patch whose paths do not start with `a/` and `b/`
+  is now unverifiable (exit 8): that is what a plain `git diff` writes when your Git
+  configuration has `diff.noprefix` or `diff.mnemonicPrefix`. A plain `git diff` in a
+  subdirectory with `diff.relative` leaves out every change outside it, and no check of the
+  patch can see that; the patch-maker reads none of those settings. A verdict is about the patch
+  bytes it was given: forge-warden does not check that they are the whole change between two
+  commits. A `git format-patch` message line that looks like a mode header makes the patch
+  unverifiable too.
 - Pick a mode. `--rank` alone is now a usage error (exit 2).
 - A pipeline that treated exit 0 as "merge" and used a supplied ranking will now see exit 8 on
   every change. That is intended: a supplied ranking can inform, never approve. To get exit 0

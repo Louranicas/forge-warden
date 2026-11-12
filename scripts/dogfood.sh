@@ -54,22 +54,11 @@ out="$(cd "$out" && pwd -P)"
 case "$out/" in
   "$trusted/"*|"$candidate/"*) echo 'dogfood: evidence must be outside both checkouts' >&2; exit 2 ;;
 esac
-# Diff endpoints are immutable commits; no external diff or textconv can execute candidate config.
-# Attributes come from the empty tree, not the candidate's work tree: a candidate .gitattributes
-# (at any depth) saying `-diff` or `binary` would otherwise turn added text into a binary patch the
-# judge cannot read. --attr-source needs Git 2.40 or later; an older Git refuses the option.
-empty_tree="$(git hash-object -t tree /dev/null)"
-# The candidate repository's own configuration is not read at all. The diff runs in a new, empty
-# repository that borrows the candidate's objects, so no setting in the candidate's .git/config
-# (diff.noprefix, diff.relative, diff.context, color.ui, core.quotePath, ...) and no directory the
-# caller happened to name can shape the patch. The settings that matter most are also fixed on the
-# command line: the judge strips exactly one leading component from each name, reads no colour
-# codes, and expects paths from the top of the repository.
-git init --quiet --bare "$out/diff.git"
-git -C "$candidate" rev-parse --path-format=absolute --git-path objects > "$out/diff.git/objects/info/alternates"
-git --git-dir="$out/diff.git" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
-  -c core.quotePath=true diff --no-ext-diff --no-textconv --no-color --no-relative --binary \
-  --no-renames --src-prefix=a/ --dst-prefix=b/ "$base...$head" > "$out/change.patch"
+# The patch is made by the trusted checkout's patch-maker: the diff runs in a new repository that
+# only borrows the candidate's objects, so nothing in the candidate's .git/config, in the
+# caller's environment or in the directory named for the candidate can shape it, and attributes
+# come from the empty tree (scripts/make_patch.sh says why for each).
+bash "$trusted/scripts/make_patch.sh" "$base" "$head" "$candidate" > "$out/change.patch"
 # Source, policy, lockfile and build configuration all come from the trusted checkout.
 cd "$trusted"
 cp -- warden.toml "$out/policy.toml"

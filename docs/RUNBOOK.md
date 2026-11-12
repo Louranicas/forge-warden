@@ -29,7 +29,13 @@ Pin what you deploy: a release tag, or a commit you have reviewed.
 ```bash
 cargo install --git https://github.com/Louranicas/forge-warden --rev <commit> forge-warden-cli --locked
 forge-warden schema exit-codes   # the exit codes your automation will see
+curl --fail --location --proto '=https' --output make_patch.sh \
+  "https://raw.githubusercontent.com/Louranicas/forge-warden/<commit>/scripts/make_patch.sh"
+sed -n 2p make_patch.sh          # forge-warden patch-maker v1
 ```
+
+`make_patch.sh` is the patch-maker step 6 uses; take it from the same commit as the binary and
+keep it where only you can write it.
 
 ## 3. Get the ranker and record its digest
 
@@ -100,23 +106,25 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 not installed yet. The advisory commands below were run as written.
 
 ```bash
-git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/ main... > change.patch
+bash make_patch.sh main HEAD > change.patch
 forge-warden check --policy warden.toml --patch change.patch \
   --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > verdict.json
 echo "exit $?"
 ```
 
-Run it from the top level of the repository. The prefix options fix the `a/` and `b/` every path
-in the patch starts with: your own Git configuration can change or drop them (`diff.noprefix`),
-and a patch without them is refused as unverifiable (exit 8, `patch_unverifiable`), because Git
-would read `scripts/x` as `x`. `--no-relative` matters as much and nothing can check it for you:
-with `diff.relative` set and the command run in a subdirectory, Git writes a well-formed patch
-that leaves out every change outside that directory, and forge-warden judges what it is given.
+`make_patch.sh` writes the change from the merge base of `main` and `HEAD` to `HEAD`, committed
+changes only, and the same bytes whatever your Git configuration, environment and current
+directory are. A plain `git diff` is not safe here: with `diff.noprefix` it drops the `a/` `b/`
+every path starts with (forge-warden refuses such a patch as unverifiable, exit 8, because Git
+would read `scripts/x` as `x`), and with `diff.relative` in a subdirectory it writes a well-formed
+patch that leaves out every change outside that directory, which nothing can check for you. If
+you have to use Git directly: from the top level,
+`git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/ main...HEAD`.
 
 What a verdict is about: these patch bytes, with paths read from the repository root.
 forge-warden does not check that the patch is the whole change between two commits; `--base`
 and `--head` are recorded as your claims, unverified. Whoever makes the patch is part of the
-trust boundary, so make it with this command or with `scripts/dogfood.sh`, not by hand.
+trust boundary, so make it with `make_patch.sh` or with `scripts/dogfood.sh`, not by hand.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
 next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.

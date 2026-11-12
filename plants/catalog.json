@@ -547,14 +547,14 @@
     {
       "id": "candidate-attributes-honoured",
       "guardrail": "G-35",
-      "path": "scripts/dogfood.sh",
+      "path": "scripts/make_patch.sh",
       "diagnostic": "FAIL attributes: the candidate's \\.gitattributes shaped the patch",
       "command": [
         "bash",
         "scripts/tests/dogfood.sh"
       ],
-      "old": "git --git-dir=\"$out/diff.git\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
-      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null \\",
+      "old": "git --git-dir=\"$scratch/diff.git\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
+      "new": "git -C \"$repository\" -c core.attributesFile=/dev/null \\",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {

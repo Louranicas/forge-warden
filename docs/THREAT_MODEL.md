@@ -97,9 +97,9 @@ implemented control for each property and why a stronger claim is unavailable.
   mode passes it (found by the attack on this fix). **A verdict is about the patch bytes it was
   given, with paths read from the repository root. forge-warden does not check that the patch
   is the whole change between two commits; `--base` and `--head` are recorded as unverified
-  claims.** Whoever makes the patch is inside the trust boundary: `scripts/dogfood.sh` makes it
-  in a repository of its own with every option fixed, and the documented commands pass
-  `--no-relative --src-prefix=a/ --dst-prefix=b/` from the top level. A patch made by hand
+  claims.** Whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which
+  `scripts/dogfood.sh` calls and the documents tell operators to use, makes it in a repository
+  of its own that reads no configuration, with every option fixed. A patch made by hand
   with other settings can still pass for less than the change it claims to be.
 - **This is not a sandbox.** Process-group cleanup covers descendants remaining in
   that group. It does not contain a ranker that leaves the group. The admitted

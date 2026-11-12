@@ -11,6 +11,12 @@ registry is always listed, because consumers parse them.
 
 ## [0.2.0] - 2026-11-11
 
+- New `scripts/make_patch.sh <base> <head> [<repository>]` writes the patch to judge: the change
+  from the merge base to head, the same bytes whatever the caller's Git configuration,
+  environment and current directory are (the diff runs in a new repository that only borrows the
+  object store). `scripts/dogfood.sh` uses it, and the runbook, README and upgrade notes
+  document it in place of a plain `git diff`. `just judge` and the reviewer agent now judge
+  committed changes only.
 - **Security fix, and breaking for some setups:** a patch is believed only if every file has a
   `diff --git a/PATH b/PATH` header (`b/PATH a/PATH` from `git diff -R` is read too). A patch
   made with `diff.noprefix`, `diff.mnemonicPrefix` or other prefixes, or without Git headers, now
@@ -18,8 +24,8 @@ registry is always listed, because consumers parse them.
   ranker both dropped the first component of an unprefixed path (`scripts/x` became `x`), agreed
   with each other, and no path rule matched: authority mode could pass a change to a protected
   file. No attacker was needed, only `[diff] noprefix = true` in the Git configuration. Make
-  patches with `git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/`; the documented
-  commands now do, from the top level of the repository. Not detectable from a patch: prefixes
+  patches with the new `scripts/make_patch.sh <base> <head>` (see the next entry); the documented
+  commands now do. Not detectable from a patch: prefixes
   that themselves begin `a/` and `b/`, and a patch that is only part of a change (`diff.relative`
   in a subdirectory). A verdict is about the patch bytes it was given.
 - A usage error (exit 2) is printed on the argument parser's own lines again. It was one line with
