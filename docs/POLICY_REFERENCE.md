@@ -121,7 +121,7 @@ argument group in `src/main.rs`), and refuses with a usage error (exit 2) when n
 
 - `--patch` is required in both modes, and is read once: the same bytes are hashed, given to the
   ranker and given to Git. Produce it with
-  `git diff --binary --no-renames --src-prefix=a/ --dst-prefix=b/` (not `format-patch`).
+  `git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/` (not `format-patch`).
 - Exactly one of `--ranker` and `--advisory` must be given; `--advisory` needs `--rank`.
 - **Advisory can never pass.** forge-warden cannot tell who wrote a supplied ranking, so it can
   inform a person but not approve a change: every advisory verdict carries `rank_unverified`, and
