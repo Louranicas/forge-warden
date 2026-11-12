@@ -1105,21 +1105,22 @@ fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
 }
 
 /// `(id, kind, severity)` of every rule in a policy file, in file order.
-fn policy_rules(path: &str) -> Vec<(String, String, String)> {
-    let policy: toml::Value = toml::from_str(&read(path)).unwrap();
-    policy
+fn policy_rules(path: &str) -> Result<Vec<(String, String, String)>, String> {
+    let policy: toml::Value = toml::from_str(&read(path)).map_err(|e| format!("{path}: {e}"))?;
+    let rules = policy
         .get("rule")
         .and_then(toml::Value::as_array)
-        .unwrap()
+        .ok_or(format!("{path}: no [[rule]] table"))?;
+    rules
         .iter()
         .map(|rule| {
             let field = |name: &str| {
                 rule.get(name)
                     .and_then(toml::Value::as_str)
-                    .unwrap()
-                    .to_owned()
+                    .map(str::to_owned)
+                    .ok_or(format!("{path}: a rule has no string `{name}`"))
             };
-            (field("id"), field("kind"), field("severity"))
+            Ok((field("id")?, field("kind")?, field("severity")?))
         })
         .collect()
 }
@@ -1152,7 +1153,7 @@ fn sample_rule(line: &str) -> Option<(String, String, String)> {
 
 /// EVIDENCE-0.2.0 item 11: a rule cannot be weakened unnoticed. In the freeze review a seed that
 /// lowered a rule from fail to hold went unseen by every reviewer; now the policy and the table in
-/// docs/POLICY_REFERENCE.md must change together, and the README's sample output must name the
+/// `docs/POLICY_REFERENCE.md` must change together, and the README's sample output must name the
 /// kinds and severities of the starter policy it was made with.
 #[test]
 fn documented_rule_severities_equal_the_policies() {
@@ -1160,16 +1161,19 @@ fn documented_rule_severities_equal_the_policies() {
     let (_, section) = reference
         .split_once("## This repository's own policy (`warden.toml`)")
         .expect("POLICY_REFERENCE has the own-policy section");
-    let section = section.split("\n## ").next().unwrap_or_default();
+    let section = section.split("\n## ").next().unwrap();
     let documented: Vec<_> = section.lines().filter_map(backticked_row).collect();
     assert_eq!(
         documented,
-        policy_rules("warden.toml"),
+        policy_rules("warden.toml").unwrap(),
         "docs/POLICY_REFERENCE.md's own-policy table and warden.toml disagree: change both together"
     );
-    let starter = policy_rules("examples/starter.warden.toml");
+    let starter = policy_rules("examples/starter.warden.toml").unwrap();
     let sampled: Vec<_> = read("README.md").lines().filter_map(sample_rule).collect();
-    assert!(!sampled.is_empty(), "the README sample output has rule lines");
+    assert!(
+        !sampled.is_empty(),
+        "the README sample output has rule lines"
+    );
     for rule in &sampled {
         assert!(
             starter.contains(rule),
