@@ -1,8 +1,10 @@
 # Release checklist: forge-warden 0.2.0
 
-This is the checklist for the 0.2.0 release as it stands at commit `6682ed53` (the frozen tree).
-Each line that is done names the commit that did it. The lines at the end can only be done by
-the repository's owner and are not ticked by anyone else. ADR 0011 (amendment A1) requires this
+This is the checklist for the 0.2.0 release. The release is the final commit: the tree frozen at
+`6682ed53` plus the fix for a finding of the freeze review and the evidence package (the last
+sections). A file cannot name the commit it is part of, so the final commit's id is recorded
+in `EVIDENCE.md` and by the tag. Each line that is done names the commit that did it. The
+lines at the end can only be done by the repository's owner and are not ticked by anyone else. ADR 0011 (amendment A1) requires this
 checklist to record which verdict schema 0.2.0 ships; that record is the first section.
 
 0.2.0 is a breaking release (pre-1.0 semver): see [Upgrading from 0.1.0](UPGRADING.md).
@@ -43,15 +45,51 @@ checklist to record which verdict schema 0.2.0 ships; that record is the first s
 - [x] The probe crates in `scripts/tests/guardrails.py` keep their own version 0.1.0: they are
   fixtures, not this workspace.
 - [ ] `EVIDENCE.md` has a 0.2.0 section whose numbers were measured again on the final commit,
-  each with its command. Not on the frozen tree; it is the last commit of the evidence package.
+  each with its command.
+
+## After the freeze: one high finding, fixed before the release
+
+The review of the frozen tree found that authority mode could pass a change to a protected
+file. A patch made with Git's `diff.noprefix` setting names each path without the `a/` and
+`b/` prefixes; Git and the pinned ranker both dropped the first path component (`scripts/x`
+became `x`), agreed with each other, and no path rule matched. No attacker was needed: the
+setting in a user's Git configuration and the documented command were enough.
+
+- [x] **The judge refuses such a patch.** A path is believed only if the patch has exactly one
+  `diff --git a/PATH b/PATH` header for it (`b/PATH a/PATH` from a reverse diff). Anything else
+  holds with `patch_unverifiable` and can never pass (`4eef914`; tests, a corpus of patches Git
+  wrote under each prefix setting, a property and a plant are in the same change).
+- [x] **The dogfood driver's patch cannot be shaped by the caller or the candidate.** It unsets
+  the caller's Git environment and makes the diff in a new repository that only borrows the
+  candidate's objects, so no Git configuration is read for it (`33ca2ec`).
+- [x] **One documented way to make a patch.** `scripts/make_patch.sh <base> <head>` does the
+  same for an operator; the runbook, README and upgrade notes use it instead of a plain
+  `git diff`, and the driver calls it (`ad13d67`).
+- [x] Measured in authority mode with the fixed judge: the two unprefixed patches that had
+  passed now hold; the clean patch of the protected file still holds; a documentation-only
+  change still passes.
+
+**The limit that remains in 0.2.0, in plain words.** A verdict is about the patch bytes it was
+given, with paths read from the repository root. forge-warden does not check that the patch is
+the whole change between two commits; `--base` and `--head` are recorded as unverified claims.
+Two kinds of patch are well formed and still describe less, or something else, than the change:
+one made by a plain `git diff` in a subdirectory with `diff.relative` (it leaves out every change
+outside that directory), and one made with prefixes that themselves begin `a/` and `b/` (it
+names another path). Neither can be detected from the patch, and both still pass. Whoever makes
+the patch is inside the trust boundary: use `scripts/make_patch.sh` or `scripts/dogfood.sh`.
+A mode in which forge-warden makes or checks the diff itself, so that the claims become
+verified, is not in 0.2.0; it is planned for 0.3.0.
 
 ## Gate
 
 - [x] The integrator gate passed on `8555bf6`, whose tree the frozen commit carries: format, lints,
   tests, the supply-chain check, the MSRV build (Rust 1.88), the plant catalogue (110 of 110 plants
   caught) and the mutation check on the changed lines (7 mutants: 6 caught, 1 not buildable, none missed).
-- [ ] The same gate on the final commit, which is the frozen tree plus the evidence package.
-- [ ] A mutation baseline of the whole workspace on the frozen tree, recorded in `EVIDENCE.md`.
+- [ ] The same gate on the final commit: the frozen tree plus the three changes above and the
+  evidence package.
+- [ ] A mutation baseline of the whole workspace on the final commit, recorded in `EVIDENCE.md`.
+- [ ] A second read of the changed area (the header check and the patch-maker) by reviewers who
+  did not build it.
 
 ## Measured once, with a stated limit
 
@@ -60,6 +98,11 @@ checklist to record which verdict schema 0.2.0 ships; that record is the first s
   not enrolled was refused (exit 3). Limit: the Git allowlist used was installed inside a rootless
   development container by an agent, not on a host by the owner. The run shows that the admission
   path, the pin and the refusals work; it does not show an owner boundary.
+- [x] The same setup after the fix (`4eef914`): the unprefixed patches that passed on `6682ed53`
+  hold with `patch_unverifiable`; a patch with `a/x/` and `b/x/` prefixes still passes, which is
+  the limit stated above.
+- [ ] Authority mode on the final commit itself. The runs above were on `6682ed53` and on the
+  fix alone.
 
 ## Only the owner
 
@@ -69,4 +112,7 @@ checklist to record which verdict schema 0.2.0 ships; that record is the first s
 - [ ] Make the changelog date (now 2026-11-11) the date of the tag.
 - [ ] Install the Git allowlist by hand on each machine that will run authority mode
   ([runbook](RUNBOOK.md), step 4).
+- [ ] Decide whether the finding above is published as a security advisory. Whether 0.1.0 is
+  affected has not been measured: it had no authority mode, but it judged the ranking it was
+  handed, and the ranker reads an unprefixed path the same way.
 - [ ] crates.io: not planned for 0.2.0. Both crates stay unpublished unless the owner decides otherwise.
