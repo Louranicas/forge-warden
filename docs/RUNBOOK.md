@@ -104,7 +104,7 @@ unenrolled Git exit 3. That proves the commands and the refusals, not an owner-h
 advisory commands below were run as written.
 
 ```bash
-git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/ main... > change.patch
+git diff --binary --no-renames --no-relative --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ main... > change.patch
 forge-warden check --policy warden.toml --patch change.patch \
   --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > verdict.json
 echo "exit $?"
@@ -116,6 +116,8 @@ and a patch without them is refused as unverifiable (exit 8, `patch_unverifiable
 would read `scripts/x` as `x`. `--no-relative` matters as much and nothing can check it for you:
 with `diff.relative` set and the command run in a subdirectory, Git writes a well-formed patch
 that leaves out every change outside that directory, and forge-warden judges what it is given.
+`--no-ext-diff --no-color` make the patch independent of `diff.external` and `color.ui=always`,
+which would otherwise turn it into output that is held as unverifiable (exit 8) instead of judged.
 
 What a verdict is about: these patch bytes, with paths read from the repository root.
 forge-warden does not check that the patch is the whole change between two commits; `--base`

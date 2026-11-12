@@ -18,7 +18,7 @@ registry is always listed, because consumers parse them.
   ranker both dropped the first component of an unprefixed path (`scripts/x` became `x`), agreed
   with each other, and no path rule matched: authority mode could pass a change to a protected
   file. No attacker was needed, only `[diff] noprefix = true` in the Git configuration. Make
-  patches with `git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/`; the documented
+  patches with `git diff --binary --no-renames --no-relative --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/`; the documented
   commands now do, from the top level of the repository. Not detectable from a patch: prefixes
   that themselves begin `a/` and `b/`, and a patch that is only part of a change (`diff.relative`
   in a subdirectory). A verdict is about the patch bytes it was given.

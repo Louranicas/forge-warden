@@ -23,7 +23,7 @@ mode. It reports the same rule results as before, and it can no longer print PAS
 What to do:
 
 - Save the patch to a file; `--patch -` is refused (stdin is reserved for `--rank -`). Use
-  `git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/` output. A patch whose paths
+  `git diff --binary --no-renames --no-relative --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/` output. A patch whose paths
   do not start with `a/` and `b/` is unverifiable (exit 8): if your Git configuration has
   `diff.noprefix` or `diff.mnemonicPrefix`, the two prefix options are what makes the command
   work. Run it from the top level of the repository: `--no-relative` stops a `diff.relative`
