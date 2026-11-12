@@ -35,5 +35,5 @@ vocab rev=ddf_rev:
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
 # Advisory mode: warden.toml admits no producer, so the verdict is at best hold.
 judge:
-    git diff --binary --no-renames "$(git merge-base HEAD origin/main)" > target/change.patch
+    git diff --binary --no-renames --src-prefix=a/ --dst-prefix=b/ "$(git merge-base HEAD origin/main)" > target/change.patch
     deep-diff-forge --stdin-patch --rank --json < target/change.patch | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch --advisory --rank -

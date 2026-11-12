@@ -2286,6 +2286,16 @@
       "diagnostic": "git_adds_the_deletion_the_producer_omitted.*FAILED",
       "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--test", "authority", "--", "git_adds_the_deletion_the_producer_omitted"],
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "header-prefixes-unchecked",
+      "guardrail": "G-14",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "old": "        check_header_paths(patch, &files)?;",
+      "new": "        drop(check_header_paths(patch, &files));",
+      "diagnostic": "a_path_is_believed_only_under_the_default_a_and_b_prefixes.*FAILED",
+      "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--lib", "--", "a_path_is_believed_only_under_the_default_a_and_b_prefixes"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     }
   ],
   "pending_guardrails": [

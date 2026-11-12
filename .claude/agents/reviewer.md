@@ -14,7 +14,7 @@ it. Judge the bytes.
 1. Capture the change and its evidence:
    ```bash
    base=$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)
-   git diff --binary --no-renames "$base" > target/review.patch
+   git diff --binary --no-renames --src-prefix=a/ --dst-prefix=b/ "$base" > target/review.patch
    deep-diff-forge --stdin-patch --outline < target/review.patch          # risk order
    deep-diff-forge --stdin-patch --rank --json < target/review.patch > target/review.rank.json
    cargo run -q --bin forge-warden -- check --policy warden.toml \

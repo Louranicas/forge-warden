@@ -86,6 +86,14 @@ implemented control for each property and why a stronger claim is unavailable.
   (the reviewed names are pinned by a test, and clippy's refusal of each is measured).
   A std or third-party effect the list does not name is not refused. The closed design,
   a doors crate with the rest of the code under `forbid` (ledger Q26), is deferred to 0.3.0.
+- **A patch is judged as it names its own paths.** A path is believed only under the default
+  `a/` and `b/` prefixes (a reverse diff's `b/` and `a/` included); a patch made with
+  `diff.noprefix` or other prefixes is refused, because Git and the ranker would agree on a
+  path with one component missing (found in the freeze review: an authority-mode pass for a
+  protected file). Prefixes that themselves begin `a/` and `b/` (`--src-prefix=a/x/`) give a
+  well-formed patch for another path, and nothing in the patch says so. Binding a patch to the
+  commits it was made from is the caller's job: `scripts/dogfood.sh` and the documented
+  commands fix the prefixes, and the verdict records `--base` and `--head` as unverified claims.
 - **This is not a sandbox.** Process-group cleanup covers descendants remaining in
   that group. It does not contain a ranker that leaves the group. The admitted
   ranker is trusted to execute; OS isolation is a separate deployment decision.

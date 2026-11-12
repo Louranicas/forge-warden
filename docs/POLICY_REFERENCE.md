@@ -120,7 +120,8 @@ There is no default mode: `check` requires exactly one of `--ranker` and `--advi
 argument group in `src/main.rs`), and refuses with a usage error (exit 2) when neither is given.
 
 - `--patch` is required in both modes, and is read once: the same bytes are hashed, given to the
-  ranker and given to Git. Produce it with `git diff --binary --no-renames` (not `format-patch`).
+  ranker and given to Git. Produce it with
+  `git diff --binary --no-renames --src-prefix=a/ --dst-prefix=b/` (not `format-patch`).
 - Exactly one of `--ranker` and `--advisory` must be given; `--advisory` needs `--rank`.
 - **Advisory can never pass.** forge-warden cannot tell who wrote a supplied ranking, so it can
   inform a person but not approve a change: every advisory verdict carries `rank_unverified`, and
@@ -193,6 +194,12 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
 - **`git format-patch` output**: a commit-message line that starts with a mode keyword (`index`,
   `new`, `deleted`, `old`) and does not have an exact header shape is refused as
   `unreadable mode header` → `patch_unverifiable`. Pass `git diff` output, which has no message.
+- **A patch without the default `a/` and `b/` prefixes** (made with `diff.noprefix`,
+  `diff.mnemonicPrefix` or other prefixes, or with no `diff --git` header) → `patch_unverifiable`.
+  Git removes one leading path component whatever it is, so it would report `scripts/x` as `x`
+  and no path rule would match. Pass `--src-prefix=a/ --dst-prefix=b/` to `git diff`. A reverse
+  diff (`git diff -R`, `b/` then `a/`) is read. Prefixes that themselves begin `a/` and `b/`
+  cannot be told from a real path and are believed as written.
 - **Renames and copies** → `patch_unverifiable` (and `source_path_unknown` from the ranking).
   Use `git diff --no-renames`, so each side is judged as a deletion and an addition.
 - **Submodules and unknown file modes** (anything but 100644, 100755, 120000) →

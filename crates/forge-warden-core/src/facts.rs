@@ -247,34 +247,37 @@ fn check_header_paths(
     files: &BTreeMap<RepoPath, FileChange>,
 ) -> Result<(), Unverifiable> {
     let mut expected: BTreeMap<Vec<u8>, &str> = BTreeMap::new();
-    for path in files.keys() {
-        let path = path.as_str();
+    for file in files.keys() {
+        let reported = file.as_str();
         // `a/ b/`, and `b/ a/`: a reverse diff (`git diff -R`) swaps the two prefixes.
         for (old, new) in [("a/", "b/"), ("b/", "a/")] {
-            expected.insert(format!("{old}{path} {new}{path}").into_bytes(), path);
+            expected.insert(
+                format!("{old}{reported} {new}{reported}").into_bytes(),
+                reported,
+            );
             for raw_high in [false, true] {
-                let quoted = c_quoted(path, raw_high);
-                let mut line = format!("\"{old}").into_bytes();
-                line.extend_from_slice(&quoted);
-                line.extend_from_slice(format!("\" \"{new}").as_bytes());
-                line.extend_from_slice(&quoted);
-                line.push(b'"');
-                expected.insert(line, path);
+                let quoted = c_quoted(reported, raw_high);
+                let mut spelling = format!("\"{old}").into_bytes();
+                spelling.extend_from_slice(&quoted);
+                spelling.extend_from_slice(format!("\" \"{new}").as_bytes());
+                spelling.extend_from_slice(&quoted);
+                spelling.push(b'"');
+                expected.insert(spelling, reported);
             }
         }
     }
-    let mut named = BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for line in patch.split(|b| *b == b'\n') {
-        let Some(names) = line.strip_prefix(b"diff --git ") else {
+        let Some(header) = line.strip_prefix(b"diff --git ") else {
             continue;
         };
         let refused = || Unverifiable::HeaderPaths(String::from_utf8_lossy(line).into_owned());
-        let path = expected.get(names).ok_or_else(refused)?;
-        if !named.insert(*path) {
+        let reported = expected.get(header).ok_or_else(refused)?;
+        if !seen.insert(*reported) {
             return Err(refused());
         }
     }
-    match files.keys().find(|path| !named.contains(path.as_str())) {
+    match files.keys().find(|file| !seen.contains(file.as_str())) {
         Some(unnamed) => Err(Unverifiable::HeaderPaths(unnamed.as_str().to_owned())),
         None => Ok(()),
     }
@@ -563,11 +566,18 @@ mod tests {
 
     /// The headers Git writes by default for the paths of a numstat, one per record.
     fn default_headers(numstat: &str) -> String {
-        numstat
+        let mut headers = String::new();
+        for path in numstat
             .split('\0')
             .filter_map(|record| record.splitn(3, '\t').nth(2))
-            .map(|path| format!("diff --git a/{path} b/{path}\n"))
-            .collect()
+        {
+            headers.push_str("diff --git a/");
+            headers.push_str(path);
+            headers.push_str(" b/");
+            headers.push_str(path);
+            headers.push('\n');
+        }
+        headers
     }
 
     fn facts(numstat: &str, summary: &str) -> Result<PatchFacts, Unverifiable> {
@@ -596,17 +606,32 @@ mod tests {
         // Default prefixes: plain, spaces, a directory literally named `a` or `b`, and each of
         // Git's three spellings of a name it quotes.
         for (path, header) in [
-            ("scripts/ci_local.sh", "a/scripts/ci_local.sh b/scripts/ci_local.sh"),
+            (
+                "scripts/ci_local.sh",
+                "a/scripts/ci_local.sh b/scripts/ci_local.sh",
+            ),
             ("a b", "a/a b b/a b"),
             ("a/x", "a/a/x b/a/x"),
             ("b/y", "a/b/y b/b/y"),
             ("plain.bin", "b/plain.bin a/plain.bin"),
-            ("docs/\u{e9}.md", "\"b/docs/\\303\\251.md\" \"a/docs/\\303\\251.md\""),
-            ("sp ace/my file.txt", "a/sp ace/my file.txt b/sp ace/my file.txt"),
-            ("docs/\u{e9}.md", "\"a/docs/\\303\\251.md\" \"b/docs/\\303\\251.md\""),
+            (
+                "docs/\u{e9}.md",
+                "\"b/docs/\\303\\251.md\" \"a/docs/\\303\\251.md\"",
+            ),
+            (
+                "sp ace/my file.txt",
+                "a/sp ace/my file.txt b/sp ace/my file.txt",
+            ),
+            (
+                "docs/\u{e9}.md",
+                "\"a/docs/\\303\\251.md\" \"b/docs/\\303\\251.md\"",
+            ),
             ("docs/\u{e9}.md", "a/docs/\u{e9}.md b/docs/\u{e9}.md"),
             ("q\"uote.txt", "\"a/q\\\"uote.txt\" \"b/q\\\"uote.txt\""),
-            ("back\\slash.txt", "\"a/back\\\\slash.txt\" \"b/back\\\\slash.txt\""),
+            (
+                "back\\slash.txt",
+                "\"a/back\\\\slash.txt\" \"b/back\\\\slash.txt\"",
+            ),
             ("tab\there.txt", "\"a/tab\\there.txt\" \"b/tab\\there.txt\""),
             ("del\u{7f}.txt", "\"a/del\\177.txt\" \"b/del\\177.txt\""),
             ("t\t\u{e9}", "\"a/t\\t\u{e9}\" \"b/t\\t\u{e9}\""),

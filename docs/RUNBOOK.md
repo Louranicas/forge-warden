@@ -100,11 +100,15 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 not installed yet. The advisory commands below were run as written.
 
 ```bash
-git diff --binary --no-renames main... > change.patch
+git diff --binary --no-renames --src-prefix=a/ --dst-prefix=b/ main... > change.patch
 forge-warden check --policy warden.toml --patch change.patch \
   --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > verdict.json
 echo "exit $?"
 ```
+
+The two prefix options fix the `a/` and `b/` every path in the patch starts with. Your own Git
+configuration can change or drop them (`diff.noprefix`), and a patch without them is refused as
+unverifiable (exit 8, `patch_unverifiable`): Git would read `scripts/x` as `x`.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
 next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.

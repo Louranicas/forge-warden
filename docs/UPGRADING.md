@@ -23,8 +23,11 @@ mode. It reports the same rule results as before, and it can no longer print PAS
 What to do:
 
 - Save the patch to a file; `--patch -` is refused (stdin is reserved for `--rank -`). Use
-  `git diff --binary --no-renames` output. A `git format-patch` message line that looks like a
-  mode header makes the patch unverifiable.
+  `git diff --binary --no-renames --src-prefix=a/ --dst-prefix=b/` output. A patch whose paths
+  do not start with `a/` and `b/` is unverifiable (exit 8): if your Git configuration has
+  `diff.noprefix` or `diff.mnemonicPrefix`, the two prefix options are what makes the command
+  work. A `git format-patch` message line that looks like a mode header makes the patch
+  unverifiable too.
 - Pick a mode. `--rank` alone is now a usage error (exit 2).
 - A pipeline that treated exit 0 as "merge" and used a supplied ranking will now see exit 8 on
   every change. That is intended: a supplied ranking can inform, never approve. To get exit 0
