@@ -553,8 +553,8 @@
         "bash",
         "scripts/tests/dogfood.sh"
       ],
-      "old": "git -C \"$candidate\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null diff",
-      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null diff",
+      "old": "git --git-dir=\"$out/diff.git\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
+      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null \\",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {

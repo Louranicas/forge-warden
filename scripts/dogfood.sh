@@ -27,8 +27,12 @@ fi
 # The runner and this script must be trusted independently of the candidate workflow.
 trusted="$(cd "$(dirname "$0")/.." && pwd -P)"
 candidate="$(cd "$candidate" && pwd -P)"
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_NO_REPLACE_OBJECTS=1
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# Nothing about Git comes from the caller's environment: GIT_CONFIG_COUNT/KEY_n/VALUE_n and
+# GIT_CONFIG_PARAMETERS carry configuration (diff.noprefix alone makes the judge read
+# `scripts/x` as `x`, so no path rule matches), GIT_DIFF_OPTS changes the hunks, GIT_DIR and
+# its relatives move the repository. Unset every GIT_ variable, then set the fixed ones.
+while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
 if [ "$trusted" = "$candidate" ] || [ "$(git -C "$trusted" rev-parse HEAD)" != "$base" ]; then
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2
   exit 2
@@ -55,8 +59,17 @@ esac
 # (at any depth) saying `-diff` or `binary` would otherwise turn added text into a binary patch the
 # judge cannot read. --attr-source needs Git 2.40 or later; an older Git refuses the option.
 empty_tree="$(git hash-object -t tree /dev/null)"
-git -C "$candidate" --attr-source="$empty_tree" -c core.attributesFile=/dev/null diff --no-ext-diff \
-  --no-textconv --binary --no-renames "$base...$head" > "$out/change.patch"
+# The candidate repository's own configuration is not read at all. The diff runs in a new, empty
+# repository that borrows the candidate's objects, so no setting in the candidate's .git/config
+# (diff.noprefix, diff.relative, diff.context, color.ui, core.quotePath, ...) and no directory the
+# caller happened to name can shape the patch. The settings that matter most are also fixed on the
+# command line: the judge strips exactly one leading component from each name, reads no colour
+# codes, and expects paths from the top of the repository.
+git init --quiet --bare "$out/diff.git"
+git -C "$candidate" rev-parse --path-format=absolute --git-path objects > "$out/diff.git/objects/info/alternates"
+git --git-dir="$out/diff.git" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
+  -c core.quotePath=true diff --no-ext-diff --no-textconv --no-color --no-relative --binary \
+  --no-renames --src-prefix=a/ --dst-prefix=b/ "$base...$head" > "$out/change.patch"
 # Source, policy, lockfile and build configuration all come from the trusted checkout.
 cd "$trusted"
 cp -- warden.toml "$out/policy.toml"
