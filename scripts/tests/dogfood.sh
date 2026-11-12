@@ -147,12 +147,14 @@ echo 'PASS candidate .gitattributes (root -diff, subdirectory binary) do not hid
 # own configuration do not shape the patch. Each case must give the bytes of the clean run above.
 # Without the `a/` `b/` prefixes the judge reads `sub/k.rs` as `k.rs`, and no path rule matches.
 clean_patch="$out/change.patch"
+# Byte equality with sha256sum, which the gate's tool set has; cmp and diff are not in it.
+same_bytes() { [ "$(sha256sum < "$1")" = "$(sha256sum < "$2")" ]; }
 grep -q '^diff --git a/sub/k.rs b/sub/k.rs$' "$clean_patch" || { echo 'FAIL git environment: the clean patch has no a/ b/ prefixes'; exit 1; }
 gitenv() {
  name="$1"; shift
  out="$sandbox/evidence-gitenv-$name"
  env "$@" bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
- if ! cmp -s "$clean_patch" "$out/change.patch"; then
+ if ! same_bytes "$clean_patch" "$out/change.patch"; then
   echo "FAIL git environment $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch")"
   exit 1
  fi
@@ -172,7 +174,7 @@ candidate_config() {
  out="$sandbox/evidence-gitenv-$name"
  bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$where" "$out" > "$sandbox/output" 2>&1
  git -C "$attr" config --unset "$key"
- if ! cmp -s "$clean_patch" "$out/change.patch"; then
+ if ! same_bytes "$clean_patch" "$out/change.patch"; then
   echo "FAIL candidate config $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch" | cat -v)"
   exit 1
  fi
@@ -194,7 +196,7 @@ mkdir -p "$sandbox/user-home" "$sandbox/maker-tmp"
 printf '[diff]\n\tnoprefix = true\n\trelative = true\n\tcontext = 0\n\tmnemonicPrefix = true\n\talgorithm = histogram\n[color]\n\tui = always\n[core]\n\tquotePath = false\n' > "$sandbox/user-home/.gitconfig"
 made() {
  name="$1"; shift
- if ! "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || ! cmp -s "$clean_patch" "$sandbox/made.patch"; then
+ if ! "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || ! same_bytes "$clean_patch" "$sandbox/made.patch"; then
   echo "FAIL make_patch $name: not the clean patch: $(sed -n 1p "$sandbox/made.patch" | cat -v) $(sed -n 1p "$sandbox/made.err")"
   exit 1
  fi
