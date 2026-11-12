@@ -117,6 +117,7 @@ crate::facts Unverifiable::RenameOrCopy,
 crate::facts Unverifiable::UnsupportedMode(String),
 crate::facts Unverifiable::UnreadableModeHeader(String),
 crate::facts Unverifiable::SymlinkTargetEdit,
+crate::facts Unverifiable::HeaderPaths(String),
 crate::facts Unverifiable::UnreadableGitOutput(String),
 crate::facts impl fmt::Display for Unverifiable
 crate::facts Unverifiable::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
