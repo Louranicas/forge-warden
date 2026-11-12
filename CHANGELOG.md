@@ -11,6 +11,17 @@ registry is always listed, because consumers parse them.
 
 ## [0.2.0] - 2026-11-11
 
+- **Security fix, and breaking for some setups:** a patch is believed only if every file has a
+  `diff --git a/PATH b/PATH` header (`b/PATH a/PATH` from `git diff -R` is read too). A patch
+  made with `diff.noprefix`, `diff.mnemonicPrefix` or other prefixes, or without Git headers, now
+  holds with `patch_unverifiable` (new refusal `Unverifiable::HeaderPaths`). Before, Git and the
+  ranker both dropped the first component of an unprefixed path (`scripts/x` became `x`), agreed
+  with each other, and no path rule matched: authority mode could pass a change to a protected
+  file. No attacker was needed, only `[diff] noprefix = true` in the Git configuration. Make
+  patches with `git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/`; the documented
+  commands now do, from the top level of the repository. Not detectable from a patch: prefixes
+  that themselves begin `a/` and `b/`, and a patch that is only part of a change (`diff.relative`
+  in a subdirectory). A verdict is about the patch bytes it was given.
 - A usage error (exit 2) is printed on the argument parser's own lines again. It was one line with
   `\u{000a}` where each line break belonged. Characters outside printable ASCII in an argument
   are still escaped, and if any argument contains a line feed the whole message stays on one

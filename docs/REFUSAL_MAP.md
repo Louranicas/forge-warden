@@ -31,6 +31,7 @@ proven by a plant.
 | `Unverifiable::UnsupportedMode` | `crates/forge-warden-core/src/facts.rs::every_mode_bearing_header_is_admitted_by_one_total_grammar` |
 | `Unverifiable::UnreadableModeHeader` | `crates/forge-warden-core/src/facts.rs::every_mode_bearing_header_is_admitted_by_one_total_grammar` |
 | `Unverifiable::SymlinkTargetEdit` | `crates/forge-warden-core/src/facts.rs::an_existing_symlink_target_edit_is_refused_not_called_covered` |
+| `Unverifiable::HeaderPaths` | `crates/forge-warden-core/src/facts.rs::a_path_is_believed_only_under_the_default_a_and_b_prefixes` |
 | `Unverifiable::UnreadableGitOutput` | `crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output` |
 | `PathError::Empty` | `crates/forge-warden-core/src/path.rs::every_non_canonical_spelling_is_refused_with_its_reason` |
 | `PathError::Nul` | `crates/forge-warden-core/src/path.rs::every_non_canonical_spelling_is_refused_with_its_reason` |

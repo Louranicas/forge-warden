@@ -553,8 +553,8 @@
         "bash",
         "scripts/tests/dogfood.sh"
       ],
-      "old": "git -C \"$candidate\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null diff",
-      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null diff",
+      "old": "git --git-dir=\"$out/diff.git\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
+      "new": "git -C \"$candidate\" -c core.attributesFile=/dev/null \\",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
@@ -2315,6 +2315,16 @@
       "new": "id = \"no-unsafe\"\nwhy = \"unsafe_code is forbidden workspace-wide; a diff that adds it is already wrong.\"\nkind = \"forbid_signal\"\nseverity = \"hold\"",
       "diagnostic": "documented_rule_severities_equal_the_policies.*FAILED",
       "cargo": ["test", "-p", "forge-warden-cli", "--locked", "--offline", "--test", "docs_inventory", "--", "documented_rule_severities_equal_the_policies"],
+      "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "header-prefixes-unchecked",
+      "guardrail": "G-14",
+      "path": "crates/forge-warden-core/src/facts.rs",
+      "old": "        check_header_paths(patch, &files)?;",
+      "new": "        drop(check_header_paths(patch, &files));",
+      "diagnostic": "a_path_is_believed_only_under_the_default_a_and_b_prefixes.*FAILED",
+      "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--lib", "--", "a_path_is_believed_only_under_the_default_a_and_b_prefixes"],
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
     }
   ],

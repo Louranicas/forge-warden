@@ -104,11 +104,23 @@ unenrolled Git exit 3. That proves the commands and the refusals, not an owner-h
 advisory commands below were run as written.
 
 ```bash
-git diff --binary --no-renames main... > change.patch
+git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/ main... > change.patch
 forge-warden check --policy warden.toml --patch change.patch \
   --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > verdict.json
 echo "exit $?"
 ```
+
+Run it from the top level of the repository. The prefix options fix the `a/` and `b/` every path
+in the patch starts with: your own Git configuration can change or drop them (`diff.noprefix`),
+and a patch without them is refused as unverifiable (exit 8, `patch_unverifiable`), because Git
+would read `scripts/x` as `x`. `--no-relative` matters as much and nothing can check it for you:
+with `diff.relative` set and the command run in a subdirectory, Git writes a well-formed patch
+that leaves out every change outside that directory, and forge-warden judges what it is given.
+
+What a verdict is about: these patch bytes, with paths read from the repository root.
+forge-warden does not check that the patch is the whole change between two commits; `--base`
+and `--head` are recorded as your claims, unverified. Whoever makes the patch is part of the
+trust boundary, so make it with this command or with `scripts/dogfood.sh`, not by hand.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
 next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.

@@ -5,7 +5,7 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 *does this change meet the standards this repository wrote down?*
 
 ```bash
-git diff --binary --no-renames origin/main... > change.patch
+git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/ origin/main... > change.patch
 forge-warden check --policy warden.toml --patch change.patch --ranker "$(command -v deep-diff-forge)"
 ```
 
@@ -157,8 +157,14 @@ editors that read JSON Schema (taplo, Even Better TOML) flag most of these as yo
   cannot prove who produced it, so the verdict is at best `hold` (`rank_unverified`).
 
 In both modes Git reads the patch independently. Its facts can only add change kinds to what
-the ranking reports, never remove them. Pass `git diff --binary --no-renames` output; see the
-[known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
+the ranking reports, never remove them. Pass the output of
+`git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/`, run from the top
+level of the repository. The prefix options keep the `a/` and `b/` that your Git configuration
+could otherwise change (a patch without them is refused), and `--no-relative` keeps a
+`diff.relative` setting from leaving out every change outside the current directory. A verdict is
+about the patch bytes it was given, with paths read from the repository root: forge-warden does
+not check that the patch is the whole change between two commits, so whoever makes the patch is
+part of the trust boundary. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
 ## Verdicts
 
@@ -215,7 +221,7 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- run: git diff --binary --no-renames "origin/${BASE_REF}...HEAD" > change.patch
+- run: git diff --binary --no-renames --no-relative --src-prefix=a/ --dst-prefix=b/ "origin/${BASE_REF}...HEAD" > change.patch
   env: { BASE_REF: "${{ github.base_ref }}" }
 - run: forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --json > verdict.json
 ```
