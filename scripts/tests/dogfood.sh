@@ -8,6 +8,7 @@ export HOME="$sandbox/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 mkdir -p "$HOME" "$sandbox/trusted/scripts" "$sandbox/bin"
 trusted="$sandbox/trusted"
 cp "$source_root/scripts/dogfood.sh" "$trusted/scripts/dogfood.sh"
+cp "$source_root/scripts/make_patch.sh" "$trusted/scripts/make_patch.sh"
 cp "$source_root/scripts/judge_mode.py" "$trusted/scripts/judge_mode.py"
 cp "$source_root/scripts/tool_versions.py" "$source_root/scripts/tool-versions.toml" "$trusted/scripts/"
 cp "$source_root/rust-toolchain.toml" "$source_root/Cargo.toml" "$trusted/"
@@ -43,15 +44,15 @@ printf 'schema = "forge-warden.policy.v0"\n[producer]\nsha256 = ["00000000000000
 printf 'trusted-build\n' > "$trusted/build.rs"
 git -C "$trusted" init -q
 # Do not inherit signing, hooks or identities from the reviewer's environment.
-git -C "$trusted" add -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
-git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$trusted" add -- scripts/dogfood.sh scripts/make_patch.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/make_patch.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
 base="$(git -C "$trusted" rev-parse HEAD)"
 git clone -q --no-local "$trusted" "$sandbox/candidate"
 candidate="$sandbox/candidate"
 printf 'exit 0 # candidate-controlled driver\n' > "$candidate/scripts/dogfood.sh"
 printf 'allow-all\n' > "$candidate/warden.toml"
 printf 'malicious-build\n' > "$candidate/build.rs"
-git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/make_patch.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
 head="$(git -C "$candidate" rev-parse HEAD)"
 cat > "$sandbox/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
@@ -186,6 +187,37 @@ candidate_config blank-context diff.suppressBlankEmpty true
 candidate_config algorithm diff.algorithm histogram
 candidate_config order-file diff.orderFile "$sandbox/output"
 candidate_config relative-from-a-subdirectory diff.relative true "$attr/sub"
+# MAKE-PATCH: the patch-maker used by hand, as the runbook documents it. The same bytes as the
+# driver's clean patch, whatever the user's own Git configuration, environment and directory are.
+maker="$trusted/scripts/make_patch.sh"
+mkdir -p "$sandbox/user-home" "$sandbox/maker-tmp"
+printf '[diff]\n\tnoprefix = true\n\trelative = true\n\tcontext = 0\n\tmnemonicPrefix = true\n\talgorithm = histogram\n[color]\n\tui = always\n[core]\n\tquotePath = false\n' > "$sandbox/user-home/.gitconfig"
+made() {
+ name="$1"; shift
+ if ! "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || ! cmp -s "$clean_patch" "$sandbox/made.patch"; then
+  echo "FAIL make_patch $name: not the clean patch: $(sed -n 1p "$sandbox/made.patch" | cat -v) $(sed -n 1p "$sandbox/made.err")"
+  exit 1
+ fi
+ echo "PASS make_patch $name gives the clean patch"
+}
+made with-ids bash "$maker" "$base" "$attr_head" "$attr"
+made hostile-user-config env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$sandbox/user-home" bash "$maker" "$base" "$attr_head" "$attr"
+made hostile-environment env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_DIFF_OPTS=--unified=0 GIT_EXTERNAL_DIFF=false bash "$maker" "$base" "$attr_head" "$attr"
+git -C "$attr" branch maker-base "$base"
+git -C "$attr" branch maker-head "$attr_head"
+made with-branch-names bash "$maker" maker-base maker-head "$attr"
+made from-a-subdirectory-with-relative bash -c 'cd "$1/sub" && env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$2" bash "$3" "$4" "$5"' _ "$attr" "$sandbox/user-home" "$maker" "$base" "$attr_head"
+made leaves-no-scratch env TMPDIR="$sandbox/maker-tmp" bash "$maker" "$base" "$attr_head" "$attr"
+if [ -n "$(ls -A "$sandbox/maker-tmp")" ]; then echo 'FAIL make_patch: scratch repository left behind'; exit 1; fi
+for bad in "nosuchrev $attr_head" "$base nosuchrev" "$base" "$base $attr_head $attr extra" "--output=$sandbox/x $attr_head"; do
+ # shellcheck disable=SC2086
+ if bash "$maker" $bad > "$sandbox/made.patch" 2> "$sandbox/made.err" || [ -s "$sandbox/made.patch" ]; then
+  echo "FAIL make_patch refuses: '$bad' gave a patch or exit 0"
+  exit 1
+ fi
+done
+[ ! -e "$sandbox/x" ] || { echo 'FAIL make_patch: an option was taken as a revision'; exit 1; }
+echo 'PASS make_patch refuses a missing revision, a wrong argument count and an option in place of a revision'
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
 # the run before any ranker exists and before the judge runs, even when the judge would pass.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
