@@ -1,0 +1,8 @@
+diff --git i/scripts/gate.sh w/scripts/gate.sh
+index a6ac7af..f761ee1 100644
+--- i/scripts/gate.sh
++++ w/scripts/gate.sh
+@@ -1,2 +1,3 @@
+ set -eu
+ echo gate
++exit 0

@@ -93,6 +93,11 @@ pub enum Unverifiable {
     /// An existing symlink's target changes (`index a..b 120000`): Git's summary has no record
     /// for it, so the change kind cannot be tied to a path (Touchstone C1b-O3-01).
     SymlinkTargetEdit,
+    /// The patch's `diff --git` headers and the paths Git reports are not one for one
+    /// `a/PATH b/PATH` (a patch made with `diff.noprefix` or other prefixes, or without Git
+    /// headers): Git strips one leading component whatever it is, so the path it reports for
+    /// such a patch is not the path the patch was made for. Carries the header or the path.
+    HeaderPaths(String),
     /// Output this module does not recognise.
     UnreadableGitOutput(String),
 }
@@ -122,6 +127,11 @@ impl fmt::Display for Unverifiable {
             Self::UnreadableModeHeader(line) => write!(f, "unreadable mode header {line:?}"),
             Self::SymlinkTargetEdit => f.write_str(
                 "an existing symlink's target changes; that change cannot be verified per file",
+            ),
+            Self::HeaderPaths(what) => write!(
+                f,
+                "{what:?} is not named by exactly one `diff --git a/PATH b/PATH` header; make \
+                 the patch with `git diff --src-prefix=a/ --dst-prefix=b/`"
             ),
             Self::UnreadableGitOutput(what) => write!(f, "unreadable git output: {what}"),
         }
@@ -197,6 +207,82 @@ fn check_header_modes(patch: &[u8]) -> Result<(), Unverifiable> {
     Ok(())
 }
 
+/// `path` as Git writes it inside double quotes in a header (`quote_c_style`): the named escapes,
+/// and three octal digits for every other control byte. Bytes that are not ASCII are octal too,
+/// unless `core.quotePath` is off, when Git leaves them as they are (`raw_high`).
+fn c_quoted(path: &str, raw_high: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            0x07 => out.extend_from_slice(b"\\a"),
+            0x08 => out.extend_from_slice(b"\\b"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            0x0b => out.extend_from_slice(b"\\v"),
+            0x0c => out.extend_from_slice(b"\\f"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'"' => out.extend_from_slice(b"\\\""),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            b' '..=b'~' => out.push(byte),
+            0x80.. if raw_high => out.push(byte),
+            _ => out.extend_from_slice(format!("\\{byte:03o}").as_bytes()),
+        }
+    }
+    out
+}
+
+/// Believe the paths Git reports only if the patch names each of them itself, with the prefixes
+/// Git writes by default (freeze review N3b). `git apply` strips one leading path component
+/// whatever it is: for a patch made with `diff.noprefix`, whose header is
+/// `diff --git scripts/x scripts/x`, it reports `x`, the ranker agrees, and no path rule
+/// matches. So the column-0 `diff --git ` lines and the reported paths must be one for one, and
+/// each line must be exactly `a/PATH b/PATH` for its path (`b/PATH a/PATH` from a reverse diff):
+/// raw, or with both names quoted as Git quotes them. Nothing is parsed out of a header, so nothing is guessed: a line is one of the
+/// expected spellings or the patch is refused. Renames and copies never get here (refused above).
+///
+/// Not detectable here, by any reader: prefixes that themselves begin `a/` and `b/`
+/// (`--src-prefix=a/x/`); such a patch is a well-formed patch for `x/PATH`.
+fn check_header_paths(
+    patch: &[u8],
+    files: &BTreeMap<RepoPath, FileChange>,
+) -> Result<(), Unverifiable> {
+    let mut expected: BTreeMap<Vec<u8>, &str> = BTreeMap::new();
+    for file in files.keys() {
+        let reported = file.as_str();
+        // `a/ b/`, and `b/ a/`: a reverse diff (`git diff -R`) swaps the two prefixes.
+        for (old, new) in [("a/", "b/"), ("b/", "a/")] {
+            expected.insert(
+                format!("{old}{reported} {new}{reported}").into_bytes(),
+                reported,
+            );
+            for raw_high in [false, true] {
+                let quoted = c_quoted(reported, raw_high);
+                let mut spelling = format!("\"{old}").into_bytes();
+                spelling.extend_from_slice(&quoted);
+                spelling.extend_from_slice(format!("\" \"{new}").as_bytes());
+                spelling.extend_from_slice(&quoted);
+                spelling.push(b'"');
+                expected.insert(spelling, reported);
+            }
+        }
+    }
+    let mut seen = BTreeSet::new();
+    for line in patch.split(|b| *b == b'\n') {
+        let Some(header) = line.strip_prefix(b"diff --git ") else {
+            continue;
+        };
+        let refused = || Unverifiable::HeaderPaths(String::from_utf8_lossy(line).into_owned());
+        let reported = expected.get(header).ok_or_else(refused)?;
+        if !seen.insert(*reported) {
+            return Err(refused());
+        }
+    }
+    match files.keys().find(|file| !seen.contains(file.as_str())) {
+        Some(unnamed) => Err(Unverifiable::HeaderPaths(unnamed.as_str().to_owned())),
+        None => Ok(()),
+    }
+}
+
 fn utf8(bytes: &[u8]) -> Result<&str, Unverifiable> {
     std::str::from_utf8(bytes).map_err(|_| Unverifiable::NonUtf8Path)
 }
@@ -259,6 +345,7 @@ impl PatchFacts {
             return Err(Unverifiable::Empty);
         }
         apply_summary(&mut files, summary)?;
+        check_header_paths(patch, &files)?;
         Ok(Self { files })
     }
 
@@ -477,8 +564,137 @@ mod tests {
         assert!(seen.len() >= 4, "too few derived signals reached: {seen:?}");
     }
 
+    /// The headers Git writes by default for the paths of a numstat, one per record.
+    fn default_headers(numstat: &str) -> String {
+        let mut headers = String::new();
+        for path in numstat
+            .split('\0')
+            .filter_map(|record| record.splitn(3, '\t').nth(2))
+        {
+            headers.push_str("diff --git a/");
+            headers.push_str(path);
+            headers.push_str(" b/");
+            headers.push_str(path);
+            headers.push('\n');
+        }
+        headers
+    }
+
     fn facts(numstat: &str, summary: &str) -> Result<PatchFacts, Unverifiable> {
-        PatchFacts::from_git(numstat.as_bytes(), summary.as_bytes(), b"")
+        PatchFacts::from_git(
+            numstat.as_bytes(),
+            summary.as_bytes(),
+            default_headers(numstat).as_bytes(),
+        )
+    }
+
+    /// Freeze review N3b. Each header below is what Git 2.56 wrote for that setting (the
+    /// repository `fixtures/hostile/patch-prefix/` holds whole patches); the numstat is what
+    /// `git apply --numstat -z` then reported, or what it would report if it accepted the patch.
+    #[test]
+    fn a_path_is_believed_only_under_the_default_a_and_b_prefixes() {
+        let with = |numstat: &str, patch: &str| {
+            PatchFacts::from_git(numstat.as_bytes(), b"", patch.as_bytes())
+        };
+        let refused = |numstat: &str, patch: &str, what: &str| {
+            assert_eq!(
+                with(numstat, patch),
+                Err(Unverifiable::HeaderPaths(what.to_owned())),
+                "{patch:?}"
+            );
+        };
+        // Default prefixes: plain, spaces, a directory literally named `a` or `b`, and each of
+        // Git's three spellings of a name it quotes.
+        for (path, header) in [
+            (
+                "scripts/ci_local.sh",
+                "a/scripts/ci_local.sh b/scripts/ci_local.sh",
+            ),
+            ("a b", "a/a b b/a b"),
+            ("a/x", "a/a/x b/a/x"),
+            ("b/y", "a/b/y b/b/y"),
+            ("plain.bin", "b/plain.bin a/plain.bin"),
+            (
+                "docs/\u{e9}.md",
+                "\"b/docs/\\303\\251.md\" \"a/docs/\\303\\251.md\"",
+            ),
+            (
+                "sp ace/my file.txt",
+                "a/sp ace/my file.txt b/sp ace/my file.txt",
+            ),
+            (
+                "docs/\u{e9}.md",
+                "\"a/docs/\\303\\251.md\" \"b/docs/\\303\\251.md\"",
+            ),
+            ("docs/\u{e9}.md", "a/docs/\u{e9}.md b/docs/\u{e9}.md"),
+            ("q\"uote.txt", "\"a/q\\\"uote.txt\" \"b/q\\\"uote.txt\""),
+            (
+                "back\\slash.txt",
+                "\"a/back\\\\slash.txt\" \"b/back\\\\slash.txt\"",
+            ),
+            ("tab\there.txt", "\"a/tab\\there.txt\" \"b/tab\\there.txt\""),
+            ("del\u{7f}.txt", "\"a/del\\177.txt\" \"b/del\\177.txt\""),
+            ("t\t\u{e9}", "\"a/t\\t\u{e9}\" \"b/t\\t\u{e9}\""),
+        ] {
+            let patch = format!("diff --git {header}\n--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n");
+            let facts = with(&format!("1\t1\t{path}\0"), &patch).unwrap();
+            assert_eq!(
+                facts.files().map(|f| f.path().as_str()).collect::<Vec<_>>(),
+                [path],
+                "{header}"
+            );
+        }
+        // `diff.noprefix`: Git strips `scripts/` and reports `ci_local.sh` (measured: authority
+        // mode then passed a change to a protected path).
+        refused(
+            "2\t0\tci_local.sh\0",
+            "diff --git scripts/ci_local.sh scripts/ci_local.sh\n",
+            "diff --git scripts/ci_local.sh scripts/ci_local.sh",
+        );
+        // The same for a file under a directory named `a`: the header looks half right.
+        refused("1\t0\tx\0", "diff --git a/x a/x\n", "diff --git a/x a/x");
+        // Other prefixes, mnemonic prefixes, one side only, a quoted unprefixed name.
+        for (reported, header) in [
+            ("f", "old/f new/f"),
+            ("f", "i/f w/f"),
+            ("f", "c/f o/f"),
+            ("f", "a/f f"),
+            ("f", "f b/f"),
+            ("f", "a/f a/f"),
+            ("f", "b/f b/f"),
+            ("\u{e9}", "\"docs/\\303\\251\" \"docs/\\303\\251\""),
+            ("f", "\"a/f\" b/f"),
+            ("f", "a/f b/f "),
+            ("f", "a/f  b/f"),
+            ("f", "a/f b/f\r"),
+            ("f", "a/f\tb/f"),
+        ] {
+            let line = format!("diff --git {header}");
+            refused(&format!("1\t0\t{reported}\0"), &format!("{line}\n"), &line);
+        }
+        // A header for a path Git does not report, and a header given twice.
+        refused(
+            "1\t0\tf\0",
+            "diff --git a/f b/f\ndiff --git a/g b/g\n",
+            "diff --git a/g b/g",
+        );
+        refused(
+            "1\t0\tf\0",
+            "diff --git a/f b/f\ndiff --git a/f b/f\n",
+            "diff --git a/f b/f",
+        );
+        // A path Git reports with no Git header at all: a traditional patch, where `-p1` strips
+        // whatever the first component is; and one prefixed section beside one unprefixed.
+        refused("1\t0\tf\0", "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-x\n+y\n", "f");
+        refused(
+            concat!("1\t0\tf\0", "1\t0\tg\0"),
+            "diff --git a/f b/f\ndiff --git scripts/g scripts/g\n",
+            "diff --git scripts/g scripts/g",
+        );
+        // A `diff --git` line inside a hunk body is content, not a header: it starts with the
+        // hunk's own first column.
+        let body = "diff --git a/f b/f\n@@ -1,2 +1,3 @@\n diff --git x x\n+diff --git y y\n-diff --git a/f b/f\n";
+        assert!(with("1\t1\tf\0", body).is_ok());
     }
 
     fn one(numstat: &str, summary: &str) -> FileChange {

@@ -86,6 +86,21 @@ implemented control for each property and why a stronger claim is unavailable.
   (the reviewed names are pinned by a test, and clippy's refusal of each is measured).
   A std or third-party effect the list does not name is not refused. The closed design,
   a doors crate with the rest of the code under `forbid` (ledger Q26), is deferred to 0.3.0.
+- **A patch is judged as it names its own paths.** A path is believed only under the default
+  `a/` and `b/` prefixes (a reverse diff's `b/` and `a/` included); a patch made with
+  `diff.noprefix` or other prefixes is refused, because Git and the ranker would agree on a
+  path with one component missing (found in the freeze review: an authority-mode pass for a
+  protected file). Prefixes that themselves begin `a/` and `b/` (`--src-prefix=a/x/`) give a
+  well-formed patch for another path, and nothing in the patch says so. Nor does a patch say
+  what tree it is a diff of: with `diff.relative` and a command run in a subdirectory, Git
+  writes a well-formed patch that omits every change outside that directory, and authority
+  mode passes it (found by the attack on this fix). **A verdict is about the patch bytes it was
+  given, with paths read from the repository root. forge-warden does not check that the patch
+  is the whole change between two commits; `--base` and `--head` are recorded as unverified
+  claims.** Whoever makes the patch is inside the trust boundary: `scripts/dogfood.sh` makes it
+  in a repository of its own with every option fixed, and the documented commands pass
+  `--no-relative --src-prefix=a/ --dst-prefix=b/` from the top level. A patch made by hand
+  with other settings can still pass for less than the change it claims to be.
 - **This is not a sandbox.** Process-group cleanup covers descendants remaining in
   that group. It does not contain a ranker that leaves the group. The admitted
   ranker is trusted to execute; OS isolation is a separate deployment decision.

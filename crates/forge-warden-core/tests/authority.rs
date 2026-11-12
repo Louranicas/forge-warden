@@ -469,6 +469,7 @@ fn every_unverifiable() -> Vec<Unverifiable> {
         Unverifiable::UnsupportedMode("160000".to_owned()),
         Unverifiable::UnreadableModeHeader("new mode 7".to_owned()),
         Unverifiable::SymlinkTargetEdit,
+        Unverifiable::HeaderPaths("diff --git f f".to_owned()),
         Unverifiable::UnreadableGitOutput("?".to_owned()),
     ]
 }

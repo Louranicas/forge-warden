@@ -66,6 +66,10 @@ pub(crate) const fn unverifiable(e: &Unverifiable) -> Row {
             "SymlinkTargetEdit",
             "crates/forge-warden-core/src/facts.rs::an_existing_symlink_target_edit_is_refused_not_called_covered",
         ),
+        Unverifiable::HeaderPaths(..) => (
+            "HeaderPaths",
+            "crates/forge-warden-core/src/facts.rs::a_path_is_believed_only_under_the_default_a_and_b_prefixes",
+        ),
         Unverifiable::UnreadableGitOutput(..) => (
             "UnreadableGitOutput",
             "crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output",
