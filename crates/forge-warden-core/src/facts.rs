@@ -236,8 +236,8 @@ fn c_quoted(path: &str, raw_high: bool) -> Vec<u8> {
 /// whatever it is: for a patch made with `diff.noprefix`, whose header is
 /// `diff --git scripts/x scripts/x`, it reports `x`, the ranker agrees, and no path rule
 /// matches. So the column-0 `diff --git ` lines and the reported paths must be one for one, and
-/// each line must be exactly `a/PATH b/PATH` for its path: raw, or with both names quoted as Git
-/// quotes them. Nothing is parsed out of a header, so nothing is guessed: a line is one of the
+/// each line must be exactly `a/PATH b/PATH` for its path (`b/PATH a/PATH` from a reverse diff):
+/// raw, or with both names quoted as Git quotes them. Nothing is parsed out of a header, so nothing is guessed: a line is one of the
 /// expected spellings or the patch is refused. Renames and copies never get here (refused above).
 ///
 /// Not detectable here, by any reader: prefixes that themselves begin `a/` and `b/`
@@ -249,15 +249,18 @@ fn check_header_paths(
     let mut expected: BTreeMap<Vec<u8>, &str> = BTreeMap::new();
     for path in files.keys() {
         let path = path.as_str();
-        expected.insert(format!("a/{path} b/{path}").into_bytes(), path);
-        for raw_high in [false, true] {
-            let quoted = c_quoted(path, raw_high);
-            let mut line = b"\"a/".to_vec();
-            line.extend_from_slice(&quoted);
-            line.extend_from_slice(b"\" \"b/");
-            line.extend_from_slice(&quoted);
-            line.push(b'"');
-            expected.insert(line, path);
+        // `a/ b/`, and `b/ a/`: a reverse diff (`git diff -R`) swaps the two prefixes.
+        for (old, new) in [("a/", "b/"), ("b/", "a/")] {
+            expected.insert(format!("{old}{path} {new}{path}").into_bytes(), path);
+            for raw_high in [false, true] {
+                let quoted = c_quoted(path, raw_high);
+                let mut line = format!("\"{old}").into_bytes();
+                line.extend_from_slice(&quoted);
+                line.extend_from_slice(format!("\" \"{new}").as_bytes());
+                line.extend_from_slice(&quoted);
+                line.push(b'"');
+                expected.insert(line, path);
+            }
         }
     }
     let mut named = BTreeSet::new();
@@ -597,6 +600,8 @@ mod tests {
             ("a b", "a/a b b/a b"),
             ("a/x", "a/a/x b/a/x"),
             ("b/y", "a/b/y b/b/y"),
+            ("plain.bin", "b/plain.bin a/plain.bin"),
+            ("docs/\u{e9}.md", "\"b/docs/\\303\\251.md\" \"a/docs/\\303\\251.md\""),
             ("sp ace/my file.txt", "a/sp ace/my file.txt b/sp ace/my file.txt"),
             ("docs/\u{e9}.md", "\"a/docs/\\303\\251.md\" \"b/docs/\\303\\251.md\""),
             ("docs/\u{e9}.md", "a/docs/\u{e9}.md b/docs/\u{e9}.md"),
@@ -630,7 +635,8 @@ mod tests {
             ("f", "c/f o/f"),
             ("f", "a/f f"),
             ("f", "f b/f"),
-            ("f", "b/f a/f"),
+            ("f", "a/f a/f"),
+            ("f", "b/f b/f"),
             ("\u{e9}", "\"docs/\\303\\251\" \"docs/\\303\\251\""),
             ("f", "\"a/f\" b/f"),
             ("f", "a/f b/f "),
