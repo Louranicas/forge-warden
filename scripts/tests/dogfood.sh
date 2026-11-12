@@ -140,6 +140,29 @@ if [ "$visible" != 2 ] || [ "$binary" != 0 ]; then
  exit 1
 fi
 echo 'PASS candidate .gitattributes (root -diff, subdirectory binary) do not hide added text'
+# DOGFOOD-GITENV (freeze review N3): the caller's Git environment and the candidate repository's
+# own configuration do not shape the patch. Each case must give the bytes of the clean run above.
+# Without the `a/` `b/` prefixes the judge reads `sub/k.rs` as `k.rs`, and no path rule matches.
+clean_patch="$out/change.patch"
+grep -q '^diff --git a/sub/k.rs b/sub/k.rs$' "$clean_patch" || { echo 'FAIL git environment: the clean patch has no a/ b/ prefixes'; exit 1; }
+gitenv() {
+ name="$1"; shift
+ out="$sandbox/evidence-gitenv-$name"
+ env "$@" bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+ if ! cmp -s "$clean_patch" "$out/change.patch"; then
+  echo "FAIL git environment $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch")"
+  exit 1
+ fi
+ echo "PASS git environment $name does not shape the patch"
+}
+gitenv config-count-noprefix GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true
+gitenv config-parameters-noprefix "GIT_CONFIG_PARAMETERS='diff.noprefix=true'"
+gitenv config-count-prefixes GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=diff.srcPrefix GIT_CONFIG_VALUE_0=a/x/ GIT_CONFIG_KEY_1=diff.dstPrefix GIT_CONFIG_VALUE_1=b/x/
+gitenv config-count-context GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.context GIT_CONFIG_VALUE_0=0
+gitenv diff-opts GIT_DIFF_OPTS=--unified=0
+git -C "$attr" config diff.noprefix true
+gitenv candidate-repository-config X=1
+git -C "$attr" config --unset diff.noprefix
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
 # the run before any ranker exists and before the judge runs, even when the judge would pass.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
