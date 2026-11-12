@@ -11,8 +11,8 @@ v0.8.2, the release binary with SHA-256 `298e0751…41ad` (the full digest is in
   allowlist, a docs-only candidate gave `pass` (exit 0, provenance `produced`, Git admission
   `approved`), a candidate touching a protected path gave `hold` (exit 8), a policy whose
   `[producer]` digest did not match was refused (exit 4), and an unowned or unenrolled Git was
-  refused (exit 3). The allowlist for that run was installed by an agent through the root of a
-  rootless container, which is the user's own uid on the host: the run proves the admission path,
+  refused (exit 3). The allowlist for that run was installed by an agent, on the owner's
+  instruction, through the root of a rootless container, which is the user's own uid on the host: the run proves the admission path,
   the producer pin and the refusals, **not** an owner-held boundary. An owner installing the
   allowlist with `sudo` on the host as [RUNBOOK.md](RUNBOOK.md) step 4 says has not been run.
 - **Resource bounds.** Input limits and the time and peak memory of `lint` and `check` at those

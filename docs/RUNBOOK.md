@@ -97,8 +97,8 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 ## 6. Judge a change
 
 **Run once in authority mode, not yet as written by an owner.** On 2026-11-11 a verifier ran it on the
-0.2.0 release candidate inside a toolbox container, with an allowlist an agent installed through the
-container's root (which is the user's own uid on the host): a docs-only change gave `pass` (exit 0), a
+0.2.0 release candidate inside a toolbox container, with an allowlist an agent installed, on the owner's
+instruction, through the container's root (which is the user's own uid on the host): a docs-only change gave `pass` (exit 0), a
 change to a protected path `hold` (exit 8), a wrong `[producer]` digest exit 4, and an unowned or
 unenrolled Git exit 3. That proves the commands and the refusals, not an owner-held allowlist. The
 advisory commands below were run as written.

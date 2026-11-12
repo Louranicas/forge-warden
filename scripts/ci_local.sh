@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The build, lint, test and audit part of CI that runs offline, in CI's order: a subset of the gate.
 # Not run here, and run by scripts/ci_fast.sh or by CI itself: tool_versions.py --check-toolchain,
-# the mutation budget and environment tests, the dogfood, hold-ack, hook-guard and
-# managed-review-bundle tests, and the guardrails tests. (The local-tools check itself does run
-# here, below: tool_versions.py --check-local-tools.) `just ci` calls this.
+# the mutation budget and environment tests, the local-tools tests (scripts/tests/local_tools.py),
+# the dogfood, hold-ack, hook-guard and managed-review-bundle tests, and the guardrails tests. (The
+# local-tools check itself does run here, below: tool_versions.py --check-local-tools.) `just ci`
+# calls this.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 # Hook-exported Git state must not redirect scratch-repository commands.
