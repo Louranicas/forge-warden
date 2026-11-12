@@ -489,6 +489,50 @@ fn git_still_checks_the_producer_and_refusals_hold() {
     assert_eq!(held["seals"]["patch_facts_sha256"], Value::Null);
 }
 
+/// Freeze review N3b, end to end. With `diff.noprefix` Git writes `docs/notes.md` twice in the
+/// header; `git apply` and the ranker both drop `docs/` and agree on `notes.md`. Before the header
+/// check this was a PASS, exit 0, for a path the patch does not touch, so no rule keyed on
+/// `docs/**` could see it. The patches are what Git 2.56 writes for each setting.
+#[test]
+fn a_patch_without_the_default_prefixes_never_passes() {
+    let (dir, policy, ranker) = setup("patch-prefix");
+    let prefixed = write(&dir, "prefixed.patch", &docs_patch(&["more"]));
+    let passed = authority(&policy, &prefixed, &ranker, &[]);
+    assert_eq!(passed.code, 0, "the control: {}", passed.stderr);
+    for (name, old, new) in [
+        ("noprefix", "docs/notes.md", "docs/notes.md"),
+        ("other-prefixes", "old/docs/notes.md", "new/docs/notes.md"),
+        ("mnemonic", "i/docs/notes.md", "w/docs/notes.md"),
+    ] {
+        let header = format!("diff --git {old} {new}");
+        let text = format!(
+            "{header}\nindex 1111111..2222222 100644\n--- {old}\n+++ {new}\n@@ -1 +1,2 @@\n notes\n+more\n"
+        );
+        let patch = write(&dir, &format!("{name}.patch"), text.as_bytes());
+        let out = authority(&policy, &patch, &ranker, &[]);
+        assert_eq!(out.code, 8, "{name}: {}{}", out.stdout, out.stderr);
+        let held = verdict(&out);
+        assert_eq!(held["verdict"], "hold", "{name}");
+        // With no prefix the fixture ranker, like the real one, agrees with Git on `notes.md`, so
+        // this note is the only thing between the patch and a PASS. With other prefixes the
+        // fixture ranker lists nothing, which holds on its own (`empty_ranking`) as well.
+        let expected: &[&str] = if name == "noprefix" {
+            &["patch_unverifiable"]
+        } else {
+            &["empty_ranking", "patch_unverifiable"]
+        };
+        assert_eq!(notes(&held), expected, "{name}");
+        assert!(
+            held["notes"].as_array().unwrap().iter().any(|note| {
+                note["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.contains(&header) && d.contains("--src-prefix=a/"))
+            }),
+            "{name}: {held}"
+        );
+    }
+}
+
 #[test]
 fn a_poisoned_parent_environment_changes_nothing() {
     // §6: PATH, LD_PRELOAD, GIT_CONFIG_* and ~/.gitconfig poisoned in the parent environment.

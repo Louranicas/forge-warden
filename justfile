@@ -33,7 +33,8 @@ vocab rev=ddf_rev:
     scripts/check_vocab.sh {{rev}}
 
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
-# Advisory mode: warden.toml admits no producer, so the verdict is at best hold.
+# Advisory mode: the ranking is supplied, so the verdict is at best hold. Committed changes only:
+# the patch-maker diffs commits, not the work tree.
 judge:
-    git diff --binary --no-renames "$(git merge-base HEAD origin/main)" > target/change.patch
+    scripts/make_patch.sh origin/main HEAD > target/change.patch
     deep-diff-forge --stdin-patch --rank --json < target/change.patch | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch --advisory --rank -

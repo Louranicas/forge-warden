@@ -1,6 +1,10 @@
 #:schema ./schemas/policy.v0.schema.json
 # forge-warden judges its own pull requests with this policy (.github/workflows/ci.yml, job
-# `dogfood`). It is the starter policy tightened for a Rust crate whose core must stay pure.
+# `dogfood`). It is the starter policy tightened for a Rust crate whose core must stay pure, and
+# loosened in two places: no-hidden-text does not apply to fixtures/** (the hostile test inputs carry
+# that signal on purpose; any fixtures change is still held for review by golden-output-needs-review
+# and quality-config-is-owned), and tests-travel-with-code holds rather than fails (inline
+# #[cfg(test)] tests in src/ are invisible to it, so whether a change is tested is a person's call).
 schema = "forge-warden.policy.v0"
 
 # The ranker `check --ranker` may run (authority mode): the released deep-diff-forge v0.8.2

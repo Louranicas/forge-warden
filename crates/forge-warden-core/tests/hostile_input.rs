@@ -9,9 +9,10 @@
 //! One more property per parser keeps a real, valid input and makes ONE field hostile at a time, so
 //! that field's validation is reached on every case (HOSTILE-INPUT.1: a hang behind a long path
 //! escaped the default budget when every field was hostile at once).
-//! Deterministic cases cover deep nesting and size edges. Every file under
-//! `fixtures/hostile/` is replayed on every run; a crash, hang or wrong refusal found here becomes
-//! one such file the same day.
+//! Deterministic cases cover deep nesting and size edges. Every file under `fixtures/hostile/rank/`
+//! and `fixtures/hostile/policy/` is replayed on every run through its parser; a crash, hang or
+//! wrong refusal of the ranking or policy parser becomes one such file the same day. Patch facts
+//! have no replay directory: a facts finding becomes a named test in this file instead.
 //!
 //! Budget (recorded here and in `fixtures/hostile/README.md`): [`CASES`] cases per property,
 //! with proptest's default seeding; `HOSTILE_CASES=<n>` raises it for a longer campaign (a value
@@ -29,7 +30,7 @@
     reason = "the harness bounds each parse by wall time: Instant is the clock it measures with"
 )]
 
-use forge_warden_core::facts::PatchFacts;
+use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
 use proptest::prelude::*;
@@ -200,6 +201,23 @@ fn number() -> impl Strategy<Value = serde_json::Value> {
         .prop_map(serde_json::Value::from),
         1 => any::<i64>().prop_map(serde_json::Value::from),
         1 => any::<f64>().prop_map(serde_json::Value::from),
+    ]
+}
+
+/// Prefixes for a `diff --git` header: none (`diff.noprefix`), the default pair's halves, the
+/// mnemonic ones, and arbitrary ones. Never one that itself begins `a/` or `b/` and goes on: that
+/// is a well-formed patch for another path (see `fixtures/hostile/patch-prefix/README.md`).
+fn prefix() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just(String::new()),
+        Just("a/".to_owned()),
+        Just("b/".to_owned()),
+        Just("i/".to_owned()),
+        Just("w/".to_owned()),
+        Just("c/".to_owned()),
+        Just("o/".to_owned()),
+        "[c-z]{1,3}/",
+        "[c-z]{1,2}/[a-z]{1,2}/",
     ]
 }
 
@@ -461,6 +479,38 @@ proptest! {
         policy_holds(&bytes);
     }
 
+    /// Header shapes Git can be configured to write, not only hostile values inside the default
+    /// shape (the gap N3b came through). The numstat is what `git apply -p1` reports: the header's
+    /// first name without its first component. Whenever the facts are believed, the path believed
+    /// is the path the patch was made for and the prefixes were the default pair.
+    #[test]
+    fn a_path_is_believed_only_with_the_default_prefixes(
+        old in prefix(),
+        new in prefix(),
+        path in "[a-z]{1,3}(/[a-z]{1,4}){0,3}",
+    ) {
+        let first = format!("{old}{path}");
+        let Some((_, reported)) = first.split_once('/') else { return Ok(()); };
+        let numstat = format!("1\t0\t{reported}\0");
+        let patch = format!("diff --git {old}{path} {new}{path}\n--- {old}{path}\n+++ {new}{path}\n@@ -1 +1,2 @@\n x\n+y\n");
+        match PatchFacts::from_git(numstat.as_bytes(), b"", patch.as_bytes()) {
+            Ok(facts) => {
+                let believed: Vec<&str> = facts.files().map(|file| file.path().as_str()).collect();
+                prop_assert_eq!(believed, [path.as_str()], "{}", &patch);
+                prop_assert!(
+                    matches!((old.as_str(), new.as_str()), ("a/", "b/") | ("b/", "a/")),
+                    "{}",
+                    &patch
+                );
+            }
+            Err(_) => prop_assert!(
+                !matches!((old.as_str(), new.as_str()), ("a/", "b/") | ("b/", "a/")),
+                "a default-prefixed header was refused: {}",
+                &patch
+            ),
+        }
+    }
+
     #[test]
     fn facts_survive_one_hostile_slot_in_real_git_output(parts in one_hostile_field_git_output()) {
         let [numstat, summary, patch] = &parts;
@@ -534,6 +584,65 @@ fn the_environment_may_raise_the_budget_but_never_lower_it() {
     assert_eq!(cases(Some("1")), CASES);
     assert_eq!(cases(Some("not a number")), CASES);
     assert_eq!(cases(Some("20000")), 20_000);
+}
+
+/// The patches Git 2.56 writes for one change to `scripts/gate.sh` under each prefix setting, with
+/// what `git apply --numstat -z` reported for each (`fixtures/hostile/patch-prefix/`, freeze review
+/// N3b). A path is believed only where the header carries the default prefixes.
+#[test]
+fn the_patch_prefix_corpus_is_believed_only_under_the_default_prefixes() {
+    let believed = |name: &str| {
+        let read = |suffix: &str| {
+            std::fs::read(root().join(format!("fixtures/hostile/patch-prefix/{name}.{suffix}")))
+                .unwrap()
+        };
+        PatchFacts::from_git(&read("numstat"), b"", &read("patch")).map(|facts| {
+            facts
+                .files()
+                .map(|file| file.path().as_str().to_owned())
+                .collect::<Vec<_>>()
+        })
+    };
+    let refused = |header: &str| Err(Unverifiable::HeaderPaths(header.to_owned()));
+    assert_eq!(believed("default"), Ok(vec!["scripts/gate.sh".to_owned()]));
+    assert_eq!(believed("reverse"), Ok(vec!["scripts/gate.sh".to_owned()]));
+    // Git reports `gate.sh`: the path the measured authority-mode PASS was given for.
+    assert_eq!(
+        believed("noprefix"),
+        refused("diff --git scripts/gate.sh scripts/gate.sh")
+    );
+    assert_eq!(
+        believed("prefix-old-new"),
+        refused("diff --git old/scripts/gate.sh new/scripts/gate.sh")
+    );
+    assert_eq!(
+        believed("mnemonic-worktree"),
+        refused("diff --git i/scripts/gate.sh w/scripts/gate.sh")
+    );
+    // The stated limit: prefixes that themselves begin `a/` and `b/` give a well-formed patch for
+    // another path, `x/scripts/gate.sh`. No reader of the patch can tell; the path believed is the
+    // one the patch names, and the documented commands fix their prefixes.
+    assert_eq!(
+        believed("prefix-a-x"),
+        Ok(vec!["x/scripts/gate.sh".to_owned()])
+    );
+    let expected: Vec<String> = [
+        "default",
+        "mnemonic-worktree",
+        "noprefix",
+        "prefix-a-x",
+        "prefix-old-new",
+        "reverse",
+    ]
+    .iter()
+    .flat_map(|name| [format!("{name}.numstat"), format!("{name}.patch")])
+    .collect();
+    let found: Vec<String> = files("fixtures/hostile/patch-prefix", "")
+        .into_iter()
+        .filter_map(|(name, _)| Some(Path::new(&name).file_name()?.to_str()?.to_owned()))
+        .filter(|name| name != "README.md")
+        .collect();
+    assert_eq!(found, expected, "every corpus file is replayed above");
 }
 
 /// Every committed corpus file is replayed: a past crash, hang or wrong refusal stays fixed.

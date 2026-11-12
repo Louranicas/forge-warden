@@ -5,7 +5,7 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 *does this change meet the standards this repository wrote down?*
 
 ```bash
-git diff --binary --no-renames origin/main... > change.patch
+bash make_patch.sh origin/main HEAD > change.patch   # scripts/make_patch.sh from the revision you installed
 forge-warden check --policy warden.toml --patch change.patch --ranker "$(command -v deep-diff-forge)"
 ```
 
@@ -157,8 +157,17 @@ editors that read JSON Schema (taplo, Even Better TOML) flag most of these as yo
   cannot prove who produced it, so the verdict is at best `hold` (`rank_unverified`).
 
 In both modes Git reads the patch independently. Its facts can only add change kinds to what
-the ranking reports, never remove them. Pass `git diff --binary --no-renames` output; see the
-[known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
+the ranking reports, never remove them. Make the patch with
+[`scripts/make_patch.sh`](scripts/make_patch.sh) `<base> <head>`, taken from the revision you
+installed: it writes the same bytes whatever your Git configuration, environment and current
+directory are. A plain `git diff` does not: `diff.noprefix` drops the `a/` `b/` prefixes (such a
+patch is refused), and `diff.relative` in a subdirectory leaves out every change outside it,
+which no check of the patch can see. If you must use Git directly, run what the script runs,
+`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ <base>...<head>`,
+from the top level (the script also reads no Git configuration and takes attributes from the empty
+tree, which a plain command cannot). A verdict is about the patch bytes it was given, with paths read from the
+repository root: forge-warden does not check that the patch is the whole change between two
+commits, so whoever makes the patch is part of the trust boundary. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
 ## Verdicts
 
@@ -215,7 +224,7 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- run: git diff --binary --no-renames "origin/${BASE_REF}...HEAD" > change.patch
+- run: bash make_patch.sh "origin/${BASE_REF}" HEAD > change.patch   # scripts/make_patch.sh, pinned like the binary
   env: { BASE_REF: "${{ github.base_ref }}" }
 - run: forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --json > verdict.json
 ```
@@ -247,7 +256,9 @@ grants nothing.
 
 forge-warden is a gate, so it is built behind one. Nothing below is a guideline; each item is
 enforced by the compiler, a test, CI, or a hook, and [`CLAUDE.md`](CLAUDE.md) gives agents the same
-contract.
+contract. Two limits, stated where each layer is described: the effect wall is a list of the
+spellings it refuses (a form outside the list passes until it is added), and the agent hook layer
+is a convenience that catches mistakes early, not a boundary (CI and the build checks are).
 
 | Layer | What it stops | Where |
 | --- | --- | --- |
