@@ -39,6 +39,15 @@ docs/claude-project/INSTRUCTIONS.md	0
 docs/claude-project/README.md	0
 docs/runner-up.md	0
 fixtures/hostile/README.md	0
+forge-stack/README.md	0
+forge-stack/agents/forge-falsifier.md	0
+forge-stack/agents/forge-reviewer.md	0
+forge-stack/skills/forge-correct/SKILL.md	0
+forge-stack/skills/forge-mode/SKILL.md	0
+forge-stack/skills/forge-prove/SKILL.md	0
+forge-stack/skills/forge-radius/SKILL.md	0
+forge-stack/skills/forge-review/SKILL.md	0
+forge-stack/skills/forge-scope/SKILL.md	0
 justfile	1
 plants/README.md	0
 schemas/README.md	0

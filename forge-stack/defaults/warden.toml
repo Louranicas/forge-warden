@@ -1,0 +1,79 @@
+#:schema https://raw.githubusercontent.com/Louranicas/forge-warden/main/schemas/policy.v0.schema.json
+# forge-warden starter policy. Every rule says *why*: the person it stops reads that line.
+# Check it with `forge-warden lint warden.toml`; it lists every problem at once.
+schema = "forge-warden.policy.v0"
+
+[[rule]]
+id = "no-secrets"
+why = "A credential committed once is compromised forever, even after a revert."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["secret_like"]
+
+[[rule]]
+id = "no-hidden-text"
+why = "Bidi controls, invisible characters and traversing paths make code read differently than it runs."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["hazardous_text"]
+
+[[rule]]
+id = "no-ci-privilege"
+why = "pull_request_target, write-all and secret inheritance hand untrusted code the keys to the repository."
+kind = "forbid_signal"
+severity = "fail"
+signals = ["ci_privilege"]
+
+[[rule]]
+id = "unsafe-needs-review"
+why = "Every new unsafe block needs a reviewer who checks its safety argument."
+kind = "forbid_signal"
+severity = "hold"
+signals = ["unsafe_added"]
+
+[[rule]]
+id = "no-silent-suppression"
+why = "A silenced check hides the next real bug; fix the cause or justify it in review."
+kind = "forbid_signal"
+severity = "hold"
+signals = ["check_suppressed"]
+
+[[rule]]
+id = "keep-the-tests"
+why = "Deleting a test removes a guarantee someone relied on; that deserves a second pair of eyes."
+kind = "forbid_signal"
+severity = "hold"
+signals = ["test_removed"]
+
+[[rule]]
+id = "tests-travel-with-code"
+why = "Behaviour that changes without a test change is behaviour nobody pinned down."
+kind = "require_companion"
+severity = "fail"
+when = ["src/**", "crates/*/src/**"]
+require = ["tests/**", "crates/*/tests/**", "**/*_test.*", "**/test_*.*"]
+
+[[rule]]
+id = "ci-is-owned"
+why = "CI and supply-chain configuration decide what every other check means."
+kind = "protect_paths"
+severity = "hold"
+paths = [".github/**", "deny.toml", "clippy.toml", "warden.toml"]
+
+[[rule]]
+id = "reviewable-size"
+why = "A change too risky to hold in one head gets rubber-stamped; split it."
+kind = "max_score"
+severity = "hold"
+limit = 60
+per = "change"
+
+# A waiver is a dated, owned exception. It fails the verdict the day after it expires, so it
+# cannot quietly become permanent.
+#
+# [[waiver]]
+# rule = "unsafe-needs-review"
+# paths = ["crates/simd/**"]
+# reason = "Kernel audited in docs/adr/0007; re-audit before renewing."
+# owner = "@you"
+# expires = "2027-02-01"

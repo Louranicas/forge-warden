@@ -9,6 +9,16 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- New directory `forge-stack/`: an agent-first pack for Claude Code that sits on top of
+  deep-diff-forge and forge-warden. One `forge` command (Python 3.11+, standard library only),
+  three hooks (session start, pre-tool, stop), six skills and two review subagents. It vendors
+  into another repository's `.claude/` with `forge.py init --apply`. It adds a declared task
+  scope checked before each edit, lexical integrity checks for weakened tests, stubs, swallowed
+  errors and removed guards, a corpus of escaped defects, and an optional tighten-only adviser
+  (Jev, off by default and not tested against the live service). It runs `forge-warden check`
+  in advisory mode and is not an approval: authority mode in CI still decides what merges. No
+  schema, exit code, crate or policy of forge-warden changes. See `forge-stack/README.md`.
+
 ## [0.2.0] - 2026-11-11
 
 - Schemas in this release: the verdict is `forge-warden.verdict.v2`. 0.1.0 shipped v0; v1 existed
