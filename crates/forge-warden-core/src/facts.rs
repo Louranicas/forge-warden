@@ -208,7 +208,9 @@ fn check_header_modes(patch: &[u8]) -> Result<(), Unverifiable> {
 }
 
 /// `path` as Git writes it inside double quotes in a header (`quote_c_style`): the named escapes,
-/// and three octal digits for every other control byte. Bytes that are not ASCII are octal too,
+/// and three octal digits for every other control byte. There is no arm for a line feed (`\n`
+/// in Git's spelling): a reported path that contains one is refused before any header is read
+/// ([`Unverifiable::NewlineInPath`]), so the arm could not be reached or tested. Bytes that are not ASCII are octal too,
 /// unless `core.quotePath` is off, when Git leaves them as they are (`raw_high`).
 fn c_quoted(path: &str, raw_high: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(path.len());
@@ -217,7 +219,6 @@ fn c_quoted(path: &str, raw_high: bool) -> Vec<u8> {
             0x07 => out.extend_from_slice(b"\\a"),
             0x08 => out.extend_from_slice(b"\\b"),
             b'\t' => out.extend_from_slice(b"\\t"),
-            b'\n' => out.extend_from_slice(b"\\n"),
             0x0b => out.extend_from_slice(b"\\v"),
             0x0c => out.extend_from_slice(b"\\f"),
             b'\r' => out.extend_from_slice(b"\\r"),
@@ -586,6 +587,54 @@ mod tests {
             summary.as_bytes(),
             default_headers(numstat).as_bytes(),
         )
+    }
+
+    /// A quoted header is believed only in the spelling Git itself writes for the reported path:
+    /// each named escape, and three octal digits for a control byte that has none (the headers are
+    /// what Git 2.56 wrote for these file names). A different spelling of the same byte, or two
+    /// names that differ, is refused: nothing is unquoted, so nothing is normalised.
+    #[test]
+    fn a_quoted_header_is_believed_only_in_gits_own_spelling() {
+        let with = |path: &str, header: &str| {
+            PatchFacts::from_git(
+                format!("1\t1\t{path}\0").as_bytes(),
+                b"",
+                format!("diff --git {header}\n").as_bytes(),
+            )
+        };
+        for (path, header) in [
+            ("x\u{7}y", "\"a/x\\ay\" \"b/x\\ay\""),
+            ("x\u{8}y", "\"a/x\\by\" \"b/x\\by\""),
+            ("x\ty", "\"a/x\\ty\" \"b/x\\ty\""),
+            ("x\u{b}y", "\"a/x\\vy\" \"b/x\\vy\""),
+            ("x\u{c}y", "\"a/x\\fy\" \"b/x\\fy\""),
+            ("x\ry", "\"a/x\\ry\" \"b/x\\ry\""),
+            ("x\u{1}y", "\"a/x\\001y\" \"b/x\\001y\""),
+            ("x\u{1b}y", "\"a/x\\033y\" \"b/x\\033y\""),
+            ("x\"y", "\"a/x\\\"y\" \"b/x\\\"y\""),
+            ("x\\y", "\"a/x\\\\y\" \"b/x\\\\y\""),
+        ] {
+            assert!(with(path, header).is_ok(), "{header}");
+        }
+        for (path, header) in [
+            ("x\u{7}y", "\"a/x\\ay\" \"b/x\\by\""),
+            ("x\u{7}y", "\"a/x\\007y\" \"b/x\\007y\""),
+            ("x\u{8}y", "\"a/x\\010y\" \"b/x\\010y\""),
+            ("x\ty", "\"a/x\\011y\" \"b/x\\011y\""),
+            ("x\u{b}y", "\"a/x\\013y\" \"b/x\\013y\""),
+            ("x\u{c}y", "\"a/x\\014y\" \"b/x\\014y\""),
+            ("x\ry", "\"a/x\\015y\" \"b/x\\015y\""),
+            ("x\u{1}y", "\"a/x\\1y\" \"b/x\\1y\""),
+            ("x\"y", "\"a/x\\042y\" \"b/x\\042y\""),
+            ("x\\y", "\"a/x\\134y\" \"b/x\\134y\""),
+            ("xy", "\"a/xy\" \"b/xy\" "),
+        ] {
+            assert_eq!(
+                with(path, header),
+                Err(Unverifiable::HeaderPaths(format!("diff --git {header}"))),
+                "{header}"
+            );
+        }
     }
 
     /// Freeze review N3b. Each header below is what Git 2.56 wrote for that setting (the
