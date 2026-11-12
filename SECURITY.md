@@ -49,6 +49,11 @@ absolute paths, but does not interpret arbitrary shell programs, scripts, aliase
 Rust text checks are conservative heuristics, not a Rust parser: the hook's shell refusals are a
 list of known spellings, and forms outside it (for example `#[ expect ]` with spaces, a `#[warn]`, or
 the allowed `cargo clippy --fix`) pass the hook and are left to the compiler and CI checks below.
+Golden regeneration (`scripts/bless.sh`, `just bless`) is refused for agents by the hook's pattern,
+which matches the script name anywhere in a command (`.claude/hooks/guard.py`); the `deny` entries in
+`.claude/settings.json` (the bare commands and the common forms with arguments) are a first filter
+that a differently spelled invocation can pass. The hook pattern is the control; neither is a
+boundary against a person or process outside Claude Code.
 A hook is not a sandbox: bypassing
 the host, changing hook configuration or running an opaque script can avoid it.
 
