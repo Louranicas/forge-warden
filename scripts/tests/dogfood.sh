@@ -220,6 +220,62 @@ for bad in "nosuchrev $attr_head" "$base nosuchrev" "$base" "$base $attr_head $a
 done
 [ ! -e "$sandbox/x" ] || { echo 'FAIL make_patch: an option was taken as a revision'; exit 1; }
 echo 'PASS make_patch refuses a missing revision, a wrong argument count and an option in place of a revision'
+# SUBMODULE-PIN (outside review O1): a submodule change always reaches the patch as its own
+# `diff --git` section. The candidate's work tree holds the change's own `.gitmodules` with
+# `ignore = all`; with that file alone, a `git diff` without the two submodule options leaves the
+# gitlink out and the rest of the change is judged without it. The script's diff runs in another
+# repository, so its rows pass with or without the options; the by-hand rows are the ones that
+# fail without them. They run the option line read from the script, and the README and the
+# runbook must print that same line, so the three cannot drift apart.
+git clone -q --no-local "$trusted" "$sandbox/sub-candidate"
+sub="$sandbox/sub-candidate"
+fixture_commit() { git -C "$sub" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "$1"; }
+git -C "$sub" update-index --add --cacheinfo "160000,$base,scripts/sub"
+fixture_commit link
+sub_base="$(git -C "$sub" rev-parse HEAD)"
+git -C "$sub" update-index --cacheinfo "160000,$sub_base,scripts/sub"
+printf '[submodule "sub"]\n\tpath = scripts/sub\n\turl = ./sub\n\tignore = all\n' > "$sub/.gitmodules"
+printf 'trusted-build\nfn beside_the_bump() {}\n' > "$sub/build.rs"
+git -C "$sub" add -- .gitmodules build.rs
+fixture_commit bump
+sub_head="$(git -C "$sub" rev-parse HEAD)"
+sub_patch="$sandbox/sub-clean.patch"
+bash "$maker" "$sub_base" "$sub_head" "$sub" > "$sub_patch"
+if ! grep -q '^diff --git a/scripts/sub b/scripts/sub$' "$sub_patch" || ! grep -q "^-Subproject commit $base\$" "$sub_patch" || ! grep -q "^+Subproject commit $sub_base\$" "$sub_patch"; then
+ echo 'FAIL submodule: make_patch left the submodule change out of the patch'
+ exit 1
+fi
+echo 'PASS make_patch writes a submodule change as a 160000 section, with ignore = all in the change'
+for setting in diff.ignoreSubmodules=all diff.submodule=log; do
+ git -C "$sub" config "${setting%%=*}" "${setting#*=}"
+ bash "$maker" "$sub_base" "$sub_head" "$sub" > "$sandbox/made.patch"
+ git -C "$sub" config --unset "${setting%%=*}"
+ same_bytes "$sub_patch" "$sandbox/made.patch" || { echo "FAIL submodule: candidate config $setting shaped make_patch's patch"; exit 1; }
+ echo "PASS make_patch candidate config $setting does not hide the submodule change"
+done
+by_hand="$(sed -n 's/^  \(diff --no-ext-diff .*\) \\$/\1/p' "$maker")"
+if [ "$(printf '%s\n' "$by_hand" | grep -c -- '--dst-prefix=b/')" != 1 ]; then
+ echo "FAIL by hand: make_patch.sh has no single line of diff options: $by_hand"
+ exit 1
+fi
+grep -qF "\`git $by_hand <base>...<head>\`" "$source_root/README.md" || { echo "FAIL by hand: README.md does not print: git $by_hand <base>...<head>"; exit 1; }
+grep -qF "\`git $by_hand main...HEAD\`" "$source_root/docs/RUNBOOK.md" || { echo "FAIL by hand: docs/RUNBOOK.md does not print: git $by_hand main...HEAD"; exit 1; }
+echo 'PASS the README and the runbook print the diff command make_patch.sh runs'
+by_hand_row() {
+ name="$1"; shift
+ # The option line is split into words on purpose, as a shell would split the documented command.
+ # shellcheck disable=SC2086
+ git -C "$sub" "$@" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
+ if ! same_bytes "$sub_patch" "$sandbox/made.patch"; then
+  echo "FAIL by hand $name: the documented command does not give make_patch's patch ($(grep -c '^diff --git a/scripts/sub ' "$sandbox/made.patch" || true) submodule sections)"
+  exit 1
+ fi
+ echo "PASS by hand $name: the documented command keeps the submodule change"
+}
+by_hand_row the-changes-own-gitmodules-ignore-all
+by_hand_row ignore-submodules-all -c diff.ignoreSubmodules=all
+by_hand_row submodule-log -c diff.submodule=log
+by_hand_row submodule-diff -c diff.submodule=diff
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
 # the run before any ranker exists and before the judge runs, even when the judge would pass.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0

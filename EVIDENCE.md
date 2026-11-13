@@ -15,6 +15,14 @@ Measured on the release commit `7f36ba2a88e098bae1a936cb7f36523160053d4b`, from 
 Fedora 44 toolbox on Linux x86_64: Rust 1.99.1 (`rust-toolchain.toml`), MSRV 1.88, Git 2.56.0,
 deep-diff-forge v0.8.2 (release binary SHA-256 `298e07511310b18051a4c8ed56c18fafa03e40dc8fc88bedf74edba0e2ba41ad`).
 
+Changed after these measurements, and not documentation only: `scripts/make_patch.sh` and the
+by-hand command in the README and the runbook gained `--submodule=short --ignore-submodules=none`,
+with rows in `scripts/tests/dogfood.sh`. The by-hand command measured below could leave a
+submodule change out of the patch, and authority mode then passed the rest (20 of 24 such
+patches on the code of `7f36ba2a`; none of the 135 patches in the table has a submodule). No Rust
+source changed. The checklist in [docs/RELEASE-0.2.0.md](docs/RELEASE-0.2.0.md) says what was
+measured after the change.
+
 | Claim | Command | Result |
 | --- | --- | --- |
 | The lint wall, tests and docs are green | `bash scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline` | green |

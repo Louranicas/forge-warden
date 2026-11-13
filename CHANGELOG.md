@@ -17,6 +17,12 @@ registry is always listed, because consumers parse them.
   object store). `scripts/dogfood.sh` uses it, and the runbook, README and upgrade notes
   document it in place of a plain `git diff`. `just judge` and the reviewer agent now judge
   committed changes only.
+- The patch-maker and the by-hand `git diff` in the README and the runbook pass
+  `--submodule=short --ignore-submodules=none`. Without them the by-hand command left a
+  submodule change out of the patch when the work tree's `.gitmodules` said `ignore = all` (a
+  file the change itself can commit), or `diff.ignoreSubmodules` or `diff.submodule=log` was
+  set, and authority mode could pass the rest of the change. `scripts/make_patch.sh` was not
+  affected. A submodule change that is in the patch holds, as before.
 - **Security fix, and breaking for some setups:** a patch is believed only if every file has a
   `diff --git a/PATH b/PATH` header (`b/PATH a/PATH` from `git diff -R` is read too). A patch
   made with `diff.noprefix`, `diff.mnemonicPrefix` or other prefixes, or without Git headers, now

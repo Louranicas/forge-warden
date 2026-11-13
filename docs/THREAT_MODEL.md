@@ -25,11 +25,16 @@ v0.8.2, the release binary with SHA-256 `298e0751…41ad` (the full digest is in
 - **Patch shapes Git itself writes.** Patches written by Git 2.56 under 17 documented settings
   (`diff.noprefix`, custom, empty and swapped `diff.srcPrefix`/`dstPrefix`, `diff.relative` from a
   subdirectory, `diff.external`, `color.ui=always`, `format.noprefix` and others), each with the
-  0.1.0 command, a command with explicit prefixes and the documented command, were judged in
-  authority mode against a protected change: 103 patches. On the frozen tree 10 of them passed
-  (the prefix and external-diff shapes this release now refuses). After the fix only `diff.relative`
-  with a command lacking `--no-relative` passes, which is the limit stated under "Explicit
-  non-claims" below; the documented command fails that change, as it should.
+  0.1.0 command, a command with explicit prefixes, the documented by-hand command and
+  `scripts/make_patch.sh`, were judged in authority mode against a protected change: 135 patches
+  on the commit `7f36ba2a`. On the frozen tree 10 of 103 passed (the prefix and external-diff
+  shapes this release now refuses). After the fix, of those 135 only `diff.relative` with a
+  command lacking `--no-relative` passes, which is the limit stated under "Explicit non-claims"
+  below. Two shapes outside those 17 settings also passed, each measured separately: prefixes
+  that themselves begin `a/` and `b/` (a stated limit, below), and a submodule change that the
+  by-hand command of `7f36ba2a` left out of the patch (found by an outside review of the release
+  range; the command now carries `--submodule=short --ignore-submodules=none`, and a test runs it
+  by hand under each setting that hid the change).
 
 How to read the tables below: where the evidence column names a test, the test is the evidence
 (the gate runs it on every change, so it describes the current code); where it names a source file,
@@ -118,14 +123,21 @@ implemented control for each property and why a stronger claim is unavailable.
   A std or third-party effect the list does not name is not refused. The closed design,
   a doors crate with the rest of the code under `forbid` (ledger Q26), is deferred to 0.3.0.
 - **A patch is judged as it names its own paths.** A path is believed only under the default
-  `a/` and `b/` prefixes (a reverse diff's `b/` and `a/` included); a patch made with
+  `a/` and `b/` prefixes (a reverse diff's `b/` and `a/` included: such a patch is judged as
+  the change its bytes make, which is the inverse of the change it was made from, so a deleted
+  test reads as an added one); a patch made with
   `diff.noprefix` or other prefixes is refused, because Git and the ranker would agree on a
   path with one component missing (found in the freeze review: an authority-mode pass for a
   protected file). Prefixes that themselves begin `a/` and `b/` (`--src-prefix=a/x/`) give a
   well-formed patch for another path, and nothing in the patch says so. Nor does a patch say
   what tree it is a diff of: with `diff.relative` and a command run in a subdirectory, Git
   writes a well-formed patch that omits every change outside that directory, and authority
-  mode passes it (found by the attack on this fix). **A verdict is about the patch bytes it was
+  mode passes it (found by the attack on this fix). The same holds for a submodule change: a
+  `git diff` without `--ignore-submodules=none` leaves it out when `.gitmodules` in the work
+  tree says `ignore = all` (a file the change itself can commit) or `diff.ignoreSubmodules` is
+  set, and with `diff.submodule=log` Git writes it as a line no reader takes as a change; the
+  rest of the patch is then judged alone. A submodule change that is in the patch holds
+  (`patch_unverifiable`). **A verdict is about the patch bytes it was
   given, with paths read from the repository root. forge-warden does not check that the patch
   is the whole change between two commits; `--base` and `--head` are recorded as unverified
   claims.** Whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which

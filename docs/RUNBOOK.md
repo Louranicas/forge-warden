@@ -121,9 +121,11 @@ changes only, and the same bytes whatever your Git configuration, environment an
 directory are. A plain `git diff` is not safe here: with `diff.noprefix` it drops the `a/` `b/`
 every path starts with (forge-warden refuses such a patch as unverifiable, exit 8, because Git
 would read `scripts/x` as `x`), and with `diff.relative` in a subdirectory it writes a well-formed
-patch that leaves out every change outside that directory, which nothing can check for you. If
+patch that leaves out every change outside that directory, which nothing can check for you. The
+same goes for a submodule change when `.gitmodules` (which the change itself can commit) says
+`ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. If
 you have to use Git directly, run what the script runs, from the top level:
-`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ main...HEAD`
+`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
 (the script also reads no Git configuration and takes attributes from the empty tree).
 
 What a verdict is about: these patch bytes, with paths read from the repository root.
