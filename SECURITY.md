@@ -27,7 +27,10 @@ environment, a timeout and capped output:
 
 The third, `/usr/bin/kill`, cleans up the child's process group after every run, whether it
 finished, was refused, or timed out, and also when the child's pipes could not be set up. It has
-a cleared environment but runs outside that timeout wrapper, and a failed kill is not reported.
+a cleared environment and its own limit of 2 seconds (`KILL_TIMEOUT` in `doors/child/process.rs`):
+a kill that cannot start, exits nonzero or does not finish in time is reported as an error. The
+one exception is the path where the child's pipes could not be set up: that run already fails,
+and the kill's own result is not checked there.
 
 It writes no other files.
 
@@ -46,6 +49,11 @@ absolute paths, but does not interpret arbitrary shell programs, scripts, aliase
 Rust text checks are conservative heuristics, not a Rust parser: the hook's shell refusals are a
 list of known spellings, and forms outside it (for example `#[ expect ]` with spaces, a `#[warn]`, or
 the allowed `cargo clippy --fix`) pass the hook and are left to the compiler and CI checks below.
+Golden regeneration (`scripts/bless.sh`, `just bless`) is refused for agents by the hook's pattern,
+which matches the script name anywhere in a command (`.claude/hooks/guard.py`); the `deny` entries in
+`.claude/settings.json` (the bare commands and the common forms with arguments) are a first filter
+that a differently spelled invocation can pass. The hook pattern is the control; neither is a
+boundary against a person or process outside Claude Code.
 A hook is not a sandbox: bypassing
 the host, changing hook configuration or running an opaque script can avoid it.
 

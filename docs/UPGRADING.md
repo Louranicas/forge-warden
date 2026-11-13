@@ -22,9 +22,16 @@ mode. It reports the same rule results as before, and it can no longer print PAS
 
 What to do:
 
-- Save the patch to a file; `--patch -` is refused (stdin is reserved for `--rank -`). Use
-  `git diff --binary --no-renames` output. A `git format-patch` message line that looks like a
-  mode header makes the patch unverifiable.
+- Save the patch to a file; `--patch -` is refused (stdin is reserved for `--rank -`). Make it
+  with `scripts/make_patch.sh <base> <head>` from the revision you installed
+  ([runbook](RUNBOOK.md), steps 2 and 6). A patch whose paths do not start with `a/` and `b/`
+  is now unverifiable (exit 8): that is what a plain `git diff` writes when your Git
+  configuration has `diff.noprefix` or `diff.mnemonicPrefix`. A plain `git diff` in a
+  subdirectory with `diff.relative` leaves out every change outside it, and no check of the
+  patch can see that; the patch-maker reads none of those settings. A verdict is about the patch
+  bytes it was given: forge-warden does not check that they are the whole change between two
+  commits. A `git format-patch` message line that looks like a mode header makes the patch
+  unverifiable too.
 - Pick a mode. `--rank` alone is now a usage error (exit 2).
 - A pipeline that treated exit 0 as "merge" and used a supplied ranking will now see exit 8 on
   every change. That is intended: a supplied ranking can inform, never approve. To get exit 0
@@ -62,6 +69,7 @@ What to do:
 - Use a released deep-diff-forge binary and pin its digest. This repository pins v0.8.2 for
   x86_64 Linux. A binary you build yourself has other bytes (the build host's paths, linker and
   libc go into it), so pin what you actually run, and expect to re-pin after rebuilding.
+  The [runbook](RUNBOOK.md), step 3, has the download, check and install commands.
 - deep-diff-forge 0.8.2 refuses some patches 0.7.0 ranked. In authority mode a patch the pinned
   ranker refuses ends as exit 3 with no verdict, never as a pass.
 - A policy without `[producer]` still works, in advisory mode only.
@@ -72,7 +80,8 @@ forge-warden asks Git what the patch changes, and in authority mode it runs only
 executable digest the machine's owner has enrolled in `/etc/forge-warden/git-allowlist.toml`.
 There is no flag and no environment variable for another location.
 
-What to do: follow [Git runtime identity](GIT_RUNTIME.md) once per machine (it needs root).
+What to do: follow the [runbook](RUNBOOK.md), step 4, once per machine (it needs root);
+[Git runtime identity](GIT_RUNTIME.md) explains the rules behind it.
 Without the allowlist, authority mode stops with exit 3, "no Git allowlist enrolled", and
 advisory mode marks its evidence as unpinned. After a Git upgrade the digest changes and the
 allowlist has to be updated before authority mode works again.

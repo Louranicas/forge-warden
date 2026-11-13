@@ -1,13 +1,21 @@
 # Refusal map
 
-Every refusal variant and every exit, with the one test that observes it. Generated from
-`crates/forge-warden-core/src/refusal_rows.rs` and `crates/forge-warden-cli/src/refusal_rows.rs`,
-and checked byte for byte by
+Every variant of the 11 enums listed below (10 refusal enums and `Exit`), with the one test that
+observes it. Generated from `crates/forge-warden-core/src/refusal_rows.rs` and
+`crates/forge-warden-cli/src/refusal_rows.rs`, and checked byte for byte by
 `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.
 
+Scope: exactly these 11 enums (`Unverifiable`, `PathError`, `PolicyError`, `RankError`, `SealError`,
+`DateError`, `Exit` in the core; `DoorErrorKind`, `ChildFailure`, `RankerFailure`, `GitFactsFailure` in
+the CLI). Outside it: the reasons inside `RankError::Invalid` (one row for all of them), `Disagreement`
+(a disagreement with Git becomes a note, not a refusal), the Git allowlist's admission refusals and the
+CLI's named error messages (each reaches the user as one of the exits below), and the refusals of the
+repository scripts (`scripts/hold_ack.py`, `scripts/dogfood.sh`), which have their own tests.
+
 A row names its test by `path::function`; the test is checked to exist and to run (not ignored,
-not behind another cfg). That it observes its variant is proven by a plant for three sampled
-rows (guardrail G-53 in `plants/catalog.json`); for the others the test's assertion was read.
+not behind another cfg). Three rows are proven by a plant that swaps the variant for a sibling
+(guardrail G-53 in `plants/catalog.json`); for every other row the test's assertion was read, not
+proven by a plant.
 
 | Refusal | Observing test |
 | --- | --- |
@@ -23,6 +31,7 @@ rows (guardrail G-53 in `plants/catalog.json`); for the others the test's assert
 | `Unverifiable::UnsupportedMode` | `crates/forge-warden-core/src/facts.rs::every_mode_bearing_header_is_admitted_by_one_total_grammar` |
 | `Unverifiable::UnreadableModeHeader` | `crates/forge-warden-core/src/facts.rs::every_mode_bearing_header_is_admitted_by_one_total_grammar` |
 | `Unverifiable::SymlinkTargetEdit` | `crates/forge-warden-core/src/facts.rs::an_existing_symlink_target_edit_is_refused_not_called_covered` |
+| `Unverifiable::HeaderPaths` | `crates/forge-warden-core/src/facts.rs::a_path_is_believed_only_under_the_default_a_and_b_prefixes` |
 | `Unverifiable::UnreadableGitOutput` | `crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output` |
 | `PathError::Empty` | `crates/forge-warden-core/src/path.rs::every_non_canonical_spelling_is_refused_with_its_reason` |
 | `PathError::Nul` | `crates/forge-warden-core/src/path.rs::every_non_canonical_spelling_is_refused_with_its_reason` |

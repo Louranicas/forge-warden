@@ -1,11 +1,47 @@
 # Threat model
 
-## Scope and evidence status
+## Scope and evidence status (0.2.0)
 
-Scope (2026-11-10): this record was written for commit `a68506f` and has not been
-re-baselined since. Later changes (the effect-door split, Git admission, verdict v2, runner
-routing) are described by their ADRs and tests, not here; the risk table below links current
-tests, which are the check. The record is re-measured on the release commit before 0.2.0.
+Re-baselined 2026-11-11 to the 0.2.0 release candidate: the frozen tree of commit `8555bf6c`
+(hub main `6682ed53`, a merge whose tree is identical). The pinned producer is deep-diff-forge
+v0.8.2, the release binary with SHA-256 `298e0751…41ad` (the full digest is in
+[RUNBOOK.md](RUNBOOK.md), step 3). What was measured on that tree, beyond the tests:
+
+- **Authority mode, end to end, once.** With the pinned release ranker and an enrolled Git
+  allowlist, a docs-only candidate gave `pass` (exit 0, provenance `produced`, Git admission
+  `approved`), a candidate touching a protected path gave `hold` (exit 8), a policy whose
+  `[producer]` digest did not match was refused (exit 4), and an unowned or unenrolled Git was
+  refused (exit 3). The allowlist for that run was installed by an agent, on the owner's
+  instruction, through the root of a rootless container, which is the user's own uid on the host: the run proves the admission path,
+  the producer pin and the refusals, **not** an owner-held boundary. An owner installing the
+  allowlist with `sudo` on the host as [RUNBOOK.md](RUNBOOK.md) step 4 says has not been run.
+- **Resource bounds.** Input limits and the time and peak memory of `lint` and `check` at those
+  limits (advisory mode, one machine) are in [POLICY_REFERENCE.md](POLICY_REFERENCE.md), "Size
+  limits, and what was measured".
+- **Hostile input.** The three parsers that read untrusted bytes run under generated inputs on
+  every gate run (256 cases per property, including one-hostile-field-at-a-time properties) and
+  replay [fixtures/hostile](../fixtures/hostile/README.md); one longer campaign (20 000 cases per
+  property) found nothing on an earlier commit of the same harness.
+- **Patch shapes Git itself writes.** Patches written by Git 2.56 under 17 documented settings
+  (`diff.noprefix`, custom, empty and swapped `diff.srcPrefix`/`dstPrefix`, `diff.relative` from a
+  subdirectory, `diff.external`, `color.ui=always`, `format.noprefix` and others), each with the
+  0.1.0 command, a command with explicit prefixes, the documented by-hand command and
+  `scripts/make_patch.sh`, were judged in authority mode against a protected change: 135 patches
+  on the commit `7f36ba2a`. On the frozen tree 10 of 103 passed (the prefix and external-diff
+  shapes this release now refuses). After the fix, of those 135 only `diff.relative` with a
+  command lacking `--no-relative` passes, which is the limit stated under "Explicit non-claims"
+  below. Two shapes outside those 17 settings also passed, each measured separately: prefixes
+  that themselves begin `a/` and `b/` (a stated limit, below), and a submodule change that the
+  by-hand command of `7f36ba2a` left out of the patch (found by an outside review of the release
+  range; the command now carries `--submodule=short --ignore-submodules=none`, and a test runs it
+  by hand under each setting that hid the change).
+
+How to read the tables below: where the evidence column names a test, the test is the evidence
+(the gate runs it on every change, so it describes the current code); where it names a source file,
+an ADR or a design document only, the row is a design statement and was not separately measured.
+Plants that prove a test bites are in [plants/README.md](../plants/README.md).
+
+## Earlier record: scope at `a68506f` (2026-11-07, dated)
 
 This WP-D5 design record describes merged hub main `a68506f`, including C1c v4.4,
 D6/D8, B5, E3a and the reviewed expectation/data ledger. Source integration is
@@ -86,6 +122,28 @@ implemented control for each property and why a stronger claim is unavailable.
   (the reviewed names are pinned by a test, and clippy's refusal of each is measured).
   A std or third-party effect the list does not name is not refused. The closed design,
   a doors crate with the rest of the code under `forbid` (ledger Q26), is deferred to 0.3.0.
+- **A patch is judged as it names its own paths.** A path is believed only under the default
+  `a/` and `b/` prefixes (a reverse diff's `b/` and `a/` included: such a patch is judged as
+  the change its bytes make, which is the inverse of the change it was made from, so a deleted
+  test reads as an added one); a patch made with
+  `diff.noprefix` or other prefixes is refused, because Git and the ranker would agree on a
+  path with one component missing (found in the freeze review: an authority-mode pass for a
+  protected file). Prefixes that themselves begin `a/` and `b/` (`--src-prefix=a/x/`) give a
+  well-formed patch for another path, and nothing in the patch says so. Nor does a patch say
+  what tree it is a diff of: with `diff.relative` and a command run in a subdirectory, Git
+  writes a well-formed patch that omits every change outside that directory, and authority
+  mode passes it (found by the attack on this fix). The same holds for a submodule change: a
+  `git diff` without `--ignore-submodules=none` leaves it out when `.gitmodules` in the work
+  tree says `ignore = all` (a file the change itself can commit) or `diff.ignoreSubmodules` is
+  set, and with `diff.submodule=log` Git writes it as a line no reader takes as a change; the
+  rest of the patch is then judged alone. A submodule change that is in the patch holds
+  (`patch_unverifiable`). **A verdict is about the patch bytes it was
+  given, with paths read from the repository root. forge-warden does not check that the patch
+  is the whole change between two commits; `--base` and `--head` are recorded as unverified
+  claims.** Whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which
+  `scripts/dogfood.sh` calls and the documents tell operators to use, makes it in a repository
+  of its own that reads no configuration, with every option fixed. A patch made by hand
+  with other settings can still pass for less than the change it claims to be.
 - **This is not a sandbox.** Process-group cleanup covers descendants remaining in
   that group. It does not contain a ranker that leaves the group. The admitted
   ranker is trusted to execute; OS isolation is a separate deployment decision.

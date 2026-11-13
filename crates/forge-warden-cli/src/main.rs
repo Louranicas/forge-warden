@@ -181,6 +181,7 @@ fn main() -> doors::Status {
 fn run_cli() -> Exit {
     let arguments = doors::arguments();
     let json = machine_requested(&arguments);
+    let own_breaks = line_breaks_are_the_parsers_own(&arguments);
     let cli = match Cli::try_parse_from(arguments) {
         Ok(cli) => cli,
         Err(error) => {
@@ -189,7 +190,9 @@ fn run_cli() -> Exit {
                 if json {
                     finish(Err(Failure::new(Exit::Usage, text)), true)
                 } else {
-                    doors::diagnose(&text);
+                    for line in usage_lines(&text, own_breaks) {
+                        doors::diagnose(line);
+                    }
                     Exit::Usage
                 }
             } else {
@@ -203,6 +206,27 @@ fn run_cli() -> Exit {
         }
     };
     finish(run(cli.command), json)
+}
+
+/// Whether every line break in the argument parser's message is one the parser wrote. The message
+/// quotes arguments, so that holds exactly when no argument contains a line feed. Arguments can
+/// carry text from a pull request (a path, a branch name); such text must not start a line of its
+/// own on a terminal or in a log.
+fn line_breaks_are_the_parsers_own(arguments: &[std::ffi::OsString]) -> bool {
+    !arguments
+        .iter()
+        .any(|argument| argument.as_encoded_bytes().contains(&b'\n'))
+}
+
+/// The lines a usage error is printed as. Each goes through `doors::diagnose`, so
+/// `render::terminal_safe` still escapes every character outside printable ASCII in it. With
+/// `own_breaks` false the whole message stays one line and its line feeds are escaped with the rest.
+fn usage_lines(text: &str, own_breaks: bool) -> Vec<&str> {
+    if own_breaks {
+        text.trim_end_matches('\n').split('\n').collect()
+    } else {
+        vec![text]
+    }
 }
 
 /// An exact flag before the option terminator requests machine diagnostics, even on parse errors.

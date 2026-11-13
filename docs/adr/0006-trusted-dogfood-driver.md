@@ -73,9 +73,47 @@ scratch candidate, one added secret-shaped line each):
 - `.gitattributes` in the candidate tree, at the root or in a subdirectory: no longer honoured.
 - `filter=` attributes: not run; a diff of two commits compares blobs and applies no filter.
 - `diff=<driver>` with a textconv or external command: not run (`--no-textconv`, `--no-ext-diff`).
-- `.git/info/attributes` in the candidate checkout: **still honoured** (`* -diff` there hides the
-  line even with the fix). It is local repository state that no commit can write; whoever creates
-  the candidate checkout controls it, which in CI is the trusted workflow.
-- `.git/config` in the candidate checkout (for example `diff.noprefix`): **still honoured**, except
-  `core.attributesFile`, which the command line overrides. Same owner as the line above.
+- `.git/info/attributes` in the candidate checkout: honoured at the time of this amendment; no
+  longer read since the amendment below.
+- `.git/config` in the candidate checkout (for example `diff.noprefix`): honoured at the time of
+  this amendment; no longer read since the amendment below.
 - System and global configuration: not read (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`).
+
+## Amendment (DOGFOOD-GITENV and MAKE-PATCH, 2026-11-12): the diff does not run in the candidate's repository
+
+**What was wrong.** The list above said the candidate checkout's `.git/config` and
+`.git/info/attributes` still shaped the patch. With `diff.noprefix` in that configuration, or in
+the caller's environment, the judge read `scripts/x` as `x` and an authority-mode run passed a
+change to a protected file (ledger Q54).
+
+**Decision.** `scripts/make_patch.sh` makes the patch, and the driver calls the trusted checkout's
+copy of it. The script unsets every `GIT_` variable, creates a new bare repository, names the
+candidate's object directory in that repository's `objects/info/alternates`, and diffs there with
+attributes taken from the empty tree. So for the diff:
+
+- `.git/config` in the candidate checkout: not read. `scripts/tests/dogfood.sh` holds nine rows,
+  one candidate setting each, whose patch must equal the clean one byte for byte.
+- `.git/info/attributes` in the candidate checkout: not read. Measured by hand (Git 2.56.0, a
+  scratch candidate with `* -diff` there: the added line reaches the patch as text). No test row
+  holds this case.
+- `.gitattributes` in the candidate tree: not read, as before. The plant
+  `candidate-attributes-honoured` (G-35) now puts the diff back in the candidate's work tree
+  without the empty attribute source, and the attributes test fails.
+- The explicit options on the diff command (prefixes, `--no-relative`, `--no-color`,
+  `core.quotePath=true`) are a second layer. When measured on the DOGFOOD-GITENV commit, removing
+  them while the new repository stayed left every test green, so no test fences them. The two
+  submodule options added later (`--submodule=short --ignore-submodules=none`) are the exception:
+  `scripts/tests/dogfood.sh` runs the script's option line by hand in the candidate's work tree,
+  where each of them decides whether a submodule change is in the patch.
+
+**What the candidate and the caller still control.**
+
+- The script resolves the base and head commits with `git rev-parse` in the candidate's
+  repository, which reads that repository's configuration; replace objects are off.
+- Alternates inside the candidate's own object store are followed, as Git always follows them.
+- `PATH` comes from the caller: the script runs whatever `git` is first on it.
+- A shallow or partial candidate object store is not supported: without the merge base the diff
+  fails and the driver stops before judging.
+
+This amendment is about how the driver makes its patch. It does not bind a patch someone else
+made to a base and a head; that limit is in the [threat model](../THREAT_MODEL.md).

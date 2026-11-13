@@ -279,13 +279,23 @@ fn runnable_tests(label: &str, source: &str) -> Result<Vec<String>, String> {
 fn render(rows: &[Row]) -> Result<String, String> {
     let mut text = String::from(
         "# Refusal map\n\n\
-         Every refusal variant and every exit, with the one test that observes it. Generated from\n\
-         `crates/forge-warden-core/src/refusal_rows.rs` and `crates/forge-warden-cli/src/refusal_rows.rs`,\n\
-         and checked byte for byte by\n\
-         `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.\n\n\
+         Every variant of the 11 enums listed below (10 refusal enums and `Exit`), with the one test that\n\
+         observes it. Generated from `crates/forge-warden-core/src/refusal_rows.rs` and\n\
+         `crates/forge-warden-cli/src/refusal_rows.rs`, and checked byte for byte by\n\
+         `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.\n\
+         \n\
+         Scope: exactly these 11 enums (`Unverifiable`, `PathError`, `PolicyError`, `RankError`, `SealError`,\n\
+         `DateError`, `Exit` in the core; `DoorErrorKind`, `ChildFailure`, `RankerFailure`, `GitFactsFailure` in\n\
+         the CLI). Outside it: the reasons inside `RankError::Invalid` (one row for all of them), `Disagreement`\n\
+         (a disagreement with Git becomes a note, not a refusal), the Git allowlist's admission refusals and the\n\
+         CLI's named error messages (each reaches the user as one of the exits below), and the refusals of the\n\
+         repository scripts (`scripts/hold_ack.py`, `scripts/dogfood.sh`), which have their own tests.\n\
+         \n\
          A row names its test by `path::function`; the test is checked to exist and to run (not ignored,\n\
-         not behind another cfg). That it observes its variant is proven by a plant for three sampled\n\
-         rows (guardrail G-53 in `plants/catalog.json`); for the others the test's assertion was read.\n\n\
+         not behind another cfg). Three rows are proven by a plant that swaps the variant for a sibling\n\
+         (guardrail G-53 in `plants/catalog.json`); for every other row the test's assertion was read, not\n\
+         proven by a plant.\n\
+         \n\
          | Refusal | Observing test |\n| --- | --- |\n",
     );
     for row in rows {

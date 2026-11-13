@@ -34,7 +34,7 @@ logs. Exit 1 means a plant escaped or a command/recipe failed. Exit 2 means all 
 were caught but the full guardrail survey is incomplete. Explicit case selections return 0 when
 the selected plants are caught, without implying whole-register coverage.
 
-This revision implements 110 named plants over 49 guardrail rows; Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 4 register rows are explicitly PENDING
+This revision implements 114 named plants over 51 guardrail rows (the gate admits at most 140: `GATE_PLANT_CAPACITY` in `scripts/plant_tools.py`); Q3-07/Q3-10 strengthen G-45/G-24, and 13 `z3-*` cases exercise G-45. The remaining 2 register rows (G-38, G-47) are explicitly PENDING
 in the catalog; no missing recipe is counted as caught. The source register was a baseline draft;
 its hash and binding corrections for duplicate paths, producer authentication, named-intent defaults and
 mutation measurement are included. In particular the README table plant checks the currently
@@ -109,12 +109,16 @@ fixture suite in a private copy and adds a named diagnostic to the existing exac
 without relaxing that assertion or changing checked-out source. These controlled command fixtures
 prove script exit propagation; they do not qualify a live ranker or hosted admission.
 
-The five pending rows have individual reasons in the catalog: unavailable local enforcement for
-CI toolchain/name drift or documentation references, the unimplemented strict skip contract, and
-a missing offline zizmor backend. G-53 (refusal map) has three sampled plants, each swapping one refusal variant for a sibling so that the test `docs/REFUSAL_MAP.md` names for it must fail; per Lodestar's ruling it is sampled, not one plant per row. G-52 (runner routing) has nine script plants (five from RUNNER-ROUTING.1: two read an ambient variable, one wraps the route script in a shell template, one hides a pool job in an over-indented body, one behind a repeated job id; the workflow files are pinned whole) against
+The two pending rows each name the owner input they wait for (ledger Q23): G-38 an exported copy
+of the GitHub ruleset's required check names, G-47 zizmor in the trusted offline image or a ruling
+that the workflow audit is hosted-only. G-16 (the gate's compiler is the pinned one) and G-18 (a
+missing required tool is a refusal, not a skip) are implemented in `scripts/tool_versions.py` and
+each has a plant against `scripts/tests/local_tools.py` (EVIDENCE-0.2.0). G-40 also plants a weakened policy: `policy-severity-lowered` lowers
+`no-unsafe` in `warden.toml` from `fail` to `hold`, and `documented_rule_severities_equal_the_policies`
+must fail until docs/POLICY_REFERENCE.md's own-policy table changes with it (EVIDENCE-0.2.0 item 11). G-53 (refusal map) has three sampled plants, each swapping one refusal variant for a sibling so that the test `docs/REFUSAL_MAP.md` names for it must fail; per Lodestar's ruling it is sampled, not one plant per row. G-52 (runner routing) has nine script plants (five from RUNNER-ROUTING.1: two read an ambient variable, one wraps the route script in a shell template, one hides a pool job in an over-indented body, one behind a repeated job id; the workflow files are pinned whole) against
 `scripts/tests/runner_routing.py`. G-06 has four door-list plants (WP-PLANTS-FENCES 3b), one of them a
 `create` of an unlisted module under `doors/`. G-06 also plants a disallowed call inside a clap
-attribute (WP-EFFECT-WALL, Q37) and a lint configuration created beside the CLI crate or in another directory (C3). Two more remove an entry from the reviewed effect list: a std effect (C1) and a `GitOracle` constructor (C4). A `.cargo/config.toml` is refused by the same test; it has no catalogue case because `create` needs an existing parent directory (its self-test plants it). Missing tools and missing checks are never counted as caught.
+attribute (WP-EFFECT-WALL, Q37) and a lint configuration created beside the CLI crate or in another directory (C3). Two more remove an entry from the reviewed effect list: a std effect (C1) and a `GitOracle` constructor (C4). A `.cargo/config.toml` is refused by the same test; it has no catalogue case because `create` needs an existing parent directory, and the repository has no `.cargo/` to create it in. It is proven instead by the test's own self-plant, `every_way_of_redirecting_the_lint_configuration_is_refused` (`crates/forge-warden-cli/tests/repo_invariants.rs`), which plants `.cargo/config.toml`, `.cargo/config` and a crate-local `.cargo/config.toml` in scratch trees on every run and requires each to be named; that is enough because the self-test runs in the gate on every change and fails if the check stops naming any of them. A full plant (the file plus a lax configuration, checked through the real test) was also measured once by the EFFECT-WALL verifier (receipt 408336dca7db8b03). Missing tools and missing checks are never counted as caught.
 
 ## Required gate execution (Q-PERIMETER)
 

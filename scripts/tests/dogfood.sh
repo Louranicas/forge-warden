@@ -8,6 +8,7 @@ export HOME="$sandbox/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 mkdir -p "$HOME" "$sandbox/trusted/scripts" "$sandbox/bin"
 trusted="$sandbox/trusted"
 cp "$source_root/scripts/dogfood.sh" "$trusted/scripts/dogfood.sh"
+cp "$source_root/scripts/make_patch.sh" "$trusted/scripts/make_patch.sh"
 cp "$source_root/scripts/judge_mode.py" "$trusted/scripts/judge_mode.py"
 cp "$source_root/scripts/tool_versions.py" "$source_root/scripts/tool-versions.toml" "$trusted/scripts/"
 cp "$source_root/rust-toolchain.toml" "$source_root/Cargo.toml" "$trusted/"
@@ -43,15 +44,15 @@ printf 'schema = "forge-warden.policy.v0"\n[producer]\nsha256 = ["00000000000000
 printf 'trusted-build\n' > "$trusted/build.rs"
 git -C "$trusted" init -q
 # Do not inherit signing, hooks or identities from the reviewer's environment.
-git -C "$trusted" add -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
-git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$trusted" add -- scripts/dogfood.sh scripts/make_patch.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$trusted" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm baseline -- scripts/dogfood.sh scripts/make_patch.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
 base="$(git -C "$trusted" rev-parse HEAD)"
 git clone -q --no-local "$trusted" "$sandbox/candidate"
 candidate="$sandbox/candidate"
 printf 'exit 0 # candidate-controlled driver\n' > "$candidate/scripts/dogfood.sh"
 printf 'allow-all\n' > "$candidate/warden.toml"
 printf 'malicious-build\n' > "$candidate/build.rs"
-git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
+git -C "$candidate" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm candidate -- scripts/dogfood.sh scripts/make_patch.sh scripts/hold_ack.py scripts/judge_mode.py scripts/tool_versions.py scripts/tool-versions.toml rust-toolchain.toml Cargo.toml warden.toml build.rs
 head="$(git -C "$candidate" rev-parse HEAD)"
 cat > "$sandbox/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
@@ -127,8 +128,10 @@ printf '* binary\n' > "$attr/sub/.gitattributes"
 key="AKIA$(printf 'ABCDEFGHIJKLMNOP')"
 printf 'trusted-build\nfn planted() { let k = "%s"; }\n' "$key" > "$attr/build.rs"
 printf 'fn sub() { let k = "%s"; }\n' "$key" > "$attr/sub/k.rs"
-git -C "$attr" add -- .gitattributes sub/.gitattributes sub/k.rs build.rs
-git -C "$attr" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm attributes -- .gitattributes sub/.gitattributes sub/k.rs build.rs
+# A name Git quotes by default, for the core.quotePath row below.
+printf 'fn accent() {}\n' > "$attr/sub/é.rs"
+git -C "$attr" add -- .gitattributes sub/.gitattributes sub/k.rs sub/é.rs build.rs
+git -C "$attr" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm attributes -- .gitattributes sub/.gitattributes sub/k.rs sub/é.rs build.rs
 attr_head="$(git -C "$attr" rev-parse HEAD)"
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
 out="$sandbox/evidence-attributes"
@@ -140,6 +143,139 @@ if [ "$visible" != 2 ] || [ "$binary" != 0 ]; then
  exit 1
 fi
 echo 'PASS candidate .gitattributes (root -diff, subdirectory binary) do not hide added text'
+# DOGFOOD-GITENV (freeze review N3): the caller's Git environment and the candidate repository's
+# own configuration do not shape the patch. Each case must give the bytes of the clean run above.
+# Without the `a/` `b/` prefixes the judge reads `sub/k.rs` as `k.rs`, and no path rule matches.
+clean_patch="$out/change.patch"
+# Byte equality with sha256sum, which the gate's tool set has; cmp and diff are not in it.
+same_bytes() { [ "$(sha256sum < "$1")" = "$(sha256sum < "$2")" ]; }
+grep -q '^diff --git a/sub/k.rs b/sub/k.rs$' "$clean_patch" || { echo 'FAIL git environment: the clean patch has no a/ b/ prefixes'; exit 1; }
+gitenv() {
+ name="$1"; shift
+ out="$sandbox/evidence-gitenv-$name"
+ env "$@" bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+ if ! same_bytes "$clean_patch" "$out/change.patch"; then
+  echo "FAIL git environment $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch")"
+  exit 1
+ fi
+ echo "PASS git environment $name does not shape the patch"
+}
+gitenv config-count-noprefix GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true
+gitenv config-parameters-noprefix "GIT_CONFIG_PARAMETERS='diff.noprefix=true'"
+gitenv config-count-prefixes GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=diff.srcPrefix GIT_CONFIG_VALUE_0=a/x/ GIT_CONFIG_KEY_1=diff.dstPrefix GIT_CONFIG_VALUE_1=b/x/
+gitenv config-count-context GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.context GIT_CONFIG_VALUE_0=0
+gitenv diff-opts GIT_DIFF_OPTS=--unified=0
+# The candidate checkout's own .git/config, one setting at a time (Bastion R1; Touchstone's
+# diff.relative finding). The last row also hands the driver a subdirectory of the candidate.
+grep -q '^diff --git "a/sub/\\303\\251.rs" "b/sub/\\303\\251.rs"$' "$clean_patch" || { echo 'FAIL git environment: the clean patch does not quote the non-ASCII name'; exit 1; }
+candidate_config() {
+ name="$1"; key="$2"; value="$3"; where="${4:-$attr}"
+ git -C "$attr" config "$key" "$value"
+ out="$sandbox/evidence-gitenv-$name"
+ bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$where" "$out" > "$sandbox/output" 2>&1
+ git -C "$attr" config --unset "$key"
+ if ! same_bytes "$clean_patch" "$out/change.patch"; then
+  echo "FAIL candidate config $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch" | cat -v)"
+  exit 1
+ fi
+ echo "PASS candidate config $name does not shape the patch"
+}
+candidate_config noprefix diff.noprefix true
+candidate_config colour color.ui always
+candidate_config quotepath core.quotePath false
+candidate_config relative diff.relative true
+candidate_config context diff.context 0
+candidate_config blank-context diff.suppressBlankEmpty true
+candidate_config algorithm diff.algorithm histogram
+candidate_config order-file diff.orderFile "$sandbox/output"
+candidate_config relative-from-a-subdirectory diff.relative true "$attr/sub"
+# MAKE-PATCH: the patch-maker used by hand, as the runbook documents it. The same bytes as the
+# driver's clean patch, whatever the user's own Git configuration, environment and directory are.
+maker="$trusted/scripts/make_patch.sh"
+mkdir -p "$sandbox/user-home" "$sandbox/maker-tmp"
+printf '[diff]\n\tnoprefix = true\n\trelative = true\n\tcontext = 0\n\tmnemonicPrefix = true\n\talgorithm = histogram\n[color]\n\tui = always\n[core]\n\tquotePath = false\n' > "$sandbox/user-home/.gitconfig"
+made() {
+ name="$1"; shift
+ if ! "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || ! same_bytes "$clean_patch" "$sandbox/made.patch"; then
+  echo "FAIL make_patch $name: not the clean patch: $(sed -n 1p "$sandbox/made.patch" | cat -v) $(sed -n 1p "$sandbox/made.err")"
+  exit 1
+ fi
+ echo "PASS make_patch $name gives the clean patch"
+}
+made with-ids bash "$maker" "$base" "$attr_head" "$attr"
+made hostile-user-config env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$sandbox/user-home" bash "$maker" "$base" "$attr_head" "$attr"
+made hostile-environment env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_DIFF_OPTS=--unified=0 GIT_EXTERNAL_DIFF=false bash "$maker" "$base" "$attr_head" "$attr"
+git -C "$attr" branch maker-base "$base"
+git -C "$attr" branch maker-head "$attr_head"
+made with-branch-names bash "$maker" maker-base maker-head "$attr"
+made from-a-subdirectory-with-relative bash -c 'cd "$1/sub" && env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$2" bash "$3" "$4" "$5"' _ "$attr" "$sandbox/user-home" "$maker" "$base" "$attr_head"
+made leaves-no-scratch env TMPDIR="$sandbox/maker-tmp" bash "$maker" "$base" "$attr_head" "$attr"
+if [ -n "$(ls -A "$sandbox/maker-tmp")" ]; then echo 'FAIL make_patch: scratch repository left behind'; exit 1; fi
+for bad in "nosuchrev $attr_head" "$base nosuchrev" "$base" "$base $attr_head $attr extra" "--output=$sandbox/x $attr_head"; do
+ # shellcheck disable=SC2086
+ if bash "$maker" $bad > "$sandbox/made.patch" 2> "$sandbox/made.err" || [ -s "$sandbox/made.patch" ]; then
+  echo "FAIL make_patch refuses: '$bad' gave a patch or exit 0"
+  exit 1
+ fi
+done
+[ ! -e "$sandbox/x" ] || { echo 'FAIL make_patch: an option was taken as a revision'; exit 1; }
+echo 'PASS make_patch refuses a missing revision, a wrong argument count and an option in place of a revision'
+# SUBMODULE-PIN (outside review O1): a submodule change always reaches the patch as its own
+# `diff --git` section. The candidate's work tree holds the change's own `.gitmodules` with
+# `ignore = all`; with that file alone, a `git diff` without the two submodule options leaves the
+# gitlink out and the rest of the change is judged without it. The script's diff runs in another
+# repository, so its rows pass with or without the options; the by-hand rows are the ones that
+# fail without them. They run the option line read from the script, and the README and the
+# runbook must print that same line, so the three cannot drift apart.
+git clone -q --no-local "$trusted" "$sandbox/sub-candidate"
+sub="$sandbox/sub-candidate"
+fixture_commit() { git -C "$sub" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "$1"; }
+git -C "$sub" update-index --add --cacheinfo "160000,$base,scripts/sub"
+fixture_commit link
+sub_base="$(git -C "$sub" rev-parse HEAD)"
+git -C "$sub" update-index --cacheinfo "160000,$sub_base,scripts/sub"
+printf '[submodule "sub"]\n\tpath = scripts/sub\n\turl = ./sub\n\tignore = all\n' > "$sub/.gitmodules"
+printf 'trusted-build\nfn beside_the_bump() {}\n' > "$sub/build.rs"
+git -C "$sub" add -- .gitmodules build.rs
+fixture_commit bump
+sub_head="$(git -C "$sub" rev-parse HEAD)"
+sub_patch="$sandbox/sub-clean.patch"
+bash "$maker" "$sub_base" "$sub_head" "$sub" > "$sub_patch"
+if ! grep -q '^diff --git a/scripts/sub b/scripts/sub$' "$sub_patch" || ! grep -q "^-Subproject commit $base\$" "$sub_patch" || ! grep -q "^+Subproject commit $sub_base\$" "$sub_patch"; then
+ echo 'FAIL submodule: make_patch left the submodule change out of the patch'
+ exit 1
+fi
+echo 'PASS make_patch writes a submodule change as a 160000 section, with ignore = all in the change'
+for setting in diff.ignoreSubmodules=all diff.submodule=log; do
+ git -C "$sub" config "${setting%%=*}" "${setting#*=}"
+ bash "$maker" "$sub_base" "$sub_head" "$sub" > "$sandbox/made.patch"
+ git -C "$sub" config --unset "${setting%%=*}"
+ same_bytes "$sub_patch" "$sandbox/made.patch" || { echo "FAIL submodule: candidate config $setting shaped make_patch's patch"; exit 1; }
+ echo "PASS make_patch candidate config $setting does not hide the submodule change"
+done
+by_hand="$(sed -n 's/^  \(diff --no-ext-diff .*\) \\$/\1/p' "$maker")"
+if [ "$(printf '%s\n' "$by_hand" | grep -c -- '--dst-prefix=b/')" != 1 ]; then
+ echo "FAIL by hand: make_patch.sh has no single line of diff options: $by_hand"
+ exit 1
+fi
+grep -qF "\`git $by_hand <base>...<head>\`" "$source_root/README.md" || { echo "FAIL by hand: README.md does not print: git $by_hand <base>...<head>"; exit 1; }
+grep -qF "\`git $by_hand main...HEAD\`" "$source_root/docs/RUNBOOK.md" || { echo "FAIL by hand: docs/RUNBOOK.md does not print: git $by_hand main...HEAD"; exit 1; }
+echo 'PASS the README and the runbook print the diff command make_patch.sh runs'
+by_hand_row() {
+ name="$1"; shift
+ # The option line is split into words on purpose, as a shell would split the documented command.
+ # shellcheck disable=SC2086
+ git -C "$sub" "$@" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
+ if ! same_bytes "$sub_patch" "$sandbox/made.patch"; then
+  echo "FAIL by hand $name: the documented command does not give make_patch's patch ($(grep -c '^diff --git a/scripts/sub ' "$sandbox/made.patch" || true) submodule sections)"
+  exit 1
+ fi
+ echo "PASS by hand $name: the documented command keeps the submodule change"
+}
+by_hand_row the-changes-own-gitmodules-ignore-all
+by_hand_row ignore-submodules-all -c diff.ignoreSubmodules=all
+by_hand_row submodule-log -c diff.submodule=log
+by_hand_row submodule-diff -c diff.submodule=diff
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
 # the run before any ranker exists and before the judge runs, even when the judge would pass.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
