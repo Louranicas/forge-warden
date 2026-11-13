@@ -112,7 +112,7 @@ verified, is not in 0.2.0; it is planned for 0.3.0.
 - [ ] Merge to the public repositories through a pull request.
 - [ ] Create the signed tag `v0.2.0`. Until it exists the README's install line names a tag that
   is not there.
-- [ ] Make the changelog date (now 2026-11-11) the date of the tag.
+- [ ] Make the changelog date (now 2026-11-13, the date of the release commit) the date of the tag.
 - [ ] Install the Git allowlist by hand on each machine that will run authority mode
   ([runbook](RUNBOOK.md), step 4).
 - [ ] Decide whether the finding above is published as a security advisory. Whether 0.1.0 is

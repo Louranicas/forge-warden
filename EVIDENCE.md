@@ -19,8 +19,8 @@ deep-diff-forge v0.8.2 (release binary SHA-256 `298e07511310b18051a4c8ed56c18faf
 | --- | --- | --- |
 | The lint wall, tests and docs are green | `bash scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline` | green |
 | Every test passes | `cargo test --workspace --locked --offline` | 375 passed, 0 failed, 0 ignored, in 27 test binaries |
-| The tests catch the viable mutants of the whole workspace | `cargo mutants --workspace --no-shuffle --cap-lints true --cargo-arg=--locked` | 737 mutants: 518 caught, 2 missed, 217 unviable, 0 timed out (each survivor explained in the baseline record). Both missed mutants replace the body of `vocab::is_known_status`, a public function left with no caller when its one call in the evaluator was replaced by the typed `Status::is_known()`; no verdict depends on it |
-| The verification tool checks itself before it judges the frozen tree | the merge gate's selftest on the frozen commit `6682ed53` | 62 of 62 checks ok |
+| The tests catch the viable mutants of the whole workspace | `cargo mutants --no-config --cap-lints true --workspace --no-shuffle --jobs 2 --cargo-arg=--locked --cargo-arg=--offline`, on a `git archive` export of the commit, in the gate's container image with no network (`--no-config`: no repository file can exclude code from the count) | 737 mutants: 518 caught, 2 missed, 217 unviable, 0 timed out (each survivor explained in the baseline record). Both missed mutants replace the body of `vocab::is_known_status`, a public function left with no caller when its one call in the evaluator was replaced by the typed `Status::is_known()`; no verdict depends on it |
+| The verification tool checks itself | the merge gate's selftest, run per tool version (fw-verify 1.2.8, the version that gated `7f36ba2a`) on the frozen commit `6682ed53` | 62 of 62 checks ok |
 | The tests catch the viable mutants of the release fix | `cargo mutants --in-diff` on the change from the frozen commit, in the merge gate | 19 caught, 0 missed, 1 unviable |
 | The minimum Rust version builds and passes | the merge gate's MSRV step (`fw-verify --msrv`), which tests the workspace with Rust 1.88 | green |
 | Supply chain is clean | `cargo deny check` | advisories, bans, licences, sources ok (advisory database as cached on the machine) |
@@ -34,10 +34,14 @@ deep-diff-forge v0.8.2 (release binary SHA-256 `298e07511310b18051a4c8ed56c18faf
 | The documented commands do what the documents say | README quick start (advisory), `init`, `lint`, `explain` for every exit, `schema exit-codes`, `schema verdict`, the 0.1.0 command forms, `--patch -`, `--json` failures | as documented: the demo exits 7 and prints the sample's lines; `schema verdict` equals `schemas/verdict.v2.schema.json`; the 0.1.0 forms exit 2; `--patch -` is refused; each `--json` failure is one JSON object |
 | The pinned producer is the one the documents name | `sha256sum` of the release binary; `[producer]` in `warden.toml`; [docs/RUNBOOK.md](docs/RUNBOOK.md) step 3 | the same digest in all three |
 | A patch is judged on the paths Git means | Git 2.56 writes 135 patches of a protected change under 17 documented settings (`diff.noprefix`, other prefixes, `diff.relative` in a subdirectory, `diff.external`, colour, `format.noprefix`, ...), each with four commands, judged in authority mode | every patch made with `scripts/make_patch.sh` or the documented command FAILs or HOLDs; the only passes come from a `git diff` without `--no-relative` run in a subdirectory, the limit stated in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md); a docs-only change still passes |
+| Hosted CI passes on the release commit | the repository's GitHub Actions workflows on the pull request that publishes 0.2.0 (PR 6), at `7f36ba2a` | every check passes; the dogfood job HOLDs, as it must for a change to protected paths, with the pinned ranker fetched |
 | Authority mode works end to end | Enrollment first: the Git allowlist was installed by an agent, on the owner's instruction, inside a rootless container (whose root is the user's own uid), not by the owner on a host. Then: a release build, the pinned ranker and that allowlist | on the frozen commit: a docs-only change passed (exit 0), a protected change held (8), a wrong producer digest was refused (4), an unowned or unenrolled Git was refused (3); on the release commit the patch-shape run above, same allowlist |
 
-Two independent adversarial reads of the frozen tree `6682ed53`, by reviewers who built none of it,
-each given seeded defects they did not know about (the key opened after their findings were saved):
+Two adversarial reads of the frozen tree `6682ed53`, by reviewers who built none of it, each given
+seeded defects they did not know about (the key opened after their findings were saved). Every
+reviewer, like every builder, was a Claude model (Fable 5.2, Opus 5.5, Sonnet 5.5): the reads are
+not independent of the builders' model family. The control for that shared bias is the measured
+recall on the seeds below, not the reviewers' independence.
 
 | Read | Reviewers | Seeds | Found together | Per reviewer |
 | --- | --- | --- | --- | --- |
@@ -51,7 +55,6 @@ read, the other from attacking the fix. The five candidates the reads did raise 
 Not verified here, for 0.2.0:
 - An owner-installed Git allowlist on a host (runbook step 4) has not been run; the authority runs above used one an agent installed in a container.
 - The workflow audit (`zizmor`) has no offline backend here; it runs in hosted CI only (G-47).
-- The hosted CI run on the release commit: not yet run when this section was written; the pull request that publishes 0.2.0 records it.
 - `cargo install --git … --tag v0.2.0` works only once the `v0.2.0` tag exists.
 - The Managed Agents calls in `agents/managed/` are still not executed.
 
