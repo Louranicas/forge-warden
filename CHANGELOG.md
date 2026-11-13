@@ -9,7 +9,7 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-11
+## [0.2.0] - 2026-11-13
 
 - New `scripts/make_patch.sh <base> <head> [<repository>]` writes the patch to judge: the change
   from the merge base to head, the same bytes whatever the caller's Git configuration,
