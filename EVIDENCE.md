@@ -34,7 +34,7 @@ deep-diff-forge v0.8.2 (release binary SHA-256 `298e07511310b18051a4c8ed56c18faf
 | The documented commands do what the documents say | README quick start (advisory), `init`, `lint`, `explain` for every exit, `schema exit-codes`, `schema verdict`, the 0.1.0 command forms, `--patch -`, `--json` failures | as documented: the demo exits 7 and prints the sample's lines; `schema verdict` equals `schemas/verdict.v2.schema.json`; the 0.1.0 forms exit 2; `--patch -` is refused; each `--json` failure is one JSON object |
 | The pinned producer is the one the documents name | `sha256sum` of the release binary; `[producer]` in `warden.toml`; [docs/RUNBOOK.md](docs/RUNBOOK.md) step 3 | the same digest in all three |
 | A patch is judged on the paths Git means | Git 2.56 writes 135 patches of a protected change under 17 documented settings (`diff.noprefix`, other prefixes, `diff.relative` in a subdirectory, `diff.external`, colour, `format.noprefix`, ...), each with four commands, judged in authority mode | every patch made with `scripts/make_patch.sh` or the documented command FAILs or HOLDs; the only passes come from a `git diff` without `--no-relative` run in a subdirectory, the limit stated in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md); a docs-only change still passes |
-| Hosted CI passes on the release commit | the repository's GitHub Actions workflows on the pull request that publishes 0.2.0 (PR 6), at `7f36ba2a` | every check passes; the dogfood job HOLDs, as it must for a change to protected paths, with the pinned ranker fetched |
+| Hosted CI on the release commit | GitHub Actions run 43338659702 (workflow `ci`, pull request 6, head `7f36ba2a`) | nine of ten jobs succeed: supply chain, vocabulary, the gate (format, lints, tests, docs), the mutation plan, both mutation shards and the diff mutation check, the workflow audit (`zizmor`) and the Rust 1.88 build. The dogfood job ends red, and with it the run, because its verdict is a hold (exit 8, `policy_hold`, 0 failed, 3 held) in explicit advisory mode, which cannot pass by design |
 | Authority mode works end to end | Enrollment first: the Git allowlist was installed by an agent, on the owner's instruction, inside a rootless container (whose root is the user's own uid), not by the owner on a host. Then: a release build, the pinned ranker and that allowlist | on the frozen commit: a docs-only change passed (exit 0), a protected change held (8), a wrong producer digest was refused (4), an unowned or unenrolled Git was refused (3); on the release commit the patch-shape run above, same allowlist |
 
 Two adversarial reads of the frozen tree `6682ed53`, by reviewers who built none of it, each given
@@ -54,7 +54,7 @@ read, the other from attacking the fix. The five candidates the reads did raise 
 
 Not verified here, for 0.2.0:
 - An owner-installed Git allowlist on a host (runbook step 4) has not been run; the authority runs above used one an agent installed in a container.
-- The workflow audit (`zizmor`) has no offline backend here; it runs in hosted CI only (G-47).
+- The workflow audit (`zizmor`) has no offline backend here; it runs in hosted CI only (G-47), and passed in the hosted run above.
 - `cargo install --git … --tag v0.2.0` works only once the `v0.2.0` tag exists.
 - The Managed Agents calls in `agents/managed/` are still not executed.
 
