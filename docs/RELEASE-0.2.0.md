@@ -2,8 +2,10 @@
 
 This is the checklist for the 0.2.0 release. The release is commit `7f36ba2a` (the tree frozen at
 `6682ed53` plus the fix for a finding of the freeze review, the patch-maker and the evidence
-package: the last sections) plus documentation-only commits after it, such as the one that
-records the 0.2.0 evidence. The tag names the exact commit. Each line that is done names the commit that did it. The
+package: the last sections) plus what came after it: documentation, such as the commit that
+records the 0.2.0 evidence, and one change that is not documentation, two submodule options in
+`scripts/make_patch.sh` with its test (the section "After the final code commit" below). No Rust
+source changed after `7f36ba2a`. The tag names the exact commit. Each line that is done names the commit that did it. The
 lines at the end can only be done by the repository's owner and are not ticked by anyone else. ADR 0011 (amendment A1) requires this
 checklist to record which verdict schema 0.2.0 ships; that record is the first section.
 
@@ -106,6 +108,22 @@ verified, is not in 0.2.0; it is planned for 0.3.0.
 - [x] Authority mode on the final commit `7f36ba2a` itself, with the same container allowlist and
   limit: 135 patches written by Git under 17 settings were judged; a docs-only change passed, and
   no patch made with `scripts/make_patch.sh` or the documented command passed a protected change.
+
+## After the final code commit: a submodule change left out by the by-hand command
+
+- [x] Found by an outside-tool review of the release range and reproduced on `39dada01` (the
+  code of `7f36ba2a`): the by-hand `git diff` the README and the runbook printed left a submodule
+  change out of the patch when the work tree's `.gitmodules` said `ignore = all` (a file the
+  change itself can commit, so no setting of the user was needed), or with
+  `diff.ignoreSubmodules=all` or `diff.submodule=log`; authority mode then passed the rest of the
+  change (20 of 24 such patches, same container allowlist and limit as above).
+  `scripts/make_patch.sh` was not affected: every one of its patches held.
+- [x] The script and both documented commands pass `--submodule=short --ignore-submodules=none`.
+  `scripts/tests/dogfood.sh` runs the script's option line by hand under each of those settings
+  and requires the script's own patch, and requires the README and the runbook to print that
+  line. Measured with Git only; without either option the test fails.
+- [ ] The same patches judged again in authority mode with the new command.
+- [ ] The gate on the release commit that carries this change.
 
 ## Only the owner
 

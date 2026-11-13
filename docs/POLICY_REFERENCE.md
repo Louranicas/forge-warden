@@ -198,7 +198,8 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
   `diff.mnemonicPrefix` or other prefixes, or with no `diff --git` header) → `patch_unverifiable`.
   Git removes one leading path component whatever it is, so it would report `scripts/x` as `x`
   and no path rule would match. Pass `--src-prefix=a/ --dst-prefix=b/` to `git diff`. A reverse
-  diff (`git diff -R`, `b/` then `a/`) is read. Prefixes that themselves begin `a/` and `b/`
+  diff (`git diff -R`, `b/` then `a/`) is read, and judged as the change its bytes make: the
+  inverse of the change it was made from. Prefixes that themselves begin `a/` and `b/`
   cannot be told from a real path and are believed as written.
 - **Renames and copies** → `patch_unverifiable` (and `source_path_unknown` from the ranking).
   Use `git diff --no-renames`, so each side is judged as a deletion and an addition.

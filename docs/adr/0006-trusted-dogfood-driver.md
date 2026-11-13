@@ -101,7 +101,10 @@ attributes taken from the empty tree. So for the diff:
   without the empty attribute source, and the attributes test fails.
 - The explicit options on the diff command (prefixes, `--no-relative`, `--no-color`,
   `core.quotePath=true`) are a second layer. When measured on the DOGFOOD-GITENV commit, removing
-  them while the new repository stayed left every test green, so no test fences them.
+  them while the new repository stayed left every test green, so no test fences them. The two
+  submodule options added later (`--submodule=short --ignore-submodules=none`) are the exception:
+  `scripts/tests/dogfood.sh` runs the script's option line by hand in the candidate's work tree,
+  where each of them decides whether a submodule change is in the patch.
 
 **What the candidate and the caller still control.**
 

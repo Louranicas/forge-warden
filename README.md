@@ -161,9 +161,10 @@ the ranking reports, never remove them. Make the patch with
 [`scripts/make_patch.sh`](scripts/make_patch.sh) `<base> <head>`, taken from the revision you
 installed: it writes the same bytes whatever your Git configuration, environment and current
 directory are. A plain `git diff` does not: `diff.noprefix` drops the `a/` `b/` prefixes (such a
-patch is refused), and `diff.relative` in a subdirectory leaves out every change outside it,
-which no check of the patch can see. If you must use Git directly, run what the script runs,
-`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ <base>...<head>`,
+patch is refused), `diff.relative` in a subdirectory leaves out every change outside it, and
+`ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change; no
+check of the patch can see either omission. If you must use Git directly, run what the script runs,
+`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level (the script also reads no Git configuration and takes attributes from the empty
 tree, which a plain command cannot). A verdict is about the patch bytes it was given, with paths read from the
 repository root: forge-warden does not check that the patch is the whole change between two
