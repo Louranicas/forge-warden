@@ -19,7 +19,8 @@ deep-diff-forge v0.8.2 (release binary SHA-256 `298e07511310b18051a4c8ed56c18faf
 | --- | --- | --- |
 | The lint wall, tests and docs are green | `bash scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline` | green |
 | Every test passes | `cargo test --workspace --locked --offline` | 375 passed, 0 failed, 0 ignored, in 27 test binaries |
-| The tests catch the viable mutants of the whole workspace | `cargo mutants --workspace --no-shuffle --cap-lints true --cargo-arg=--locked` | 737 mutants: 518 caught, 2 missed, 217 unviable, 0 timed out. Both missed mutants replace the body of `vocab::is_known_status`, a public function left with no caller when its one call in the evaluator was replaced by the typed `Status::is_known()`; no verdict depends on it |
+| The tests catch the viable mutants of the whole workspace | `cargo mutants --workspace --no-shuffle --cap-lints true --cargo-arg=--locked` | 737 mutants: 518 caught, 2 missed, 217 unviable, 0 timed out (each survivor explained in the baseline record). Both missed mutants replace the body of `vocab::is_known_status`, a public function left with no caller when its one call in the evaluator was replaced by the typed `Status::is_known()`; no verdict depends on it |
+| The verification tool checks itself before it judges the frozen tree | the merge gate's selftest on the frozen commit `6682ed53` | 62 of 62 checks ok |
 | The tests catch the viable mutants of the release fix | `cargo mutants --in-diff` on the change from the frozen commit, in the merge gate | 19 caught, 0 missed, 1 unviable |
 | The minimum Rust version builds and passes | the merge gate's MSRV step (`fw-verify --msrv`), which tests the workspace with Rust 1.88 | green |
 | Supply chain is clean | `cargo deny check` | advisories, bans, licences, sources ok (advisory database as cached on the machine) |
@@ -33,12 +34,24 @@ deep-diff-forge v0.8.2 (release binary SHA-256 `298e07511310b18051a4c8ed56c18faf
 | The documented commands do what the documents say | README quick start (advisory), `init`, `lint`, `explain` for every exit, `schema exit-codes`, `schema verdict`, the 0.1.0 command forms, `--patch -`, `--json` failures | as documented: the demo exits 7 and prints the sample's lines; `schema verdict` equals `schemas/verdict.v2.schema.json`; the 0.1.0 forms exit 2; `--patch -` is refused; each `--json` failure is one JSON object |
 | The pinned producer is the one the documents name | `sha256sum` of the release binary; `[producer]` in `warden.toml`; [docs/RUNBOOK.md](docs/RUNBOOK.md) step 3 | the same digest in all three |
 | A patch is judged on the paths Git means | Git 2.56 writes 135 patches of a protected change under 17 documented settings (`diff.noprefix`, other prefixes, `diff.relative` in a subdirectory, `diff.external`, colour, `format.noprefix`, ...), each with four commands, judged in authority mode | every patch made with `scripts/make_patch.sh` or the documented command FAILs or HOLDs; the only passes come from a `git diff` without `--no-relative` run in a subdirectory, the limit stated in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md); a docs-only change still passes |
-| Authority mode works end to end | a release build, the pinned ranker and an enrolled Git allowlist (installed by an agent, on the owner's instruction, in a container: the user's own uid) | on the frozen commit: a docs-only change passed (exit 0), a protected change held (8), a wrong producer digest was refused (4), an unowned or unenrolled Git was refused (3) |
+| Authority mode works end to end | Enrollment first: the Git allowlist was installed by an agent, on the owner's instruction, inside a rootless container (whose root is the user's own uid), not by the owner on a host. Then: a release build, the pinned ranker and that allowlist | on the frozen commit: a docs-only change passed (exit 0), a protected change held (8), a wrong producer digest was refused (4), an unowned or unenrolled Git was refused (3); on the release commit the patch-shape run above, same allowlist |
+
+Two independent adversarial reads of the frozen tree `6682ed53`, by reviewers who built none of it,
+each given seeded defects they did not know about (the key opened after their findings were saved):
+
+| Read | Reviewers | Seeds | Found together | Per reviewer |
+| --- | --- | --- | --- | --- |
+| First | six: four for correctness (two per half of the tree), two for security | 24: 13 from the plant catalogue, 11 written | 23 of 24 | 58% to 100%; catalogue seeds 49 of 52 found (94%), written seeds 26 of 44 (59%) |
+| Second, of the weaker areas | two | 18 new written seeds | 17 of 18 | correctness 92%, security 83% |
+
+Neither read found the two high findings fixed before the release (a patch without the `a/` `b/`
+prefixes, and a patch of part of the tree): one came from reproducing a low candidate of the second
+read, the other from attacking the fix. The five candidates the reads did raise were low to medium.
 
 Not verified here, for 0.2.0:
 - An owner-installed Git allowlist on a host (runbook step 4) has not been run; the authority runs above used one an agent installed in a container.
 - The workflow audit (`zizmor`) has no offline backend here; it runs in hosted CI only (G-47).
-- The hosted CI run on this commit is recorded by the pull request that publishes it, not here.
+- The hosted CI run on the release commit: not yet run when this section was written; the pull request that publishes 0.2.0 records it.
 - `cargo install --git … --tag v0.2.0` works only once the `v0.2.0` tag exists.
 - The Managed Agents calls in `agents/managed/` are still not executed.
 

@@ -1,9 +1,9 @@
 # Release checklist: forge-warden 0.2.0
 
-This is the checklist for the 0.2.0 release. The release is the final commit: the tree frozen at
-`6682ed53` plus the fix for a finding of the freeze review and the evidence package (the last
-sections). A file cannot name the commit it is part of, so the final commit's id is recorded
-in `EVIDENCE.md` and by the tag. Each line that is done names the commit that did it. The
+This is the checklist for the 0.2.0 release. The release is commit `7f36ba2a` (the tree frozen at
+`6682ed53` plus the fix for a finding of the freeze review, the patch-maker and the evidence
+package: the last sections) plus documentation-only commits after it, such as the one that
+records the 0.2.0 evidence. The tag names the exact commit. Each line that is done names the commit that did it. The
 lines at the end can only be done by the repository's owner and are not ticked by anyone else. ADR 0011 (amendment A1) requires this
 checklist to record which verdict schema 0.2.0 ships; that record is the first section.
 
@@ -44,8 +44,8 @@ checklist to record which verdict schema 0.2.0 ships; that record is the first s
   (`593c15d`); a usage error keeps its line breaks, the first thing an upgrading user sees (`8555bf6`).
 - [x] The probe crates in `scripts/tests/guardrails.py` keep their own version 0.1.0: they are
   fixtures, not this workspace.
-- [ ] `EVIDENCE.md` has a 0.2.0 section whose numbers were measured again on the final commit,
-  each with its command.
+- [x] `EVIDENCE.md` has a 0.2.0 section whose numbers were measured again on the final commit
+  `7f36ba2a`, each with its command (documentation-only, after `7f36ba2a`).
 
 ## After the freeze: one high finding, fixed before the release
 
@@ -85,9 +85,11 @@ verified, is not in 0.2.0; it is planned for 0.3.0.
 - [x] The integrator gate passed on `8555bf6`, whose tree the frozen commit carries: format, lints,
   tests, the supply-chain check, the MSRV build (Rust 1.88), the plant catalogue (110 of 110 plants
   caught) and the mutation check on the changed lines (7 mutants: 6 caught, 1 not buildable, none missed).
-- [ ] The same gate on the final commit: the frozen tree plus the three changes above and the
-  evidence package.
-- [ ] A mutation baseline of the whole workspace on the final commit, recorded in `EVIDENCE.md`.
+- [x] The same gate on the final commit `7f36ba2a`: the frozen tree plus the three changes above and
+  the evidence package. Plants 114 of 114 caught; the changed lines' mutants 19 caught, 1 not
+  buildable, none missed; MSRV checked.
+- [x] A mutation baseline of the whole workspace on the final commit `7f36ba2a`, recorded in
+  `EVIDENCE.md`: 737 mutants, 518 caught, 2 missed (one function nothing calls), 217 not buildable.
 - [ ] A second read of the changed area (the header check and the patch-maker) by reviewers who
   did not build it.
 
@@ -101,8 +103,9 @@ verified, is not in 0.2.0; it is planned for 0.3.0.
 - [x] The same setup after the fix (`4eef914`): the unprefixed patches that passed on `6682ed53`
   hold with `patch_unverifiable`; a patch with `a/x/` and `b/x/` prefixes still passes, which is
   the limit stated above.
-- [ ] Authority mode on the final commit itself. The runs above were on `6682ed53` and on the
-  fix alone.
+- [x] Authority mode on the final commit `7f36ba2a` itself, with the same container allowlist and
+  limit: 135 patches written by Git under 17 settings were judged; a docs-only change passed, and
+  no patch made with `scripts/make_patch.sh` or the documented command passed a protected change.
 
 ## Only the owner
 
