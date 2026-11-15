@@ -11,6 +11,11 @@ registry is always listed, because consumers parse them.
 
 ## [0.2.0] - 2026-11-13
 
+- Advisory [FW-2026-001](docs/advisories/FW-2026-001.md) records the wrong PASS on every commit
+  published before 0.2.0 (non-default Git prefixes, `diff.relative` patches, submodule changes
+  left out of the patch), what 0.2.0 fixes, and its one stated limit. The install, clone and
+  patch-maker download lines and the reporting route now name the repository of record on GitLab;
+  the GitHub repository is no longer updated.
 - New `scripts/make_patch.sh <base> <head> [<repository>]` writes the patch to judge: the change
   from the merge base to head, the same bytes whatever the caller's Git configuration,
   environment and current directory are (the diff runs in a new repository that only borrows the

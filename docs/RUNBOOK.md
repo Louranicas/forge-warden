@@ -27,10 +27,10 @@ the branch instead.
 Pin what you deploy: a release tag, or a commit you have reviewed.
 
 ```bash
-cargo install --git https://github.com/Louranicas/forge-warden --rev <commit> forge-warden-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/forge-warden --rev <commit> forge-warden-cli --locked
 forge-warden schema exit-codes   # the exit codes your automation will see
 curl --fail --location --proto '=https' --output make_patch.sh \
-  "https://raw.githubusercontent.com/Louranicas/forge-warden/<commit>/scripts/make_patch.sh"
+  "https://gitlab.com/lukeomahoney/forge-warden/-/raw/<commit>/scripts/make_patch.sh"
 sed -n 2p make_patch.sh          # forge-warden patch-maker v1
 ```
 

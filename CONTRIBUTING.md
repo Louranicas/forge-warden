@@ -13,7 +13,7 @@ access, and provision the separate Rust 1.88.0 MSRV compiler for `just ci`. The 
 1.99.1 toolchain supplies rustfmt and Clippy. Then the walkthrough and test gates run offline:
 
 ```bash
-git clone https://github.com/Louranicas/forge-warden.git
+git clone https://gitlab.com/lukeomahoney/forge-warden.git
 cd ./forge-warden
 rustup toolchain install 1.88.0 --profile minimal
 cargo fetch --locked
