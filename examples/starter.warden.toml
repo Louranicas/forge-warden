@@ -53,12 +53,14 @@ severity = "fail"
 when = ["src/**", "crates/*/src/**"]
 require = ["tests/**", "crates/*/tests/**", "**/*_test.*", "**/test_*.*"]
 
+# `**/.claude/**` is a coding agent's configuration (hooks, permissions, skills): it decides which
+# checks the agent runs before a change reaches this gate, so it is owned like CI.
 [[rule]]
 id = "ci-is-owned"
 why = "CI and supply-chain configuration decide what every other check means."
 kind = "protect_paths"
 severity = "hold"
-paths = [".github/**", "deny.toml", "clippy.toml", "warden.toml"]
+paths = [".github/**", "deny.toml", "clippy.toml", "warden.toml", "**/.claude/**"]
 
 [[rule]]
 id = "reviewable-size"

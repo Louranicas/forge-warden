@@ -74,6 +74,10 @@ forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
 ```
 
+The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
+agent's configuration (`**/.claude/**`) for a person's review; read `examples/starter.warden.toml`
+before you adopt it, and add what your repository owns.
+
 Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.0 is a
 source release: there is no forge-warden binary to download. Authority mode runs only the
 deep-diff-forge binary whose SHA-256 your policy lists, and a binary you build yourself has other
