@@ -772,8 +772,13 @@ mod tests {
     #[test]
     fn binary_means_both_columns_are_dashes() {
         assert!(one("-\t-\ta.bin\0", "").binary());
-        assert!(!one("-\t3\ta.txt\0", "").binary());
-        assert!(!one("3\t-\ta.txt\0", "").binary());
+        // One dash is not a binary file but an unreadable record (Q58): Git writes both or neither.
+        for record in ["-\t3\ta.txt\0", "3\t-\ta.txt\0"] {
+            assert!(matches!(
+                facts(record, ""),
+                Err(Unverifiable::UnreadableGitOutput(_))
+            ));
+        }
         let change = one("2\t1\tsrc/a.rs\0", "");
         assert_eq!(
             (change.path().as_str(), change.kind()),
