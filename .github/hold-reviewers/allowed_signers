@@ -1,1 +1,3 @@
-# No reviewers enrolled. Owner-controlled enrollment required; fail closed by default.
+# Hold reviewers enrolled by the owner (ADR 0007). One line per reviewer: principal, namespace, key.
+# luke: the owner's hold reviewer key, fingerprint SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E, enrolled 2026-11-15.
+luke namespaces="forge-warden-ack" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTrK57/wQa5YNGYBFpP1ypKjTbSk9DiG0JP0+gYUvEQ

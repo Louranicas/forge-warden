@@ -1,6 +1,8 @@
 # Trusted HOLD reviewers
 
-No production keys are provisioned. A repository owner may enroll public keys and reviewer
+One reviewer is enrolled: principal `luke`, the owner's hold reviewer key (fingerprint
+`SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E`, enrolled 2026-11-15). Its private key stays
+with the owner. A repository owner may enroll further public keys and reviewer
 principals in `allowed_signers` through a separately reviewed trusted-base change. For example:
 `reviewer-id namespaces="forge-warden-ack" ssh-ed25519 PUBLIC_KEY_BASE64`.
 Private keys stay with reviewers, never in Git or CI. Signer IDs in receipts contain only

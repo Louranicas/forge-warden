@@ -98,3 +98,11 @@ reviewer already enrolled in the trusted base can acknowledge a change that enro
 is the "separately reviewed trusted-base change" of `.github/hold-reviewers/README.md`; the owner
 should know that the review is one reviewer's signature unless the external controller asks for more.
 (Read from `warden.toml` and this ADR; not measured.)
+
+**First enrolment (HOLD-REVIEWER, 2026-11-15).** "No production keys ship with this change" above
+describes the change that introduced the helper. One reviewer is now enrolled in
+`.github/hold-reviewers/allowed_signers`: principal `luke`, the owner's key, fingerprint
+`SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E`, namespace `forge-warden-ack` only. The owner
+made the key and placed its public half for enrolment; the private key never left the owner's machine.
+The external controller of "Deployment and invalidation" still does not exist, so the enrolment
+makes the local path usable, not the hosted one.

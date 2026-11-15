@@ -250,8 +250,10 @@ always run hosted. The trade-offs and the residual host-loopback exposure are se
 A `hold` is accepted only with an OpenSSH-signed acknowledgement. The receipt binds the exact
 base, head, verdict digest and held rules, signed by a reviewer enrolled in the base branch's
 `.github/hold-reviewers/allowed_signers` ([ADR 0007](docs/adr/0007-subject-bound-hold-acknowledgements.md)).
-No reviewer keys ship, so until the owner enrols one, CI fails closed on every hold. A label
-grants nothing. This acknowledgement belongs to this repository's own driver (`scripts/dogfood.sh`);
+One reviewer is enrolled, the owner (principal `luke`). An acknowledgement is checked only in an
+authority-mode run of `scripts/dogfood.sh` on a machine with an owner-enrolled Git allowlist;
+hosted CI runs it in advisory mode, which cannot be acknowledged, so hosted CI still fails closed on
+every hold. A label grants nothing. This acknowledgement belongs to this repository's own driver (`scripts/dogfood.sh`);
 the `forge-warden` binary has none, so a deployer of the binary has no acknowledgement path. A
 receipt binds the verdict's bytes, which carry the UTC date of the run (`evaluated_on`), so it
 matches only runs on the UTC day it was prepared for, whatever its `expires_at` says.

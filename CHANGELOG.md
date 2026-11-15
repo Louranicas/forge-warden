@@ -9,6 +9,12 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- The owner's hold reviewer key is enrolled in `.github/hold-reviewers/allowed_signers`
+  (principal `luke`, namespace `forge-warden-ack`, fingerprint
+  `SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E`; intention 124). A signed acknowledgement
+  from that key is now accepted by an authority-mode run of `scripts/dogfood.sh`. Hosted CI runs
+  dogfood in advisory mode and still fails closed on every hold. README, CONTRIBUTING, the
+  hold-reviewers README and ADR 0007 say so.
 - Documents say who can acknowledge a hold, and for how long (ledger Q61). The `forge-warden`
   binary has no acknowledgement path; the signed acknowledgement of ADR 0007 belongs to this
   repository's own driver (`scripts/dogfood.sh`). A receipt binds the verdict's bytes, which carry
