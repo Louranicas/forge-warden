@@ -414,6 +414,26 @@ mod tests {
         );
     }
 
+    // Q57: the string predicates are public API with no caller inside the workspace; this test
+    // keeps each one equal to its typed `is_known()`, for known names and for names that are not.
+    #[test]
+    fn the_string_predicates_agree_with_the_typed_vocabulary() {
+        for name in KNOWN_STATUSES {
+            assert!(is_known_status(name), "{name}");
+        }
+        for name in KNOWN_SIGNALS {
+            assert!(is_known_signal(name), "{name}");
+        }
+        for name in ["unknown", "", "Added", "added ", "new_file"] {
+            assert!(!is_known_status(name), "{name:?}");
+            assert_eq!(is_known_status(name), Status::parse(name).is_known());
+        }
+        for name in ["brand_new", "", "New_File", "added"] {
+            assert!(!is_known_signal(name), "{name:?}");
+            assert_eq!(is_known_signal(name), Signal::parse(name).is_known());
+        }
+    }
+
     #[test]
     fn typos_get_a_suggestion_and_noise_does_not() {
         assert_eq!(suggest_signal("secrets_like"), Some("secret_like"));
