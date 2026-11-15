@@ -9,6 +9,15 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Git's numstat counts are read strictly: each is a decimal, or both are `-` for a binary file;
+  anything else is refused as unreadable Git output (`patch_unverifiable`). Before, an
+  unreadable count was read as a content change. Git does not write one.
+- The refusal for a patch without `diff --git a/PATH b/PATH` headers, and the policy reference,
+  now name `scripts/make_patch.sh` as the way to make the patch.
+- `scripts/dogfood.sh` downloads the ranker with `--proto-redir =https` as well as
+  `--proto =https`, so a redirect cannot leave HTTPS (the archive's pinned SHA-256 was already
+  checked).
+
 ## [0.2.0] - 2026-11-13
 
 - New `scripts/make_patch.sh <base> <head> [<repository>]` writes the patch to judge: the change

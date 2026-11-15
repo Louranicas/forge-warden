@@ -27,8 +27,10 @@ What to do:
   ([runbook](RUNBOOK.md), steps 2 and 6). A patch whose paths do not start with `a/` and `b/`
   is now unverifiable (exit 8): that is what a plain `git diff` writes when your Git
   configuration has `diff.noprefix` or `diff.mnemonicPrefix`. A plain `git diff` in a
-  subdirectory with `diff.relative` leaves out every change outside it, and no check of the
-  patch can see that; the patch-maker reads none of those settings. A verdict is about the patch
+  subdirectory with `diff.relative` leaves out every change outside it, and a plain `git diff`
+  leaves out a submodule change when `diff.ignoreSubmodules` is set or the work tree's
+  `.gitmodules` says `ignore = all` (a file the change itself can commit); no check of the
+  patch can see either omission. The patch-maker reads none of those settings. A verdict is about the patch
   bytes it was given: forge-warden does not check that they are the whole change between two
   commits. A `git format-patch` message line that looks like a mode header makes the patch
   unverifiable too.

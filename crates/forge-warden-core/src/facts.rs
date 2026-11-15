@@ -131,7 +131,7 @@ impl fmt::Display for Unverifiable {
             Self::HeaderPaths(what) => write!(
                 f,
                 "{what:?} is not named by exactly one `diff --git a/PATH b/PATH` header; make \
-                 the patch with `git diff --src-prefix=a/ --dst-prefix=b/`"
+                 the patch with forge-warden's `scripts/make_patch.sh <base> <head>`"
             ),
             Self::UnreadableGitOutput(what) => write!(f, "unreadable git output: {what}"),
         }
@@ -284,6 +284,11 @@ fn check_header_paths(
     }
 }
 
+/// Whether a numstat count column is a decimal number, as Git writes one.
+fn decimal(column: &[u8]) -> bool {
+    !column.is_empty() && column.iter().all(u8::is_ascii_digit)
+}
+
 fn utf8(bytes: &[u8]) -> Result<&str, Unverifiable> {
     std::str::from_utf8(bytes).map_err(|_| Unverifiable::NonUtf8Path)
 }
@@ -316,6 +321,16 @@ impl PatchFacts {
                     "short numstat record".to_owned(),
                 ));
             };
+            // Git writes each count as a decimal, or `-` and `-` for a binary file (Q58).
+            let binary = match (added, deleted) {
+                (b"-", b"-") => true,
+                _ if decimal(added) && decimal(deleted) => false,
+                _ => {
+                    return Err(Unverifiable::UnreadableGitOutput(
+                        "numstat counts are not two decimals or `-` and `-`".to_owned(),
+                    ));
+                }
+            };
             if path_bytes.is_empty() {
                 // `add\tdel\t\0old\0new\0`: the rename/copy form.
                 return Err(Unverifiable::RenameOrCopy);
@@ -329,7 +344,6 @@ impl PatchFacts {
                     path: text.to_owned(),
                     why,
                 })?;
-            let binary = added == b"-" && deleted == b"-";
             let change = FileChange {
                 path: repo_path.clone(),
                 kind: ChangeKind::Modified,
@@ -793,6 +807,38 @@ mod tests {
             ),
             Err(Unverifiable::TypeChange("a".to_owned()))
         );
+    }
+
+    #[test]
+    fn numstat_counts_are_two_decimals_or_two_dashes() {
+        // Q58: Git writes `ADDED\tDELETED\tPATH`, each count a decimal, or `-` `-` for binary.
+        for record in [
+            "x\t1\ta\0",
+            "1\tx\ta\0",
+            "\t1\ta\0",
+            "1\t\ta\0",
+            "-\t1\ta\0",
+            "1\t-\ta\0",
+            "+1\t0\ta\0",
+            "1 \t0\ta\0",
+        ] {
+            assert_eq!(
+                facts(record, ""),
+                Err(Unverifiable::UnreadableGitOutput(
+                    "numstat counts are not two decimals or `-` and `-`".to_owned()
+                )),
+                "{record:?}"
+            );
+        }
+        let read = |record: &str| {
+            let facts = facts(record, "").unwrap();
+            let change = facts.files().next().unwrap().clone();
+            (change.binary, change.content)
+        };
+        assert_eq!(read("0\t0\ta\0"), (false, false));
+        assert_eq!(read("12\t0\ta\0"), (false, true));
+        assert_eq!(read("0\t3\ta\0"), (false, true));
+        assert_eq!(read("-\t-\ta\0"), (true, true));
     }
 
     #[test]

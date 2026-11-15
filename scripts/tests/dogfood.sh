@@ -87,7 +87,7 @@ STUB
 cat > "$sandbox/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ " $* " == *" --proto =https "* && " $* " == *" --fail "* ]] || exit 91
+[[ " $* " == *" --proto =https "* && " $* " == *" --proto-redir =https "* && " $* " == *" --fail "* ]] || exit 91
 [ "${!#}" = "$EXPECTED_URL" ] || exit 92
 output=
 while [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then output="$2"; fi; shift; done
@@ -209,6 +209,10 @@ git -C "$attr" branch maker-base "$base"
 git -C "$attr" branch maker-head "$attr_head"
 made with-branch-names bash "$maker" maker-base maker-head "$attr"
 made from-a-subdirectory-with-relative bash -c 'cd "$1/sub" && env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$2" bash "$3" "$4" "$5"' _ "$attr" "$sandbox/user-home" "$maker" "$base" "$attr_head"
+# Q58 S1: no repository at the caller's current directory is read; a SHA-256 one there once
+# made the empty-tree id the wrong length for the SHA-1 scratch repository.
+git init -q --object-format=sha256 "$sandbox/cwd-sha256"
+made from-a-sha256-directory bash -c 'cd "$1" && bash "$2" "$3" "$4" "$5"' _ "$sandbox/cwd-sha256" "$maker" "$base" "$attr_head" "$attr"
 made leaves-no-scratch env TMPDIR="$sandbox/maker-tmp" bash "$maker" "$base" "$attr_head" "$attr"
 if [ -n "$(ls -A "$sandbox/maker-tmp")" ]; then echo 'FAIL make_patch: scratch repository left behind'; exit 1; fi
 for bad in "nosuchrev $attr_head" "$base nosuchrev" "$base" "$base $attr_head $attr extra" "--output=$sandbox/x $attr_head"; do
