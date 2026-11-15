@@ -125,19 +125,26 @@ def canonical(receipt):
     return (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+def mismatch(receipt, wanted):
+    """Name the receipt fields that differ from the current subject, for the refusal message only."""
+    differ = [key for key in sorted(wanted) if receipt.get(key) != wanted[key]]
+    extra = len(set(receipt) - set(wanted))
+    why = ", ".join(differ + ([f"{extra} extra field(s)"] if extra else []))
+    if differ == ["verdict_sha256"] and not extra:
+        why += ("; a verdict carries its UTC evaluation date, so a receipt matches only runs"
+                " on the UTC day it was prepared for")
+    return why
+
+
 def verify(args):
     # Snapshot all untrusted bytes before parsing or signature verification.
     raw = read(args.ack, 16384)
     receipt = decode(raw)
     wanted = expected(args, receipt["signer"], receipt["expires_at"])
-    if receipt != wanted:
-        differ = [key for key in sorted(wanted) if receipt.get(key) != wanted[key]]
-        extra = len(set(receipt) - set(wanted))
-        why = ", ".join(differ + ([f"{extra} extra field(s)"] if extra else []))
-        if differ == ["verdict_sha256"] and not extra:
-            why += ("; a verdict carries its UTC evaluation date, so a receipt matches only runs"
-                    " on the UTC day it was prepared for")
-        require(False, "acknowledgement does not match current subject and verdict: " + why)
+    try:
+        require(receipt == wanted, "acknowledgement does not match current subject and verdict")
+    except ValueError as error:
+        raise ValueError(f"{error}: {mismatch(receipt, wanted)}") from None
     require(raw == canonical(receipt), "receipt must use canonical encoding")
     signers = ROOT / ".github" / "hold-reviewers" / "allowed_signers"
     require(signers.resolve() == signers, "allowed_signers path must not contain symlinks")
