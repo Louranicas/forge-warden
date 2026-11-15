@@ -231,7 +231,8 @@ paths = [".github/workflows/**"]
 }
 
 /// The starter policy (`forge-warden init`) holds a change to a coding agent's configuration
-/// under `.claude/`, at the root or nested, with the CI rule (M7-PROTECT-CLAUDE).
+/// (`.claude` itself and everything under it, at the root or nested, in any letter case) with the
+/// CI rule (M7-PROTECT-CLAUDE).
 #[test]
 fn the_starter_policy_holds_a_change_to_agent_configuration() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
@@ -261,6 +262,10 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
         (".claude/hooks/pre-tool-use.sh", "deleted"),
         (".claude/skills/release/SKILL.md", "added"),
         ("tools/agent/.claude/settings.json", "modified"),
+        (".claude", "added"),
+        ("tools/agent/.claude", "added"),
+        (".Claude/settings.json", "added"),
+        (".CLAUDE/hooks/stop.sh", "modified"),
     ] {
         assert_eq!(
             ci_rule(path, status),
@@ -270,6 +275,7 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
     }
     for path in [
         ".claudex/settings.json",
+        ".claude-old",
         "docs/claude/settings.json",
         "CLAUDE.md",
     ] {

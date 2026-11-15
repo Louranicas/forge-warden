@@ -10,8 +10,9 @@ registry is always listed, because consumers parse them.
 ## [Unreleased]
 
 - The starter policy (`forge-warden init`, `examples/starter.warden.toml`) protects a coding
-  agent's configuration: rule `ci-is-owned` now also holds a change under `**/.claude/**` (hooks,
-  permissions, skills; at the root or in a subdirectory). A repository that adopted the starter
+  agent's configuration: rule `ci-is-owned` now also holds a change to `.claude` or anything under
+  it (hooks, permissions, skills), at the root or in a subdirectory, in any letter case (a
+  case-insensitive checkout reads `.CLAUDE` as `.claude`), and a `.claude` symlink itself. A repository that adopted the starter
   earlier keeps its own copy; add the path to its policy by hand. The demo verdict's
   `policy_sha256` changes with the policy bytes; nothing else in it does.
 

@@ -75,7 +75,7 @@ forge-warden lint warden.toml       # lists every problem at once
 ```
 
 The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
-agent's configuration (`**/.claude/**`) for a person's review; read `examples/starter.warden.toml`
+agent's configuration (`.claude` and everything under it) for a person's review; read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
 Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.0 is a
