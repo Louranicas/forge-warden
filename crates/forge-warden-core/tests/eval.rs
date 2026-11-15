@@ -264,6 +264,7 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
         ("tools/agent/.claude/settings.json", "modified"),
         (".claude", "added"),
         ("tools/agent/.claude", "added"),
+        (".CLAUDE", "added"),
         (".Claude/settings.json", "added"),
         (".CLAUDE/hooks/stop.sh", "modified"),
     ] {
