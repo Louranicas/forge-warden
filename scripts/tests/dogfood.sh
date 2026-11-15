@@ -358,6 +358,9 @@ for row in 'accepted 8 0 0' 'stale 8 8 8' 'broken-verifier 8 3 8' 'fail-with-ack
  actual=$?
  set -e
  if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL ack $name"; exit 1; fi
+ # Only an accepted acknowledgement leaves acknowledgement.json; a refused one leaves no file.
+ if [ "$name" = accepted ]; then test -s "$sandbox/ack-$name/acknowledgement.json"
+ elif [ -e "$sandbox/ack-$name/acknowledgement.json" ]; then echo "FAIL ack $name left acknowledgement.json"; exit 1; fi
  echo "PASS ack $name exit=$actual"
 done
 # A source revision is not a binary hash enrollment. Without a producer section,

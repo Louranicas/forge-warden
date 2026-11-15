@@ -116,6 +116,7 @@ if [ "$mode" = authority ] && [ "$code" -eq 8 ] && [ "$#" -eq 6 ]; then
     echo 'dogfood: signed HOLD acknowledgement accepted; raw verdict remains HOLD'
     exit 0
   fi
+  rm -f -- "$out/acknowledgement.json"
   echo 'dogfood: HOLD acknowledgement refused' >&2
 fi
 exit "$code"

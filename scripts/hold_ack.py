@@ -130,7 +130,14 @@ def verify(args):
     raw = read(args.ack, 16384)
     receipt = decode(raw)
     wanted = expected(args, receipt["signer"], receipt["expires_at"])
-    require(receipt == wanted, "acknowledgement does not match current subject and verdict")
+    if receipt != wanted:
+        differ = [key for key in sorted(wanted) if receipt.get(key) != wanted[key]]
+        extra = len(set(receipt) - set(wanted))
+        why = ", ".join(differ + ([f"{extra} extra field(s)"] if extra else []))
+        if differ == ["verdict_sha256"] and not extra:
+            why += ("; a verdict carries its UTC evaluation date, so a receipt matches only runs"
+                    " on the UTC day it was prepared for")
+        require(False, "acknowledgement does not match current subject and verdict: " + why)
     require(raw == canonical(receipt), "receipt must use canonical encoding")
     signers = ROOT / ".github" / "hold-reviewers" / "allowed_signers"
     require(signers.resolve() == signers, "allowed_signers path must not contain symlinks")
@@ -143,9 +150,12 @@ def verify(args):
         ssh_keygen = Path("/usr/bin/ssh-keygen")
         require(ssh_keygen.is_file() and os.access(ssh_keygen, os.X_OK),
                 "HOLD_ACK_TOOL_UNAVAILABLE: install executable /usr/bin/ssh-keygen (OpenSSH client) before verifying acknowledgements")
-        subprocess.run([str(ssh_keygen), "-Y", "verify", "-f", str(tmp / "allowed_signers"),
-                        "-I", receipt["signer"], "-n", NAMESPACE, "-s", str(tmp / "ack.sig")],
-                       input=raw, env=ENV, capture_output=True, timeout=5, check=True)
+        checked = subprocess.run([str(ssh_keygen), "-Y", "verify", "-f", str(tmp / "allowed_signers"),
+                                  "-I", receipt["signer"], "-n", NAMESPACE, "-s", str(tmp / "ack.sig")],
+                                 input=raw, env=ENV, capture_output=True, timeout=5, check=False)
+        require(checked.returncode == 0,
+                "signature is not valid for an enrolled reviewer: /usr/bin/ssh-keygen -Y verify refused it"
+                f" (signer {receipt['signer']}, namespace {NAMESPACE}, exit {checked.returncode})")
     return {"receipt": receipt, "signed_bytes_base64": base64.b64encode(raw).decode("ascii"),
             "signature_base64": base64.b64encode(signature).decode("ascii"),
             "allowed_signers_sha256": hashlib.sha256(allowed).hexdigest()}

@@ -177,7 +177,7 @@ authority verdict, whatever it says.
 | exit 3, `executable digest is not enrolled` | Git changed (step 8) | add the new digest, new revision |
 | exit 4, the ranker's digest `does not list` | the binary is not the one the policy pins | use the pinned binary, or change the policy in review |
 | exit 4, `pinning …` | the ranker file is a symlink, a FIFO, or writable by others | install it as a plain file only you can write |
-| exit 8 | a rule or note holds: a person must decide | read `verdict.json`; a signed HOLD acknowledgement is the reviewed way past it |
+| exit 8 | a rule or note holds: a person must decide | read `verdict.json`; the binary has no acknowledgement path, so the hold stands until the change or the policy changes in review (the signed acknowledgement of ADR 0007 exists only in this repository's own driver, `scripts/dogfood.sh`) |
 
 **Roll back** by removing `/etc/forge-warden/git-allowlist.toml` (authority mode then refuses; advisory
 mode still runs and records `unpinned`), or by reinstalling the previous forge-warden revision.
@@ -187,3 +187,9 @@ mode still runs and records `unpinned`), or by reinstalling the previous forge-w
 Hosted CI runs dogfood in advisory mode by decision, because a hosted runner has no owner-enrolled Git
 allowlist. Network containment of a self-hosted runner, signing keys for HOLD acknowledgements
 (`.github/hold-reviewers/README.md`) and releases are separate owner procedures.
+
+A deployer of the released binary has no way to acknowledge a hold. `forge-warden check` has no
+acknowledgement option; the signed acknowledgement (ADR 0007) is checked only by this repository's
+`scripts/dogfood.sh` and `scripts/hold_ack.py`, which name this repository and read reviewer keys from
+this repository's trusted checkout. A deployment that needs a way past a hold builds its own
+admission step outside the pull request, or changes the change or the policy in review.

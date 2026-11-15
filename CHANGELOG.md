@@ -9,6 +9,16 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Documents say who can acknowledge a hold, and for how long (ledger Q61). The `forge-warden`
+  binary has no acknowledgement path; the signed acknowledgement of ADR 0007 belongs to this
+  repository's own driver (`scripts/dogfood.sh`). A receipt binds the verdict's bytes, which carry
+  the UTC date of the run, so it matches only runs on the UTC day it was prepared for, whatever its
+  `expires_at` says. The runbook's exit-8 row, the README, `.github/hold-reviewers/README.md` and a
+  dated amendment to ADR 0007 say so. `scripts/hold_ack.py` now names the fields a refused receipt
+  differs in (and the UTC-day cause when only the verdict bytes differ) and says "signature is not
+  valid for an enrolled reviewer" instead of printing a failed command line; `scripts/dogfood.sh`
+  no longer leaves an `acknowledgement.json` behind when it refuses one.
+
 ## [0.2.0] - 2026-11-13
 
 - New `scripts/make_patch.sh <base> <head> [<repository>]` writes the patch to judge: the change

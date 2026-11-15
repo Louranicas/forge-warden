@@ -98,12 +98,14 @@ class BoundAck(unittest.TestCase):
                                "--head", self.head, "--verdict", str(self.root / "verdict.json"), *args],
                               capture_output=True)
 
-    def verify(self, success=False):
+    def verify(self, success=False, refusal=None):
         out = self.run_helper("verify", "--ack", str(self.root / "ack.json"),
                               "--signature", str(self.root / "ack.sig"))
         self.assertEqual(out.returncode, 0 if success else 8, out.stderr)
         if not success:
             self.assertEqual(out.stdout, b"")
+        if refusal is not None:
+            self.assertIn(refusal.encode("utf-8"), out.stderr)
 
     def test_git_policy_revocation_invalidates_receipt(self):
         self.git_policy.write_text(self.git_policy.read_text().replace("d" * 64, "e" * 64))
@@ -140,16 +142,27 @@ class BoundAck(unittest.TestCase):
     def test_exact_verdict_bytes(self):
         with (self.root / "verdict.json").open("ab") as stream:
             stream.write(b"\n")
-        self.verify()
+        self.verify(refusal="match current subject and verdict: verdict_sha256; a verdict carries its UTC evaluation date")
+
+    def test_next_utc_day_verdict_is_refused_and_named(self):
+        # The same change judged on the next UTC day differs only in evaluated_on (Q61).
+        self.assertIn("evaluated_on", self.verdict)
+        self.verdict["evaluated_on"] = "2099-01-02"
+        self.write_verdict()
+        self.verify(refusal="verdict_sha256; a verdict carries its UTC evaluation date")
+
+    def test_new_head_names_the_field(self):
+        self.head = "c" * 40
+        self.verify(refusal="does not match current subject and verdict: head")
 
     def test_wrong_key_signature(self):
         self.new_key("other")
         self.sign(key="other")
-        self.verify()
+        self.verify(refusal="signature is not valid for an enrolled reviewer")
 
     def test_unknown_or_revoked_reviewer(self):
         (self.keys / "allowed_signers").write_text("")
-        self.verify()
+        self.verify(refusal="signature is not valid for an enrolled reviewer")
 
     def test_wrong_namespace(self):
         self.sign(namespace="another-application")
@@ -178,7 +191,7 @@ class BoundAck(unittest.TestCase):
 
     def test_signature_tamper(self):
         (self.root / "ack.sig").write_bytes(bytes(64))
-        self.verify()
+        self.verify(refusal="signature is not valid for an enrolled reviewer")
 
     def test_signed_incomplete_rules_and_extra_fields(self):
         original = (self.root / "ack.json").read_bytes()

@@ -251,7 +251,10 @@ A `hold` is accepted only with an OpenSSH-signed acknowledgement. The receipt bi
 base, head, verdict digest and held rules, signed by a reviewer enrolled in the base branch's
 `.github/hold-reviewers/allowed_signers` ([ADR 0007](docs/adr/0007-subject-bound-hold-acknowledgements.md)).
 No reviewer keys ship, so until the owner enrols one, CI fails closed on every hold. A label
-grants nothing.
+grants nothing. This acknowledgement belongs to this repository's own driver (`scripts/dogfood.sh`);
+the `forge-warden` binary has none, so a deployer of the binary has no acknowledgement path. A
+receipt binds the verdict's bytes, which carry the UTC date of the run (`evaluated_on`), so it
+matches only runs on the UTC day it was prepared for, whatever its `expires_at` says.
 
 ## How this repository makes bad code hard to write
 
