@@ -41,7 +41,9 @@ keep it where only you can write it.
 
 Authority mode runs deep-diff-forge itself and admits it only by the SHA-256 of its bytes. Use the
 released binary: a binary built from the same source on another machine has other bytes (its build
-paths are embedded) and will not match.
+paths are embedded) and will not match. The released binary is published only on deep-diff-forge's
+GitHub release page, so the download below reads from there; the GitLab mirror carries the same
+`v0.8.2` tag for the source.
 
 ```bash
 v=v0.8.2; a=deep-diff-forge-$v-x86_64-unknown-linux-gnu

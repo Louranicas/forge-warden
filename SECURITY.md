@@ -44,8 +44,9 @@ rather than in a public issue.
 
 - [FW-2026-001](docs/advisories/FW-2026-001.md): a change to a protected path could PASS when the
   patch was made with a non-default Git prefix, from a subdirectory with `diff.relative`, or
-  without the submodule change. Every commit published before 0.2.0 is affected; fixed or
-  mitigated in 0.2.0.
+  without the submodule change. Every commit published before the tag `v0.2.0` is affected,
+  including builds that already say 0.2.0. Fixed in 0.2.0 for patches made with
+  `scripts/make_patch.sh`; the advisory lists what a patch made by hand can still hide.
 
 ## Agent hooks are convenience checks (WP-D4)
 
