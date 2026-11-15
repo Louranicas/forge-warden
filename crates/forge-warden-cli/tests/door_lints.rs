@@ -1,4 +1,5 @@
-//! Nothing outside doors.rs can switch off the door lints (ADR 0005 §2.7, Bastion B-C1c-01/02).
+//! Nothing outside the door modules (`common::DOOR_FILES`, formerly the single file doors.rs) can
+//! switch off the door lints (ADR 0005 §2.7, Bastion B-C1c-01/02).
 //!
 //! `clippy.toml` makes `Ranking::attest`, the raw-engine test door and the effect doors disallowed methods;
 //! clippy resolves every way of naming them (`tests/mint_lint.rs`). What remains is a lint attribute
@@ -6,6 +7,11 @@
 //! real parser (syn), so comments, whitespace and raw identifiers never reach it, and inspects every
 //! attribute by its parsed path: outer and inner, nested in `cfg_attr`, and inside macro
 //! invocations. A file that does not parse fails, and so does a lint attribute whose arguments do not.
+//! Production code also may not use `include!` (B-C1c-04) or `#[path]` (Q-DOOR-PATH): either would
+//! compile a file this check judges under another name. Inside a door module, `#[path]` may only
+//! bring test support into a test-only module.
+//! Shipped code also may not write an expression in an attribute (Q37): a derive macro may place
+//! it in generated code under its own `allow`, where clippy says nothing about a disallowed call.
 #![expect(
     clippy::disallowed_methods,
     reason = "test door: reads the CLI crate's source files"
@@ -44,9 +50,20 @@ fn last(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The offence a `path` attribute records (Q-DOOR-PATH).
+const PATH_ATTRIBUTE: &str = "path attribute";
+
 /// What one attribute (as its `Meta`) does to the door lints: a list of offences.
 fn check_meta(meta: &Meta, found: &mut Vec<String>) {
     let name = last(meta.path());
+    if name == "path" {
+        // Q-DOOR-PATH: `#[path]` compiles a file under another module path, so a protected door
+        // file could be compiled a second time outside the door modules, where these fences,
+        // which judge by file, would not see it. Only test code and one test-only door form
+        // (`a_door_module_names_only_test_support_by_path`) may use it.
+        found.push(PATH_ATTRIBUTE.to_owned());
+        return;
+    }
     let level = matches!(name.as_str(), "allow" | "expect" | "warn");
     if !level && name != "cfg_attr" {
         return;
@@ -114,6 +131,177 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
                 Err(_) => found.push("an attribute in a macro that does not parse".to_owned()),
             }
         }
+    }
+}
+
+/// The offence an expression in an attribute records (Q37).
+const ATTRIBUTE_EXPRESSION: &str = "an expression in an attribute";
+
+/// Attributes that may carry an expression, each written exactly so (whitespace aside). Reviewed:
+/// the first builds a clap `ArgGroup` from literals; the second formats a count and a list of the
+/// variant's own field; the last two name the crate's own size constant. None reaches an effect.
+const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 4] = [
+    r#"command(group(ArgGroup::new("mode").required(true).args(["ranker","advisory"])))"#,
+    r#"error("policy refused with {} issue(s):\n{}",.0.len(),IssueList(.0))"#,
+    r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_POLICY_BYTES)"#,
+    r#"error("ranking is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
+];
+
+/// `text` without whitespace (inside string literals too: spacing never makes an expression).
+fn squeeze(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Attributes whose `name(value)` arguments are expressions (clap's derive reads them so).
+const CLAP_ATTRIBUTES: [&str; 5] = ["command", "arg", "clap", "group", "value"];
+
+/// Q37: whether an attribute's arguments hold anything but names, paths, literals, lists of those
+/// and `name = value` pairs. A derive macro may put an argument's expression into code it
+/// generates under `#[allow(clippy::style)]`, which contains `disallowed_methods`: a call written
+/// there reaches an effect and clippy reports nothing (measured on clap's derive). So a call, a
+/// method call, a macro call, a block, a closure and every operator are refused wherever they
+/// stand in an attribute. A value (after `=`, or inside a clap `name(value)`) must be a literal,
+/// `true`, `false`, `None` or a list of those: a bare name or path there may be a function the macro
+/// calls for us, and `value_parser = std::env::var` is as much an effect as a call written out
+/// (Bastion). `depth` counts enclosing parentheses; `literal_only` carries a value position into
+/// a bracketed list.
+fn holds_an_expression(tokens: TokenStream, depth: usize, clap: bool, literal_only: bool) -> bool {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut value = false;
+    for (index, tree) in trees.iter().enumerate() {
+        let before = index.checked_sub(1).and_then(|at| trees.get(at));
+        let strict = literal_only || value || (clap && depth >= 1);
+        match tree {
+            TokenTree::Punct(punct) => match punct.as_char() {
+                '=' => value = true,
+                ',' => value = false,
+                '-' => {}
+                ':' if !strict => {}
+                _ => return true,
+            },
+            TokenTree::Ident(ident) => {
+                let name = ident.unraw().to_string();
+                if strict && !["true", "false", "None"].contains(&name.as_str()) {
+                    return true;
+                }
+            }
+            TokenTree::Group(group) => {
+                let inner = group.stream();
+                let (nested, nested_clap, nested_literal) = match group.delimiter() {
+                    Delimiter::Brace => return true,
+                    Delimiter::Parenthesis => {
+                        let name = match before {
+                            Some(TokenTree::Ident(ident)) => Some(ident.unraw().to_string()),
+                            _ => None,
+                        };
+                        let named = name.is_some();
+                        let path_end = index
+                            .checked_sub(2)
+                            .and_then(|at| trees.get(at))
+                            .is_some_and(
+                                |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ':'),
+                            );
+                        if !named || path_end || value || (clap && depth >= 1) {
+                            return true;
+                        }
+                        // A clap attribute met inside another attribute (`cfg_attr`) starts here.
+                        let starts_clap =
+                            !clap && name.is_some_and(|n| CLAP_ATTRIBUTES.contains(&n.as_str()));
+                        if starts_clap {
+                            (0, true, false)
+                        } else {
+                            (depth.saturating_add(1), clap, false)
+                        }
+                    }
+                    Delimiter::Bracket | Delimiter::None => (depth, clap, strict),
+                };
+                if holds_an_expression(inner, nested, nested_clap, nested_literal) {
+                    return true;
+                }
+            }
+            TokenTree::Literal(_) => {}
+        }
+    }
+    false
+}
+
+/// Q37 for one attribute: an offence unless it holds no expression or is admitted verbatim.
+fn check_expression(meta: &Meta, found: &mut Vec<String>) {
+    let list = match meta {
+        Meta::Path(_) => return,
+        Meta::List(list) => list,
+        Meta::NameValue(pair) => {
+            // `name = value` on the attribute itself (`#[doc = "…"]`): only a literal.
+            if !matches!(pair.value, syn::Expr::Lit(_)) {
+                found.push(ATTRIBUTE_EXPRESSION.to_owned());
+            }
+            return;
+        }
+    };
+    let name = last(meta.path());
+    let clap = CLAP_ATTRIBUTES.contains(&name.as_str());
+    if !holds_an_expression(list.tokens.clone(), 0, clap, false) {
+        return;
+    }
+    let written = squeeze(&format!("{name}({})", list.tokens));
+    if !ADMITTED_ATTRIBUTE_EXPRESSIONS
+        .iter()
+        .any(|admitted| squeeze(admitted) == written)
+    {
+        found.push(ATTRIBUTE_EXPRESSION.to_owned());
+    }
+}
+
+/// `#[…]` / `#![…]` written as tokens inside a macro invocation, checked for expressions. An
+/// attribute there that does not parse is already an offence of `check_tokens`.
+fn check_expression_tokens(tokens: TokenStream, found: &mut Vec<String>) {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            check_expression_tokens(group.stream(), found);
+        }
+        if !matches!(tree, TokenTree::Punct(p) if p.as_char() == '#') {
+            continue;
+        }
+        let mut next = index.saturating_add(1);
+        if matches!(trees.get(next), Some(TokenTree::Punct(p)) if p.as_char() == '!') {
+            next = next.saturating_add(1);
+        }
+        if let Some(TokenTree::Group(group)) = trees.get(next)
+            && group.delimiter() == Delimiter::Bracket
+            && let Ok(meta) = syn::parse2::<Meta>(group.stream())
+        {
+            check_expression(&meta, found);
+        }
+    }
+}
+
+struct Expressions {
+    found: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Expressions {
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        check_expression(&attribute.meta, &mut self.found);
+        syn::visit::visit_attribute(self, attribute);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        check_expression_tokens(mac.tokens.clone(), &mut self.found);
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Q37: one offence per attribute in `source` that holds an expression; a file that does not
+/// parse is one offence.
+fn attribute_expressions(source: &str) -> Vec<String> {
+    match syn::parse_file(source) {
+        Ok(file) => {
+            let mut scan = Expressions { found: Vec::new() };
+            scan.visit_file(&file);
+            scan.found
+        }
+        Err(e) => vec![format!("does not parse: {e}")],
     }
 }
 
@@ -253,6 +441,193 @@ fn the_parser_finds_every_suppression_form() {
     }
 }
 
+/// Q37 on the tree: no source compiled into production, outside the door modules, writes an
+/// expression in an attribute, except the admitted ones.
+#[test]
+fn shipped_code_writes_no_expression_in_an_attribute() {
+    let production = common::production_sources();
+    assert!(
+        production.len() >= 10,
+        "found only {} files",
+        production.len()
+    );
+    let mut admitted_seen = 0_usize;
+    for name in production {
+        if common::is_door_file(&name) {
+            continue;
+        }
+        let source = std::fs::read_to_string(root().join(&name)).unwrap();
+        assert_eq!(
+            attribute_expressions(&source),
+            Vec::<String>::new(),
+            "{name}: an attribute holds an expression (Q37)"
+        );
+        let squeezed = squeeze(&source);
+        admitted_seen = admitted_seen.saturating_add(
+            ADMITTED_ATTRIBUTE_EXPRESSIONS
+                .iter()
+                .filter(|admitted| squeezed.contains(&squeeze(admitted)))
+                .count(),
+        );
+    }
+    assert_eq!(
+        admitted_seen,
+        ADMITTED_ATTRIBUTE_EXPRESSIONS.len(),
+        "every admitted expression is still in the tree, once; drop the ones that are gone"
+    );
+}
+
+/// Q37: every way of writing an expression in an attribute is an offence for the shipped-file scan.
+#[test]
+fn the_parser_finds_every_attribute_expression_form() {
+    let forms = [
+        (
+            "a method call in a clap value (the measured escape)",
+            "#[command(after_help = std::env::var(\"X\").is_ok().to_string())]\nstruct Cli;",
+        ),
+        (
+            "a path call after =",
+            "#[arg(long, default_value_os_t = std::env::var_os(\"X\"))]\nstruct Cli;",
+        ),
+        (
+            "an imported function called after =",
+            "#[arg(long, default_value_os_t = v(\"X\"))]\nstruct Cli;",
+        ),
+        (
+            "clap's name(value) form holding a call",
+            "#[command(after_help(v(\"X\")))]\nstruct Cli;",
+        ),
+        (
+            "a std function named as a value, not called (Bastion)",
+            "#[arg(long, value_parser = std::fs::read_to_string)]\nstruct Cli;",
+        ),
+        (
+            "an imported function named as a value",
+            "#[arg(long, value_parser = v)]\nstruct Cli;",
+        ),
+        (
+            "a function named in clap's name(value) form",
+            "#[arg(long, value_parser(std::env::var))]\nstruct Cli;",
+        ),
+        (
+            "a name inside a list value",
+            "#[arg(long, value_parser = [v, \"b\"])]\nstruct Cli;",
+        ),
+        (
+            "a block",
+            "#[arg(long, default_value_t = { 1 })]\nstruct Cli;",
+        ),
+        (
+            "a macro call",
+            "#[command(about = concat!(\"a\", \"b\"))]\nstruct Cli;",
+        ),
+        (
+            "a closure",
+            "#[arg(long, value_parser = |s: &str| s.len())]\nstruct Cli;",
+        ),
+        (
+            "an operator",
+            "#[arg(long, default_value_t = 1 + 1)]\nstruct Cli;",
+        ),
+        (
+            "through cfg_attr",
+            "#[cfg_attr(all(), command(after_help = v(\"X\")))]\nstruct Cli;",
+        ),
+        (
+            "through cfg_attr, clap's name(value) form",
+            "#[cfg_attr(all(), command(after_help(v(\"X\"))))]\nstruct Cli;",
+        ),
+        (
+            "inside a macro invocation",
+            "some_macro! {\n    #[command(after_help = v(\"X\"))]\n    struct Cli;\n}",
+        ),
+        (
+            "a non-literal value on the attribute itself",
+            "#[doc = concat!(\"a\", \"b\")]\nstruct Cli;",
+        ),
+        (
+            "the admitted group expression with one word changed",
+            "#[command(group(ArgGroup::new(\"mode\").required(false).args([\"ranker\", \"advisory\"])))]\nstruct Cli;",
+        ),
+    ];
+    for (name, source) in forms {
+        assert!(
+            attribute_expressions(source)
+                .iter()
+                .any(|f| f == ATTRIBUTE_EXPRESSION),
+            "missed: {name}\n{source}"
+        );
+    }
+}
+
+/// Q37: what an attribute may hold without being an expression.
+#[test]
+fn the_parser_admits_names_literals_and_lists_of_literals() {
+    let plain = [
+        (
+            "literals, flags and a list of literals",
+            "#[arg(long, value_name = \"FILE\", default_value = \"/usr/bin/git\", value_parser = [\"a\", \"b\"])]\nstruct Cli;",
+        ),
+        (
+            "true, false, None and clap's name(literal) form",
+            "#[arg(long, required = true, hide = false, long_help = None, value_name(\"FILE\"))]\nstruct Cli;",
+        ),
+        (
+            "nested lists in a non-clap attribute",
+            "#[cfg_attr(all(test, unix), derive(Debug), expect(dead_code, reason = \"x\"))]\nstruct Cli;",
+        ),
+        (
+            "a negative number and a doc string",
+            "/// text\n#[arg(long, default_value_t = -1)]\nstruct Cli;",
+        ),
+        (
+            "the admitted group expression, spaced differently",
+            "#[command(group(ArgGroup::new(\"mode\").required(true).args([\"ranker\",\n    \"advisory\"])))]\nstruct Cli;",
+        ),
+    ];
+    for (name, source) in plain {
+        assert!(
+            attribute_expressions(source).is_empty(),
+            "refused: {name}\n{source}"
+        );
+    }
+}
+
+/// Q-DOOR-PATH: every way of writing a `path` attribute is an offence for the shipped-file scan.
+#[test]
+fn the_parser_finds_every_path_attribute_form() {
+    let forms = [
+        (
+            "a path attribute (Q-DOOR-PATH)",
+            "#[path = \"doors/file.rs\"]\nmod again;",
+        ),
+        (
+            "a path attribute through cfg_attr",
+            "#[cfg_attr(all(), path = \"doors/file.rs\")]\nmod again;",
+        ),
+        (
+            "a path attribute through nested cfg_attr",
+            "#[cfg_attr(all(), cfg_attr(unix, path = \"doors/file.rs\"))]\nmod again;",
+        ),
+        (
+            "a path attribute inside a macro invocation",
+            "some_macro! {\n    #[path = \"doors/file.rs\"]\n    mod again;\n}",
+        ),
+        (
+            "a path attribute on an inline module",
+            "#[path = \"doors\"]\nmod again {\n    mod file;\n}",
+        ),
+    ];
+    for (name, source) in forms {
+        assert!(
+            door_lint_controls(source)
+                .iter()
+                .any(|f| f == PATH_ATTRIBUTE),
+            "missed: {name}\n{source}"
+        );
+    }
+}
+
 #[test]
 fn the_parser_ignores_names_outside_lint_attributes() {
     for (name, source) in [
@@ -288,6 +663,11 @@ fn the_parser_ignores_names_outside_lint_attributes() {
             "a string in a macro",
             "fn f() { assert!(true, \"#[allow(warnings)]\"); }",
         ),
+        (
+            "path as an identifier, a reason or a doc",
+            "/// see path = \"doors/file.rs\"\n#[expect(dead_code, reason = \"path = x\")]\nfn path() -> u8 { let path = 1; path }",
+        ),
+        ("a module without a path attribute", "mod file;"),
     ] {
         assert_eq!(
             door_lint_controls(source),
@@ -302,7 +682,6 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
     // Scanned: every source compiled into production (whatever crate or directory it lives in, B-C1c-04)
     // and every Rust file of the CLI crate. Production is decided by the compiler (B-C1c-03).
     let production = common::production_sources();
-    let doors = "crates/forge-warden-cli/src/doors.rs";
     let mut scanned: std::collections::BTreeSet<String> = production.clone();
     scanned.extend(
         files_under("crates/forge-warden-cli", ".rs")
@@ -312,7 +691,7 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
     );
     assert!(scanned.len() >= 10, "found only {} files", scanned.len());
     for name in scanned {
-        if name == doors {
+        if common::is_door_file(&name) {
             continue;
         }
         let source = std::fs::read_to_string(root().join(&name)).unwrap();
@@ -321,10 +700,12 @@ fn nothing_outside_doors_rs_can_switch_off_the_door_lints() {
         let found: Vec<String> = door_lint_controls(&source)
             .into_iter()
             .filter(|f| {
-                // Test code may open test doors and include fixtures; production may not.
+                // Test code may open test doors and include fixtures or support files; production
+                // may not.
                 let test_door = f == "expect(clippy::disallowed_methods)"
                     || f == "expect(clippy::disallowed_types)"
-                    || f == "include!";
+                    || f == "include!"
+                    || f == PATH_ATTRIBUTE;
                 // macro_rules! is refused in the CLI crate only (core declares note codes by macro).
                 let core_macro = f == "macro_rules!" && !cli;
                 !((!shipped && test_door) || core_macro)
@@ -371,7 +752,8 @@ fn raw_attribute_names_and_paths_cannot_suppress_doors() {
     }
 }
 
-/// Inside doors.rs, two narrower rules than "doors live here" (Q-DOOR). Q2-02: only
+/// Inside the door modules, two narrower rules than "doors live here" (Q-DOOR), judged over all of
+/// them together. Q2-02: only
 /// `open_regular` may open a named file, so it is the only production item under which any lint
 /// attribute names `clippy::disallowed_types` (`std::fs::OpenOptions`). Q2-03: production code
 /// joins no thread (a zero-argument `.join()` call, or any path ending in `join`, which covers
@@ -627,19 +1009,93 @@ fn only_a_predicate_that_implies_test_is_test_only() {
 
 #[test]
 fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
-    let source =
-        std::fs::read_to_string(root().join("crates/forge-warden-cli/src/doors.rs")).unwrap();
-    let shape = door_shape(&source);
+    let mut types_doors = Vec::new();
+    let mut joins = Vec::new();
+    for door in common::DOOR_FILES {
+        let source = std::fs::read_to_string(root().join(door)).unwrap();
+        let shape = door_shape(&source);
+        types_doors.extend(shape.types_doors);
+        joins.extend(
+            shape
+                .joins
+                .into_iter()
+                .map(|join| format!("{door}: {join}")),
+        );
+    }
     assert_eq!(
-        shape.types_doors,
+        types_doors,
         ["open_regular"],
         "Q2-02: only open_regular may open a named file (and expect clippy::disallowed_types)"
     );
     assert!(
-        shape.joins.is_empty(),
-        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {:?}",
-        shape.joins
+        joins.is_empty(),
+        "Q2-03: a join has no deadline; read the thread's result from a channel with a timeout: {joins:?}"
     );
+}
+
+/// Q-DOOR-SPLIT: door rights are granted by exact listing, never by location. Every file under the
+/// door directory, of any kind, must be a listed door module. A file added under `src/doors/`
+/// therefore fails here until the protected list names it. The comparison is equality, so a listed
+/// module that is missing would fail too; but deleting a listed module is a compile error first (its
+/// `mod` line), and for that direction the compiler is the guard (ledger Q30).
+///
+/// The door directory itself, and each directory above it, must be a real directory: a linked
+/// `src/doors` would be walked through the link and fail only as a mismatch or a panic in
+/// `common::relative`, not for its reason (ledger Q35). Nothing under the door directory may be a
+/// symlink. The listing below compares canonical paths,
+/// so a link `doors/alias.rs -> file.rs` would collapse onto the listed `file.rs` and pass as if it
+/// were not there (Touchstone F1): one module's rights under a second name. A linked directory is
+/// refused here by name as well, before any path is resolved.
+#[test]
+fn door_files_are_exactly_the_listed_modules() {
+    let mut ancestor = root();
+    for part in std::path::Path::new(common::DOOR_DIR).components() {
+        ancestor.push(part);
+        let kind = std::fs::symlink_metadata(&ancestor).unwrap().file_type();
+        assert!(
+            kind.is_dir() && !kind.is_symlink(),
+            "{}: the door directory and each directory above it are real directories, never symlinks",
+            ancestor.display()
+        );
+    }
+    let mut links = Vec::new();
+    let mut pending = vec![root().join(common::DOOR_DIR)];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let kind = std::fs::symlink_metadata(&path).unwrap().file_type();
+            if kind.is_symlink() {
+                links.push(path.display().to_string());
+            } else if kind.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    links.sort();
+    assert!(
+        links.is_empty(),
+        "a door module is a real file and a door directory a real directory, never a symlink: {links:?}"
+    );
+    let present: std::collections::BTreeSet<String> = files_under(common::DOOR_DIR, "")
+        .iter()
+        .map(|p| common::relative(p))
+        .collect();
+    let listed: std::collections::BTreeSet<String> =
+        common::DOOR_FILES.iter().map(|p| (*p).to_owned()).collect();
+    assert_eq!(
+        present,
+        listed,
+        "files under {} must be exactly DOOR_FILES",
+        common::DOOR_DIR
+    );
+    for door in common::DOOR_FILES {
+        assert!(
+            door.starts_with(common::DOOR_DIR)
+                && std::path::Path::new(door).extension() == Some("rs".as_ref()),
+            "{door}: a door module lives under {} and is Rust",
+            common::DOOR_DIR
+        );
+    }
 }
 
 #[test]
@@ -657,5 +1113,215 @@ fn door_scanner_matches_its_role_in_the_shared_corpus() {
             .and_then(serde_json::Value::as_bool)
             .unwrap();
         assert_eq!(!door_lint_controls(source).is_empty(), expected, "{case}");
+    }
+}
+
+/// Whether `target` (repository-relative, as a door's `#[path]` resolves it) names a Rust file
+/// under some crate's `tests/`. Normalised lexically: `..` may not climb above the repository
+/// root, and an absolute path is refused. Nothing on disk is read or followed.
+fn names_test_support(target: &std::path::Path) -> bool {
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if parts.pop().is_none() {
+                    return false;
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return false,
+        }
+    }
+    matches!(parts.as_slice(), [crates, _, tests, _, ..] if *crates == "crates" && *tests == "tests")
+        && target.extension() == Some("rs".as_ref())
+}
+
+/// Every `path` attribute in a door module other than the admitted ones.
+struct DoorPaths<'ast> {
+    admitted: Vec<&'ast Attribute>,
+    found: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for DoorPaths<'ast> {
+    fn visit_attribute(&mut self, attribute: &'ast Attribute) {
+        if !self.admitted.iter().any(|a| std::ptr::eq(*a, attribute)) {
+            let mut found = Vec::new();
+            check_meta(&attribute.meta, &mut found);
+            if found.iter().any(|f| f == PATH_ATTRIBUTE) {
+                self.found.push(
+                    "a path attribute that is not on a test-only top-level `mod name;` naming a \
+                     file under crates/*/tests/"
+                        .to_owned(),
+                );
+            }
+        }
+        syn::visit::visit_attribute(self, attribute);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let mut found = Vec::new();
+        check_tokens(mac.tokens.clone(), &mut found);
+        if found.iter().any(|f| f == PATH_ATTRIBUTE) {
+            self.found
+                .push("a path attribute inside a macro invocation".to_owned());
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// Q-DOOR-PATH: inside the door module `door`, a `#[path]` is admitted only to bring test support
+/// into a test-only module. It must be written directly (not through `cfg_attr` or a macro) as a
+/// string literal on a top-level `mod name;` that is compiled only under `test`, and it must name a
+/// Rust file under `crates/<crate>/tests/`. Every other `path` attribute is an offence.
+fn door_path_offences(door: &str, source: &str) -> Vec<String> {
+    let Ok(file) = syn::parse_file(source) else {
+        return vec![format!("{door}: does not parse")];
+    };
+    let dir = std::path::Path::new(door)
+        .parent()
+        .unwrap_or(std::path::Path::new(""));
+    let mut admitted = Vec::new();
+    for item in &file.items {
+        let syn::Item::Mod(module) = item else {
+            continue;
+        };
+        if module.content.is_some() || !is_test_only(&module.attrs) {
+            continue;
+        }
+        for attribute in &module.attrs {
+            if let Meta::NameValue(pair) = &attribute.meta
+                && pair.path.segments.len() == 1
+                && last(&pair.path) == "path"
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(target),
+                    ..
+                }) = &pair.value
+                && names_test_support(&dir.join(target.value()))
+            {
+                admitted.push(attribute);
+            }
+        }
+    }
+    let mut scan = DoorPaths {
+        admitted,
+        found: Vec::new(),
+    };
+    scan.visit_file(&file);
+    scan.found
+        .into_iter()
+        .map(|f| format!("{door}: {f}"))
+        .collect()
+}
+
+/// Q-DOOR-PATH on the tree: no door module names another file by `#[path]`, except test support
+/// into a test-only module (today: `doors/mod.rs`'s `test_environment`).
+#[test]
+fn a_door_module_names_only_test_support_by_path() {
+    for door in common::DOOR_FILES {
+        let source = std::fs::read_to_string(root().join(door)).unwrap();
+        assert_eq!(
+            door_path_offences(door, &source),
+            Vec::<String>::new(),
+            "{door}"
+        );
+    }
+}
+
+#[test]
+fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
+    let door = "crates/forge-warden-cli/src/doors/mod.rs";
+    for (name, source) in [
+        (
+            "cfg(test)",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(test) plus another cfg, as in doors/mod.rs",
+            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(all(test, unix)) and a ./ segment",
+            "#[cfg(all(test, unix))]\n#[path = \"./../../tests/support/env.rs\"]\nmod env;",
+        ),
+        ("no path attribute at all", "mod child;"),
+    ] {
+        assert_eq!(
+            door_path_offences(door, source),
+            Vec::<String>::new(),
+            "refused: {name}\n{source}"
+        );
+    }
+    for (name, source) in [
+        (
+            "no cfg(test)",
+            "#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(not(test))",
+            "#[cfg(not(test))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "cfg(any(test, unix))",
+            "#[cfg(any(test, unix))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "a door file, not test support",
+            "#[cfg(test)]\n#[path = \"child/git.rs\"]\nmod again;",
+        ),
+        (
+            "the crate's own src",
+            "#[cfg(test)]\n#[path = \"../main.rs\"]\nmod again;",
+        ),
+        (
+            "climbs above the repository root, then into a tests/ dir",
+            "#[cfg(test)]\n#[path = \"../../../../../crates/forge-warden-cli/tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "an absolute path",
+            "#[cfg(test)]\n#[path = \"/crates/forge-warden-cli/tests/support/env.rs\"]\nmod env;",
+        ),
+        (
+            "not a Rust file",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.txt\"]\nmod env;",
+        ),
+        (
+            "a tests/ directory itself",
+            "#[cfg(test)]\n#[path = \"../../tests\"]\nmod env;",
+        ),
+        (
+            "an inline module",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env {}",
+        ),
+        (
+            "nested in an inline test module",
+            "#[cfg(test)]\nmod t {\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+        ),
+        (
+            "through cfg_attr",
+            "#[cfg_attr(test, path = \"../../tests/support/env.rs\")]\nmod env;",
+        ),
+        (
+            "inside a macro invocation",
+            "some_macro! {\n    #[cfg(test)]\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+        ),
+        (
+            "not a string literal",
+            "#[cfg(test)]\n#[path = concat!(\"../../tests/\", \"env.rs\")]\nmod env;",
+        ),
+        (
+            "on a function",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nfn env() {}",
+        ),
+        (
+            "a second, unadmitted path beside an admitted one",
+            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;\n#[path = \"file.rs\"]\nmod again;",
+        ),
+        ("unparseable", "fn f( {"),
+    ] {
+        assert!(
+            !door_path_offences(door, source).is_empty(),
+            "missed: {name}\n{source}"
+        );
     }
 }

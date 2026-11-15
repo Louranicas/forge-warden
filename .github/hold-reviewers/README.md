@@ -7,3 +7,6 @@ Private keys stay with reviewers, never in Git or CI. Signer IDs in receipts con
 lowercase ASCII letters, digits and hyphens. The trusted base's file is authoritative; candidate
 files cannot enroll a reviewer. Revocation requires the external admission controller to use the
 new trusted base. See ADR 0007. A bare label, username or unsigned receipt grants nothing.
+An acknowledgement's `expires_at` must be in the future (`scripts/hold_ack.py`); there is no
+maximum lifetime, so the signer chooses it; a long-lived acknowledgement stays usable until it expires
+or its signer is removed from the trusted base.

@@ -9,12 +9,16 @@ both modes. A genuinely absent policy permits advisory output only: `git.admissi
 unapproved Git identity. Advisory evidence cannot authorize an acknowledgement.
 
 This is the Mission 6 R2 amendment to ADR 0011: hosted advisory dogfood can report evidence
-without enrolling the runner's Git. Authority still requires the owner policy. Current
+without enrolling the runner's Git. Authority still requires the owner policy. Since the
+repository's own policy pins a producer, `scripts/dogfood.sh` would choose authority mode; the
+hosted job therefore passes `--hosted-advisory`, written in the workflow, and the driver says why
+in its output and in `provenance.txt`. Without that argument a pinned policy and no enrolled
+allowlist end in exit 3 (`no Git allowlist enrolled`), never in a quiet downgrade. Current
 output is verdict v2; the historical v1 schema is retained, not emitted.
 
 ## Owner enrollment
 
-Luke alone enrolls artifacts. Obtain each approved executable digest from an independent,
+The machine's owner alone enrolls artifacts. Obtain each approved executable digest from an independent,
 reviewed artifact/provisioning record. Hashing whichever Git happens to be installed is an
 identity measurement, **not approval**. Compare that measurement with the approved record
 before enrolling it. Agent test fixtures never modify the effective policy.
@@ -29,11 +33,12 @@ sha256 = ["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]
 
 The displayed digest is an example, not an approved artifact. Digests must be unique,
 64-character lowercase hex strings; the list must be nonempty. Revision must be a positive
-integer. Luke tracks revision increases in the provisioning record: the CLI has no persistent
+integer. The owner tracks revision increases in the provisioning record: the CLI has no persistent
 anti-rollback counter. Unknown fields and duplicate keys are refused. Maximum policy size is
 64 KiB; maximum executable size is 512 MiB.
 
-After preparing and reviewing a real `git-allowlist.toml` locally, Luke can install it with:
+After preparing and reviewing a real `git-allowlist.toml` locally, the machine's owner installs it with
+(the [runbook](RUNBOOK.md), step 4, has the whole procedure and its checks):
 
 ```sh
 sudo install -d -o root -g root -m 0755 /etc/forge-warden

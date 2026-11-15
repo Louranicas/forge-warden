@@ -1,0 +1,14 @@
+diff --git a/src/a.rs b/src/a.rs
+index 1111111..2222222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/docs/b.rs b/docs/b.rs
+index 1111111..2222222 100644
+--- a/docs/b.rs
++++ b/docs/b.rs
+@@ -1 +1 @@
+-old
++new

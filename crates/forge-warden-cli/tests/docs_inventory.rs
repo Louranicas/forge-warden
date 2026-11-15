@@ -570,9 +570,13 @@ fn dated_history_heading(heading: &str, kind: &str) -> bool {
         return false;
     };
     let label_ok = version(label) || (kind == "dated_evidence" && label == "Independent review");
+    label_ok && iso_date(date)
+}
+
+/// Whether `date` is `YYYY-MM-DD` with a month in 1..=12 and a day in 1..=31.
+fn iso_date(date: &str) -> bool {
     let parts: Vec<_> = date.split('-').collect();
-    label_ok
-        && parts.len() == 3
+    parts.len() == 3
         && parts
             .iter()
             .zip([4, 2, 2])
@@ -820,4 +824,360 @@ fn first_rule_walkthrough_runs_its_documented_exercise_offline() {
         assert_eq!(record["seals"]["provenance"], "supplied");
     }
     assert_eq!(records.len(), 3);
+}
+
+/// G-40 (R-15): a backticked token shaped like a test name (lowercase, four or more `_`-joined
+/// words) in documentation must name a `fn` or `def` that exists, or a lint in the workspace lint
+/// tables; a backticked `tests/…rs` path must exist. Read from every source Markdown document and
+/// every Rust doc comment. Lines under a dated history heading keep the names they recorded.
+fn test_shaped(token: &str) -> bool {
+    let words: Vec<&str> = token.split('_').collect();
+    words.len() >= 4
+        && token.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+        && words.iter().all(|w| {
+            !w.is_empty()
+                && w.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+/// Every name that follows `keyword` (e.g. `fn `) at a word start in `text`.
+fn names_after(text: &str, keyword: &str, out: &mut BTreeSet<String>) {
+    for (at, _) in text.match_indices(keyword) {
+        let before = text.get(..at).and_then(|s| s.chars().next_back());
+        if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+            continue;
+        }
+        let Some(rest) = at
+            .checked_add(keyword.len())
+            .and_then(|from| text.get(from..))
+        else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.insert(name);
+        }
+    }
+}
+
+/// The Rust `fn` and Python `def` names in the workspace, and the lints in `cargo`'s workspace
+/// tables. A missing lint table adds no names, so more tokens are refused, never fewer.
+fn known_names(cargo: &toml::Value) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for path in files_under("crates", ".rs") {
+        if !path.components().any(|c| c.as_os_str() == "target") {
+            names_after(&read(&common::relative(&path)), "fn ", &mut names);
+        }
+    }
+    for dir in ["scripts", "plants", ".claude/hooks"] {
+        for path in files_under(dir, ".py") {
+            names_after(&read(&common::relative(&path)), "def ", &mut names);
+        }
+    }
+    let tables = cargo
+        .get("workspace")
+        .and_then(|w| w.get("lints"))
+        .and_then(toml::Value::as_table);
+    for table in tables
+        .into_iter()
+        .flat_map(|t| t.values().filter_map(toml::Value::as_table))
+    {
+        names.extend(table.keys().cloned());
+    }
+    names
+}
+
+/// The workspace member directories `cargo` lists, or `None` when the table is missing (the
+/// caller, a test, then fails rather than resolving nothing).
+fn workspace_members(cargo: &toml::Value) -> Option<Vec<String>> {
+    cargo
+        .get("workspace")
+        .and_then(|w| w.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+/// `## <n>. Amendment (<label>, YYYY-MM-DD)…`, the dated form of an ADR amendment.
+fn adr_amendment_heading(heading: &str) -> bool {
+    heading
+        .strip_prefix("## ")
+        .and_then(|s| s.split_once(". Amendment ("))
+        .is_some_and(|(number, rest)| {
+            !number.is_empty()
+                && number.bytes().all(|b| b.is_ascii_digit())
+                && rest
+                    .split_once(')')
+                    .and_then(|(inside, _)| inside.rsplit_once(", "))
+                    .is_some_and(|(_, date)| iso_date(date))
+        })
+}
+
+fn history_heading(heading: &str) -> bool {
+    dated_history_heading(heading, "dated_releases")
+        || dated_history_heading(heading, "dated_evidence")
+        || adr_amendment_heading(heading)
+}
+
+/// Whether a backticked `tests/…rs` reference names a file: as written from the root, or under a crate.
+fn test_path_exists(root: &std::path::Path, members: &[String], reference: &str) -> bool {
+    if reference.starts_with("crates/") {
+        return root.join(reference).is_file();
+    }
+    members
+        .iter()
+        .any(|member| root.join(member).join(reference).is_file())
+}
+
+/// Each stale reference in `documents` (name, text, whether it is Markdown with headings).
+fn stale_test_references(
+    root: &std::path::Path,
+    members: &[String],
+    documents: &[(String, String, bool)],
+    known: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut stale = Vec::new();
+    for (name, text, markdown) in documents {
+        let mut historical = false;
+        for (index, line) in text.lines().enumerate() {
+            if *markdown && line.starts_with("## ") {
+                historical = history_heading(line);
+            }
+            if historical {
+                continue;
+            }
+            for token in line.split('`').skip(1).step_by(2) {
+                let number = index.saturating_add(1);
+                if test_shaped(token) && !known.contains(token) {
+                    stale.push(format!(
+                        "{name}:{number}: `{token}` names no fn, def or lint"
+                    ));
+                }
+                let path_like = std::path::Path::new(token)
+                    .extension()
+                    .is_some_and(|e| e == "rs")
+                    && token.contains("tests/")
+                    && !token.contains([' ', '*']);
+                if path_like && !test_path_exists(root, members, token) {
+                    stale.push(format!("{name}:{number}: `{token}` names no file"));
+                }
+            }
+        }
+    }
+    stale
+}
+
+/// The Markdown documents, and the doc-comment lines of every Rust source, as checked documents.
+fn documentation() -> Vec<(String, String, bool)> {
+    let root = common::root();
+    let mut documents: Vec<(String, String, bool)> = common::markdown_documents(&root)
+        .into_iter()
+        .map(|name| {
+            let text = read(&name);
+            (name, text, true)
+        })
+        .collect();
+    for path in files_under("crates", ".rs") {
+        if path.components().any(|c| c.as_os_str() == "target") {
+            continue;
+        }
+        let comments: Vec<String> = read(&common::relative(&path))
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("///") || trimmed.starts_with("//!") {
+                    trimmed.to_owned()
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        documents.push((common::relative(&path), comments.join("\n"), false));
+    }
+    documents
+}
+
+#[test]
+fn docs_name_only_tests_and_files_that_exist() {
+    let cargo: toml::Value = toml::from_str(&read("Cargo.toml")).unwrap();
+    let stale = stale_test_references(
+        &common::root(),
+        &workspace_members(&cargo).unwrap(),
+        &documentation(),
+        &known_names(&cargo),
+    );
+    assert_eq!(
+        stale,
+        Vec::<String>::new(),
+        "G-40: documentation names tests or files that do not exist"
+    );
+}
+
+#[test]
+fn the_stale_name_rule_refuses_planted_names_and_keeps_history() {
+    let root = common::root();
+    let cargo: toml::Value = toml::from_str(&read("Cargo.toml")).unwrap();
+    let known = known_names(&cargo);
+    let members = workspace_members(&cargo).unwrap();
+    let doc = |text: &str| vec![("plant.md".to_owned(), text.to_owned(), true)];
+    for (case, text) in [
+        (
+            "a renamed test",
+            "See `duplicate_ranked_paths_are_refused`.",
+        ),
+        (
+            "an invented test",
+            "Pinned by `a_test_that_does_not_exist_here`.",
+        ),
+        ("a missing test file", "See `tests/no_such_file.rs`."),
+        (
+            "a missing crate test file",
+            "See `crates/forge-warden-cli/tests/no_such_file.rs`.",
+        ),
+        (
+            "an undated amendment is not history",
+            "## 9. Amendment (G4)\n`a_test_that_does_not_exist_here`",
+        ),
+        (
+            "history ends at the next heading",
+            "## [0.1.0] - 2026-01-01\n## Next\n`a_test_that_does_not_exist_here`",
+        ),
+    ] {
+        assert!(
+            !stale_test_references(&root, &members, &doc(text), &known).is_empty(),
+            "missed: {case}"
+        );
+    }
+    for (case, text) in [
+        (
+            "an existing test",
+            "See `every_file_door_refuses_a_fifo_at_once_not_waited_on`.",
+        ),
+        (
+            "a Python test helper",
+            "See `test_removed_expectation_refuses`.",
+        ),
+        ("a workspace lint", "Denied: `wildcard_enum_match_arm`."),
+        ("a short name", "`read_file` and `run_child`"),
+        (
+            "a glob is not a file reference",
+            "Every `crates/*/tests/*.rs` file.",
+        ),
+        (
+            "an existing test file",
+            "See `tests/door_lints.rs` and `crates/forge-warden-core/tests/coverage.rs`.",
+        ),
+        (
+            "a dated release",
+            "## [0.1.0] - 2026-01-01\n`a_test_that_does_not_exist_here`",
+        ),
+        (
+            "a dated ADR amendment",
+            "## 9. Amendment (G4, 2026-11-10): x\n`a_test_that_does_not_exist_here`",
+        ),
+    ] {
+        assert_eq!(
+            stale_test_references(&root, &members, &doc(text), &known),
+            Vec::<String>::new(),
+            "false positive: {case}"
+        );
+    }
+    let comment = vec![(
+        "x.rs".to_owned(),
+        "/// `a_test_that_does_not_exist_here`\n## [0.1.0] - 2026-01-01\n/// `another_test_that_does_not_exist`"
+            .to_owned(),
+        false,
+    )];
+    assert_eq!(
+        stale_test_references(&root, &members, &comment, &known).len(),
+        2,
+        "doc comments have no history headings"
+    );
+}
+
+/// `(id, kind, severity)` of every rule in a policy file, in file order.
+fn policy_rules(path: &str) -> Result<Vec<(String, String, String)>, String> {
+    let policy: toml::Value = toml::from_str(&read(path)).map_err(|e| format!("{path}: {e}"))?;
+    let rules = policy
+        .get("rule")
+        .and_then(toml::Value::as_array)
+        .ok_or(format!("{path}: no [[rule]] table"))?;
+    rules
+        .iter()
+        .map(|rule| {
+            let field = |name: &str| {
+                rule.get(name)
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or(format!("{path}: a rule has no string `{name}`"))
+            };
+            Ok((field("id")?, field("kind")?, field("severity")?))
+        })
+        .collect()
+}
+
+/// A Markdown table row of three backticked cells, `| `a` | `b` | `c` |`, as its three values.
+fn backticked_row(line: &str) -> Option<(String, String, String)> {
+    let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+    let ["", a, b, c, ""] = cells.as_slice() else {
+        return None;
+    };
+    let unquote = |cell: &str| {
+        cell.strip_prefix('`')
+            .and_then(|rest| rest.strip_suffix('`'))
+            .map(str::to_owned)
+    };
+    Some((unquote(a)?, unquote(b)?, unquote(c)?))
+}
+
+/// A rule line of the README's sample output, `  [STATUS] id (kind, severity)`.
+fn sample_rule(line: &str) -> Option<(String, String, String)> {
+    let rest = line.trim_start().strip_prefix('[')?;
+    let (status, rest) = rest.split_once(']')?;
+    if !["PASS", "FAIL", "HOLD", "WAIVED"].contains(&status.trim()) {
+        return None;
+    }
+    let (id, rest) = rest.trim().split_once(" (")?;
+    let (kind, severity) = rest.strip_suffix(')')?.split_once(", ")?;
+    Some((id.to_owned(), kind.to_owned(), severity.to_owned()))
+}
+
+/// EVIDENCE-0.2.0 item 11: a rule cannot be weakened unnoticed. In the freeze review a seed that
+/// lowered a rule from fail to hold went unseen by every reviewer; now the policy and the table in
+/// `docs/POLICY_REFERENCE.md` must change together, and the README's sample output must name the
+/// kinds and severities of the starter policy it was made with.
+#[test]
+fn documented_rule_severities_equal_the_policies() {
+    let reference = read("docs/POLICY_REFERENCE.md");
+    let (_, section) = reference
+        .split_once("## This repository's own policy (`warden.toml`)")
+        .expect("POLICY_REFERENCE has the own-policy section");
+    let section = section.split("\n## ").next().unwrap();
+    let documented: Vec<_> = section.lines().filter_map(backticked_row).collect();
+    assert_eq!(
+        documented,
+        policy_rules("warden.toml").unwrap(),
+        "docs/POLICY_REFERENCE.md's own-policy table and warden.toml disagree: change both together"
+    );
+    let starter = policy_rules("examples/starter.warden.toml").unwrap();
+    let sampled: Vec<_> = read("README.md").lines().filter_map(sample_rule).collect();
+    assert!(
+        !sampled.is_empty(),
+        "the README sample output has rule lines"
+    );
+    for rule in &sampled {
+        assert!(
+            starter.contains(rule),
+            "README sample {rule:?} does not match examples/starter.warden.toml"
+        );
+    }
 }

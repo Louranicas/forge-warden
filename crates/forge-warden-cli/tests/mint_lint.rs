@@ -1,4 +1,4 @@
-//! Bastion B-C1c-01: only `doors.rs` may mint `Ranking<Produced>`. Since Q-TYPES-1, `attest` needs an
+//! Bastion B-C1c-01: only the door modules (formerly `doors.rs`) may mint `Ranking<Produced>`. Since Q-TYPES-1, `attest` needs an
 //! `AdmittedProducer` that only the policy's allowlist makes, and raw `evaluate` is not nameable
 //! outside the core (`tests/api_boundary.rs` proves both for any downstream crate). Which file of the
 //! binary may mint is still the binary's rule: `clippy.toml` makes `attest` a disallowed method,
@@ -139,6 +139,80 @@ pub fn pickers(
     n
 }
 ";
+
+/// EFFECT-WALL.2 (review candidate C1, reproduced on main): effects the lists did not name. Each
+/// `// FORM:` line must be refused under the CLI configuration and under the core's.
+const EFFECT_PLANTS: &str = r"
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::Path;
+
+pub fn forms(p: &Path) -> usize {
+    let mut n = 0_usize;
+    let _a = std::fs::remove_dir(p); // FORM: std::fs::remove_dir
+    let _b = std::fs::hard_link(p, p); // FORM: std::fs::hard_link
+    let _c2 = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600)); // FORM: std::fs::set_permissions
+    let _c = std::fs::DirBuilder::new().create(p); // FORM: std::fs::DirBuilder::create
+    let _d = p.exists(); // FORM: std::path::Path::exists
+    let _e = p.metadata(); // FORM: std::path::Path::metadata
+    let _f = std::os::unix::fs::symlink(p, p); // FORM: std::os::unix::fs::symlink
+    let _g = std::os::unix::net::UnixStream::connect(p); // FORM: std::os::unix::net::UnixStream::connect
+    let _h = Path::exists(p); // FORM: Path::exists UFCS
+    n += usize::from(p.is_absolute()); // CONTROL: a question about the path that reads nothing
+    n
+}
+";
+
+/// EFFECT-WALL.2 (review candidate C4, reproduced): the two `GitOracle` constructors were listed in
+/// `clippy.toml` and guarded by nothing; removing either entry turned no test red. Each form must be
+/// refused under the CLI configuration (the core has no such entry: it defines them).
+const GIT_ORACLE_PLANTS: &str = r"
+use forge_warden_core::seal::Sha256Hex;
+use forge_warden_core::verdict::GitOracle;
+
+pub fn forms(digest: &Sha256Hex) -> usize {
+    let _a = GitOracle::approved(String::new(), String::new(), digest.clone(), digest.clone()); // FORM: GitOracle::approved direct
+    let _b = GitOracle::unpinned(String::new(), String::new(), digest.clone()); // FORM: GitOracle::unpinned direct
+    let mint = GitOracle::approved; // FORM: GitOracle::approved alias binding
+    let _c = mint(String::new(), String::new(), digest.clone(), digest.clone());
+    let plain: fn(String, String, Sha256Hex) -> GitOracle = GitOracle::unpinned; // FORM: GitOracle::unpinned as fn pointer
+    let _d = plain(String::new(), String::new(), digest.clone());
+    digest.as_str().len() // CONTROL: an allowed function
+}
+";
+
+#[test]
+fn clippy_refuses_the_listed_effects_under_the_cli_configuration() {
+    check_plants(
+        "effect-lint-cli",
+        EFFECT_PLANTS,
+        &root(),
+        "effect-plants",
+        &[],
+    );
+}
+
+#[test]
+fn clippy_refuses_the_listed_effects_under_the_core_configuration() {
+    let core = root().join("crates/forge-warden-core");
+    check_plants(
+        "effect-lint-core",
+        EFFECT_PLANTS,
+        &core,
+        "effect-plants",
+        &[],
+    );
+}
+
+#[test]
+fn clippy_refuses_minting_a_git_oracle_outside_the_door() {
+    check_plants(
+        "git-oracle-lint",
+        GIT_ORACLE_PLANTS,
+        &root(),
+        "git-oracle-plants",
+        &[],
+    );
+}
 
 #[test]
 fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() {

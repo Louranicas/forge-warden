@@ -11,6 +11,8 @@
 //!    committed fixtures (`fixtures/demo.patch`, `fixtures/coverage/*.patch`), byte for byte;
 //! 3. otherwise prints a synthetic ranking read from the patch headers: each file once, status
 //!    `added`, `deleted` or `modified`, with `new_file` or `deleted_file` where Git would derive it.
+//!    An unprefixed header (the same name twice) is ranked under the name without its first
+//!    component, which is what the real ranker does.
 #![expect(
     clippy::disallowed_methods,
     reason = "test door: the fixture ranker reads stdin and the committed fixtures, and writes stdout/stderr"
@@ -107,6 +109,12 @@ fn synthetic(text: &str) -> Vec<File> {
                 status: "modified",
                 signals: Vec::new(),
             });
+        } else if let Some(path) = line.strip_prefix("diff --git ").and_then(unprefixed) {
+            files.push(File {
+                path: path.to_owned(),
+                status: "modified",
+                signals: Vec::new(),
+            });
         } else if let Some(file) = files.last_mut() {
             if line.starts_with("new file mode ") {
                 file.status = "added";
@@ -120,6 +128,18 @@ fn synthetic(text: &str) -> Vec<File> {
         }
     }
     files
+}
+
+/// The path deep-diff-forge 0.8.2 reports for an unprefixed header (`diff.noprefix`: the same
+/// name twice): the name without its first component, as `git apply -p1` reports it. Measured on
+/// the released binary (freeze review N3b): `scripts/ci_local.sh scripts/ci_local.sh` is ranked
+/// as `ci_local.sh`, so the ranking and Git agree on a path the patch was not made for.
+fn unprefixed(names: &str) -> Option<&str> {
+    let (old, rest) = names.split_at_checked(names.len().saturating_sub(1) / 2)?;
+    (rest.strip_prefix(' ') == Some(old))
+        .then(|| old.split_once('/'))
+        .flatten()
+        .map(|(_, tail)| tail)
 }
 
 /// deep-diff-forge's recorded ranking of `patch`, if it is a committed fixture.

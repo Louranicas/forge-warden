@@ -1444,6 +1444,76 @@
     ]
   ],
   [
+    "effect-plants",
+    [
+      [
+        "form:std::fs::remove_dir",
+        "b5c47937dd0b5e5f940b0bd038beace495f65f15dba3946e49d5ae53f15f1f33"
+      ],
+      [
+        "form:std::fs::hard_link",
+        "c36018b5068982eed7d46097dbaf43157e0329f1d6ac343b318fff0228815818"
+      ],
+      [
+        "form:std::fs::set_permissions",
+        "52d696c900fe303ddb7e0d8cb8f4e2357f864856c4b3c7a54cb79b30df403650"
+      ],
+      [
+        "form:std::fs::DirBuilder::create",
+        "9424551da2a6a151c738af5f4af8649fe0653fea9dbd1d6fb5af583e07e7edc2"
+      ],
+      [
+        "form:std::path::Path::exists",
+        "79425e028208a9ff0dbf3c5e831b6be4efe1c34653688fbca3458fbc26739b0d"
+      ],
+      [
+        "form:std::path::Path::metadata",
+        "fd168029462ab4aadd38ba4401c134bd4eee32733c05b2bf6a5c5c206bddf5ec"
+      ],
+      [
+        "form:std::os::unix::fs::symlink",
+        "e8cd1107da34797592564dec22d472f387fb6fa0b3d8d89d6bda59aeeac49454"
+      ],
+      [
+        "form:std::os::unix::net::UnixStream::connect",
+        "5bdc18511ad7d8228e572068a565c194142c3b15465c963f8d5b88bd0a1d5578"
+      ],
+      [
+        "form:Path::exists UFCS",
+        "7a664bfd2d081a904e993efe1b55e90bf5a2f6d9d90a451775b6e8af1465a58f"
+      ],
+      [
+        "control:a question about the path that reads nothing",
+        "c1a6121d35e5e0a6ac4b63f8a4b53afe5b87ff98c3b59f2163183e7e38d9dadf"
+      ]
+    ]
+  ],
+  [
+    "git-oracle-plants",
+    [
+      [
+        "form:GitOracle::approved direct",
+        "8f6a322500527b4d5ce5c681de0ef87ebbf4f09d61a9be537bba2216b42a45e0"
+      ],
+      [
+        "form:GitOracle::unpinned direct",
+        "91318875b4f92a5281360e4dbc3cc50a6cb7f8e759aa08054e15f4e89b2d33ed"
+      ],
+      [
+        "form:GitOracle::approved alias binding",
+        "6ff19222ac44e5b7792aaf64de77bee0622e0f6ef1218c4486ab146d8de5bb80"
+      ],
+      [
+        "form:GitOracle::unpinned as fn pointer",
+        "8898aa4d6717ba8dcfc12703497cb8b5acef10ede54c93aa2894e34c195d4ab1"
+      ],
+      [
+        "control:an allowed function",
+        "b4a7d66711ea15fa0595f557853b113b4b5f887befe780b16ef9c67b763807ce"
+      ]
+    ]
+  ],
+  [
     "mint-plants",
     [
       [
@@ -1878,12 +1948,48 @@
         "931b57b90e1f122d8bc16c90d9acb0f9a83b84596cb33b27502fdcead9bc0460"
       ],
       [
-        "crates/forge-warden-cli/src/doors.rs",
-        "16b5254eba5a3a2f399061607da730cf13ad0435f7dc307cc74b6bf604566c0b"
+        "crates/forge-warden-cli/src/doors/child/entropy.rs",
+        "f30e2f20bb61cafd5bd967fa50f3ee298cfb096d65ab0076b5b2a72f3b87d56b"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/git.rs",
+        "def50dff0da1fa9f7e94ce8fe3aaf23659f3f309c23ef08ff9f562a2d0ef3499"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/isolation.rs",
+        "271357763413deda21a9c631b1f0827daccf2629f2464cc6d2f63c49a6d3fd35"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/mod.rs",
+        "9aa42d10d95aa0c60316854574658eed5d5546e0ffd165ecf7ce3f646d9c91e7"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/process.rs",
+        "069d18dc965999708acba390d552792252bc0e3bbe71913d41c6134581dfe190"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/child/ranker.rs",
+        "575da02c445ba72894defd5eb1847a2e10f41347773fa3873be238d4628096a9"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/diagnose.rs",
+        "21d7d2133f0f5664dbe25c6c5e7278dc5e37cc61302f70f73887740cfd73c25e"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/file.rs",
+        "4c60ce47c8415a900616fe465d587134cb40dce9ec98d0863ddb04d9a36665ad"
+      ],
+      [
+        "crates/forge-warden-cli/src/doors/mod.rs",
+        "0a3d0cd0bde8e22f40498e07a1727135fa49c76b8d481aa9a8d967d297b43ade"
       ],
       [
         "crates/forge-warden-cli/src/main.rs",
         "a6dae790eb0c5834a3edf5ff8712e2575760df9de6cbba6700cc7ada8df7fd2c"
+      ],
+      [
+        "crates/forge-warden-cli/src/refusal_rows.rs",
+        "9d509e24ca553bb0eaa4e1a84bbd9f208fc0c6dc367f77194fe35f8fdc98a719"
       ],
       [
         "crates/forge-warden-cli/tests/adversarial.rs",
@@ -1948,6 +2054,10 @@
       [
         "crates/forge-warden-cli/tests/public_api.rs",
         "6a3697ddd558b4cb0bf75f573c07ae76e415ee706ff0a6b62f80bdf60e1fe1b0"
+      ],
+      [
+        "crates/forge-warden-cli/tests/refusal_map.rs",
+        "994ae7f60ab57471b7f60c33f9bda99b300c4f8cf969fb503414c89e94121501"
       ],
       [
         "crates/forge-warden-cli/tests/repo_invariants.rs",
@@ -2042,6 +2152,10 @@
         "d4e736ace1a6ae7127744c964d3aa0843f62916e59b3d74a1475616e8111510b"
       ],
       [
+        "crates/forge-warden-core/src/refusal_rows.rs",
+        "a7596989ac86e966f005b1a8e10d3b3efd22a1ee6618fd2c8b460297101cca8b"
+      ],
+      [
         "crates/forge-warden-core/src/render.rs",
         "ae6aa58d06c6215c8ba8cd658bad8a832b9aa1324d966c8c6b93f52dae0f8267"
       ],
@@ -2078,12 +2192,20 @@
         "83085dffea141ff3922f0b60dfbc2bf8b21555a05288351ea76d914d6e904b5c"
       ],
       [
+        "crates/forge-warden-core/tests/hostile_input.rs",
+        "23084db44313a704d1f6b3ef5555147b5566e7b352ebc6f7cca262166d67144a"
+      ],
+      [
         "crates/forge-warden-core/tests/laws.rs",
         "0cca0e5fa53c94f24f473d1c5373705c89ce87135832c6b4fc43d5fa738497ed"
       ],
       [
         "crates/forge-warden-core/tests/support/corpus_manifest.rs",
         "b80b904c23a1529586df2d373efbb5fce773ce1aa8593414646cb13890b25a03"
+      ],
+      [
+        "crates/forge-warden-core/tests/z3_authority.rs",
+        "6a9c7c0081f01f70cb480a4aec1069fe38d19ba410aae82be9bf5ada8fc5495f"
       ]
     ]
   ]

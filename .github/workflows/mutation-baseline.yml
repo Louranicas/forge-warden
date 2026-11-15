@@ -18,10 +18,42 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  route:
+    timeout-minutes: 5
+    name: route (runner-up for merged main only)
+    # WP-RUNNER-UP: the only place the pool is chosen. Exact (case-sensitive) bash comparisons: the
+    # self-hosted runner-up pool only for push, schedule or dispatch on exactly refs/heads/main while
+    # it is protected; everything else, every pull request and merge_group included, is hosted.
+    # Expression `==` would ignore case (a protected MAIN would match), so the decision is not made
+    # in an expression. scripts/tests/runner_routing.py runs this exact script over a truth table.
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PROTECTED: ${{ github.ref_protected }}
+        run: |
+          runner=ubuntu-latest
+          case "$EVENT" in
+            push|schedule|workflow_dispatch)
+              if [ "$REF" = refs/heads/main ] && [ "$PROTECTED" = true ]; then
+                runner=runner-up-kinoite
+              fi
+              ;;
+          esac
+          printf 'runner=%s\n' "$runner" >> "$GITHUB_OUTPUT"
+          printf 'route: event=%s ref=%s protected=%s -> %s\n' "$EVENT" "$REF" "$PROTECTED" "$runner"
+
   mutation-plan:
     timeout-minutes: 10
     name: plan mutation shards
-    runs-on: ubuntu-latest
+    # WP-RUNNER-UP: routed by the hosted `route` job; hosted if it fails or gives no output.
+    needs: route
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -29,6 +61,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Prepare a self-hosted runner-up guest (hosted images ship these tools)
+        if: runner.environment == 'self-hosted'
+        run: bash scripts/guest_bootstrap.sh
       - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
@@ -41,8 +76,11 @@ jobs:
   mutation-shards:
     timeout-minutes: ${{ matrix.minutes }}
     name: mutation shard ${{ matrix.index }}
-    needs: [mutation-plan]
-    runs-on: ubuntu-latest
+    # WP-RUNNER-UP: routed like mutation-plan. Runs only on a successful plan; a failed route alone
+    # still runs it, hosted.
+    needs: [route, mutation-plan]
+    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}
+    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.mutation-plan.outputs.matrix) }}
@@ -51,6 +89,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Prepare a self-hosted runner-up guest (hosted images ship these tools)
+        if: runner.environment == 'self-hosted'
+        run: bash scripts/guest_bootstrap.sh
       - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
       - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:

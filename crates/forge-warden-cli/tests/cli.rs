@@ -186,6 +186,36 @@ fn a_ranking_from_another_tool_is_refused() {
 }
 
 #[test]
+fn a_policy_over_its_own_budget_is_refused_by_lint_and_by_check() {
+    // POLICY-CAP (ledger Q44): the policy has its own 1 MiB budget, far under the ranking's. A
+    // valid policy padded past it is refused for its size (exit 4) by both commands.
+    let dir = scratch("policy-cap");
+    let mut bytes = read_bytes(POLICY);
+    bytes.resize(forge_warden_core::MAX_POLICY_BYTES, b'\n');
+    let at = write(&dir, "at.warden.toml", &bytes);
+    assert_eq!(
+        run(&["lint", text(&at)], b"").code,
+        0,
+        "at the budget it is read"
+    );
+    bytes.push(b'\n');
+    let over = write(&dir, "over.warden.toml", &bytes);
+    for out in [
+        run(&["lint", text(&over), "--json"], b""),
+        advisory(text(&over), PATCH, RANK, b""),
+    ] {
+        assert_eq!(out.code, 4, "{}", out.stderr);
+        assert!(
+            out.stderr
+                .contains("policy is 1048577 bytes, over the 1048576 byte budget"),
+            "{}",
+            out.stderr
+        );
+        assert_eq!(out.stdout, "");
+    }
+}
+
+#[test]
 fn over_budget_input_is_invalid_input_not_an_io_error() {
     // One byte over the budget is the caller's input problem (exit 4, change_input), not the
     // environment's (exit 3, check_environment): the action differs, so the code must too.
@@ -238,6 +268,120 @@ fn text_output_lists_every_note() {
     ] {
         assert!(out.stdout.contains(needle), "{needle:?} in {}", out.stdout);
     }
+}
+
+#[test]
+fn a_refused_today_says_why() {
+    for (today, why) in [
+        ("2026-02-30", "it is not a calendar date"),
+        ("1969-12-31", "it is outside 1970-01-01..=9999-12-31"),
+        ("tomorrow", "it is not YYYY-MM-DD"),
+    ] {
+        let out = run(
+            &[
+                "check",
+                "--policy",
+                POLICY,
+                "--patch",
+                PATCH,
+                "--advisory",
+                "--rank",
+                RANK,
+                "--today",
+                today,
+            ],
+            b"",
+        );
+        assert_eq!(out.code, 2, "{today}: {}", out.stderr);
+        assert!(
+            out.stderr.contains(&format!(
+                "--today {today:?} is not a YYYY-MM-DD date: {why}"
+            )),
+            "{today}: {}",
+            out.stderr
+        );
+    }
+}
+
+/// The command 0.1.0 documented, run against this version: the first thing an upgrading user sees.
+/// A snapshot, so a change to the wording or the layout is a reviewed change.
+#[test]
+fn a_usage_error_is_printed_on_the_argument_parsers_own_lines() {
+    let out = run(&["check", "--policy", "p.toml", "--rank", "r.json"], b"");
+    assert_eq!(out.code, 2);
+    assert_eq!(out.stdout, "");
+    assert_eq!(
+        out.stderr,
+        "error: the following required arguments were not provided:\n  --patch <FILE>\n  \
+         <--ranker <FILE>|--advisory>\n\nUsage: forge-warden check --policy <FILE> --patch <FILE> \
+         --rank <FILE> <--ranker <FILE>|--advisory>\n\nFor more information, try '--help'.\n"
+    );
+}
+
+/// Argument text can come from a pull request. Its control characters are escaped inside the
+/// lines, and an argument that carries a line feed keeps the whole message on one line, so it
+/// can never start a line of its own.
+#[test]
+fn hostile_argument_text_in_a_usage_error_is_neutralised() {
+    let escape = run(
+        &["check", "--policy", "p", "--frob\u{1b}[31m\u{202e}nicate"],
+        b"",
+    );
+    assert_eq!(escape.code, 2);
+    assert!(
+        escape.stderr.contains("\\u{001b}[31m\\u{202e}nicate"),
+        "{}",
+        escape.stderr
+    );
+    assert!(
+        escape
+            .stderr
+            .chars()
+            .all(|c| c == '\n' || (' '..='~').contains(&c)),
+        "{:?}",
+        escape.stderr
+    );
+    assert!(
+        escape
+            .stderr
+            .lines()
+            .any(|line| line.starts_with("Usage: ")),
+        "the message keeps its lines: {}",
+        escape.stderr
+    );
+
+    let forged = "forge-warden 0.2.0: PASS (exit 0 pass, next: none)";
+    let as_flag = format!("--frob\n{forged}");
+    let as_value = format!("p\n{forged}");
+    let cases: [&[&str]; 3] = [
+        &["check", "--policy", "p", &as_flag],
+        &["check", "--policy", &as_value, "--bogus"],
+        &["check", "--bogus", "--", &as_value],
+    ];
+    for args in cases {
+        let out = run(args, b"");
+        assert_eq!(out.code, 2, "{args:?}");
+        assert_eq!(
+            out.stderr.matches('\n').count(),
+            1,
+            "{args:?}: {:?}",
+            out.stderr
+        );
+        assert!(out.stderr.ends_with('\n'), "{args:?}");
+        assert!(
+            !out.stderr
+                .lines()
+                .any(|line| line.starts_with("forge-warden ")),
+            "{args:?}: {:?}",
+            out.stderr
+        );
+    }
+    let quoted = run(&["check", "--policy", "p", &as_flag], b"");
+    assert!(
+        quoted.stderr.contains("\\u{000a}forge-warden 0.2.0: PASS"),
+        "{:?}",
+        quoted.stderr
+    );
 }
 
 #[test]

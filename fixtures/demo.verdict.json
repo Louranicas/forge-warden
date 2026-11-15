@@ -2,7 +2,7 @@
   "schema": "forge-warden.verdict.v2",
   "tool": {
     "name": "forge-warden",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "evaluated_on": "2026-11-05",
   "seals": {

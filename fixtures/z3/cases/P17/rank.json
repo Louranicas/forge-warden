@@ -1,0 +1,1 @@
+{"schema":"deep-diff-forge.rank.v0","input_sha256":"f0f94c39ac81dd6a9ef6eeb4330d0fe359760145ff8783b6a66a441e0d08af8b","tool":{"name":"deep-diff-forge","version":"0.0.0-z3.synthetic"},"ranked":[{"path":"src/a.rs","status":"modified","score":0,"signals":[],"evidence":[]},{"path":"tests/a.rs","status":"added","score":0,"signals":["new_file"],"evidence":[]}]}

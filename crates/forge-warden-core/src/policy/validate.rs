@@ -29,7 +29,7 @@ pub const MAX_ID_CHARS: usize = 64;
 /// [`PolicyError`]: over budget, not UTF-8 TOML of the right shape, or invalid, with every issue
 /// listed.
 pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
-    if bytes.len() > crate::MAX_INPUT_BYTES {
+    if bytes.len() > crate::MAX_POLICY_BYTES {
         return Err(PolicyError::TooLarge(bytes.len()));
     }
     let text = std::str::from_utf8(bytes).map_err(|e| PolicyError::Malformed {
@@ -324,10 +324,13 @@ fn validate_waiver(
             "`owner` names who answers for the exemption; it must not be empty".to_owned(),
         );
     }
-    let expires = Date::parse(&raw.expires).map_err(|_| {
+    let expires = Date::parse(&raw.expires).map_err(|why| {
         issues.reject(
             location,
-            format!("expires {:?} is not a YYYY-MM-DD date", raw.expires),
+            format!(
+                "expires {:?} is not a YYYY-MM-DD date: it {why}",
+                raw.expires
+            ),
         )
     });
     let paths = compile(location, "paths", &raw.paths, issues);

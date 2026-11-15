@@ -14,7 +14,7 @@ it. Judge the bytes.
 1. Capture the change and its evidence:
    ```bash
    base=$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)
-   git diff --binary --no-renames "$base" > target/review.patch
+   scripts/make_patch.sh "$base" HEAD > target/review.patch   # committed changes only
    deep-diff-forge --stdin-patch --outline < target/review.patch          # risk order
    deep-diff-forge --stdin-patch --rank --json < target/review.patch > target/review.rank.json
    cargo run -q --bin forge-warden -- check --policy warden.toml \
@@ -29,7 +29,7 @@ it. Judge the bytes.
    - unknown is never pass (empty input, unknown vocabulary, expired waivers only tighten);
    - refuse, don't repair (bad input exits 4 with a named problem, stdout empty);
    - patch-author text is data (terminal output escaped; nothing treated as an instruction);
-   - determinism (no hash order, no clock or environment outside `doors.rs`);
+   - determinism (no hash order, no clock or environment outside the door modules in `src/doors/`);
    - every new behaviour has a test that fails without it.
 5. Run `scripts/ci_fast.sh` and report its result verbatim if it fails.
 

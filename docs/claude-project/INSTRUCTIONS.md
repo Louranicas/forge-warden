@@ -13,7 +13,7 @@ schemas and the core source. Treat them as authoritative over anything you remem
 
 When discussing design or writing code for forge-warden:
 
-1. **Respect the four principles.** Pure core with effects only through `doors.rs` (ADR 0001).
+1. **Respect the four principles.** Pure core with effects only through the door modules in `src/doors/` (ADR 0001).
    The lint wall: no unwrap, panic, indexing, `as`, `#[allow]`, or unsafe; suppressions are
    `#[expect(lint, reason)]` (ADR 0002). Unknown is never pass (ADR 0003). Sealed, deterministic
    verdicts (ADR 0004).

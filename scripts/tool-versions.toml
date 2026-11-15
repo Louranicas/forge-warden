@@ -1,8 +1,25 @@
 # Canonical tool inputs. Rust is owned by rust-toolchain.toml; MSRV by Cargo.toml.
-ddf_rev = "587a6afd559a4bd9f8c0aabcef4c1e5de85ffc54"
+ddf_rev = "fb5ffe15ae582f665d9de073d5231ecff8003a17"
+# The release built from ddf_rev, and the sha256 of its x86_64-unknown-linux-gnu archive. The
+# dogfood gate fetches that archive and refuses other bytes; warden.toml pins the binary inside it.
+ddf_release = "v0.8.2"
+ddf_archive_sha256 = "f3898cc9065f856f151e9f2ecd72bfe8818c5e8bc0a3004bae654fad592f056b"
 zizmor = "1.30.1"
 cargo_mutants = "27.1.0"
 cargo_deny = "0.20.2"
 
 # Shared immutable installer revision; every declarative CI copy is checked.
 install_action = "c509219cf42fba86913069efd0ade2458c59337b"
+
+# WP-RUNNER-UP: rustup-init for self-hosted runner-up guests (hosted images ship rustup). The
+# sha256 is the archive's published checksum, verified against an independent download.
+rustup = "1.29.3"
+rustup_sha256 = "b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55"
+
+# The local gate (G-18): a skipped gate must never read as a passed gate. A `required` tool that is
+# missing or at another version stops ci_local with a named refusal. A `hosted-only` step that cannot
+# run here is named in ci_local's final line; it runs in hosted CI. Moving a tool between the lists is
+# a reviewed change to this protected file.
+[local_gate]
+required = ["cargo-deny", "cargo-mutants"]
+hosted_only = ["zizmor", "deep-diff-forge"]

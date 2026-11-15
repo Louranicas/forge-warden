@@ -1,0 +1,12 @@
+schema="forge-warden.policy.v0"
+
+[producer]
+sha256=["6ca8eac992dbdb6bc10c531050d41369e5182a572ea6ee61c8af55769b2a0c28"]
+
+[[rule]]
+id="count"
+why="Z3 fixed rule."
+severity="fail"
+kind="max_files"
+limit=2
+paths=["**"]

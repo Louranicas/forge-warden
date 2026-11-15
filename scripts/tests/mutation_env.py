@@ -23,7 +23,8 @@ class MutationEnvironment(unittest.TestCase):
             (root / "target").mkdir()
             (root / "scripts/tests").mkdir(parents=True)
             (root / "plants").mkdir()
-            for name in ("scripts/tool_versions.py", "scripts/tests/perimeter.py", "plants/test_runner.py"):
+            for name in ("scripts/tool_versions.py", "scripts/tests/perimeter.py",
+                         "scripts/tests/runner_routing.py", "plants/test_runner.py"):
                 (root / name).write_text("# explicit unrelated-gate fixture stub\n")
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
             scripts = {

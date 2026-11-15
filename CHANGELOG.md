@@ -3,11 +3,61 @@
 All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). A change to a published schema
-(`forge-warden.policy.v0`, `forge-warden.verdict.v0`) or to the exit-code registry is always
-listed, because consumers parse them.
+(today `forge-warden.policy.v0`, `forge-warden.verdict.v2` and the Git allowlist
+`forge-warden.git-allowlist.v1`; 0.1.0 shipped `forge-warden.verdict.v0`) or to the exit-code
+registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-13
+
+- New `scripts/make_patch.sh <base> <head> [<repository>]` writes the patch to judge: the change
+  from the merge base to head, the same bytes whatever the caller's Git configuration,
+  environment and current directory are (the diff runs in a new repository that only borrows the
+  object store). `scripts/dogfood.sh` uses it, and the runbook, README and upgrade notes
+  document it in place of a plain `git diff`. `just judge` and the reviewer agent now judge
+  committed changes only.
+- The patch-maker and the by-hand `git diff` in the README and the runbook pass
+  `--submodule=short --ignore-submodules=none`. Without them the by-hand command left a
+  submodule change out of the patch when the work tree's `.gitmodules` said `ignore = all` (a
+  file the change itself can commit), or `diff.ignoreSubmodules` or `diff.submodule=log` was
+  set, and authority mode could pass the rest of the change. `scripts/make_patch.sh` was not
+  affected. A submodule change that is in the patch holds, as before.
+- **Security fix, and breaking for some setups:** a patch is believed only if every file has a
+  `diff --git a/PATH b/PATH` header (`b/PATH a/PATH` from `git diff -R` is read too). A patch
+  made with `diff.noprefix`, `diff.mnemonicPrefix` or other prefixes, or without Git headers, now
+  holds with `patch_unverifiable` (new refusal `Unverifiable::HeaderPaths`). Before, Git and the
+  ranker both dropped the first component of an unprefixed path (`scripts/x` became `x`), agreed
+  with each other, and no path rule matched: authority mode could pass a change to a protected
+  file. No attacker was needed, only `[diff] noprefix = true` in the Git configuration. Make
+  patches with the new `scripts/make_patch.sh <base> <head>` (see the next entry); the documented
+  commands now do. Not detectable from a patch: prefixes
+  that themselves begin `a/` and `b/`, and a patch that is only part of a change (`diff.relative`
+  in a subdirectory). A verdict is about the patch bytes it was given.
+- A usage error (exit 2) is printed on the argument parser's own lines again. It was one line with
+  `\u{000a}` where each line break belonged. Characters outside printable ASCII in an argument
+  are still escaped, and if any argument contains a line feed the whole message stays on one
+  line, so argument text cannot start a line of its own. `--json` errors are unchanged.
+- Schemas in this release: the verdict is `forge-warden.verdict.v2`. 0.1.0 shipped v0; v1 existed
+  only between releases and no tagged release carries it (ADR 0011, amendment A1).
+- The policy schema stays `forge-warden.policy.v0`. The `[producer]` table is optional and
+  additive: a policy without it still works, in advisory mode only. Two 0.1.0 policies are now
+  refused all the same (no rules; a file over 1 MiB): see
+  [Upgrading from 0.1.0](docs/UPGRADING.md), section 6.
+- **Breaking:** a policy file over 1 MiB is refused (exit 4, `invalid_input`, before parsing);
+  it shared the ranking's 64 MiB budget before. New constant `MAX_POLICY_BYTES`. Measured: a
+  64 MiB policy of half a million rules parsed in 6.5 s at a peak of 4 GiB. Size limits and
+  measurements are in [the policy reference](docs/POLICY_REFERENCE.md).
+- [Upgrading from 0.1.0](docs/UPGRADING.md) lists every change a 0.1.0 user must act on.
+- `scripts/dogfood.sh` (driver v2) takes `--hosted-advisory` as an optional first argument. The
+  repository's hosted `dogfood` job passes it: a hosted runner has no owner-enrolled Git
+  allowlist, so with the producer now pinned in `warden.toml` it could not judge in authority mode
+  (exit 3). Hosted dogfood is advisory by decision and cannot PASS; without the argument a pinned
+  policy still means authority mode. No schema or exit code changes.
+- A patch Git refuses is now judged in one code path that cannot finish without its
+  `patch_unverifiable` note (Q25; `Verdict::held_by`, crate-internal). For consumers nothing
+  changes: the verdict document, its schema and the exit codes are the same, a refused patch still
+  holds at least, and a failing rule on it still fails.
 - Verdict no longer implements Clone; CLI reporting borrows judged authority/advisory results without copying them (T-GITPIN-01).
 
 ### CLI machine contract

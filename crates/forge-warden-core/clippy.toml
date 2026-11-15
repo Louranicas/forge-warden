@@ -69,4 +69,14 @@ disallowed-methods = [
     { path = "core::option::Option::get_or_insert", reason = "a stored default is a default: match, or name it with NamedDefault (G-04, B7.1)" },
     { path = "core::option::Option::get_or_insert_with", reason = "a stored default is a default: match, or name it with NamedDefault (G-04, B7.1)" },
     { path = "core::option::Option::get_or_insert_default", reason = "a stored default is a default: match, or name it with NamedDefault (G-04, B7.1)" },
+    # EFFECT-WALL.2 (review candidate C1, reproduced): effects the list did not name. The list is a
+    # denylist of spellings; an effect it does not name is not refused (docs/THREAT_MODEL.md).
+    { path = "std::fs::remove_dir", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::fs::hard_link", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::fs::set_permissions", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::fs::DirBuilder::create", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::path::Path::exists", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::path::Path::metadata", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::os::unix::fs::symlink", reason = "the core does no I/O (ADR 0001)" },
+    { path = "std::os::unix::net::UnixStream::connect", reason = "the core does no I/O (ADR 0001)" },
 ]

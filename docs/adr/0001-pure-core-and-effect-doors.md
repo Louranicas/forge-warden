@@ -25,6 +25,11 @@ let a change pass on one machine and fail on another.
 4. `doors.rs` is owned (CODEOWNERS, `warden.toml` rule `quality-config-is-owned`, and the
    Claude Code PreToolUse hook), so a new effect is always a reviewed decision.
 
+Amended 2026-11-10 (WP-Q-DOOR-SPLIT, Q2-09): `src/doors.rs` became the door modules under
+`src/doors/`. Points 2-4 apply to that exact, closed list (`DOOR_FILES` in the CLI's
+`tests/common`); a file under `src/doors/` that is not listed fails the invariants. Ownership
+moved with the code to `crates/forge-warden-cli/src/doors/**`.
+
 ## Consequences
 
 - Every verdict is reproducible from `(policy bytes, ranking bytes, date)`; the golden test

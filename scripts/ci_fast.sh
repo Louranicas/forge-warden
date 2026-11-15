@@ -7,12 +7,15 @@ while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 python3 -I scripts/tests/mutation_budget.py
 bash scripts/tests/ci_local.sh
 python3 -I scripts/tests/mutation_env.py
+python3 -I scripts/tests/local_tools.py
 bash scripts/tests/dogfood.sh
 python3 -I scripts/tests/hold_ack.py
 python3 -I .claude/hooks/test_guard.py
 python3 -I scripts/tests/managed_review_bundle.py
 python3 -I scripts/tests/guardrails.py
+python3 -I scripts/tests/runner_routing.py
 python3 -I scripts/check_guardrails.py
+python3 -I plants/anchors.py
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked --quiet
 cargo test --workspace --locked --quiet

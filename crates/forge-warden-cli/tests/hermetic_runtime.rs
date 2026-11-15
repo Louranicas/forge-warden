@@ -27,6 +27,10 @@ fn empty_cargo_home_has_an_actionable_precondition() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test fixture: looks at whether the scratch directory still exists"
+)]
 fn scratch_is_unique_and_cleans_on_drop_and_unwind() {
     let first = common::scratch("same-label");
     let second = common::scratch("same-label");
@@ -95,6 +99,10 @@ fn relative_tools_keep_their_identity_after_changing_directory() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test fixture: makes a symlink to a scratch executable"
+)]
 fn executable_symlink_invocation_name_is_preserved() {
     let directory = common::scratch("tool-symlink");
     let link = directory.join("sh");

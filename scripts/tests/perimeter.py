@@ -28,7 +28,7 @@ CAPS = load("plant_tools")
 
 # Independent reviewed expectations, not values imported from the validator.
 TIMEOUTS = {
-    "ci.yml": {"gate": 20, "msrv": 10, "supply-chain": 10,
+    "ci.yml": {"gate": 45, "msrv": 10, "supply-chain": 10,
                "workflow-audit": 10, "mutation": 5, "mutation-plan": 10,
                "mutation-shards": "${{ matrix.minutes }}", "dogfood": 10,
                "vocabulary": 10},
@@ -361,6 +361,27 @@ class Contracts(unittest.TestCase):
     def test_required_perimeter_is_owned(self):
         paths = set((ROOT / "protected-paths.txt").read_text().splitlines())
         self.assertTrue({".cargo/**", "crates/*/tests/**", "fixtures/**", "plants/**"} <= paths)
+
+
+
+class GateCapacity(unittest.TestCase):
+    """CI-GATE-BUDGET (ledger Q49): the gate budget was derived for a bounded catalogue."""
+
+    def test_the_catalogue_fits_the_budget_and_one_case_too_many_is_refused(self):
+        CAPS.check_gate_capacity(ROOT)
+        capacity = CAPS.GATE_PLANT_CAPACITY
+        # The documented rule, restated here on purpose: seconds = 525 + 8.7 per plant, 1.5x headroom.
+        self.assertLessEqual(1.5 * (525 + 8.7 * capacity), TIMEOUTS["ci.yml"]["gate"] * 60)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "plants").mkdir()
+            for count, refused in ((capacity, False), (capacity + 1, True)):
+                (root / "plants/catalog.json").write_text(json.dumps({"cases": [{}] * count}))
+                if refused:
+                    with self.assertRaisesRegex(ValueError, "re-derive it"):
+                        CAPS.check_gate_capacity(root)
+                else:
+                    CAPS.check_gate_capacity(root)
 
 
 if __name__ == "__main__":
