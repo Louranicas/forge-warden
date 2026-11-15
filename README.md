@@ -167,11 +167,13 @@ the ranking reports, never remove them. Make the patch with
 installed: it writes the same bytes whatever your Git configuration, environment and current
 directory are. A plain `git diff` does not: `diff.noprefix` drops the `a/` `b/` prefixes (such a
 patch is refused), `diff.relative` in a subdirectory leaves out every change outside it, and
-`ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change; no
-check of the patch can see either omission. If you must use Git directly, run what the script runs,
-`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
-from the top level (the script also reads no Git configuration and takes attributes from the empty
-tree, which a plain command cannot). A verdict is about the patch bytes it was given, with paths read from the
+`ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change, and a
+`.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
+cannot read; no check of the patch can see any of these. If you must use Git directly, run what
+the script runs,
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+from the top level, with Git 2.40 or later: the first two options take attributes from the empty
+tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
 repository root: forge-warden does not check that the patch is the whole change between two
 commits, so whoever makes the patch is part of the trust boundary. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 

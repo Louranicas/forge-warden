@@ -125,10 +125,13 @@ every path starts with (forge-warden refuses such a patch as unverifiable, exit 
 would read `scripts/x` as `x`), and with `diff.relative` in a subdirectory it writes a well-formed
 patch that leaves out every change outside that directory, which nothing can check for you. The
 same goes for a submodule change when `.gitmodules` (which the change itself can commit) says
-`ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. If
-you have to use Git directly, run what the script runs, from the top level:
-`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
-(the script also reads no Git configuration and takes attributes from the empty tree).
+`ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. And a
+`.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
+binary sections the ranker cannot read. If you have to use Git directly, run what the script
+runs, from the top level, with Git 2.40 or later:
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
+(the first two options take attributes from the empty tree; the script also reads no Git
+configuration).
 
 What a verdict is about: these patch bytes, with paths read from the repository root.
 forge-warden does not check that the patch is the whole change between two commits; `--base`

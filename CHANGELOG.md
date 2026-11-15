@@ -11,9 +11,14 @@ registry is always listed, because consumers parse them.
 
 ## [0.2.0] - 2026-11-13
 
+- The documented by-hand `git diff` (README, runbook) now takes attributes from the empty tree
+  (`--attr-source=<empty tree> -c core.attributesFile=/dev/null`, Git 2.40 or later), as
+  `scripts/make_patch.sh` already did. Without them, a `.gitattributes` the change commits
+  (`*.rs -diff`) made Git write the edited text as binary sections, and signal rules saw nothing.
+  The dogfood test commits such a file and fails if the documents drop the options.
 - Advisory [FW-2026-001](docs/advisories/FW-2026-001.md) records the wrong PASS on every commit
   published before 0.2.0 (non-default Git prefixes, `diff.relative` patches, submodule changes
-  left out of the patch), what 0.2.0 fixes for patches made with `scripts/make_patch.sh`, and what
+  left out of the patch, text hidden by a committed `.gitattributes`), what 0.2.0 fixes for patches made with `scripts/make_patch.sh`, and what
   it does not fix for patches made by hand. Builds of `dcce82c` and `7f36ba2a` already say 0.2.0
   but are affected. The install, clone and patch-maker download lines, the reporting route and the
   crate metadata now name the repository of record on GitLab; the GitHub repository is no longer
