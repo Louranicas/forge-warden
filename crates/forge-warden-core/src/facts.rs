@@ -284,9 +284,10 @@ fn check_header_paths(
     }
 }
 
-/// Whether a numstat count column is a decimal number, as Git writes one.
+/// Whether a numstat count column is a decimal number as Git writes one: 1 to 20 ASCII digits
+/// (20 is the length of the largest 64-bit count).
 fn decimal(column: &[u8]) -> bool {
-    !column.is_empty() && column.iter().all(u8::is_ascii_digit)
+    (1..=20).contains(&column.len()) && column.iter().all(u8::is_ascii_digit)
 }
 
 fn utf8(bytes: &[u8]) -> Result<&str, Unverifiable> {
@@ -826,6 +827,11 @@ mod tests {
             "1\t-\ta\0",
             "+1\t0\ta\0",
             "1 \t0\ta\0",
+            " 1\t0\ta\0",
+            "0x1\t0\ta\0",
+            "\u{661}\t0\ta\0",
+            "123456789012345678901\t0\ta\0",
+            "0\t123456789012345678901\ta\0",
         ] {
             assert_eq!(
                 facts(record, ""),
@@ -844,6 +850,7 @@ mod tests {
         assert_eq!(read("12\t0\ta\0"), (false, true));
         assert_eq!(read("0\t3\ta\0"), (false, true));
         assert_eq!(read("-\t-\ta\0"), (true, true));
+        assert_eq!(read("12345678901234567890\t0\ta\0"), (false, true));
     }
 
     #[test]
