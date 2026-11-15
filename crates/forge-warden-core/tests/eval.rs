@@ -236,14 +236,23 @@ paths = [".github/workflows/**"]
 fn the_starter_policy_holds_a_change_to_agent_configuration() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
     let ci_rule = |path: &str, status: &str| {
-        let verdict = evaluate(&starter, &rank(vec![file(path, status, 1, &[])]), seals(), today());
+        let verdict = evaluate(
+            &starter,
+            &rank(vec![file(path, status, 1, &[])]),
+            seals(),
+            today(),
+        );
         let rule = verdict
             .rules()
             .iter()
             .find(|rule| rule.id == "ci-is-owned")
             .unwrap()
             .clone();
-        let paths: Vec<_> = rule.violations.iter().filter_map(|v| v.path.clone()).collect();
+        let paths: Vec<_> = rule
+            .violations
+            .iter()
+            .filter_map(|v| v.path.clone())
+            .collect();
         (verdict.outcome(), rule.outcome, paths)
     };
     for (path, status) in [
@@ -259,7 +268,11 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
             "{path} ({status})"
         );
     }
-    for path in [".claudex/settings.json", "docs/claude/settings.json", "CLAUDE.md"] {
+    for path in [
+        ".claudex/settings.json",
+        "docs/claude/settings.json",
+        "CLAUDE.md",
+    ] {
         assert_eq!(
             ci_rule(path, "modified"),
             (Outcome::Pass, RuleOutcome::Pass, Vec::new()),
