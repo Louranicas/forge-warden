@@ -16,6 +16,7 @@ python3 -I scripts/tests/guardrails.py
 python3 -I scripts/tests/runner_routing.py
 python3 -I scripts/check_guardrails.py
 python3 -I plants/anchors.py
+python3 -I scripts/script_commands.py
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked --quiet
 cargo test --workspace --locked --quiet

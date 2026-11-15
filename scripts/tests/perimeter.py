@@ -2,6 +2,7 @@
 """Owned gate contracts: exact tool inputs, complete plant receipts and merge subjects."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -25,6 +26,7 @@ def load(name):
 TOOLS = load("tool_versions")
 PLANTS = load("check_plants")
 CAPS = load("plant_tools")
+COMMANDS = load("script_commands")
 
 # Independent reviewed expectations, not values imported from the validator.
 TIMEOUTS = {
@@ -382,6 +384,98 @@ class GateCapacity(unittest.TestCase):
                         CAPS.check_gate_capacity(root)
                 else:
                     CAPS.check_gate_capacity(root)
+
+
+
+class GateImageCommands(unittest.TestCase):
+    """Gap G9 (Mission 7): a script that calls a command the offline gate image lacks is refused.
+
+    Train 14's first gate went red on `cmp` in scripts/tests/dogfood.sh; every lane's toolbox
+    has it, the gate image does not. Each case below hides an undeclared command in one shell
+    or Python shape the reader must see, and must be named once, on its line."""
+
+    def problems(self, files):
+        with tempfile.TemporaryDirectory(prefix="script-commands-") as directory:
+            root = Path(directory)
+            for name, text in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text)
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": directory}
+            subprocess.run(["git", "init", "-q", directory], check=True, env=env, stdin=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", directory, "add", "-A"], check=True, env=env, stdin=subprocess.DEVNULL)
+            return COMMANDS.problems(root)
+
+    def test_every_tracked_script_calls_only_declared_commands(self):
+        self.assertEqual(COMMANDS.problems(ROOT), [])
+
+    def test_the_declared_set_has_none_of_the_commands_the_image_lacks(self):
+        absent = {"cmp", "diff", "jq", "xxd", "file", "apt-get", "zizmor", "deep-diff-forge"}
+        self.assertEqual(COMMANDS.IMAGE & absent, set())
+
+    def test_an_undeclared_command_is_named_in_each_shape(self):
+        shapes = {
+            "plain (train 14)": "cmp a b\n",
+            "after a pipe": "printf x | jq .\n",
+            "after &&": "true && xxd a\n",
+            "in an if": "if file a; then :; fi\n",
+            "in a substitution": 'x="$(diff a b)"\n',
+            "in backquotes": "x=`diff a b`\n",
+            "in a process substitution": "while read -r l; do :; done < <(diff a b)\n",
+            "after env and assignments": "env -u HOME A=1 \"$b=2\" diff a b\n",
+            "after an absolute env": "/usr/bin/env -i PATH=/usr/bin diff a b\n",
+            "in bash -c": "bash -c 'diff \"$1\" b' _ a\n",
+            "in a trap": "trap 'diff a b' EXIT\n",
+            "in a function": "f() {\n  diff a b\n}\n",
+            "in a case arm": "case \"$1\" in\n x) diff a b ;;\nesac\n",
+            "in a stub here-document": "cat > stub <<'S'\n#!/bin/sh\ndiff a b\nS\n",
+            "in a python here-document": "python3 -I - <<'P'\nimport subprocess\nsubprocess.run(['diff', 'a'])\nP\n",
+            "after a line continuation": "true \\\n  && diff a b\n",
+        }
+        for name, text in shapes.items():
+            with self.subTest(shape=name):
+                found = self.problems({"s.sh": "#!/usr/bin/env bash\n" + text})
+                self.assertEqual(len(found), 1, found)
+                self.assertRegex(found[0], r"^s\.sh:\d+: calls `(cmp|jq|xxd|file|diff)`, which the gate image")
+                line = int(found[0].split(":")[1])
+                self.assertIn(found[0].split("`")[1], ("#!/usr/bin/env bash\n" + text).splitlines()[line - 1])
+
+    def test_python_and_restricted_calls_are_named(self):
+        found = self.problems({"t.py": "import subprocess\nsubprocess.run(['jq', '.'])\n"})
+        self.assertEqual(found, ["t.py:2: calls `jq`, which the gate image does not declare "
+                                 "(scripts/script_commands.py)"])
+        found = self.problems({"scripts/x.sh": "apt-get install -y cmp\n"})
+        self.assertEqual(found, ["scripts/x.sh:1: calls `apt-get`, which only "
+                                 "scripts/guest_bootstrap.sh may call"])
+
+    def test_what_the_reader_cannot_resolve_is_refused_not_skipped(self):
+        cases = {
+            "eval": ("eval \"$cmd\"\n", "not read: line 1: eval"),
+            "unterminated quote": ("echo 'x\n", "not read: line 1: unterminated single quote"),
+            "unterminated here-document": ("cat <<'E'\nx\n", "not terminated"),
+            "unpinned dynamic word": ('"$tool" --version\n', 'calls `"$tool"`'),
+            "dynamic bash -c text": ('bash -c "$script"\n', 'calls `"$script"`'),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(case=name):
+                found = self.problems({"s.sh": text})
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(expected, found[0])
+
+    def test_words_that_are_not_commands_are_not_named(self):
+        text = (
+            "# cmp in a comment\n"
+            "echo 'diff' \"jq\" diff\n"
+            "command -v cmp >/dev/null || echo none\n"
+            "for tool in cmp diff; do echo \"$tool\"; done\n"
+            "case \"$x\" in\n cmp|diff) echo match ;;\n *) : ;;\nesac\n"
+            "files=(cmp diff\n  jq)\n"
+            "cat > notes <<'D'\ncmp and diff are data here\nD\n"
+            "[[ $x == diff && $y == cmp ]]\n"
+            "grep -q cmp a 2>/dev/null\n"
+            "scripts/tool.sh run\n"
+        )
+        self.assertEqual(self.problems({"s.sh": text, "scripts/tool.sh": "true\n"}), [])
 
 
 if __name__ == "__main__":
