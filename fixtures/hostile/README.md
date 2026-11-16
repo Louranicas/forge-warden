@@ -29,3 +29,5 @@ are covered by PATCH-PREFIX's own tests and regression patches, and by an attack
 documented setting and judges it in authority mode (recorded in docs/THREAT_MODEL.md, scope section).
 `lone-header/` (M7-HEADER-OWN) holds a lone `diff --git` header over a traditional section for another path: forge-warden's
 own header check refuses each whatever a ranker believes (`a_lone_git_header_over_another_path_is_never_believed`).
+`binary-text/` (M7-BINARY-TEXT-HOLD) holds a text file sent as a binary section, with the real ranking that misses
+its `unsafe` block; the starter's `binary-text-is-hidden-text` rule holds it.

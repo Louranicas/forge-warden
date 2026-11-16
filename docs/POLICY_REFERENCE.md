@@ -273,6 +273,7 @@ fails when the two disagree. The same test holds the README's sample output to
 | `no-ci-privilege` | `forbid_signal` | `fail` |
 | `no-silent-suppression` | `forbid_signal` | `hold` |
 | `keep-the-tests` | `forbid_signal` | `hold` |
+| `binary-text-is-hidden-text` | `forbid_signal` | `hold` |
 | `tests-travel-with-code` | `require_companion` | `hold` |
 | `schema-changes-are-versioned` | `require_companion` | `fail` |
 | `quality-config-is-owned` | `protect_paths` | `hold` |

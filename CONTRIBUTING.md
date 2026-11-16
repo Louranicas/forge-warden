@@ -31,6 +31,12 @@ The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned i
 (G-18). `zizmor` and `deep-diff-forge` are hosted-only (the `[local_gate]` table says why). When they
 are absent, the gate's last line names them as not run here instead of claiming that everything passed.
 
+Scripts and their tests run in an offline gate image that has fewer commands than a developer's
+machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` (fast gate, and
+`GateImageCommands` in `scripts/tests/perimeter.py`) names every command a tracked shell or Python
+script calls that is not in its declared list; adding a command to that list means first seeing it
+in the gate image.
+
 ## First rule: a passing example and a failing control
 
 This adds a policy rule using the existing `protect_paths` kind; adding a new Rust rule kind

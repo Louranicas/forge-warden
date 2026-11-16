@@ -288,6 +288,83 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
     }
 }
 
+/// The starter holds a binary section on a path that is normally text, in any letter case, and only
+/// there (M7-BINARY-TEXT-HOLD, ledger Q63).
+#[test]
+fn the_starter_policy_holds_a_binary_section_on_a_text_path() {
+    let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
+    let rule_says = |path: &str, signals: &[&str]| {
+        let verdict = evaluate(
+            &starter,
+            &rank(vec![file(path, "binary_changed", 1, signals)]),
+            seals(),
+            today(),
+        );
+        verdict
+            .rules()
+            .iter()
+            .find(|rule| rule.id == "binary-text-is-hidden-text")
+            .unwrap()
+            .outcome
+    };
+    for path in [
+        "src/lib.rs",
+        "lib.RS",
+        "Main.Py",
+        "a.tar.rs",
+        "scripts/ci_local.sh",
+        "Makefile",
+        "MAKEFILE",
+        ".gitattributes",
+        ".github/workflows/ci.yml",
+        "go.mod",
+        "deep/dir/CODEOWNERS",
+        "docs/README.md",
+        ".githooks/pre-push",
+        "scripts/hooks/PRE-COMMIT",
+        "configure",
+        ".github/allowed_signers",
+        "deploy/app.service",
+        "X.SERVICE",
+        "config.h.in",
+        "start.S",
+        "LICENSE-MIT",
+        "COPYING.LIB",
+        "dockerfile.dev",
+    ] {
+        assert_eq!(
+            rule_says(path, &["binary_change"]),
+            RuleOutcome::Hold,
+            "{path}"
+        );
+    }
+    for path in [
+        "logo.png",
+        "LOGO.PNG",
+        "font.woff2",
+        "fixtures/a.bin",
+        "a.rs.orig",
+        "rs",
+        "Makefile.bak",
+        "notes.rsx",
+        "bin/tool",
+        "pre-commit.sample",
+        "Dockerfilex",
+        "LICENSES",
+    ] {
+        assert_eq!(
+            rule_says(path, &["binary_change"]),
+            RuleOutcome::Pass,
+            "{path} is not a text name"
+        );
+    }
+    assert_eq!(
+        rule_says("src/lib.rs", &[]),
+        RuleOutcome::Pass,
+        "no binary section"
+    );
+}
+
 #[test]
 fn score_and_file_budgets() {
     let p = policy(
