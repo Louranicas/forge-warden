@@ -431,6 +431,20 @@ class GateImageCommands(unittest.TestCase):
             "in a stub here-document": "cat > stub <<'S'\n#!/bin/sh\ndiff a b\nS\n",
             "in a python here-document": "python3 -I - <<'P'\nimport subprocess\nsubprocess.run(['diff', 'a'])\nP\n",
             "after a line continuation": "true \\\n  && diff a b\n",
+            # M7-G9 round 2 (Bastion's probe d4c5b000): commands that run their operand.
+            "after xargs": "printf '%s\\n' a | xargs -n 1 cmp b\n",
+            "after find -exec": "find . -name x -exec cmp {} b \\;\n",
+            "after a second find -execdir": "find . -exec true \\; -execdir diff {} b +\n",
+            "after tar -I": "tar -I xxd -cf x.tar a\n",
+            "in python3 -c": "python3 -I -c 'import subprocess; subprocess.run([\"cmp\", \"a\"])'\n",
+            "in env -S": "env -S 'cmp a b'\n",
+            "after exec -a NAME": "exec -a name cmp a b\n",
+            "after env -C DIR": "env -C /tmp cmp a b\n",
+            "after timeout -s SIGNAL": "timeout -s KILL 5 cmp a b\n",
+            "after nohup": "nohup cmp a b\n",
+            "after coproc": "coproc cmp a b\n",
+            "behind a function of the same name": "cmp() { command cmp \"$@\"; }\ncmp a b\n",
+            "in a function keyword body": "function f {\n  diff a b\n}\nf\n",
         }
         for name, text in shapes.items():
             with self.subTest(shape=name):
@@ -448,6 +462,48 @@ class GateImageCommands(unittest.TestCase):
         self.assertEqual(found, ["scripts/x.sh:1: calls `apt-get`, which only "
                                  "scripts/guest_bootstrap.sh may call"])
 
+    def test_python_calls_are_read_as_the_command_lines_they_run(self):
+        calls = {
+            "shell=True pipe": "subprocess.run('cat a | cmp - b', shell=True)",
+            "shell=True and": "subprocess.run('true && xxd a', shell=True)",
+            "shell=True f-string": "subprocess.run(f'cmp {name} b', shell=True)",
+            "bash -c in a list": "subprocess.run(['bash', '-c', 'cmp a b'])",
+            "env in a list": "subprocess.run(['env', 'cmp', 'a', 'b'])",
+            "list plus a variable": "subprocess.run(['cmp'] + rest)",
+            "os.system": "os.system('true && xxd a')",
+            "os.popen": "os.popen('jq . a')",
+            "getoutput": "subprocess.getoutput('cmp a b')",
+            "getstatusoutput": "subprocess.getstatusoutput('xxd a')",
+            "posix_spawnp": "os.posix_spawnp('cmp', ['cmp', 'a', 'b'], {})",
+            "spawnlp": "os.spawnlp(os.P_WAIT, 'cmp', 'cmp', 'a', 'b')",
+            "spawnvp": "os.spawnvp(os.P_WAIT, 'cmp', ['cmp', 'a'])",
+            "execlp": "os.execlp('cmp', 'cmp', 'a', 'b')",
+            "create_subprocess_exec": "asyncio.create_subprocess_exec('cmp', 'a', 'b')",
+            "create_subprocess_shell": "asyncio.create_subprocess_shell('cmp a b')",
+            "pty.spawn": "pty.spawn(['cmp', 'a', 'b'])",
+        }
+        for name, call in calls.items():
+            with self.subTest(call=name):
+                found = self.problems({"t.py": "import asyncio, os, pty, subprocess\n" + call + "\n"})
+                self.assertEqual(len(found), 1, found)
+                self.assertRegex(found[0], r"^t\.py:2: calls `(cmp|jq|xxd)`, which the gate image")
+
+    def test_a_script_is_known_by_its_first_line(self):
+        cases = {
+            "env -S bash, no extension": ("#!/usr/bin/env -S bash -eu\ncmp a b\n", ["tool:2: calls `cmp`"]),
+            "dash, which the image lacks": ("#!/bin/dash\ntrue\n", ["tool:1: calls `dash`"]),
+            "python, no extension": ("#!/usr/bin/env python3\nimport subprocess\nsubprocess.run(['cmp'])\n",
+                                     ["tool:3: calls `cmp`"]),
+            "another interpreter": ("#!/usr/bin/perl\nprint 1;\n", ["tool: not read: line 1"]),
+            "a Rust inner attribute": ("#![forbid(unsafe_code)]\n", []),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(case=name):
+                found = self.problems({"tool": text})
+                self.assertEqual(len(found), len(expected), found)
+                for line, prefix in zip(found, expected):
+                    self.assertTrue(line.startswith(prefix), (line, prefix))
+
     def test_what_the_reader_cannot_resolve_is_refused_not_skipped(self):
         cases = {
             "eval": ("eval \"$cmd\"\n", "not read: line 1: eval"),
@@ -455,6 +511,10 @@ class GateImageCommands(unittest.TestCase):
             "unterminated here-document": ("cat <<'E'\nx\n", "not terminated"),
             "unpinned dynamic word": ('"$tool" --version\n', 'calls `"$tool"`'),
             "dynamic bash -c text": ('bash -c "$script"\n', 'calls `"$script"`'),
+            "dynamic python3 -c text": ('python3 -c "$code"\n', 'calls `"$code"`'),
+            "aliases": ("shopt -s expand_aliases\n", "not read: line 1: `shopt expand_aliases`"),
+            "a path out of the repository": ("../tool.sh\n", "calls `../tool.sh`"),
+            "a declared name outside the system directories": ("/opt/x/bin/git status\n", "calls `/opt/x/bin/git`"),
         }
         for name, (text, expected) in cases.items():
             with self.subTest(case=name):
@@ -474,8 +534,16 @@ class GateImageCommands(unittest.TestCase):
             "[[ $x == diff && $y == cmp ]]\n"
             "grep -q cmp a 2>/dev/null\n"
             "scripts/tool.sh run\n"
+            "./.githooks/x\n"
+            "find . -name cmp -print\n"
+            "tar -cf diff.tar a\n"
+            "python3 tool.py -c diff\n"
+            "nohup true\n"
+            "/usr/bin/git status\n"
+            "coproc worker { true; }\n"
+            "function cmp { :; }\ncmp a b\n"
         )
-        self.assertEqual(self.problems({"s.sh": text, "scripts/tool.sh": "true\n"}), [])
+        self.assertEqual(self.problems({"s.sh": text, "scripts/tool.sh": "true\n", ".githooks/x": "true\n"}), [])
 
 
 if __name__ == "__main__":
