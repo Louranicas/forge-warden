@@ -374,6 +374,22 @@
       [
         "ts2-new-submodule-update",
         "7c10453d77416fa34902f6ac04daadba84bdbcec2a88f0d826a42672c7caf108"
+      ],
+      [
+        "ddf083-G1a-files-differ-replaces",
+        "bd695a5b081de1e3bfb80e2432984dbf18add4900690dab89dfd149a9a109923"
+      ],
+      [
+        "ddf083-G1c-rename-files-differ",
+        "e4d797ad7dbd552749af9713e252c9a402eb83e75d157eb06d399909a0f06f00"
+      ],
+      [
+        "ddf083-G2a-modify-then-rename",
+        "78b593808fcabf764170ac8992b1bfc68bf0059db1cd377333889915cff22e46"
+      ],
+      [
+        "ddf083-G2e-modify-then-delete",
+        "c52ed8f4b90d7cbfbd70e75a503155b9ef59535d426a6416f8e42d211c717380"
       ]
     ]
   ],
@@ -382,7 +398,7 @@
     [
       [
         "cases.json",
-        "dc315c5d4e406fa06e3e79e9dc1fb04c89a8efe6662dbeca4d24375c4fe27884"
+        "ce258b8173b71b04e4acb617e17e7761af3ed66e0fa21d85c31c5eb6a5871054"
       ],
       [
         "forged-add-as-modified.numstat",
@@ -1295,6 +1311,70 @@
       [
         "ts2-new-submodule-update.summary",
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      [
+        "ddf083-G1a-files-differ-replaces.numstat",
+        "847f26511a09d55d73949b8d7ddbdbec28394cb73ecc2adeaedb8c53b6a19a35"
+      ],
+      [
+        "ddf083-G1a-files-differ-replaces.patch",
+        "9ee8e47656e0e86f8818154cb93506acc538d38e0955729a005be5559be8ccd0"
+      ],
+      [
+        "ddf083-G1a-files-differ-replaces.rank.json",
+        "46892e4e416d9d035660aa3a09e354326c03d9ce9698c1224010011cadf32555"
+      ],
+      [
+        "ddf083-G1a-files-differ-replaces.summary",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      ],
+      [
+        "ddf083-G1c-rename-files-differ.numstat",
+        "b0d22ce1486cbbf232e64bc2f9582d92a52f0eefadfed13264ee04a4fac1e65c"
+      ],
+      [
+        "ddf083-G1c-rename-files-differ.patch",
+        "59eeddcc8e3ba380910e1282ad39819c7310397b81a2d5f2084938c1448d8b9e"
+      ],
+      [
+        "ddf083-G1c-rename-files-differ.rank.json",
+        "4326815605dcd3d923680e28e6542628d2ad7df8742c356cb9719e277f725c89"
+      ],
+      [
+        "ddf083-G1c-rename-files-differ.summary",
+        "8f9d08586d7913ea237dbb712282ac76ab243a9da359e159183508ea6d096843"
+      ],
+      [
+        "ddf083-G2a-modify-then-rename.numstat",
+        "63ae954022a45f029c04ab349260c8c519256fc8fe642a3ea3ca85875d463b5f"
+      ],
+      [
+        "ddf083-G2a-modify-then-rename.patch",
+        "5d995975884cc70ce34309d581721f3db7b5ecb11384da8f6223e5d2502efe61"
+      ],
+      [
+        "ddf083-G2a-modify-then-rename.rank.json",
+        "91ad24d0cc7bbbbe39561463a520f38f0146085254a9cc959f02298bb9a385b3"
+      ],
+      [
+        "ddf083-G2a-modify-then-rename.summary",
+        "e1c9877b99cec62638d20a476301223385c27cb6d13bb28cd21ab2aca09f3d97"
+      ],
+      [
+        "ddf083-G2e-modify-then-delete.numstat",
+        "ce69fe782a0fe128368585490a29079a833eb7a3cb2dbe323efc9f07df8724eb"
+      ],
+      [
+        "ddf083-G2e-modify-then-delete.patch",
+        "e8288933bea35a8ff0f0d877bc5c0654b10854335b7e88f3bdad270dbd3d605e"
+      ],
+      [
+        "ddf083-G2e-modify-then-delete.rank.json",
+        "c761d2913b4a86344df13e264030507db687f0da4fd934cdb113c1b157ee0875"
+      ],
+      [
+        "ddf083-G2e-modify-then-delete.summary",
+        "340d72c76636fddff1c5d564d5868a157df377defa974d61fffb21ad7c81413d"
       ]
     ]
   ],

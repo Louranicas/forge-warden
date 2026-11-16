@@ -1,0 +1,14 @@
+diff --git a/x b/x
+index 1111111..2222222 100644
+--- a/x
++++ b/x
+@@ -1 +1 @@
+-a
++b
+diff --git a/x b/x
+deleted file mode 100644
+index 2222222..0000000
+--- a/x
++++ /dev/null
+@@ -1 +0,0 @@
+-b

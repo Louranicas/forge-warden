@@ -456,7 +456,7 @@ def listed_workflow_problems(names):
 # the hostile environment and the shape checks below then run on the new text. The shape checks
 # are kept as diagnostics that explain what a reviewer should look at, not as the control.
 WORKFLOW_SHA256 = {
-    ".github/workflows/ci.yml": "1e2bc5cb1b61ad5a2f28d716c7852c3a288555c41762a3355d6dd38698dd52b1",
+    ".github/workflows/ci.yml": "e38015155d67358199c67b5aa6b0208ea2539b69b06590b62112e5bbe9a5e155",
     ".github/workflows/mutation-baseline.yml": "9d34b3fd261b45dbd340245da6a023c32e7d09e825a1199c6823a1e614f8d9d0",
 }
 
