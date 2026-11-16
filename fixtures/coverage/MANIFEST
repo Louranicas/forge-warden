@@ -1940,6 +1940,22 @@
       [
         "ts2-new-submodule-update",
         "8f3db2a823a7ffe194ddde69533fca579cb34e4a3a83c3200cc5cc664637c8e5"
+      ],
+      [
+        "ddf083-G1a-files-differ-replaces",
+        "46892e4e416d9d035660aa3a09e354326c03d9ce9698c1224010011cadf32555"
+      ],
+      [
+        "ddf083-G1c-rename-files-differ",
+        "4326815605dcd3d923680e28e6542628d2ad7df8742c356cb9719e277f725c89"
+      ],
+      [
+        "ddf083-G2a-modify-then-rename",
+        "91ad24d0cc7bbbbe39561463a520f38f0146085254a9cc959f02298bb9a385b3"
+      ],
+      [
+        "ddf083-G2e-modify-then-delete",
+        "c761d2913b4a86344df13e264030507db687f0da4fd934cdb113c1b157ee0875"
       ]
     ]
   ],
