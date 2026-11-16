@@ -45,10 +45,10 @@ Authority mode runs deep-diff-forge itself and admits it only by the SHA-256 of 
 released binary: a binary built from the same source on another machine has other bytes (its build
 paths are embedded) and will not match. The released binary is published only on deep-diff-forge's
 GitHub release page, so the download below reads from there; the GitLab mirror carries the same
-`v0.8.2` tag for the source.
+`v0.8.3` tag for the source.
 
 ```bash
-v=v0.8.2; a=deep-diff-forge-$v-x86_64-unknown-linux-gnu
+v=v0.8.3; a=deep-diff-forge-$v-x86_64-unknown-linux-gnu
 curl --fail --location --proto '=https' -O "https://github.com/Louranicas/deep-diff-forge/releases/download/$v/$a.tar.gz"
 curl --fail --location --proto '=https' -O "https://github.com/Louranicas/deep-diff-forge/releases/download/$v/$a.tar.gz.sha256"
 sha256sum --check "$a.tar.gz.sha256"          # must print OK
@@ -57,8 +57,8 @@ sha256sum "$a/deep-diff-forge"                # the digest the policy will list
 install -D -m 0755 "$a/deep-diff-forge" "$HOME/.local/share/forge-warden/deep-diff-forge"
 ```
 
-For v0.8.2 the archive digest is `f3898cc9065f856f151e9f2ecd72bfe8818c5e8bc0a3004bae654fad592f056b`
-and the binary's is `298e07511310b18051a4c8ed56c18fafa03e40dc8fc88bedf74edba0e2ba41ad`. The last line
+For v0.8.3 the archive digest is `b7734168308009d19c9b353184cd031574c82a5406c112161523e94416e5aeba`
+and the binary's is `4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1`. The last line
 installs it where step 6 runs it: a regular file only you can write (the door refuses a symlink, a FIFO
 or a file writable by group or others). Do not modify it afterwards.
 
@@ -98,7 +98,7 @@ For authority mode, add the ranker's digest from step 3 to the policy, then lint
 
 ```toml
 [producer]
-sha256 = ["298e07511310b18051a4c8ed56c18fafa03e40dc8fc88bedf74edba0e2ba41ad"]
+sha256 = ["4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1"]
 ```
 
 The policy lives in the repository it judges and should be owned there (CODEOWNERS and a

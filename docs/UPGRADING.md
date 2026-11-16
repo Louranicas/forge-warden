@@ -190,6 +190,13 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
 - **Patches for bound mode come from `scripts/make_patch.sh` of 0.3.0** (patch-maker v2, `--full-index`).
   A patch made by 0.2.x's script has abbreviated `index` lines, so `--repo` refuses it (exit 4); make it
   again.
+- **The ranker pin is deep-diff-forge v0.8.3** (`[producer]` in `warden.toml`, `scripts/tool-versions.toml`;
+  owner decision D4: the newest release, with its stated limits). A policy that pins 0.8.2's binary keeps working
+  with 0.8.2; to move, list the v0.8.3 binary's SHA-256 from the [runbook](RUNBOOK.md), step 3. 0.8.3 refuses
+  some patches 0.8.2 ranked (malformed `index`-line modes; in authority mode: exit 3, no verdict) and ranks every
+  other measured patch identically (vocabulary, statuses, paths, scores). Stated limit: 0.8.3 has two open high
+  findings (G1 `Files … differ` after an `index` line; G2 several sections on one path); forge-warden holds both
+  shapes itself, and `fixtures/coverage` keeps one case of each as its test.
 - **Library users:** `Claims` has private fields and two forms (read it with `base()`, `head()`,
   `merge_base()`, `verified()`); `Unverified` is gone. Verified claims come only from
   `BoundClaims::from_comparison`.
