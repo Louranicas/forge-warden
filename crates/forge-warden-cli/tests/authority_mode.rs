@@ -804,6 +804,46 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
 }
 
 #[test]
+fn bound_mode_compares_before_any_ranker_is_admitted() {
+    // Needs no fixture ranker, so a plant recipe can run it alone (plant bound-comparison-removed;
+    // Train B2, receipt b7797a70: a filtered `cargo test` does not build the example). The comparison
+    // runs in `bind`, before the ranker is admitted: with a ranker the policy does not list, a patch
+    // that is not the bound diff is still refused by the comparison, not by the ranker's admission.
+    let dir = scratch("bound-before-ranker");
+    let policy = policy_admitting(&dir, NO_SECRETS, &["a".repeat(64)]);
+    let (repo, base, head) = bound_repo("bound-before-ranker-repo");
+    let short = git_in(
+        &repo,
+        &[
+            "diff",
+            "--binary",
+            "--no-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &base,
+            &head,
+        ],
+    );
+    let other = write(&dir, "other.patch", format!("{short}\n").as_bytes());
+    let out = authority(
+        &policy,
+        &other,
+        Path::new("/usr/bin/true"),
+        &[
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            head.as_str(),
+        ],
+    );
+    assert_eq!(out.code, 4, "stdout={} stderr={}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("is not `git diff"), "{}", out.stderr);
+    assert!(out.stdout.is_empty(), "{}", out.stdout);
+}
+
+#[test]
 fn bound_mode_refuses_a_patch_made_with_other_options() {
     let (dir, policy, ranker) = setup("bound-shapes");
     let (repo, base, head) = bound_repo("bound-shapes-repo");

@@ -2017,6 +2017,26 @@ mod child_tests {
     }
 
     #[test]
+    fn the_cut_writes_exactly_the_boundary_as_shallow() {
+        // ADR 0012 D3.3 and plant bound-shallow-not-written: whether a missing shallow file refuses a
+        // run depends on the Git build (Train B2, receipt b7797a70: the gate image's Git passed the
+        // redundant-merge row without it). This holds the file itself.
+        let dir = scratch("bound-cut");
+        let (a, b) = ("1".repeat(40), "2".repeat(40));
+        super::child::cut_in(&[a.clone(), b.clone()], &dir).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("shallow")).unwrap(),
+            format!("{a}\n{b}\n")
+        );
+        let none = scratch("bound-cut-none");
+        super::child::cut_in(&[], &none).unwrap();
+        assert!(
+            !none.join("shallow").exists(),
+            "a root merge base leaves no boundary and no file"
+        );
+    }
+
+    #[test]
     fn init_flags_are_pinned() {
         // ADR 0012 D3.1 and acceptance item 8 ("--template= removed"): a pinned shape, because the
         // template has no effect on the bytes in a cleared environment.

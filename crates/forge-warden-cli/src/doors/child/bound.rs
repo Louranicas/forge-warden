@@ -288,6 +288,15 @@ pub(in crate::doors) fn recheck_in(
     bound.recheck(mb, base, head)
 }
 
+/// The cut (D3.3) alone: writes `verified`'s `shallow` file from `boundary`. The contract test for a
+/// step whose absence only some Git builds notice (one walks into the absent parent and dies, another
+/// stops there). Tests only.
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+pub(in crate::doors) fn cut_in(boundary: &[String], verified: &Path) -> Result<(), BoundFailure> {
+    Bound::cut(boundary, verified)
+}
+
 /// One bound run: its runner and its two private repositories.
 struct Bound<'a> {
     run: Runner<'a>,
