@@ -445,6 +445,11 @@ class GateImageCommands(unittest.TestCase):
             "after coproc": "coproc cmp a b\n",
             "behind a function of the same name": "cmp() { command cmp \"$@\"; }\ncmp a b\n",
             "in a function keyword body": "function f {\n  diff a b\n}\nf\n",
+            # Round 3 (Bastion's probe2): options and subcommands that run a program.
+            "after rustup run TOOLCHAIN": "rustup run stable cmp a b\n",
+            "in tar --to-command": "tar -xf a.tar --to-command='cmp - b'\n",
+            "in tar --checkpoint-action=exec": "tar -cf a.tar --checkpoint-action=exec='xxd a' a\n",
+            "in sort --compress-program": "sort --compress-program=xxd a\n",
         }
         for name, text in shapes.items():
             with self.subTest(shape=name):
@@ -481,12 +486,55 @@ class GateImageCommands(unittest.TestCase):
             "create_subprocess_exec": "asyncio.create_subprocess_exec('cmp', 'a', 'b')",
             "create_subprocess_shell": "asyncio.create_subprocess_shell('cmp a b')",
             "pty.spawn": "pty.spawn(['cmp', 'a', 'b'])",
+            "str.split": "subprocess.run('cmp a b'.split())",
+            "shlex.split": "subprocess.run(shlex.split('cmp a b'))",
+            "a conditional argv": "subprocess.run(['cmp', 'a'] if flag else ['true'])",
+            "shell=1": "subprocess.run('true && cmp a b', shell=1)",
+            "shell=flag": "subprocess.run('true && cmp a b', shell=flag)",
         }
         for name, call in calls.items():
             with self.subTest(call=name):
-                found = self.problems({"t.py": "import asyncio, os, pty, subprocess\n" + call + "\n"})
+                found = self.problems({"t.py": "import asyncio, os, pty, shlex, subprocess\n" + call + "\n"})
                 self.assertEqual(len(found), 1, found)
                 self.assertRegex(found[0], r"^t\.py:2: calls `(cmp|jq|xxd)`, which the gate image")
+
+    def test_an_aliased_process_function_is_read(self):
+        found = self.problems({"t.py": "from subprocess import run as sh\nsh(['cmp', 'a', 'b'])\n"})
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("t.py:2: calls `cmp`"), found)
+
+    def test_a_file_a_call_runs_is_read_in_that_language(self):
+        """Round 3 (Bastion): a tracked file run or sourced by a literal path is read in the
+        language it runs in, even with no extension and no `#!` line; else it is named."""
+        cases = {
+            "./FILE, no #! line": ({"s.sh": "./tool\n", "tool": "cmp a b\n"},
+                                   ["tool (run as shell):1: calls `cmp`"]),
+            "bash FILE": ({"s.sh": "bash -o pipefail scripts/helper x\n", "scripts/helper": "cmp a b\n"},
+                          ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "python3 FILE": ({"s.sh": "python3 -I tools/x a\n",
+                              "tools/x": "import subprocess\nsubprocess.run(['cmp'])\n"},
+                             ["tools/x (run as python):2: calls `cmp`"]),
+            "a sourced library and its function": ({"s.sh": ". lib/common\nf\n", "lib/common": "f() { cmp a b; }\n"},
+                                                   ["lib/common (run as shell):1: calls `cmp`"]),
+            "a .sh file with a python #!": ({"a.sh": "#!/usr/bin/env python3\nimport subprocess\nsubprocess.run(['cmp'])\n"},
+                                            ["a.sh:3: calls `cmp`"]),
+            "./FILE with another interpreter": ({"s.sh": "./tool\n", "tool": "#!/usr/bin/perl\nprint 1;\n"},
+                                                ["tool: not read: line 1"]),
+        }
+        for name, (files, expected) in cases.items():
+            with self.subTest(case=name):
+                found = self.problems(files)
+                self.assertEqual(len(found), len(expected), found)
+                for line, prefix in zip(found, expected):
+                    self.assertTrue(line.startswith(prefix), (line, prefix))
+
+    def test_the_routing_pin_allows_one_dynamic_call(self):
+        name = "scripts/tests/runner_routing.py"
+        one = "import subprocess\nsubprocess.run(['bash', '-c', text])\n"
+        self.assertEqual(self.problems({name: one}), [])
+        found = self.problems({name: one + "subprocess.run(['bash', '-c', other])\n"})
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith(name + ":3: calls `\"$python_expression\"`"), found)
 
     def test_a_script_is_known_by_its_first_line(self):
         cases = {

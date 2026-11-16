@@ -13,10 +13,13 @@ What is read, and how:
   is data), and the command position after `;`, `|`, `&&`, `||`, `&`, `(`, `{`, `!`, the
   reserved words (`coproc` too), the prefixes `env`, `exec`, `command`, `nice`, `nohup`,
   `timeout`, `xargs`, `sudo` (their options and option arguments skipped), find's `-exec`,
-  `-execdir`, `-ok` and `-okdir`, tar's `-I`/`--use-compress-program`, and the text of
+  `-execdir`, `-ok` and `-okdir`, `rustup run TOOLCHAIN`, the program options of tar
+  (`-I`, `--use-compress-program`, `--to-command`, `--checkpoint-action=exec=`, `--info-script`,
+  `--new-volume-script`) and sort (`--compress-program`), and the text of
   `bash -c`, `sh -c`, `trap`, `env -S` and `python3 -c`;
 - every tracked Python file (`*.py`, or a python `#!` line) and Python here-document:
-  `subprocess`, `os`, `asyncio` and `pty` process calls. A string run by a shell
+  `subprocess`, `os`, `asyncio` and `pty` process calls (also imported under another name),
+  each branch of a conditional argument list, and `shell=` on unless it is literally false. A string run by a shell
   (`shell=True`, `os.system`, `os.popen`, `getoutput`, `create_subprocess_shell`) is read as
   shell text; an argument list is read as the command line it makes, so the prefixes above
   apply to it; a non-literal argument stands for a dynamic word.
@@ -28,12 +31,19 @@ word that is not in DYNAMIC, a tracked file whose `#!` line names another interp
 problem, not a skip. A word run through `command`, `exec`, `env` or another prefix is never
 excused by a shell function of the same name.
 
+A tracked file that a call runs or sources by a literal path (`./FILE`, `bash FILE`,
+`python3 FILE`, `. FILE`) is read in the language it runs in, with or without an extension or a
+`#!` line; the functions of a sourced file count for the file that sources it.
+
 Stated limits (each needs a deliberate author): a Python call whose program is not a literal
-(a variable, `sys.executable`, a helper's list) is not resolved; a data here-document that a
+(a variable, `sys.executable`, an argument list built by a call other than `'...'.split()` and
+`shlex.split('...')`, a process function bound to another name by assignment) is not resolved;
+a script run or sourced through a non-literal path is not read; a data here-document that a
 later line runs is not read; a command reached only through a non-literal path is pinned by
 DYNAMIC, not resolved; commands run by another program's own language or configuration are not
-read (`awk` `system()`, sed's `e`, Git's pager, editor and alias settings); a named `coproc`
-NAME is read as a command (loud, not silent).
+read (`awk` `system()`, sed's `e`, Git's pager, editor and alias settings); a shell function
+excuses a call of its name anywhere in the file, also a call before the definition, which bash
+would run as the real command.
 
 usage: python3 -I scripts/script_commands.py     (exit 1 names each undeclared call)
 """
@@ -95,6 +105,14 @@ PREFIX_OPTIONS = {
 }
 PREFIXES = frozenset(PREFIX_OPTIONS)
 FIND_EXEC = frozenset({'-exec', '-execdir', '-ok', '-okdir'})
+# Options whose value is a command line the program runs (`tar --to-command=...`).
+PROGRAM_OPTIONS = {
+    'tar': frozenset({'-I', '--use-compress-program', '--to-command', '--info-script',
+                      '--new-volume-script', '-F'}),
+    'sort': frozenset({'--compress-program'}),
+}
+# Shell options that take a separate argument (`bash -o pipefail FILE`).
+SHELL_OPTION_ARGS = frozenset({'-o', '+o', '-O', '+O', '--rcfile', '--init-file'})
 SHELLS = frozenset({'sh', 'bash', 'dash'})
 PYTHONS = re.compile(r'python(?:3(?:\.[0-9]+)?)?')
 # A non-literal Python argument stands for this dynamic word in the command line it makes.
@@ -117,10 +135,16 @@ DYNAMIC = {
     # gitenv and made run their own arguments; every caller passes a declared command (bash, env),
     # but those arguments are not read as commands here (a stated limit).
     'scripts/tests/dogfood.sh': {'"$@"'},
-    # The routing test runs the `run:` block of the workflow's route job with `bash -c`; that
-    # text lives in .github/workflows/, which this reader does not read (a stated limit).
-    'scripts/tests/runner_routing.py': {PY_DYNAMIC},
 }
+# Non-literal command words allowed exactly once in the named file (a second one is named).
+DYNAMIC_ONCE = {
+    # The routing test runs the `run:` block of the workflow's route job with `bash -c`; that
+    # text lives in .github/workflows/ (it calls only `[` and printf; Bastion, M7-G9 round 2).
+    'scripts/tests/runner_routing.py': PY_DYNAMIC,
+}
+# Markers in a reader's output for a file a call runs or sources: `bash FILE`, `python3 FILE`,
+# `. FILE`. problems() reads that file in that language (or names it as not read).
+RUNS = {'(sh)': 'shell', '(py)': 'python', '(src)': 'shell'}
 # Python process calls, by where the command is: (index of the program, index where its
 # arguments start, whether those arguments are one list or spread out). Shell-text calls read
 # their first argument as shell text.
@@ -491,26 +515,51 @@ def command_words(tokens, calls):
                 else:
                     calls.extend(python_calls(word.value, word.line))
                 script = None
-            elif script in SHELLS and word.literal and re.fullmatch(r'-[a-z]*c[a-z]*', word.value):
-                script = 'next'
+            elif isinstance(script, tuple) and script[0] == 'program-option':
+                if word.literal:
+                    calls.extend(external(shell_calls(word.value, word.line)))
+                else:
+                    found.append((word.line, word.raw, True))
+                script = script[1]
             elif isinstance(script, tuple):
                 script = script[1]
+            elif script in SHELLS and word.literal:
+                if re.fullmatch(r'-[a-z]*c[a-z]*', word.value):
+                    script = 'next'
+                elif word.value in SHELL_OPTION_ARGS:
+                    script = ('option-argument', script)
+                elif word.value == '-s':
+                    script = None  # the script is standard input (a here-document, read above)
+                elif not word.value.startswith(('-', '+')):
+                    found.append((word.line, '(sh)' + word.value, True))
+                    script = None
             elif script and PYTHONS.fullmatch(script) and word.literal:
                 if re.fullmatch(r'-[A-Za-z]*c', word.value):
                     script = 'next-python'
                 elif word.value in ('-W', '-X'):
                     script = ('option-argument', script)
-                elif not word.value.startswith('-') or word.value == '-m':
+                elif word.value == '-m':
                     script = None
-            elif script == 'tar' and word.literal and word.value in ('-I', '--use-compress-program'):
-                script = 'tar-program'
-            elif script == 'tar' and word.literal and word.value.startswith('--use-compress-program='):
-                program = word.value.split('=', 1)[1].split()
-                found.append((word.line, program[0] if program else '', True))
-            elif script == 'tar-program':
-                program = word.value.split() if word.literal else [word.raw]
-                found.append((word.line, program[0] if program else '', True))
-                script = 'tar'
+                elif not word.value.startswith('-'):
+                    found.append((word.line, '(py)' + word.value, True))
+                    script = None
+            elif script in ('.', 'source') and word.literal:
+                found.append((word.line, '(src)' + word.value, True))
+                script = None
+            elif script == 'rustup' and word.literal and word.value == 'run':
+                script = 'rustup-toolchain'
+            elif script == 'rustup-toolchain':
+                # `rustup run TOOLCHAIN CMD`: CMD is a command.
+                expect, prefix, script, by_find = True, None, None, True
+            elif script in PROGRAM_OPTIONS and word.literal:
+                option, equals, program = word.value.partition('=')
+                if option in PROGRAM_OPTIONS[script]:
+                    if equals:
+                        calls.extend(external(shell_calls(program, word.line)))
+                    else:
+                        script = ('program-option', script)
+                elif script == 'tar' and word.value.startswith('--checkpoint-action=exec='):
+                    calls.extend(external(shell_calls(word.value.split('=', 2)[2], word.line)))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
@@ -566,9 +615,17 @@ def command_words(tokens, calls):
     return found + [(0, '()' + name, False) for name in functions]
 
 
+def branches(node):
+    """Each value a conditional expression can take (`a if x else b`)."""
+    if isinstance(node, ast.IfExp):
+        return branches(node.body) + branches(node.orelse)
+    return [node]
+
+
 def py_items(node):
-    """The items of a literal argument list (`[...]`, `(...)`, `[...] + x`), else None.
-    An item that is not there literally (`*rest`, the `x` of `+ x`) is None."""
+    """The items of a literal argument list (`[...]`, `(...)`, `[...] + x`, `'a b'.split()`,
+    `shlex.split('a b')`), else None. An item that is not there literally (`*rest`, the `x` of
+    `+ x`) is None."""
     if isinstance(node, (ast.List, ast.Tuple)):
         return [None if isinstance(item, ast.Starred) else item for item in node.elts]
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
@@ -576,6 +633,19 @@ def py_items(node):
         if left is not None:
             right = py_items(node.right)
             return left + (right if right is not None else [None])
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, 'id', None)
+        owner = func.value if isinstance(func, ast.Attribute) else None
+        if (name == 'split' and isinstance(owner, ast.Constant) and isinstance(owner.value, str)
+                and not node.args and not node.keywords):
+            return [ast.Constant(part) for part in owner.value.split()]
+        if (name == 'split' and (owner is None or getattr(owner, 'id', None) == 'shlex') and node.args
+                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            try:
+                return [ast.Constant(part) for part in shlex.split(node.args[0].value)]
+            except ValueError:
+                return None
     return None
 
 
@@ -594,62 +664,71 @@ def py_word(node):
     return PY_DYNAMIC
 
 
+def argv_text(items):
+    """The command line an argument list makes, or None when its program is not a literal."""
+    head = items[0] if items else None
+    if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
+        return None  # stated limit: the program is not a literal
+    return ' '.join(py_word(item) for item in items)
+
+
 def python_calls(text, line=1):
     """(line, command, True) for each process call whose program is a string literal: the call is
     turned into the shell text or command line it runs, which shell_calls reads."""
+    tree = ast.parse(text)
+    imported = {}  # local name -> (module, name), for `from subprocess import run as sh`
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in ('subprocess', 'os', 'asyncio', 'pty'):
+            for alias in node.names:
+                imported[alias.asname or alias.name] = (node.module, alias.name)
     found = []
-    for node in ast.walk(ast.parse(text)):
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, 'id', None)
+        if isinstance(func, ast.Attribute):
+            module, name = getattr(func.value, 'id', None), func.attr
+        else:
+            module, name = imported.get(getattr(func, 'id', None), (None, getattr(func, 'id', None)))
         args = list(node.args)
         keywords = {item.arg: item.value for item in node.keywords if item.arg}
-        shell, items = None, None
+        texts = []
         if name in PY_SHELL_TEXT:
             first = args[0] if args else keywords.get('cmd', keywords.get('command'))
-            shell = py_text(first) if first is not None else None
-            if shell is None:
-                continue
-        elif name == 'spawn' and isinstance(func, ast.Attribute) and getattr(func.value, 'id', None) == 'pty':
+            texts = [py_text(branch) for branch in branches(first)] if first is not None else []
+        elif name == 'spawn' and module == 'pty':
             argv = args[0] if args else keywords.get('argv')
-            if argv is None:
-                continue
-            items = py_items(argv) or [argv]
+            texts = [argv_text(py_items(branch) or [branch]) for branch in branches(argv)] if argv is not None else []
         elif name in PY_ARGV:
             spec = PY_ARGV[name]
             if spec is None:
                 first = args[0] if args else keywords.get('args')
-                if first is None:
-                    continue
-                listed = py_items(first)
-                shell_kw = keywords.get('shell')
-                if isinstance(shell_kw, ast.Constant) and shell_kw.value is True:
-                    shell = py_text(listed[0] if listed else first) if (listed is None or listed[0] is not None) else None
-                    if shell is None:
-                        continue
-                else:
-                    items = listed if listed is not None else [first]
+                shell = keywords.get('shell')
+                # shell= is on unless it is literally false (shell=1 and shell=flag run a shell).
+                shell_on = shell is not None and not (isinstance(shell, ast.Constant) and not shell.value)
+                for branch in branches(first) if first is not None else []:
+                    listed = py_items(branch)
+                    if shell_on:
+                        texts.append(py_text(branch if listed is None else (listed[0] if listed else None)))
+                    else:
+                        texts.append(argv_text(listed if listed is not None else [branch]))
             else:
                 program, start, shape = spec
                 if len(args) <= program:
                     continue
                 if shape == 'list':
-                    rest = py_items(args[start]) if len(args) > start else []
-                    rest = [None] if rest is None else rest[1:]
+                    lists = branches(args[start]) if len(args) > start else [None]
+                    for listed in lists:
+                        rest = [] if listed is None else py_items(listed)
+                        rest = [None] if rest is None else rest[1:]
+                        texts.append(argv_text([args[program]] + rest))
                 elif shape == 'spread':
-                    rest = args[start + 1:]
+                    texts.append(argv_text([args[program]] + args[start + 1:]))
                 else:
-                    rest = args[start:]
-                items = [args[program]] + rest
-        else:
-            continue
-        if shell is None:
-            head = items[0] if items else None
-            if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
-                continue  # stated limit: the program is not a literal
-            shell = ' '.join(py_word(item) for item in items)
-        found.extend(external(shell_calls(shell, line + node.lineno - 1)))
+                    texts.append(argv_text([args[program]] + args[start:]))
+        for shell_text in texts:
+            if shell_text is not None:
+                found.extend(external(shell_calls(shell_text, line + node.lineno - 1)))
     return found
 
 
@@ -660,13 +739,17 @@ def tracked(root):
 
 
 def classify(root, name):
-    """(kind, `#!` line as (kind, program) or None): kind 'shell', 'python', 'other' or None."""
+    """(kind, `#!` line as (kind, program) or None): kind 'shell', 'python', 'other' or None.
+    A `#!` line naming sh, bash, dash or python wins over the extension (a `.sh` file with a
+    python `#!` runs as Python); otherwise `.sh`/`.bash` is shell and `.py` is Python."""
     path, bang = root / name, None
     if not path.is_symlink() and path.is_file():
         with path.open('rb') as handle:
             first = handle.readline(400).decode('utf-8', 'replace').rstrip('\n')
         if re.match(r'#!\s*/', first):
             bang = shebang(first)
+    if bang and bang[0] in ('shell', 'python'):
+        return bang[0], bang
     if name.endswith(('.sh', '.bash')):
         return 'shell', bang
     if name.endswith('.py'):
@@ -677,42 +760,105 @@ def classify(root, name):
 STANDARD_BIN = ('/usr/bin/', '/bin/', '/usr/sbin/', '/sbin/', '/usr/local/bin/')
 
 
+def repo_path(word):
+    """A literal relative path as a repository path (`./x` is `x`); None outside the repository."""
+    if word.startswith(('/', '$', '"', "'")):
+        return None
+    path = posixpath.normpath(word)
+    return None if path == '..' or path.startswith('../') else path
+
+
 def problems(root):
+    """Every file is read in the language it runs in: by its own kind, and also in the language
+    of each call that runs or sources it by a literal path (`bash FILE`, `python3 FILE`,
+    `. FILE`, `./FILE`). A tracked file a call runs, but that cannot be read, is named."""
     found, files = [], tracked(root)
+    tracked_files = set(files)
+    kinds = {name: classify(root, name) for name in files}
+    readings, order = {}, []
+
+    def want(name, lang):
+        if (name, lang) not in readings:
+            readings[(name, lang)] = None
+            order.append((name, lang))
+
     for name in files:
-        kind, bang = classify(root, name)
+        kind, bang = kinds[name]
+        if kind in ('shell', 'python'):
+            want(name, kind)
+        elif kind == 'other':
+            found.append(f'{name}: not read: line 1: its `#!` line names {bang[1]!r}, '
+                         'which this reader does not read')
+    position = 0
+    while position < len(order):
+        name, lang = order[position]
+        position += 1
+        label = name if kinds[name][0] == lang else f'{name} (run as {lang})'
         try:
-            if kind == 'shell':
-                calls = shell_calls((root / name).read_text(encoding='utf-8'))
-            elif kind == 'python':
-                calls = python_calls((root / name).read_text(encoding='utf-8'))
-            elif kind == 'other':
-                raise Unsupported(f'line 1: its `#!` line names {bang[1]!r}, which this reader does not read')
-            else:
-                continue
-        except (Unsupported, SyntaxError) as error:
-            found.append(f'{name}: not read: {error}')
+            text = (root / name).read_text(encoding='utf-8')
+            calls = shell_calls(text) if lang == 'shell' else python_calls(text)
+        except (Unsupported, SyntaxError, UnicodeDecodeError) as error:
+            readings[(name, lang)] = label
+            found.append(f'{label}: not read: {error}')
             continue
-        if bang:
+        readings[(name, lang)] = calls
+        for _, word, _ in calls:
+            marker = next((m for m in RUNS if word.startswith(m)), None)
+            if marker:
+                target = repo_path(word[len(marker):])
+                if target in tracked_files:
+                    want(target, RUNS[marker])
+            elif '/' in word:
+                target = repo_path(word)
+                if target in tracked_files and kinds[target][0] != 'other':
+                    # Run as a program: its `#!` decides; without one, the shell runs it as a script.
+                    want(target, kinds[target][0] if kinds[target][0] in ('shell', 'python') else 'shell')
+
+    def functions_of(key, seen):
+        calls = readings.get(key)
+        if not isinstance(calls, list):
+            return set()
+        names = {word[2:] for _, word, _ in calls if word.startswith('()')}
+        for _, word, _ in calls:
+            if word.startswith('(src)'):
+                target = repo_path(word[5:])
+                if (target, 'shell') not in seen:
+                    seen.add((target, 'shell'))
+                    names |= functions_of((target, 'shell'), seen)
+        return names
+
+    for name, lang in order:
+        calls = readings[(name, lang)]
+        if not isinstance(calls, list):
+            continue
+        kind, bang = kinds[name]
+        label = name if kind == lang else f'{name} (run as {lang})'
+        if bang and kind == lang:
             calls = [(1, bang[1], True)] + calls
-        functions = {word[2:] for _, word, _ in calls if word.startswith('()')}
+        functions = functions_of((name, lang), {(name, lang)})
+        once = 0
         for line, word, by_prefix in calls:
-            if word.startswith('()') or word in BUILTINS or (word in functions and not by_prefix):
+            if word.startswith('()') or any(word.startswith(m) for m in RUNS):
+                continue
+            if word in BUILTINS or (word in functions and not by_prefix):
                 continue
             if word in DECLARED:
                 if word in ONLY_IN and name not in ONLY_IN[word]:
-                    found.append(f'{name}:{line}: calls `{word}`, which only '
+                    found.append(f'{label}:{line}: calls `{word}`, which only '
                                  f'{", ".join(sorted(ONLY_IN[word]))} may call')
                 continue
             if word in DYNAMIC.get(name, ()):
                 continue
+            if DYNAMIC_ONCE.get(name) == word:
+                once += 1
+                if once == 1:
+                    continue
             if '/' in word and not word.startswith(('$', '"', "'")):
                 if word.startswith(STANDARD_BIN) and word.rsplit('/', 1)[-1] in IMAGE:
                     continue
-                # Normalised, so `./x` is `x` and `../x` (outside the repository) is never tracked.
-                if not word.startswith('/') and posixpath.normpath(word) in files:
-                    continue
-            found.append(f'{name}:{line}: calls `{word}`, which the gate image does not declare '
+                if repo_path(word) in tracked_files:
+                    continue  # read above in the language it runs in (or named as not read)
+            found.append(f'{label}:{line}: calls `{word}`, which the gate image does not declare '
                          '(scripts/script_commands.py)')
     return found
 
