@@ -20,8 +20,8 @@ forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.p
 ```
 
 ```text
-forge-warden 0.2.0: FAIL (exit 7 policy_fail, next: change_input)
-  patch bbf580931c67, policy a0ac60726c9b, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
+forge-warden 0.2.1: FAIL (exit 7 policy_fail, next: change_input)
+  patch bbf580931c67, policy 55c357961fc8, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
   4 file(s), 10 rule(s): 5 pass, 0 waived, 4 hold, 1 fail
   [PASS  ] no-secrets (forbid_signal, fail)
   [PASS  ] no-hidden-text (forbid_signal, fail)
@@ -68,32 +68,34 @@ people, scripts, CI and agents together.
 ## Install
 
 ```bash
-cargo install --git https://gitlab.com/lukeomahoney/forge-warden --tag v0.2.0 forge-warden-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/forge-warden --tag v0.2.1 forge-warden-cli --locked
 cargo install --git https://gitlab.com/lukeomahoney/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
 forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
 ```
 
 The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
-agent's configuration (`.claude` and everything under it) for a person's review, and so it does a text
-file sent as a binary section, whose lines no signal rule can read (an executable with another name
-than the rule lists needs a path rule of your own); read `examples/starter.warden.toml`
+agent's configuration (`.claude` and everything under it) for a person's review. It also holds a text
+file sent as a binary section, whose lines no signal rule can read (an executable whose name the rule
+does not list needs a path rule of your own); read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
-Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.0 is a
+Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.1 is a
 source release: there is no forge-warden binary to download. Authority mode runs only the
 deep-diff-forge binary whose SHA-256 your policy lists, and a binary you build yourself has other
 bytes than the released one ([runbook](docs/RUNBOOK.md), step 3).
 
-The repository of record is GitLab (`gitlab.com/lukeomahoney/forge-warden`); the tag `v0.2.0`
-exists there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
+The repository of record is GitLab (`gitlab.com/lukeomahoney/forge-warden`); the release tags
+(`v0.2.0`, and `v0.2.1` once the owner has signed it) are there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
 its `main` predates the fixes in 0.2.0: see advisory
 [FW-2026-001](docs/advisories/FW-2026-001.md).
 
-Coming from 0.1.0? [Upgrading to 0.2.0](docs/UPGRADING.md) lists what changed and what to do.
+Coming from 0.2.0 or 0.1.0? [Upgrading](docs/UPGRADING.md) lists what changed and what to do: from 0.2.0,
+one new starter rule and two globs in `ci-is-owned` to copy by hand.
 
 forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
-Unix file metadata, and clean up child process groups with `/usr/bin/kill`. It is built, tested and
+Unix file metadata, clean up child process groups with `/usr/bin/kill`, and cap bound mode's Git
+children with `/usr/bin/prlimit` (util-linux). It is built, tested and
 measured on x86_64 Linux only; the deep-diff-forge release this repository pins exists for that
 platform alone.
 
@@ -177,7 +179,7 @@ patch is refused), `diff.relative` in a subdirectory leaves out every change out
 `.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
 cannot read; no check of the patch can see any of these. If you must use Git directly, run what
 the script runs,
-`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level, with Git 2.40 or later: the first two options take attributes from the empty
 tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
 repository root: forge-warden does not check that the patch is the whole change between two
@@ -285,7 +287,7 @@ is a convenience that catches mistakes early, not a boundary (CI and the build c
 | Layer | What it stops | Where |
 | --- | --- | --- |
 | **Lint wall** | `unsafe`, panics (`unwrap`, `expect`, `panic!`, indexing, unchecked arithmetic, `as` casts), missing docs, wildcard matches, `print!`, `#[allow]`; every warning is an error | `Cargo.toml` `[workspace.lints]`, [ADR 0002](docs/adr/0002-the-lint-wall.md) |
-| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git and `/usr/bin/kill` for cleanup); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors/`](crates/forge-warden-cli/src/doors/mod.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
+| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git, `/usr/bin/kill` for cleanup and `/usr/bin/prlimit` as bound mode's exec wrapper); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors/`](crates/forge-warden-cli/src/doors/mod.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
 | **A pure core** | I/O, clocks and threads in the engine: they are compile errors in `forge-warden-core` | [`crates/forge-warden-core/clippy.toml`](crates/forge-warden-core/clippy.toml) |
 | **Contracts as tests** | schema, README, registry and vocabulary drift; non-determinism; unsafe output | `crates/forge-warden-cli/tests/` |
 | **Properties** | whole classes of bugs: adding a rule never loosens a verdict; dates round-trip; rendered output is always printable ASCII | `proptest` in both crates |

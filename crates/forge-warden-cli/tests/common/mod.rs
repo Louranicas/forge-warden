@@ -30,7 +30,8 @@ mod process_env;
 /// door lints, make an `ExitCode` or mint a produced ranking. The list is closed and exact.
 /// `door_files_are_exactly_the_listed_modules` refuses any other Rust file under [`DOOR_DIR`], so no
 /// file gains door rights just by where it lives.
-pub(crate) const DOOR_FILES: [&str; 9] = [
+pub(crate) const DOOR_FILES: [&str; 10] = [
+    "crates/forge-warden-cli/src/doors/child/bound.rs",
     "crates/forge-warden-cli/src/doors/child/entropy.rs",
     "crates/forge-warden-cli/src/doors/child/git.rs",
     "crates/forge-warden-cli/src/doors/child/isolation.rs",
@@ -493,7 +494,7 @@ pub(crate) struct Sources {
 pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
     (
         "examples/starter.warden.toml",
-        "a0ac60726c9b5cb2e9480c29042b74067c0852c96ec7c860171c88486cef3834",
+        "55c357961fc8a0a46039b60c9c9a9ad9531f31a37f23d5448c54a714a1ba22e0",
     ),
     (
         "schemas/error.v1.schema.json",

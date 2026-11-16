@@ -21,8 +21,10 @@ git --version
 
 ## 2. Install forge-warden at a pinned revision
 
-**NOT YET RUN** as written: no published revision carries 0.2.0 yet, and the verifier ran a local build of
-the branch instead.
+**Run for v0.2.0** (2026-11-16) with `--tag v0.2.0` in place of `--rev`: from the GitLab tag into a scratch root
+with a fresh `CARGO_HOME`, then that binary in a container without network or Git allowlist, where it
+printed every line of the README's advisory sample, byte for byte and in order (`…` skips lines). For 0.2.1 the same run is a release step after the
+owner's tag (`docs/RELEASE-0.2.1.md`); until it is recorded there, 0.2.1 has not been installed this way.
 
 Pin what you deploy: a release tag, or a commit you have reviewed.
 
@@ -31,7 +33,7 @@ cargo install --git https://gitlab.com/lukeomahoney/forge-warden --rev <commit> 
 forge-warden schema exit-codes   # the exit codes your automation will see
 curl --fail --location --proto '=https' --output make_patch.sh \
   "https://gitlab.com/lukeomahoney/forge-warden/-/raw/<commit>/scripts/make_patch.sh"
-sed -n 2p make_patch.sh          # forge-warden patch-maker v1
+sed -n 2p make_patch.sh          # forge-warden patch-maker v2
 ```
 
 `make_patch.sh` is the patch-maker step 6 uses; take it from the same commit as the binary and
@@ -129,7 +131,7 @@ same goes for a submodule change when `.gitmodules` (which the change itself can
 `.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
 binary sections the ranker cannot read. If you have to use Git directly, run what the script
 runs, from the top level, with Git 2.40 or later:
-`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
 (the first two options take attributes from the empty tree; the script also reads no Git
 configuration).
 
@@ -137,6 +139,15 @@ What a verdict is about: these patch bytes, with paths read from the repository 
 forge-warden does not check that the patch is the whole change between two commits; `--base`
 and `--head` are recorded as your claims, unverified. Whoever makes the patch is part of the
 trust boundary, so make it with `make_patch.sh` or with `scripts/dogfood.sh`, not by hand.
+
+Bound mode (ADR 0012, unreleased): add `--repo DIR --base BASE --head HEAD` (full commit ids) to
+an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
+of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
+(exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). In a
+linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
+(util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. In this revision the
+comparison runs and refuses a mismatch, but the verdict still records `--base` and `--head` as
+unverified claims; verdict v3 records them as verified.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
 next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.

@@ -27,6 +27,7 @@ use doors::child::{GitFactsFailure, RankerFailure};
 use forge_warden_core::authority::{
     Ranking, SuppliedCopy, check as check_coverage, evaluate_advisory, evaluate_authority,
 };
+use forge_warden_core::defaults::NamedDefault as _;
 use forge_warden_core::exit::{Exit, entry_by_code, entry_by_name};
 use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::{PolicyError, parse_policy};
@@ -95,6 +96,12 @@ enum Command {
         /// A claimed head commit (hex), recorded unverified in the verdict.
         #[arg(long, value_name = "REV")]
         head: Option<String>,
+        /// Bound mode (ADR 0012, authority mode only): the repository whose objects hold --base
+        /// and --head (full ids). forge-warden makes `git diff merge-base..head` itself, from a
+        /// verified copy of those objects, and refuses a --patch that is not byte-equal to it.
+        /// For a linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`.
+        #[arg(long, value_name = "DIR", requires_all = ["ranker", "base", "head"], conflicts_with = "advisory")]
+        repo: Option<PathBuf>,
         /// Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC).
         #[arg(long, value_name = "DATE")]
         today: Option<String>,
@@ -269,6 +276,7 @@ fn run(command: Command) -> Result<Exit, Failure> {
             git,
             base,
             head,
+            repo,
             today,
             json,
         } => check(&CheckArgs {
@@ -279,6 +287,7 @@ fn run(command: Command) -> Result<Exit, Failure> {
             git,
             base,
             head,
+            repo,
             today,
             json,
         }),
@@ -312,6 +321,7 @@ struct CheckArgs {
     git: PathBuf,
     base: Option<String>,
     head: Option<String>,
+    repo: Option<PathBuf>,
     today: Option<String>,
     json: bool,
 }
@@ -333,6 +343,10 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         None => doors::today().map_err(Failure::from_door)?,
     };
     let claims = claims(args.base.as_deref(), args.head.as_deref())?;
+    let bound_ids = match (&args.repo, &args.base, &args.head) {
+        (Some(_), Some(base), Some(head)) => Some(full_ids(base, head)?),
+        _ => None,
+    };
     let git_path = git_path(&args.git)?;
     let policy_bytes = doors::read_file(&args.policy).map_err(Failure::from_door)?;
     let policy = parse_policy(&policy_bytes).map_err(|e| policy_failure(&e))?;
@@ -345,6 +359,9 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
     let advisory;
     let verdict: &Verdict = if let Some(ranker) = &args.ranker {
         let admitted_git = doors::child::admit_git_pinned(&args.git).map_err(Failure::from_door)?;
+        if let (Some(repo), Some((base, head))) = (&args.repo, bound_ids) {
+            bind(admitted_git.admitted(), repo, base, head, &patch)?;
+        }
         let (facts, facts_sha256) = authority_git_facts(&admitted_git, &patch)?;
         let git = git_oracle(admitted_git.admitted(), git_path)?;
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
@@ -400,6 +417,81 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
         advisory.verdict()
     };
     report(verdict, args.json)
+}
+
+/// `--base` and `--head` as bound mode takes them (ADR 0012 D1): full object ids of one length, 40
+/// or 64 lowercase hex digits. Names and abbreviations are refused: resolving them reads refs.
+fn full_ids<'a>(base: &'a str, head: &'a str) -> Result<(&'a str, &'a str), Failure> {
+    let hex = |id: &str| {
+        id.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    if base.len() == head.len() && matches!(base.len(), 40 | 64) && hex(base) && hex(head) {
+        Ok((base, head))
+    } else {
+        Err(Failure::new(
+            Exit::Usage,
+            "--repo needs --base and --head as full object ids of one length (40 or 64 lowercase hex digits)",
+        ))
+    }
+}
+
+/// Bound mode's comparison (ADR 0012 D4): the patch must be byte-equal to the diff forge-warden
+/// made from a verified copy of the repository's objects. A difference is a wrong input (exit 4);
+/// a store that does not hold what its ids name, or Git out of bounds, gives no verdict (exit 3).
+/// This step does not yet mark the claims verified (M7-PATCH-BOUND step b, verdict v3).
+fn bind(
+    git: &doors::child::AdmittedGit,
+    repo: &Path,
+    base: &str,
+    head: &str,
+    patch: &[u8],
+) -> Result<(), Failure> {
+    use doors::child::BoundFailure;
+    // Every bound-mode refusal by its variant (REFUSAL_MAP): a repository bound mode cannot read and
+    // a store that does not hold what its ids name give no verdict (exit 3); ids that name no
+    // usable pair of commits are a wrong input (exit 4).
+    let fail = |failure: BoundFailure| match failure {
+        BoundFailure::Door(error) => Failure::from_door(error),
+        BoundFailure::Repository(why) => Failure {
+            exit: Exit::Io,
+            message: format!("--repo {}: {why}", repo.display()),
+            next: "check_environment",
+        },
+        why @ (BoundFailure::Ids
+        | BoundFailure::NotACommit { .. }
+        | BoundFailure::NoCommonHistory
+        | BoundFailure::SeveralMergeBases(_)) => {
+            Failure::new(Exit::InvalidInput, format!("bound mode: {why}"))
+        }
+        why @ (BoundFailure::Store(_)
+        | BoundFailure::VerifiedMergeBase(_)
+        | BoundFailure::Unavailable(_)) => Failure::new(Exit::Io, format!("bound mode: {why}")),
+    };
+    let objects = doors::child::admit_repository(repo).map_err(fail)?;
+    let made = doors::child::bound_diff(git, &objects, base, head).map_err(fail)?;
+    if made.patch == patch {
+        return Ok(());
+    }
+    // Equal up to the shorter length: the first difference is where the shorter one ends.
+    let first = match made.patch.iter().zip(patch).position(|(a, b)| a != b) {
+        Some(at) => at,
+        None => made.patch.len().min(patch.len()),
+    };
+    // ADR 0012 D4 (review S4): name the admitted Git, whose diff output is the reference. The Git
+    // that made the patch is not known to forge-warden.
+    let version = doors::child::git_version(git)
+        .map(|v| format!("{v:?}"))
+        .or_display("an admitted Git whose version could not be read".to_owned());
+    Err(Failure::new(
+        Exit::InvalidInput,
+        format!(
+            "the patch is not `git diff {}..{head}` of --repo: first difference at byte {first} (patch {} bytes, diff {} bytes); make it with forge-warden's `scripts/make_patch.sh {base} {head}`; forge-warden's diff was made by {version} (the admitted Git), and a patch made by another Git version, or by a make_patch.sh without --full-index, can differ",
+            made.merge_base,
+            patch.len(),
+            made.patch.len()
+        ),
+    ))
 }
 
 fn report(verdict: &Verdict, json: bool) -> Result<Exit, Failure> {

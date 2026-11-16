@@ -1,4 +1,8 @@
-# Upgrading from 0.1.0 to 0.2.0
+# Upgrading
+
+From 0.2.0 to 0.2.1: [the last section](#020-to-021). From 0.1.0 to 0.2.0: sections 1 to 7 below.
+
+## From 0.1.0 to 0.2.0
 
 0.2.0 is not a drop-in replacement. 0.1.0 judged a ranking it was handed; 0.2.0 only passes a
 change when it ran the ranker itself, on a patch it holds, with a Git the owner enrolled. This
@@ -9,7 +13,7 @@ in the [changelog](../CHANGELOG.md); the reasons are in ADRs 0005 to 0011
 If you only want yesterday's behaviour with the least work, read section 1 and use advisory
 mode. It reports the same rule results as before, and it can no longer print PASS.
 
-## 1. `check` needs a patch and an explicit mode
+### 1. `check` needs a patch and an explicit mode
 
 0.1.0: `forge-warden check --policy warden.toml --rank rank.json`, with `--patch` optional.
 
@@ -39,7 +43,7 @@ What to do:
   every change. That is intended: a supplied ranking can inform, never approve. To get exit 0
   again, move that pipeline to authority mode.
 
-## 2. The verdict document is `forge-warden.verdict.v2`
+### 2. The verdict document is `forge-warden.verdict.v2`
 
 The v0 document 0.1.0 printed is withdrawn; v1 existed only between releases and is neither
 produced nor accepted (`schemas/verdict.v1.schema.json` stays in the tree for reference only). A consumer that parses `--json` output must change:
@@ -60,7 +64,7 @@ What to do: validate against [`schemas/verdict.v2.schema.json`](../schemas/verdi
 On failure with `--json`, `check`, `lint`, `explain` and `schema` now print one error object on
 stderr (`exit`, `name`, `message`, `next`). Reject stdout whenever the exit code is an error.
 
-## 3. Authority mode needs a pinned producer
+### 3. Authority mode needs a pinned producer
 
 A policy that should be able to PASS lists the SHA-256 of each ranker executable it admits in a
 `[producer]` table ([policy reference](POLICY_REFERENCE.md)). forge-warden hashes the bytes it is
@@ -76,7 +80,7 @@ What to do:
   ranker refuses ends as exit 3 with no verdict, never as a pass.
 - A policy without `[producer]` still works, in advisory mode only.
 
-## 4. Authority mode needs an owner-enrolled Git
+### 4. Authority mode needs an owner-enrolled Git
 
 forge-warden asks Git what the patch changes, and in authority mode it runs only a Git whose
 executable digest the machine's owner has enrolled in `/etc/forge-warden/git-allowlist.toml`.
@@ -91,7 +95,7 @@ allowlist has to be updated before authority mode works again.
 A hosted CI runner has no owner-enrolled allowlist. This repository's own hosted job therefore
 runs in advisory mode by decision and cannot PASS; authority mode is for a machine you control.
 
-## 5. Exit codes: same numbers, wider meanings
+### 5. Exit codes: same numbers, wider meanings
 
 The registry is unchanged: 0 `pass`, 2 `usage`, 3 `io`, 4 `invalid_input`, 7 `policy_fail`,
 8 `policy_hold`, 101 `internal`. What changed is when you see them:
@@ -108,36 +112,63 @@ The registry is unchanged: 0 `pass`, 2 `usage`, 3 `io`, 4 `invalid_input`, 7 `po
 
 What to do: a wrapper that mapped "not 7" to success must be rewritten to accept only 0.
 
-## 6. Policies
+### 6. Policies
 
 - A policy with no rules is refused (exit 4). Add at least one rule.
 - A policy file over 1 MiB is refused (exit 4). 0.1.0 read up to 64 MiB.
 - Duplicate paths in a ranking hold the verdict.
 - `lint --json` prints `forge-warden.lint.v1`.
 
-## 7. If you use the crates as a library
+### 7. If you use the crates as a library
 
 `forge-warden-core` is not a stable API yet. Since 0.1.0: `Policy`, `RankDoc`, `RankedFile`
 and `Evidence` have private fields and are built only through the parsers; rule kinds are the
 enum `Kind` (non-exhaustive: match it with a wildcard arm); `Verdict` is no longer `Clone`; a ranking is judged only through the
 authority and advisory entry points, which take a checked ranking.
 
-## After 0.2.0: starter rules to copy by hand
-
-`forge-warden init` prints the starter policy of the version you run. A `warden.toml` you adopted from
-an older starter keeps its own rules: nothing changes until you edit it. The starter has gained, since
-0.2.0 (changelog, Unreleased):
-- rule `binary-text-is-hidden-text` (hold): a file that is normally text, carried by the patch as a
-  binary section. Copy the whole rule from `examples/starter.warden.toml`; its three globs are generated
-  from the lists in `crates/forge-warden-core/tests/authority.rs` (extensions; exact names, the Git hook
-  names, `configure` and `allowed_signers` among them; name prefixes `LICENSE-`, `COPYING.`,
-  `Dockerfile.`). **Not covered:** an executable with another name (a `bin/tool` with no extension) sent
-  as a binary section is not held by this rule; a shell still runs a script whose first NUL byte is past
-  its 80-byte check. Protect such paths with a `protect_paths` rule (`bin/**`, `tools/**`). A hold for
-  any binary section on an executable file needs the file mode and comes with verdict v3 (ledger Q64).
-- in rule `ci-is-owned`, the two `.claude` globs (any letter case, the entry itself and everything under it).
-
-## Not covered here
+### Not covered here
 
 Moving a signed HOLD acknowledgement workflow from an unreleased v1 build; there was no release
 that produced one. Platforms other than x86_64 Linux: nothing is pinned or tested for them.
+
+## 0.2.0 to 0.2.1
+
+0.2.1 is a drop-in replacement for 0.2.0: the verdict, policy and Git-allowlist schemas and the exit codes are
+unchanged. Act on two things: the starter rules below, if you adopted the starter, and three refusals that
+read differently or are new.
+
+### Starter rules to copy by hand
+
+`forge-warden init` prints the starter policy of the version you run. A `warden.toml` you adopted from
+an older starter keeps its own rules: nothing changes until you edit it. The starter has gained, in
+0.2.1 (changelog, 0.2.1):
+- rule `binary-text-is-hidden-text` (hold): a file that is normally text, carried by the patch as a
+  binary section. Copy the whole rule from `examples/starter.warden.toml`; its three globs are generated
+  from the lists in `crates/forge-warden-core/tests/authority.rs` (extensions; exact names, ten of Git's
+  hook names, `configure` and `allowed_signers` among them, while Git's other hook names such as
+  `post-commit` are not listed; name prefixes `LICENSE-`, `COPYING.`,
+  `Dockerfile.`). **Not covered:** an executable with another name (a `bin/tool` with no extension) sent
+  as a binary section is not held by this rule: bash runs a file as a script unless it finds a NUL byte in
+  its first line (within the first 80 bytes), so a file Git calls binary can still be a script. Protect such paths with a `protect_paths` rule (`bin/**`, `tools/**`). A hold for
+  any binary section on an executable file needs the file mode and is planned for verdict v3 (ledger Q64).
+- in rule `ci-is-owned`, the two `.claude` globs (any letter case, the entry itself and everything under it).
+
+### The ranker pin
+
+The ranker pin stays deep-diff-forge 0.8.2; its advisory GHSA-rq5r-p3g9-phff (published 2026-11-11) is fixed in 0.8.3.
+Measured with 0.2.1 in authority mode on the advisory's shapes (Touchstone, receipt 88e2f464): the bare-header
+shape and the three submodule-mode shapes are held on forge-warden's own checks (the header check; "unsupported
+file mode"); the `new file mode` then `new mode` shape gets the same verdict as Git's own patch for that change,
+because forge-warden takes the executable and symlink signals from Git's reading, not from the ranker. Moving
+the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-PIN).
+
+### Refusals that read differently
+- A file replaced by a symlink, or the reverse, is still refused (`patch_unverifiable`); the detail now says
+  the path "changes type" instead of "git lists PATH more than once". Automation that matched the old
+  text should match the note code instead.
+- A patch without `diff --git a/PATH b/PATH` headers is still refused (`patch_unverifiable`); the detail now
+  says to make the patch with `scripts/make_patch.sh <base> <head>` instead of `git diff --src-prefix=a/
+  --dst-prefix=b/`. Match the note code, not the text.
+- New: Git's numstat counts are read strictly (1 to 20 decimal digits, or `-` `-` for a binary file); any
+  other count is refused as unreadable Git output, where 0.2.0 read it as a content change. Git does not
+  write one, so a patch Git made is unaffected.

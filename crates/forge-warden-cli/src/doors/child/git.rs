@@ -52,6 +52,13 @@ impl AdmittedGit {
     }
 }
 
+impl AdmittedGit {
+    /// The admitted descriptor, for the sibling bound-mode door (ADR 0012); never a path.
+    pub(super) fn executable(&self) -> &PinnedExecutable {
+        &self.executable
+    }
+}
+
 /// Authority proof: only pinned admission constructs this private-field token.
 #[derive(Debug)]
 pub(crate) struct PinnedGit {

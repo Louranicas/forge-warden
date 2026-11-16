@@ -11,14 +11,26 @@ pub(in crate::doors) use process::{
 pub(crate) use process::{PinnedExecutable, pin_executable, run_child};
 
 mod git;
+// Bound mode (ADR 0012): the diff of two commits from a verified copy of a repository's objects.
+mod bound;
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+pub(in crate::doors) use bound::{
+    ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program, cut_in,
+    recheck_in,
+};
+pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
+// The admission refusals are named only in tests (the refusal map's rows and the door tests).
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+pub(crate) use bound::RepositoryRefusal;
 pub(crate) use git::{
     AdmittedGit, GitFactsFailure, PinnedGit, admit_git_advisory, admit_git_pinned, git_facts,
+    git_version,
 };
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use git::{
-    GIT_STDERR_CAP, fixture_git, git_facts_in, git_version, parse_git_allowlist,
-};
+pub(in crate::doors) use git::{GIT_STDERR_CAP, fixture_git, git_facts_in, parse_git_allowlist};
 
 /// How a child ended, or why it was refused.
 #[derive(Debug, PartialEq, Eq)]
@@ -73,6 +85,16 @@ pub(crate) enum Program<'a> {
     Absolute(&'a Path),
     /// An executable pinned by content.
     Pinned(&'a PinnedExecutable),
+    /// A pinned executable run under `/usr/bin/prlimit` with these `RLIMIT_DATA` and `RLIMIT_AS` caps,
+    /// set before the executable's first instruction (bound mode, ADR 0012 D3.6). The executable
+    /// is reached as `/proc/<this process>/fd/<n>`: the descriptor is close-on-exec, so prlimit,
+    /// once it runs, no longer has `/proc/self/fd/<n>`. A missing prlimit fails the spawn: never an
+    /// uncapped run.
+    Limited {
+        pinned: &'a PinnedExecutable,
+        data: u64,
+        address_space: u64,
+    },
 }
 
 mod entropy;
