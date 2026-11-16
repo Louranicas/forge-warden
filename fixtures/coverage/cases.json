@@ -531,6 +531,46 @@
    ],
    "source": "fixtures/coverage/keel-submodule-add.patch with `new file mode<TAB>160000`",
    "why": "mode-line negative control (Lodestar #294): a Git-accepted spelling of a 160000 mode line is refused"
+  },
+  {
+   "name": "ddf083-G1a-files-differ-replaces",
+   "expect": "status_mismatch",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "deep-diff-forge v0.8.3 rescore finding patch (captured with git version 2.56.1)",
+   "why": "deep-diff-forge 0.8.3 known finding G1 (high, v0.8.3 rescore): `index` + `Files … differ`; Git writes the new blob from its object store while the ranker shows modified with no hunks. forge-warden must hold it."
+  },
+  {
+   "name": "ddf083-G1c-rename-files-differ",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "deep-diff-forge v0.8.3 rescore finding patch (captured with git version 2.56.1)",
+   "why": "G1 with `rename from/to`: the renamed file gets a stored blob. forge-warden must hold it."
+  },
+  {
+   "name": "ddf083-G2a-modify-then-rename",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "deep-diff-forge v0.8.3 rescore finding patch (captured with git version 2.56.1)",
+   "why": "deep-diff-forge 0.8.3 known finding G2 (high): several sections on one path; Git applies them as a set and the old path stays. forge-warden must hold it."
+  },
+  {
+   "name": "ddf083-G2e-modify-then-delete",
+   "expect": "unverifiable",
+   "git_rc": [
+    0,
+    0
+   ],
+   "source": "deep-diff-forge v0.8.3 rescore finding patch (captured with git version 2.56.1)",
+   "why": "G2: modify then delete one path; Git leaves the file. forge-warden must hold it."
   }
  ],
  "classes": "rank_refused | unverifiable | covered | '+'-joined subset of status_mismatch, duplicate_paths, rank_incomplete, rank_extraneous (in that order)"
