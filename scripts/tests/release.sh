@@ -97,7 +97,9 @@ g -C "$W" update-index --assume-unchanged .github/release-signers/allowed_signer
 tagit "$S/key-b"; rc=$?; refused "a signer added only in the working tree does not count" "no release signer is enrolled"
 # tag: GitHub remote refused before a tag exists
 fresh hubtag; printf 'owner namespaces="git" %s\n' "$(cut -d' ' -f1,2 "$S/key-a.pub")" >> "$W/.github/release-signers/allowed_signers"; commit_all enrol
-git -C "$W" remote set-url --push forgejo "https://github.com/x/forge-warden.git"
+# A local path that names GitHub: refused by name, and never a network URL, so a test with the check
+# removed (a plant) fails here instead of reaching any service.
+git -C "$W" remote set-url --push forgejo "$S/remotes-github.com/x/forge-warden.git"
 tagit "$S/key-a"; rc=$?; refused "a GitHub push URL is refused before tagging" "is GitHub"
 git -C "$W" rev-parse -q --verify "refs/tags/v$v" >/dev/null && fail "a tag was made before the GitHub refusal" || pass "no tag made when a remote is GitHub"
 # tag: a commit that is not gitlab main
