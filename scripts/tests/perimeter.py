@@ -11,6 +11,7 @@ import sys
 sys.dont_write_bytecode = True
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -447,6 +448,35 @@ class GateImageCommands(unittest.TestCase):
             self.assertEqual(COMMANDS.tracked(Path(directory)), ["ok.sh"])
             self.assertEqual(COMMANDS.problems(Path(directory)), [])
 
+    def test_the_walk_skips_build_output_only_at_the_root(self):
+        # Git can track `x/target/f` (Q66): only the root's build output is skipped.
+        with tempfile.TemporaryDirectory(prefix="script-commands-target-") as directory:
+            root = Path(directory)
+            for name in ("target/a.sh", "mutants.out/b.sh", "x/target/c.sh", "x/mutants.out/d.sh",
+                         "x/.git/e.sh", "ok.sh"):
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text("#!/usr/bin/env bash\ntrue\n")
+            self.assertEqual(COMMANDS.tracked(root), ["ok.sh", "x/mutants.out/d.sh", "x/target/c.sh"])
+
+    def test_inherited_git_variables_do_not_choose_another_index(self):
+        # A decoy GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE in the caller's environment (Q66).
+        with tempfile.TemporaryDirectory(prefix="script-commands-gitenv-") as directory:
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": directory}
+            real, decoy = Path(directory) / "real", Path(directory) / "decoy"
+            for repo, name in ((real, "a.sh"), (decoy, "b.sh")):
+                subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env, stdin=subprocess.DEVNULL)
+                (repo / name).write_text("#!/usr/bin/env bash\ntrue\n")
+                subprocess.run(["git", "-C", str(repo), "add", name], check=True, env=env, stdin=subprocess.DEVNULL)
+            (real / "untracked.sh").write_text("#!/usr/bin/env bash\ntrue\n")  # Git's answer, not the walk's
+            decoys = {"GIT_DIR": str(decoy / ".git"), "GIT_WORK_TREE": str(decoy),
+                      "GIT_INDEX_FILE": str(decoy / ".git" / "index"),
+                      "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": str(decoy)}
+            with mock.patch.dict(os.environ, decoys):
+                self.assertEqual(COMMANDS.tracked(real), ["a.sh"])
+            with mock.patch.dict(os.environ, {"GIT_INDEX_FILE": str(decoy / ".git" / "index")}):
+                self.assertEqual(COMMANDS.tracked(real), ["a.sh"])
+
     def test_a_tree_without_git_is_read_not_skipped(self):
         with tempfile.TemporaryDirectory(prefix="script-commands-nogit-") as directory:
             (Path(directory) / "s.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
@@ -503,6 +533,14 @@ class GateImageCommands(unittest.TestCase):
             "in tar --to-comm=": "tar -xf a.tar --to-comm='cmp - b'\n",
             "in tar --checkpoint-action exec=": "tar --checkpoint-action 'exec=cmp a b' -cf a.tar a\n",
             "in sort --compress=": "sort --compress=xxd a\n",
+            # Q65 / probe4: here-strings, descriptor numbers, clusters on prefixes, -c with -o.
+            "in a here-string to bash": "bash <<< 'cmp a b'\n",
+            "in a here-string before sh": "<<< 'cmp a b' sh\n",
+            "in a here-string to python3": "python3 <<< \"import os; os.system('cmp a b')\"\n",
+            "after 2>/dev/null before the command": "2>/dev/null cmp a b\n",
+            "after xargs -0rn 1": "printf a | xargs -0rn 1 cmp b\n",
+            "after env -iu NAME": "env -iu X cmp a b\n",
+            "in bash -co pipefail": "bash -co pipefail 'cmp a b'\n",
         }
         for name, text in shapes.items():
             with self.subTest(shape=name):
@@ -604,6 +642,40 @@ class GateImageCommands(unittest.TestCase):
             "bash -eoO pipefail extglob FILE": ({"s.sh": "bash -eoO pipefail extglob scripts/helper\n", "scripts/helper": "cmp a b\n"},
                                                 ["scripts/helper (run as shell):1: calls `cmp`"]),
             "bash -o pipefail FILE, a clean file": ({"s.sh": "bash -o pipefail scripts/ok\n", "scripts/ok": "true\n"}, []),
+            # Q65: standard input redirected before the command word.
+            "< FILE bash": ({"s.sh": "< scripts/helper bash\n", "scripts/helper": "cmp a b\n"},
+                            ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "<FILE sh": ({"s.sh": "<scripts/helper sh\n", "scripts/helper": "cmp a b\n"},
+                         ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "shell=True text with no newline, < FILE": ({"t.py": "import subprocess\nsubprocess.run('bash < scripts/helper', shell=True)\n",
+                                                          "scripts/helper": "cmp a b\n"},
+                                                         ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "0< FILE bash": ({"s.sh": "0< scripts/helper bash\n", "scripts/helper": "cmp a b\n"},
+                             ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash 0< FILE": ({"s.sh": "bash 0< scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                             ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "< FILE env python3": ({"s.sh": "< tools/x env python3\n", "tools/x": "import os\nos.system('cmp a b')\n"},
+                                   ["tools/x (run as python):2: calls `cmp`"]),
+            # Bastion CHANGES on 2df4ed6f: `--` with no file after it, and `<>` on standard input.
+            "bash -- < FILE": ({"s.sh": "bash -- < scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                               ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "python3 -- < FILE": ({"s.sh": "python3 -- < tools/x\n", "tools/x": "import os\nos.system('cmp a b')\n"},
+                                  ["tools/x (run as python):2: calls `cmp`"]),
+            "bash <>FILE": ({"s.sh": "bash <>scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                            ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash 0<> FILE": ({"s.sh": "bash 0<> scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                              ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -- FILE < DATA": ({"s.sh": "bash -- scripts/ok < data.txt\n", "scripts/ok": "true\n",
+                                     "data.txt": "cmp a b\n"}, []),
+            "bash 2< DATA, no script file": ({"s.sh": "bash 2< data.txt\n", "data.txt": "cmp a b\n"}, []),
+            "bash 1<> DATA": ({"s.sh": "bash scripts/ok 1<> data.txt\n", "scripts/ok": "true\n", "data.txt": "cmp a b\n"}, []),
+            # Standard input is data when the program got a script: not read.
+            "python3 FILE < DATA": ({"s.sh": "python3 tools/ok.py < data.json\n", "tools/ok.py": "x = 1\n",
+                                     "data.json": "{not python\n"}, []),
+            "< DATA python3 FILE": ({"s.sh": "< data.json python3 tools/ok.py\n", "tools/ok.py": "x = 1\n",
+                                     "data.json": "{not python\n"}, []),
+            "bash -c TEXT < DATA": ({"s.sh": "bash -c 'true' < data.txt\n", "data.txt": "cmp a b\n"}, []),
+            "2< DATA bash FILE": ({"s.sh": "bash scripts/ok 2< data.txt\n", "scripts/ok": "true\n", "data.txt": "cmp a b\n"}, []),
         }
         for name, (files, expected) in cases.items():
             with self.subTest(case=name):
