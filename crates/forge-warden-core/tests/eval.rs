@@ -343,7 +343,11 @@ fn the_starter_policy_holds_a_binary_section_on_a_text_path() {
             "{path} is not a text name"
         );
     }
-    assert_eq!(rule_says("src/lib.rs", &[]), RuleOutcome::Pass, "no binary section");
+    assert_eq!(
+        rule_says("src/lib.rs", &[]),
+        RuleOutcome::Pass,
+        "no binary section"
+    );
 }
 
 #[test]
