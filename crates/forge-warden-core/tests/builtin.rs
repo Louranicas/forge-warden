@@ -255,10 +255,9 @@ fn no_policy_can_waive_or_declare_the_built_in_rule() {
         "{refused}"
     );
     let declared = PERMISSIVE.replace("no-secrets", ID);
-    let kebab =
-        parse_policy(format!("schema = \"forge-warden.policy.v0\"\n{declared}").as_bytes())
-            .unwrap_err()
-            .to_string();
+    let kebab = parse_policy(format!("schema = \"forge-warden.policy.v0\"\n{declared}").as_bytes())
+        .unwrap_err()
+        .to_string();
     assert!(kebab.contains("kebab-case"), "{kebab}");
 }
 
