@@ -416,10 +416,16 @@ class Runner(unittest.TestCase):
         catalog=json.loads(Path(__file__).with_name('catalog.json').read_text())
         runnable={c['guardrail'] for c in catalog['cases']}
         pending={c['id'] for c in catalog['pending_guardrails']}
-        self.assertFalse(runnable & pending)
+        retired={c['id'] for c in catalog['retired_guardrails']}
+        self.assertFalse(runnable & pending or runnable & retired or pending & retired)
         # G-54 (bound mode) added 2026-11-16 by the register owner (Lodestar ruling P1.6).
-        self.assertEqual(runnable | pending, {f'G-{i:02}' for i in range(1,55)})
+        self.assertEqual(runnable | pending | retired, {f'G-{i:02}' for i in range(1,55)})
         self.assertTrue(all(c['status']=='PENDING' for c in catalog['pending_guardrails']))
+        # Owner decision D3 (2026-11-16): each retired row names its decision, its reason and what it was.
+        self.assertTrue(all(c['status']=='RETIRED' and c['decision'] and c['reason'] and c['was']
+                            for c in catalog['retired_guardrails']))
+        self.assertTrue(all(case['guardrail']==row['id'] for row in catalog['retired_guardrails']
+                            for case in row.get('cases', [])))
 
     def test_cli_receipt_is_incomplete_and_source_is_unchanged(self):
         # Real Git, synthetic compiler protocol: tests the runner, not Rust enforcement.
@@ -531,10 +537,16 @@ class ReadmeCounts(unittest.TestCase):
         readme, catalog = self.actual()
         text = ' '.join(readme.split())
         said = ANCHORS.COUNT_SENTENCE.search(text)
-        for key in ('plants', 'rows', 'capacity', 'z3', 'pending', 'pending_ids'):
+        for key in ('plants', 'rows', 'capacity', 'z3', 'pending', 'pending_ids', 'retired', 'retired_ids'):
             with self.subTest(key=key):
                 start, end = said.span(key)
-                stale = 'G-99, G-47' if key == 'pending_ids' else str(int(said[key]) - 1)
+                if start < 0:  # no pending row: the README names none, so a stale one is inserted
+                    start = end = said.end('pending') + len(' are explicitly PENDING')
+                    stale = ' (G-99)'
+                elif key.endswith('_ids'):
+                    stale = 'G-99, G-47'
+                else:
+                    stale = str(int(said[key]) + 1)
                 found = self.problems(text[:start] + stale + text[end:], catalog)
                 self.assertEqual(len(found), 1, found)
                 self.assertTrue(found[0].startswith(f'README: {key} says '), found)
@@ -545,8 +557,15 @@ class ReadmeCounts(unittest.TestCase):
         self.assertEqual(self.problems(readme, grown),
                          [f"README: plants says '{len(catalog['cases'])}', the catalogue gives "
                           f"'{len(catalog['cases']) + 1}'"])
-        closed = dict(catalog, pending_guardrails=catalog['pending_guardrails'][1:])
-        self.assertEqual(len(self.problems(readme, closed)), 2)
+        restored = dict(catalog, retired_guardrails=catalog['retired_guardrails'][1:])
+        self.assertEqual(len(self.problems(readme, restored)), 2)
+        unreasoned = dict(catalog, retired_guardrails=[dict(row, decision='') for row in
+                                                       catalog['retired_guardrails']])
+        self.assertIn('README: a retired register row has no RETIRED status or no decision',
+                      self.problems(readme, unreasoned))
+        revived = dict(catalog, cases=catalog['cases'] + catalog['retired_guardrails'][-1]['cases'][:1])
+        self.assertIn('README: a retired register row still has a runnable case',
+                      self.problems(readme, revived))
         moved = dict(catalog, cases=[dict(case, guardrail='G-01') if case['id'].startswith('z3-')
                                      else case for case in catalog['cases']])
         self.assertIn('README: a z3-* case does not exercise G-45', self.problems(readme, moved))

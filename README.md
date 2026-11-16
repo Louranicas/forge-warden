@@ -248,20 +248,26 @@ as JSON, and a test fails if this table drifts from it.
 ```
 
 Take the policy from the **base** checkout, not from the pull request. Otherwise a pull request
-can loosen the rules that judge it. The workflow kept in this repository as a worked example for
-deployers on GitHub ([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) runs
-[`scripts/dogfood.sh`](scripts/dogfood.sh) from a separate base checkout. This repository's own gate
-uses no hosted workflow; where it runs is in [CONTRIBUTING](CONTRIBUTING.md#where-the-gate-runs). The candidate is only diff data, and the driver picks authority or
+can loosen the rules that judge it. This repository's example workflow
+([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) runs [`scripts/dogfood.sh`](scripts/dogfood.sh)
+from a separate base checkout. The project does not run that workflow itself: it is kept for deployers on
+GitHub, and this project's gate of record is the local integrator gate, with merges admitted on GitLab
+(owner decision D3, 2026-11-16; where each check runs is in
+[CONTRIBUTING](CONTRIBUTING.md#where-the-gate-runs)). The candidate is only diff data, and the driver picks authority or
 advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). On a hosted runner
 it is asked for advisory mode (`--hosted-advisory`): the runner has no owner-enrolled Git allowlist
 ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)), so that job reports evidence and cannot PASS. It
-still fetches the pinned deep-diff-forge release and checks its bytes. Authority mode is claimed
+still fetches the pinned deep-diff-forge release and checks its bytes. Only that hosted job downloads:
+a local run names a copy of the pinned release archive with `--ranker-archive FILE` (the driver copies
+it and checks the copy against the same pinned SHA-256), and without either argument the driver
+refuses before it does anything. Authority mode is claimed
 only for a machine whose owner enrolled the allowlist. A workflow file in
 the repository is not an independent approval boundary, so the trust root must be enforced
 outside the pull request (see [`SECURITY.md`](SECURITY.md)).
 
-As written, the scheduled full mutation baseline (its plan and shards), run on merged `main` only,
-can use a self-hosted runner-up pool. In that workflow, pull requests, every ci.yml job and the
+The scheduled full mutation baseline (its plan and shards), run on merged `main` only, can use a
+self-hosted runner-up pool. Like `ci.yml` it is a deployer example: this project runs no runner-up pool, and
+the runner-routing guardrail (G-52) is retired from 1.0 (D3; [`plants/README.md`](plants/README.md)). In that workflow, pull requests, every ci.yml job and the
 baseline's aggregate check always run hosted. The trade-offs and the residual host-loopback exposure are set out in
 [`docs/runner-up.md`](docs/runner-up.md).
 
@@ -299,7 +305,7 @@ change, the vocabulary check and the workflow audit.
 | **Mutation testing** | tests that pass whatever the code does: every surviving mutant in a change's diff fails it | `scripts/ci_local.sh` and the integrator gate (hosted job `mutation` for deployers) |
 | **Supply chain** | unknown registries and git sources, copyleft licences, yanked or advisory-flagged crates | [`deny.toml`](deny.toml), `scripts/ci_local.sh` and the integrator gate (hosted job `supply-chain` for deployers) |
 | **Workflow audit** | template injection, credential persistence, unpinned actions | `zizmor`: in the hosted workflow for deployers, and in `scripts/ci_local.sh` when it is installed; not in the integrator gate. Every action pinned to a commit SHA |
-| **Dogfooding** | forge-warden's own changes skipping its own policy | [`scripts/dogfood.sh`](scripts/dogfood.sh) and [`warden.toml`](warden.toml); hosted job `dogfood` for deployers. Not yet run on each change of this repository; `scripts/dogfood.sh` downloads its pinned ranker from github.com |
+| **Dogfooding** | forge-warden's own changes skipping its own policy | [`scripts/dogfood.sh`](scripts/dogfood.sh) and [`warden.toml`](warden.toml); hosted job `dogfood` for deployers. Not yet run on each change of this repository |
 | **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), `just install-hooks` |
 | **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 

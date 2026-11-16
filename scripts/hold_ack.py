@@ -89,13 +89,19 @@ def admitted_git(verdict):
 def expected(args, signer, expires_at):
     require(type(expires_at) is int and expires_at > int(time.time()), "acknowledgement expired or invalid expiry")
     require(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", signer), "invalid signer ID")
+    # SHA-1 (40) or SHA-256 (64) object ids, both the same length: bound mode verifies claims in either
+    # object format (Bastion's LOW on PATCH-BOUND b: a SHA-256 hold could not be acknowledged).
     for commit in (args.base, args.head):
-        require(re.fullmatch(r"[0-9a-f]{40}", commit), "full lowercase commit IDs required")
+        require(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit), "full lowercase commit IDs required")
+    require(len(args.base) == len(args.head), "base and head must be object ids of one length")
     raw = read(args.verdict, LIMIT)
     verdict = decode(raw)
     require(verdict["schema"] == "forge-warden.verdict.v3", "unsupported verdict schema")
     # v3 (ADR 0012): verified claims bind the patch to base and head; they must be these commits.
     claims = verdict["seals"].get("claims")
+    # The merge base is not compared with anything: the acknowledgement names base and head, and the
+    # merge base is what forge-warden computed from those two in a verified copy (ADR 0012 D3), so it
+    # adds no claim the signer makes. It is still bound, through verdict_sha256, like every other field.
     if isinstance(claims, dict) and claims.get("verified") is True:
         require(claims.get("base") == args.base and claims.get("head") == args.head,
                 "the verdict's verified claims name other commits")
@@ -121,7 +127,7 @@ def expected(args, signer, expires_at):
             held.append(rule["id"])
     require(held and verdict["summary"]["held"] == len(held) and verdict["summary"]["failed"] == 0,
             "inconsistent HOLD summary")
-    return {"schema": "forge-warden.hold-ack.v1", "repository": "Louranicas/forge-warden",
+    return {"schema": "forge-warden.hold-ack.v1", "repository": "lukeomahoney/forge-warden",
             "base": args.base, "head": args.head, "verdict_sha256": hashlib.sha256(raw).hexdigest(),
             "held_rules": sorted(held), "signer": signer, "expires_at": expires_at}
 

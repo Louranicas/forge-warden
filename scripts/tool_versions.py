@@ -74,7 +74,7 @@ LOCAL_PROBES = {
 }
 # Why a step may be hosted-only. A name outside this table cannot be declared hosted-only.
 HOSTED_ONLY_REASONS = {
-    "zizmor": "the trusted offline image has no zizmor (G-47)",
+    "zizmor": "the trusted offline image has no zizmor (G-47, retired from 1.0 by owner decision D3)",
     "deep-diff-forge": "the dogfood gate fetches the pinned release archive; a local run needs that binary on PATH",
 }
 

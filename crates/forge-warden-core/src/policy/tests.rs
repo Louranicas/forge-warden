@@ -56,7 +56,8 @@ fn typoed_signal_gets_a_suggestion() {
 #[test]
 fn every_issue_is_reported_at_once() {
     let text = format!(
-        "schema = \"forge-warden.policy.v1\"\n[[rule]]\n{}\n[[rule]]\n{}\n",
+        // v9: an unknown schema id (v1 became valid with ADR 0012 D8).
+        "schema = \"forge-warden.policy.v9\"\n[[rule]]\n{}\n[[rule]]\n{}\n",
         GOOD.replace("no-secrets", "No_Secrets").replace(
             "A credential committed once is compromised forever.",
             "because"
@@ -365,4 +366,63 @@ fn a_toml_syntax_error_keeps_its_line_and_column() {
         parse_policy(b"\xff"),
         Err(PolicyError::Malformed { at: None, .. })
     ));
+}
+
+/// A policy of `schema` with the good rule and then `tail` (tables after the rules).
+fn policy_text(schema: &str, tail: &str) -> String {
+    format!("schema = \"{schema}\"\n[[rule]]\n{GOOD}\n{tail}")
+}
+
+#[test]
+fn claims_need_policy_v1_and_are_read_exactly() {
+    // ADR 0012 D8 under Lodestar's R2 reversal: [claims] only under forge-warden.policy.v1.
+    let v1 = |tail: &str| parse_policy(policy_text(POLICY_SCHEMA_V1, tail).as_bytes());
+    assert!(
+        v1("[claims]\nrequire_verified = true\n")
+            .unwrap()
+            .require_verified()
+    );
+    assert!(
+        !v1("[claims]\nrequire_verified = false\n")
+            .unwrap()
+            .require_verified()
+    );
+    assert!(!v1("").unwrap().require_verified(), "v1 without the table");
+    assert!(
+        !parse_policy(policy_text(POLICY_SCHEMA, "").as_bytes())
+            .unwrap()
+            .require_verified(),
+        "v0 is read unchanged"
+    );
+    let under_v0 = issues_of(&policy_text(
+        POLICY_SCHEMA,
+        "[claims]\nrequire_verified = true\n",
+    ));
+    assert!(
+        under_v0
+            .iter()
+            .any(|i| i.contains("claims") && i.contains("forge-warden.policy.v1")),
+        "{under_v0:?}"
+    );
+    let unknown_schema = issues_of(&policy_text("forge-warden.policy.v2", ""));
+    assert!(
+        unknown_schema
+            .iter()
+            .any(|i| i.contains("forge-warden.policy.v0") && i.contains("forge-warden.policy.v1")),
+        "{unknown_schema:?}"
+    );
+    for (tail, word) in [
+        (
+            "[claims]\nrequire_verified = true\nrequire_signed = true\n",
+            "require_signed",
+        ),
+        ("[claims]\nrequire_verified = \"yes\"\n", "bool"),
+        ("[claims]\n", "require_verified"),
+    ] {
+        assert!(
+            matches!(v1(tail), Err(PolicyError::Malformed { message: m, .. }) if m.contains(word)),
+            "{tail:?}: {:?}",
+            v1(tail)
+        );
+    }
 }

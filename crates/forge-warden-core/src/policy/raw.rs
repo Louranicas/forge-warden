@@ -12,6 +12,16 @@ pub(super) struct RawPolicy {
     #[serde(default, rename = "waiver")]
     pub(super) waivers: Vec<RawWaiver>,
     pub(super) producer: Option<RawProducer>,
+    /// `[claims]` (schema `forge-warden.policy.v1` only; ADR 0012 D8).
+    pub(super) claims: Option<RawClaims>,
+}
+
+/// `[claims]`: what the policy requires of the caller's claims about the change.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawClaims {
+    /// Authority runs whose claims bound mode did not verify are held at best.
+    pub(super) require_verified: bool,
 }
 
 /// `[producer]`: the rankers authority mode admits, by the SHA-256 of their bytes.

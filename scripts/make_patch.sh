@@ -41,6 +41,19 @@ case "${#base}" in
 esac
 git init --quiet --bare --object-format="$format" "$scratch/diff.git"
 printf '%s\n' "$objects" > "$scratch/diff.git/objects/info/alternates"
+# The caller's commit-graph and multi-pack index are not read (they can lie about parents; bound mode's
+# staging does the same, ADR 0012 D3.1), and several merge bases are refused as bound mode refuses
+# them (D7): `git diff A...B` would pick one with only a warning.
+nograph=(-c core.commitGraph=false -c core.multiPackIndex=false)
+bases="$(git --git-dir="$scratch/diff.git" "${nograph[@]}" merge-base --all "$base" "$head")" || {
+  echo "make_patch: base and head have no common history" >&2
+  exit 2
+}
+count="$(printf '%s\n' "$bases" | grep -c .)"
+if [ "$count" -ne 1 ]; then
+  echo "make_patch: base and head have $count merge bases; name the merge base as --base" >&2
+  exit 2
+fi
 # Attributes come from the empty tree, not from any work tree: a `.gitattributes` saying `-diff`
 # or `binary` would otherwise turn added text into a binary patch the judge cannot read.
 # --attr-source needs Git 2.40 or later; an older Git refuses the option.
@@ -50,7 +63,7 @@ empty_tree="$(git --git-dir="$scratch/diff.git" hash-object -t tree /dev/null)"
 # commit) leaves it out, and `diff.submodule=log` writes a line no patch reader takes as a change.
 # The diff options are one line: scripts/tests/dogfood.sh reads it, runs it by hand, and checks
 # that the README and the runbook print the same command.
-git --git-dir="$scratch/diff.git" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
+git --git-dir="$scratch/diff.git" "${nograph[@]}" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
   -c core.quotePath=true \
   diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none \
   "$base...$head"

@@ -178,10 +178,10 @@
           ]
         },
         "claims": {
-          "description": "What the caller said (--base, --head); claims never change an outcome. Two shapes. Asserted (exactly v2's object): recorded, not verified. Bound (--repo, ADR 0012): the patch was byte-equal to `git diff merge_base head` made from a verified copy of the repository's objects; base, head and merge_base are full object ids of one length.",
+          "description": "What the caller said (--base, --head); claims never change an outcome. Two shapes. Asserted (exactly v2's object): recorded, not verified. Bound (--repo, ADR 0012): the patch was byte-equal to `git diff merge_base head` made from a verified copy of the repository's objects; base, head and merge_base are full object ids of one length: one shape per length (40 or 64 hex digits), so a mixed-length claim fits neither.",
           "oneOf": [
             {
-              "description": "Bound claims: verified by bound mode.",
+              "description": "Bound claims, SHA-1 ids: verified by bound mode; base, head and merge_base are 40 lowercase hex digits.",
               "type": "object",
               "additionalProperties": false,
               "required": [
@@ -193,15 +193,43 @@
               "properties": {
                 "base": {
                   "type": "string",
-                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                  "pattern": "^[0-9a-f]{40}$"
                 },
                 "head": {
                   "type": "string",
-                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                  "pattern": "^[0-9a-f]{40}$"
                 },
                 "merge_base": {
                   "type": "string",
-                  "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "verified": {
+                  "const": true
+                }
+              }
+            },
+            {
+              "description": "Bound claims, SHA-256 ids: verified by bound mode; base, head and merge_base are 64 lowercase hex digits.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "base",
+                "head",
+                "merge_base",
+                "verified"
+              ],
+              "properties": {
+                "base": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "head": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "merge_base": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
                 },
                 "verified": {
                   "const": true
@@ -494,7 +522,8 @@
             "status_mismatch",
             "patch_unverifiable",
             "rank_unverified",
-            "rank_mismatch"
+            "rank_mismatch",
+            "claims_unverified"
           ]
         },
         "path": {
