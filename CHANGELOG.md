@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- `scripts/dogfood.sh` takes `--ranker-archive FILE`: a local copy of the pinned deep-diff-forge release
+  archive, copied into the evidence directory and checked against the same pinned SHA-256 (other bytes:
+  exit 3). Only a run with `--hosted-advisory` downloads the archive; a run with neither argument is a
+  usage error (exit 2) before any effect, so a local run never reaches the network (ledger Q67). The
+  provenance file says `ranker_archive=local` or `downloaded`. The hosted job is unchanged.
 - Bound mode, first slice (ADR 0012, accepted): `check --repo DIR --base BASE --head HEAD` (authority
   mode, full commit ids) makes `git diff merge-base..head` from a copy of the repository's objects
   that Git re-hashes (a staging repository enumerates; `index-pack` copies into a repository with no
