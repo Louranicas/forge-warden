@@ -83,7 +83,7 @@ caller's store. Two repositories inside the private 0700 directory (ADR 0010 `Is
    ancestors along another path (a merge), and verified's merge-base then walks into an uncopied commit and fails on an
    honest store (measured on forge-warden's own 7bd9e655..26330b93, the M7-PATCH-BOUND Q-C record, 2026-11-16). This is not a caller's shallow
    repository (D2.2 still refuses those); it is the cut forge-warden makes after the copy was re-hashed. Every edge left
-   in verified is a re-hashed, real edge, and a cut only removes ancestry, so verified's merge base is a real common
+   in verified is a re-hashed, real edge, and a cut only removes ancestry (corrected 2026-11-16: see "Correction: D3.3's cut" below), so verified's merge base is a real common
    ancestor, `mb` or older; step 4 still requires it to equal staging's, and an older one could only widen the patch. `--strict` is NOT used: its
    connectivity check wants all of `mb`'s ancestry and refuses every honest store with this list (Bastion, receipt
    8a6ce212, Git 2.56.1), and its fsck checks can refuse honest repositories with historic object quirks.
@@ -211,3 +211,51 @@ bounded no-follow removal of exactly those two. Every Git child of bound mode ha
    refused: the row is live); control-character check removed; `--template=` removed; merge-base
    `--all` check removed; memory ceiling removed; `require_verified` ignored.
 9. In-diff mutants zero missed; ci_fast; MSRV; dogfood in authority bound mode on this repository.
+
+## Correction, 2026-11-16T09:54:17Z: D3.3's cut (Bastion, verify of 148513ea, Must 1)
+D3.3 put in `shallow` `mb` and every copied commit with a parent outside the copy, and said "a cut only removes
+ancestry". A shallow commit loses all its parents, so a copied commit with one parent inside the copy and one outside
+(a redundant merge: second parent an ancestor of `mb`, as `commit-tree` or `merge -s ours` of an old commit make) lost
+its in-copy edge too; verified then found no merge base and an honest store was refused (exit 3) with a false "no
+common history" (Bastion's row, receipt 31f5ff9a). The sentence stays above; this is what is built instead.
+- **The boundary is copied, not the copy cut.** Each parent of a copied commit that is not itself copied (the
+  boundary) is packed as a commit object only, re-hashed by `index-pack` like the rest, and `shallow` names exactly the
+  boundary commits. Every copied commit keeps all its edges; history in verified stops below them. A root `mb` with no
+  outside parent leaves no boundary and no `shallow` file.
+- **When verified's merge base differs:** the message is now "the verified copy gives no single merge base", not
+  staging's wording.
+- **A known limit, refused rather than guessed:** when base's and head's lines both reach the same commit from below
+  `mb`'s parent (both merge one old commit), that commit is a boundary reachable from both, and verified cannot see
+  that it lies below `mb`; it reports two merge bases and the run is refused (exit 3). A wrong merge base is never used.
+  When the old commit is `mb`'s own parent, verified keeps `mb`'s edge to it and the run passes. Both are tests
+  (`bound_mode_keeps_a_redundant_merges_in_copy_edge`, `bound_mode_refuses_when_both_sides_reach_one_old_commit_past_the_boundary`).
+  Accepting the extra base would need staging's ancestry, which is not trusted.
+
+## Acceptance evidence for step (a): what is delivered, and what moves (dated 2026-11-16T09:54:17Z, for Lodestar's ruling)
+Step (a) is the door and the `--repo` comparison; verified claims are step (b), `require_verified` step (c).
+- **Delivered as tests on the door (`doors/mod.rs`, `child_tests`):** item 2 (a forged blob, tree and commit; a lying
+  pack `.idx`; a garbage commit-graph and multi-pack index that are not read), item 3 in part (abbreviated, mixed-length,
+  upper-case ids; advisory + `--repo`; a `.git` file with the `--git-common-dir` advice; a newline in `DIR`;
+  alternates; a caller's `shallow`; a non-commit id; several merge bases; a patch with abbreviated `index` lines (the
+  one-byte and strict-prefix rows come with step (b)'s core comparison); the time limit, by a budget sweep that always reaches it), item 4 (hostile caller
+  settings: bytes identical), item 5 (a partial clone refused with no fetch), item 6 in part (nothing left in the
+  temporary base after success, every refusal above and a timeout, where the door kills the Git it ran), and the
+  byte-equality rows on a linear history, a merge, a redundant merge, a gitlink, base = head and SHA-256.
+- **Delivered as plants (the step's gate script; into `plants/catalog.json` as H14 next):** comparison removed; the copy skipped (diff through
+  staging); the merge-base recheck always passing (a contract test of the recheck, `the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give`: every known forged store is refused earlier, by an object absent from verified); `shallow` not written; the control-character check removed;
+  `--template=` removed (a pinned-shape test, `init_flags_are_pinned`: the template has no effect on the bytes in a
+  cleared environment); merge-base `--all` removed; the memory ceiling removed (caps set to the maximum); and
+  `--full-index` removed.
+- **Moved, with the reason:**
+  - item 1, byte equality over this repository's N3 commits, Touchstone's relative-patch commits and 20 generated
+    pairs, and a run where the user's Git is not the admitted one: to H16 (dogfood in bound mode in the local gate,
+    after step (c)), where the trusted base judges real merges; this host has one Git, so the second half needs a
+    second Git build in the gate image.
+  - item 3, the memory ceiling as a behaviour (a loose object whose header states a huge size) and a diff over
+    budget: to step (c) unit c3 (injected caps in a `cfg(test)` constructor, so no test writes 256 MiB); today the
+    ceiling is tested as a mechanism (`every_bound_mode_git_child_runs_under_the_memory_caps` reads the child's own
+    `/proc/self/limits`).
+  - item 6, cleanup after a Git killed from outside: admission accepts only ELF executables, so a misbehaving
+    stand-in Git needs a native fixture binary; with c3.
+  - item 8, `require_verified` ignored: step (c), where the key is built.
+- **Not a test, said plainly:** the byte caps (`PACK_CAP`, `LIST_CAP`, `STDERR_CAP`) are literals until c3.
