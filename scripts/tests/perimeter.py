@@ -446,7 +446,7 @@ class GateImageCommands(unittest.TestCase):
             "behind a function of the same name": "cmp() { command cmp \"$@\"; }\ncmp a b\n",
             "in a function keyword body": "function f {\n  diff a b\n}\nf\n",
             # Round 3 (Bastion's probe2): options and subcommands that run a program.
-            "after rustup run TOOLCHAIN": "rustup run stable cmp a b\n",
+            "after rustup's run and its toolchain": "rustup run \"$toolchain\" cmp a b\n",
             "in tar --to-command": "tar -xf a.tar --to-command='cmp - b'\n",
             "in tar --checkpoint-action=exec": "tar -cf a.tar --checkpoint-action=exec='xxd a' a\n",
             "in sort --compress-program": "sort --compress-program=xxd a\n",

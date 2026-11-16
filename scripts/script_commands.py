@@ -13,16 +13,18 @@ What is read, and how:
   is data), and the command position after `;`, `|`, `&&`, `||`, `&`, `(`, `{`, `!`, the
   reserved words (`coproc` too), the prefixes `env`, `exec`, `command`, `nice`, `nohup`,
   `timeout`, `xargs`, `sudo` (their options and option arguments skipped), find's `-exec`,
-  `-execdir`, `-ok` and `-okdir`, `rustup run TOOLCHAIN`, the program options of tar
-  (`-I`, `--use-compress-program`, `--to-command`, `--checkpoint-action=exec=`, `--info-script`,
-  `--new-volume-script`) and sort (`--compress-program`), and the text of
-  `bash -c`, `sh -c`, `trap`, `env -S` and `python3 -c`;
+  `-execdir`, `-ok` and `-okdir`, the command after rustup's `run` and its toolchain, the
+  program options of tar (`-I`, `--use-compress-program`, `--to-command`,
+  `--checkpoint-action=exec=`, `--info-script`, `--new-volume-script`) and sort
+  (`--compress-program`), and the text of `bash -c`, `sh -c`, `trap`, `env -S` and
+  `python3 -c`;
 - every tracked Python file (`*.py`, or a python `#!` line) and Python here-document:
   `subprocess`, `os`, `asyncio` and `pty` process calls (also imported under another name),
-  each branch of a conditional argument list, and `shell=` on unless it is literally false. A string run by a shell
-  (`shell=True`, `os.system`, `os.popen`, `getoutput`, `create_subprocess_shell`) is read as
-  shell text; an argument list is read as the command line it makes, so the prefixes above
-  apply to it; a non-literal argument stands for a dynamic word.
+  each branch of a conditional argument list, and `shell=` on unless it is literally false.
+  A string run by a shell (`shell=True`, `os.system`, `os.popen`, `getoutput`,
+  `create_subprocess_shell`) is read as shell text; an argument list is read as the command
+  line it makes, so the prefixes above apply to it; a non-literal argument stands for a
+  dynamic word.
 - the interpreter a `#!` line names is itself a call, on line 1.
 
 Fail closed: a construct this reader does not handle (`case` inside a substitution, an
@@ -549,7 +551,7 @@ def command_words(tokens, calls):
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
             elif script == 'rustup-toolchain':
-                # `rustup run TOOLCHAIN CMD`: CMD is a command.
+                # rustup's `run` subcommand: the word after the toolchain is a command.
                 expect, prefix, script, by_find = True, None, None, True
             elif script in PROGRAM_OPTIONS and word.literal:
                 option, equals, program = word.value.partition('=')
