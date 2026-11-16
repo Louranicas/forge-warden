@@ -2,6 +2,7 @@
 """Owned gate contracts: exact tool inputs, complete plant receipts and merge subjects."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -25,6 +26,7 @@ def load(name):
 TOOLS = load("tool_versions")
 PLANTS = load("check_plants")
 CAPS = load("plant_tools")
+COMMANDS = load("script_commands")
 
 # Independent reviewed expectations, not values imported from the validator.
 TIMEOUTS = {
@@ -382,6 +384,298 @@ class GateCapacity(unittest.TestCase):
                         CAPS.check_gate_capacity(root)
                 else:
                     CAPS.check_gate_capacity(root)
+
+
+
+class GateImageCommands(unittest.TestCase):
+    """Gap G9 (Mission 7): a script that calls a command the offline gate image lacks is refused.
+
+    Train 14's first gate went red on `cmp` in scripts/tests/dogfood.sh; every lane's toolbox
+    has it, the gate image does not. Each case below hides an undeclared command in one shell
+    or Python shape the reader must see, and must be named once, on its line."""
+
+    def problems(self, files):
+        with tempfile.TemporaryDirectory(prefix="script-commands-") as directory:
+            root = Path(directory)
+            for name, text in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text)
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": directory}
+            subprocess.run(["git", "init", "-q", directory], check=True, env=env, stdin=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", directory, "add", "-A"], check=True, env=env, stdin=subprocess.DEVNULL)
+            return COMMANDS.problems(root)
+
+    def test_every_tracked_script_calls_only_declared_commands(self):
+        self.assertEqual(COMMANDS.problems(ROOT), [])
+
+    def test_a_source_export_is_read_like_the_checkout(self):
+        # Train A3's hosted-parity export phase has no .git: the check must read the files there.
+        with tempfile.TemporaryDirectory(prefix="script-commands-export-") as directory:
+            copy = Path(directory)
+            for name in COMMANDS.tracked(ROOT):
+                source, target = ROOT / name, copy / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if source.is_symlink():
+                    target.symlink_to(os.readlink(source))
+                elif source.is_file():
+                    shutil.copyfile(source, target)
+            self.assertFalse((copy / ".git").exists())
+            self.assertEqual(sorted(COMMANDS.tracked(copy)), sorted(COMMANDS.tracked(ROOT)))
+            self.assertEqual(COMMANDS.problems(copy), COMMANDS.problems(ROOT))
+
+    def test_an_export_inside_another_repository_is_read(self):
+        # Git answers for the enclosing repository there; the export's own files must still be read.
+        with tempfile.TemporaryDirectory(prefix="script-commands-outer-") as directory:
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": directory}
+            subprocess.run(["git", "init", "-q", directory], check=True, env=env, stdin=subprocess.DEVNULL)
+            export = Path(directory) / "export"
+            export.mkdir()
+            (export / "s.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
+            found = COMMANDS.problems(export)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("s.sh:2: calls `cmp`"), found)
+
+    def test_the_walk_skips_a_git_directory(self):
+        # A `.git` Git does not accept (no HEAD) is walked around, not read as tracked files.
+        with tempfile.TemporaryDirectory(prefix="script-commands-dotgit-") as directory:
+            hooks = Path(directory) / ".git" / "hooks"
+            hooks.mkdir(parents=True)
+            (hooks / "x.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
+            (Path(directory) / "ok.sh").write_text("#!/usr/bin/env bash\ntrue\n")
+            self.assertEqual(COMMANDS.tracked(Path(directory)), ["ok.sh"])
+            self.assertEqual(COMMANDS.problems(Path(directory)), [])
+
+    def test_a_tree_without_git_is_read_not_skipped(self):
+        with tempfile.TemporaryDirectory(prefix="script-commands-nogit-") as directory:
+            (Path(directory) / "s.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
+            found = COMMANDS.problems(Path(directory))
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("s.sh:2: calls `cmp`"), found)
+
+    def test_the_declared_set_has_none_of_the_commands_the_image_lacks(self):
+        absent = {"cmp", "diff", "jq", "xxd", "file", "apt-get", "zizmor", "deep-diff-forge"}
+        self.assertEqual(COMMANDS.IMAGE & absent, set())
+
+    def test_an_undeclared_command_is_named_in_each_shape(self):
+        shapes = {
+            "plain (train 14)": "cmp a b\n",
+            "after a pipe": "printf x | jq .\n",
+            "after &&": "true && xxd a\n",
+            "in an if": "if file a; then :; fi\n",
+            "in a substitution": 'x="$(diff a b)"\n',
+            "in backquotes": "x=`diff a b`\n",
+            "in a process substitution": "while read -r l; do :; done < <(diff a b)\n",
+            "after env and assignments": "env -u HOME A=1 \"$b=2\" diff a b\n",
+            "after an absolute env": "/usr/bin/env -i PATH=/usr/bin diff a b\n",
+            "in bash -c": "bash -c 'diff \"$1\" b' _ a\n",
+            "in a trap": "trap 'diff a b' EXIT\n",
+            "in a function": "f() {\n  diff a b\n}\n",
+            "in a case arm": "case \"$1\" in\n x) diff a b ;;\nesac\n",
+            "in a stub here-document": "cat > stub <<'S'\n#!/bin/sh\ndiff a b\nS\n",
+            "in a python here-document": "python3 -I - <<'P'\nimport subprocess\nsubprocess.run(['diff', 'a'])\nP\n",
+            "after a line continuation": "true \\\n  && diff a b\n",
+            # M7-G9 round 2 (Bastion's probe d4c5b000): commands that run their operand.
+            "after xargs": "printf '%s\\n' a | xargs -n 1 cmp b\n",
+            "after find -exec": "find . -name x -exec cmp {} b \\;\n",
+            "after a second find -execdir": "find . -exec true \\; -execdir diff {} b +\n",
+            "after tar -I": "tar -I xxd -cf x.tar a\n",
+            "in python3 -c": "python3 -I -c 'import subprocess; subprocess.run([\"cmp\", \"a\"])'\n",
+            "in env -S": "env -S 'cmp a b'\n",
+            "after exec -a NAME": "exec -a name cmp a b\n",
+            "after env -C DIR": "env -C /tmp cmp a b\n",
+            "after timeout -s SIGNAL": "timeout -s KILL 5 cmp a b\n",
+            "after nohup": "nohup cmp a b\n",
+            "after coproc": "coproc cmp a b\n",
+            "behind a function of the same name": "cmp() { command cmp \"$@\"; }\ncmp a b\n",
+            "in a function keyword body": "function f {\n  diff a b\n}\nf\n",
+            # Round 3 (Bastion's probe2): options and subcommands that run a program.
+            "after rustup's run and its toolchain": "rustup run \"$toolchain\" cmp a b\n",
+            "in tar --to-command": "tar -xf a.tar --to-command='cmp - b'\n",
+            "in tar --checkpoint-action=exec": "tar -cf a.tar --checkpoint-action=exec='xxd a' a\n",
+            "in sort --compress-program": "sort --compress-program=xxd a\n",
+            # Round 4 (Bastion's probe3): attached, clustered and abbreviated spellings.
+            "in tar -Iprogram": "tar -Ixxd -cf a.tar a\n",
+            "in tar -cIprogram": "tar -cIxxd -f a.tar a\n",
+            "in tar -Fprogram": "tar -Fxxd -cf a.tar a\n",
+            "in tar --use-compress-prog=": "tar --use-compress-prog=xxd -cf a.tar a\n",
+            "in tar --to-comm=": "tar -xf a.tar --to-comm='cmp - b'\n",
+            "in tar --checkpoint-action exec=": "tar --checkpoint-action 'exec=cmp a b' -cf a.tar a\n",
+            "in sort --compress=": "sort --compress=xxd a\n",
+        }
+        for name, text in shapes.items():
+            with self.subTest(shape=name):
+                found = self.problems({"s.sh": "#!/usr/bin/env bash\n" + text})
+                self.assertEqual(len(found), 1, found)
+                self.assertRegex(found[0], r"^s\.sh:\d+: calls `(cmp|jq|xxd|file|diff)`, which the gate image")
+                line = int(found[0].split(":")[1])
+                self.assertIn(found[0].split("`")[1], ("#!/usr/bin/env bash\n" + text).splitlines()[line - 1])
+
+    def test_python_and_restricted_calls_are_named(self):
+        found = self.problems({"t.py": "import subprocess\nsubprocess.run(['jq', '.'])\n"})
+        self.assertEqual(found, ["t.py:2: calls `jq`, which the gate image does not declare "
+                                 "(scripts/script_commands.py)"])
+        found = self.problems({"scripts/x.sh": "apt-get install -y cmp\n"})
+        self.assertEqual(found, ["scripts/x.sh:1: calls `apt-get`, which only "
+                                 "scripts/guest_bootstrap.sh may call"])
+
+    def test_python_calls_are_read_as_the_command_lines_they_run(self):
+        calls = {
+            "shell=True pipe": "subprocess.run('cat a | cmp - b', shell=True)",
+            "shell=True and": "subprocess.run('true && xxd a', shell=True)",
+            "shell=True f-string": "subprocess.run(f'cmp {name} b', shell=True)",
+            "bash -c in a list": "subprocess.run(['bash', '-c', 'cmp a b'])",
+            "env in a list": "subprocess.run(['env', 'cmp', 'a', 'b'])",
+            "list plus a variable": "subprocess.run(['cmp'] + rest)",
+            "os.system": "os.system('true && xxd a')",
+            "os.popen": "os.popen('jq . a')",
+            "getoutput": "subprocess.getoutput('cmp a b')",
+            "getstatusoutput": "subprocess.getstatusoutput('xxd a')",
+            "posix_spawnp": "os.posix_spawnp('cmp', ['cmp', 'a', 'b'], {})",
+            "spawnlp": "os.spawnlp(os.P_WAIT, 'cmp', 'cmp', 'a', 'b')",
+            "spawnvp": "os.spawnvp(os.P_WAIT, 'cmp', ['cmp', 'a'])",
+            "execlp": "os.execlp('cmp', 'cmp', 'a', 'b')",
+            "create_subprocess_exec": "asyncio.create_subprocess_exec('cmp', 'a', 'b')",
+            "create_subprocess_shell": "asyncio.create_subprocess_shell('cmp a b')",
+            "pty.spawn": "pty.spawn(['cmp', 'a', 'b'])",
+            "str.split": "subprocess.run('cmp a b'.split())",
+            "shlex.split": "subprocess.run(shlex.split('cmp a b'))",
+            "a conditional argv": "subprocess.run(['cmp', 'a'] if flag else ['true'])",
+            "shell=1": "subprocess.run('true && cmp a b', shell=1)",
+            "shell=flag": "subprocess.run('true && cmp a b', shell=flag)",
+        }
+        for name, call in calls.items():
+            with self.subTest(call=name):
+                found = self.problems({"t.py": "import asyncio, os, pty, shlex, subprocess\n" + call + "\n"})
+                self.assertEqual(len(found), 1, found)
+                self.assertRegex(found[0], r"^t\.py:2: calls `(cmp|jq|xxd)`, which the gate image")
+
+    def test_an_aliased_process_function_is_read(self):
+        found = self.problems({"t.py": "from subprocess import run as sh\nsh(['cmp', 'a', 'b'])\n"})
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("t.py:2: calls `cmp`"), found)
+
+    def test_a_file_a_call_runs_is_read_in_that_language(self):
+        """Round 3 (Bastion): a tracked file run or sourced by a literal path is read in the
+        language it runs in, even with no extension and no `#!` line; else it is named."""
+        cases = {
+            "./FILE, no #! line": ({"s.sh": "./tool\n", "tool": "cmp a b\n"},
+                                   ["tool (run as shell):1: calls `cmp`"]),
+            "bash FILE": ({"s.sh": "bash -o pipefail scripts/helper x\n", "scripts/helper": "cmp a b\n"},
+                          ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "python3 FILE": ({"s.sh": "python3 -I tools/x a\n",
+                              "tools/x": "import subprocess\nsubprocess.run(['cmp'])\n"},
+                             ["tools/x (run as python):2: calls `cmp`"]),
+            "a sourced library and its function": ({"s.sh": ". lib/common\nf\n", "lib/common": "f() { cmp a b; }\n"},
+                                                   ["lib/common (run as shell):1: calls `cmp`"]),
+            "a .sh file with a python #!": ({"a.sh": "#!/usr/bin/env python3\nimport subprocess\nsubprocess.run(['cmp'])\n"},
+                                            ["a.sh:3: calls `cmp`"]),
+            "./FILE with another interpreter": ({"s.sh": "./tool\n", "tool": "#!/usr/bin/perl\nprint 1;\n"},
+                                                ["tool: not read: line 1"]),
+            # Round 4 (Bastion's probe3): option groups, --, and standard input.
+            "bash -euo pipefail FILE": ({"s.sh": "bash -euo pipefail scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                                        ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -eO extglob FILE": ({"s.sh": "bash -eO extglob scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                                      ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -- FILE": ({"s.sh": "bash -- scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                             ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -- FILE named like an option": ({"s.sh": "bash -- -helper\n", "-helper": "cmp a b\n"},
+                                                  ["-helper (run as shell):1: calls `cmp`"]),
+            "python3 -- FILE named like an option": ({"s.sh": "python3 -- -tool\n", "-tool": "import os\nos.system('cmp a b')\n"},
+                                                     ["-tool (run as python):2: calls `cmp`"]),
+            ". -- FILE": ({"s.sh": ". -- scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                          ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash < FILE": ({"s.sh": "bash < scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                            ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "sh -s < FILE": ({"s.sh": "sh -s < scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                             ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "python3 -uW ignore FILE": ({"s.sh": "python3 -uW ignore tools/x\n",
+                                         "tools/x": "import os\nos.system('cmp a b')\n"},
+                                        ["tools/x (run as python):2: calls `cmp`"]),
+            "python3 --check-hash-based-pycs always FILE": (
+                {"s.sh": "python3 --check-hash-based-pycs always tools/x\n", "tools/x": "import os\nos.system('cmp a b')\n"},
+                ["tools/x (run as python):2: calls `cmp`"]),
+            "python3 - < FILE": ({"s.sh": "python3 - < tools/x\n", "tools/x": "import os\nos.system('cmp a b')\n"},
+                                 ["tools/x (run as python):2: calls `cmp`"]),
+            "a run of a file ONLY_IN lets call more": (
+                {"s.sh": "bash scripts/guest_bootstrap.sh\n", "scripts/guest_bootstrap.sh": "apt-get install -y x\n"},
+                ["s.sh:1: runs `scripts/guest_bootstrap.sh`, which alone may call apt-get, cc, sudo"]),
+            "bash -eoO pipefail extglob FILE": ({"s.sh": "bash -eoO pipefail extglob scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                                                ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -o pipefail FILE, a clean file": ({"s.sh": "bash -o pipefail scripts/ok\n", "scripts/ok": "true\n"}, []),
+        }
+        for name, (files, expected) in cases.items():
+            with self.subTest(case=name):
+                found = self.problems(files)
+                self.assertEqual(len(found), len(expected), found)
+                for line, prefix in zip(found, expected):
+                    self.assertTrue(line.startswith(prefix), (line, prefix))
+
+    def test_the_routing_pin_allows_one_dynamic_call(self):
+        name = "scripts/tests/runner_routing.py"
+        one = "import subprocess\nsubprocess.run(['bash', '-c', text])\n"
+        self.assertEqual(self.problems({name: one}), [])
+        found = self.problems({name: one + "subprocess.run(['bash', '-c', other])\n"})
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith(name + ":3: calls `\"$python_expression\"`"), found)
+
+    def test_a_script_is_known_by_its_first_line(self):
+        cases = {
+            "env -S bash, no extension": ("#!/usr/bin/env -S bash -eu\ncmp a b\n", ["tool:2: calls `cmp`"]),
+            "dash, which the image lacks": ("#!/bin/dash\ntrue\n", ["tool:1: calls `dash`"]),
+            "python, no extension": ("#!/usr/bin/env python3\nimport subprocess\nsubprocess.run(['cmp'])\n",
+                                     ["tool:3: calls `cmp`"]),
+            "another interpreter": ("#!/usr/bin/perl\nprint 1;\n", ["tool: not read: line 1"]),
+            "a Rust inner attribute": ("#![forbid(unsafe_code)]\n", []),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(case=name):
+                found = self.problems({"tool": text})
+                self.assertEqual(len(found), len(expected), found)
+                for line, prefix in zip(found, expected):
+                    self.assertTrue(line.startswith(prefix), (line, prefix))
+
+    def test_what_the_reader_cannot_resolve_is_refused_not_skipped(self):
+        cases = {
+            "eval": ("eval \"$cmd\"\n", "not read: line 1: eval"),
+            "unterminated quote": ("echo 'x\n", "not read: line 1: unterminated single quote"),
+            "unterminated here-document": ("cat <<'E'\nx\n", "not terminated"),
+            "unpinned dynamic word": ('"$tool" --version\n', 'calls `"$tool"`'),
+            "dynamic bash -c text": ('bash -c "$script"\n', 'calls `"$script"`'),
+            "dynamic python3 -c text": ('python3 -c "$code"\n', 'calls `"$code"`'),
+            "aliases": ("shopt -s expand_aliases\n", "not read: line 1: `shopt expand_aliases`"),
+            "a path out of the repository": ("../tool.sh\n", "calls `../tool.sh`"),
+            "a declared name outside the system directories": ("/opt/x/bin/git status\n", "calls `/opt/x/bin/git`"),
+        }
+        for name, (text, expected) in cases.items():
+            with self.subTest(case=name):
+                found = self.problems({"s.sh": text})
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(expected, found[0])
+
+    def test_words_that_are_not_commands_are_not_named(self):
+        text = (
+            "# cmp in a comment\n"
+            "echo 'diff' \"jq\" diff\n"
+            "command -v cmp >/dev/null || echo none\n"
+            "for tool in cmp diff; do echo \"$tool\"; done\n"
+            "case \"$x\" in\n cmp|diff) echo match ;;\n *) : ;;\nesac\n"
+            "files=(cmp diff\n  jq)\n"
+            "cat > notes <<'D'\ncmp and diff are data here\nD\n"
+            "[[ $x == diff && $y == cmp ]]\n"
+            "grep -q cmp a 2>/dev/null\n"
+            "scripts/tool.sh run\n"
+            "./.githooks/x\n"
+            "find . -name cmp -print\n"
+            "tar -cf diff.tar a\n"
+            "python3 tool.py -c diff\n"
+            "nohup true\n"
+            "/usr/bin/git status\n"
+            "coproc worker { true; }\n"
+            "function cmp { :; }\ncmp a b\n"
+        )
+        self.assertEqual(self.problems({"s.sh": text, "scripts/tool.sh": "true\n", ".githooks/x": "true\n"}), [])
 
 
 if __name__ == "__main__":
