@@ -450,6 +450,14 @@ class GateImageCommands(unittest.TestCase):
             "in tar --to-command": "tar -xf a.tar --to-command='cmp - b'\n",
             "in tar --checkpoint-action=exec": "tar -cf a.tar --checkpoint-action=exec='xxd a' a\n",
             "in sort --compress-program": "sort --compress-program=xxd a\n",
+            # Round 4 (Bastion's probe3): attached, clustered and abbreviated spellings.
+            "in tar -Iprogram": "tar -Ixxd -cf a.tar a\n",
+            "in tar -cIprogram": "tar -cIxxd -f a.tar a\n",
+            "in tar -Fprogram": "tar -Fxxd -cf a.tar a\n",
+            "in tar --use-compress-prog=": "tar --use-compress-prog=xxd -cf a.tar a\n",
+            "in tar --to-comm=": "tar -xf a.tar --to-comm='cmp - b'\n",
+            "in tar --checkpoint-action exec=": "tar --checkpoint-action 'exec=cmp a b' -cf a.tar a\n",
+            "in sort --compress=": "sort --compress=xxd a\n",
         }
         for name, text in shapes.items():
             with self.subTest(shape=name):
@@ -520,6 +528,37 @@ class GateImageCommands(unittest.TestCase):
                                             ["a.sh:3: calls `cmp`"]),
             "./FILE with another interpreter": ({"s.sh": "./tool\n", "tool": "#!/usr/bin/perl\nprint 1;\n"},
                                                 ["tool: not read: line 1"]),
+            # Round 4 (Bastion's probe3): option groups, --, and standard input.
+            "bash -euo pipefail FILE": ({"s.sh": "bash -euo pipefail scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                                        ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -eO extglob FILE": ({"s.sh": "bash -eO extglob scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                                      ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -- FILE": ({"s.sh": "bash -- scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                             ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -- FILE named like an option": ({"s.sh": "bash -- -helper\n", "-helper": "cmp a b\n"},
+                                                  ["-helper (run as shell):1: calls `cmp`"]),
+            "python3 -- FILE named like an option": ({"s.sh": "python3 -- -tool\n", "-tool": "import os\nos.system('cmp a b')\n"},
+                                                     ["-tool (run as python):2: calls `cmp`"]),
+            ". -- FILE": ({"s.sh": ". -- scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                          ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash < FILE": ({"s.sh": "bash < scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                            ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "sh -s < FILE": ({"s.sh": "sh -s < scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                             ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "python3 -uW ignore FILE": ({"s.sh": "python3 -uW ignore tools/x\n",
+                                         "tools/x": "import os\nos.system('cmp a b')\n"},
+                                        ["tools/x (run as python):2: calls `cmp`"]),
+            "python3 --check-hash-based-pycs always FILE": (
+                {"s.sh": "python3 --check-hash-based-pycs always tools/x\n", "tools/x": "import os\nos.system('cmp a b')\n"},
+                ["tools/x (run as python):2: calls `cmp`"]),
+            "python3 - < FILE": ({"s.sh": "python3 - < tools/x\n", "tools/x": "import os\nos.system('cmp a b')\n"},
+                                 ["tools/x (run as python):2: calls `cmp`"]),
+            "a run of a file ONLY_IN lets call more": (
+                {"s.sh": "bash scripts/guest_bootstrap.sh\n", "scripts/guest_bootstrap.sh": "apt-get install -y x\n"},
+                ["s.sh:1: runs `scripts/guest_bootstrap.sh`, which alone may call apt-get, cc, sudo"]),
+            "bash -eoO pipefail extglob FILE": ({"s.sh": "bash -eoO pipefail extglob scripts/helper\n", "scripts/helper": "cmp a b\n"},
+                                                ["scripts/helper (run as shell):1: calls `cmp`"]),
+            "bash -o pipefail FILE, a clean file": ({"s.sh": "bash -o pipefail scripts/ok\n", "scripts/ok": "true\n"}, []),
         }
         for name, (files, expected) in cases.items():
             with self.subTest(case=name):

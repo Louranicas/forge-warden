@@ -14,10 +14,13 @@ What is read, and how:
   reserved words (`coproc` too), the prefixes `env`, `exec`, `command`, `nice`, `nohup`,
   `timeout`, `xargs`, `sudo` (their options and option arguments skipped), find's `-exec`,
   `-execdir`, `-ok` and `-okdir`, the command after rustup's `run` and its toolchain, the
-  program options of tar (`-I`, `--use-compress-program`, `--to-command`,
-  `--checkpoint-action=exec=`, `--info-script`, `--new-volume-script`) and sort
+  program options of tar (`-I`, `-F`, `--use-compress-program`, `--to-command`,
+  `--checkpoint-action exec=`, `--info-script`, `--new-volume-script`) and sort
   (`--compress-program`), and the text of `bash -c`, `sh -c`, `trap`, `env -S` and
-  `python3 -c`;
+  `python3 -c`. The options of a shell, Python, `.`, tar and sort are read as their own
+  parsers read them: option groups (`bash -euo pipefail FILE`, `python3 -uW ignore FILE`,
+  `tar -cIxz`), attached arguments, `--`, and long options by any unambiguous prefix
+  (`--to-comm=`); tar's traditional dash-less first word (`tar cIf ...`) is not read;
 - every tracked Python file (`*.py`, or a python `#!` line) and Python here-document:
   `subprocess`, `os`, `asyncio` and `pty` process calls (also imported under another name),
   each branch of a conditional argument list, and `shell=` on unless it is literally false.
@@ -34,16 +37,23 @@ problem, not a skip. A word run through `command`, `exec`, `env` or another pref
 excused by a shell function of the same name.
 
 A tracked file that a call runs or sources by a literal path (`./FILE`, `bash FILE`,
-`python3 FILE`, `. FILE`) is read in the language it runs in, with or without an extension or a
-`#!` line; the functions of a sourced file count for the file that sources it.
+`python3 FILE`, `. FILE`, `bash < FILE`, `python3 - < FILE`) is read in the language it runs in,
+with or without an extension or a `#!` line; the functions of a sourced file count for the file
+that sources it. A file another file runs by a literal path may not be one that ONLY_IN lets
+call commands the gate image lacks (it is named).
 
 Stated limits (each needs a deliberate author): a Python call whose program is not a literal
 (a variable, `sys.executable`, an argument list built by a call other than `'...'.split()` and
 `shlex.split('...')`, a process function bound to another name by assignment) is not resolved;
-a script run or sourced through a non-literal path is not read; a data here-document that a
-later line runs is not read; a command reached only through a non-literal path is pinned by
+a script run or sourced through a non-literal path, a pipe (`cat FILE | bash`) or a process
+substitution (`bash <(...)`, `. <(...)`) is not read; a data here-document that a later line
+runs is not read; a command reached only through a non-literal path is pinned by
 DYNAMIC, not resolved; commands run by another program's own language or configuration are not
-read (`awk` `system()`, sed's `e`, Git's pager, editor and alias settings); a shell function
+read: a program in IMAGE told to run a command by an argument, an option, its configuration or
+an environment variable beyond the spellings above (awk `system()`, `print |` and `getline`;
+sed's `e`; `git bisect run`, `git rebase -x`, `git submodule foreach`, `--upload-pack`, Git's
+pager, editor and alias settings, `GIT_SSH_COMMAND`; `cargo --config` runners, `RUSTC_WRAPPER`,
+`rustc -C linker=`; `BASH_ENV`); a shell function
 excuses a call of its name anywhere in the file, also a call before the definition, which bash
 would run as the real command.
 
@@ -107,14 +117,13 @@ PREFIX_OPTIONS = {
 }
 PREFIXES = frozenset(PREFIX_OPTIONS)
 FIND_EXEC = frozenset({'-exec', '-execdir', '-ok', '-okdir'})
-# Options whose value is a command line the program runs (`tar --to-command=...`).
-PROGRAM_OPTIONS = {
-    'tar': frozenset({'-I', '--use-compress-program', '--to-command', '--info-script',
-                      '--new-volume-script', '-F'}),
-    'sort': frozenset({'--compress-program'}),
-}
-# Shell options that take a separate argument (`bash -o pipefail FILE`).
-SHELL_OPTION_ARGS = frozenset({'-o', '+o', '-O', '+O', '--rcfile', '--init-file'})
+# Long options whose value is a command line the program runs (`tar --to-command=...`), read
+# by any unambiguous prefix as GNU getopt does; tar's short options read as a getopt cluster.
+PROGRAM_LONG = {'tar': ('use-compress-program', 'to-command', 'info-script', 'new-volume-script'),
+                'sort': ('compress-program',)}
+TAR_SHORT_ARGUMENT = frozenset('bCfFgHIKLNTVX')
+TAR_SHORT_PROGRAM = frozenset('IF')
+PYTHON_LONG_ARGUMENT = frozenset({'--check-hash-based-pycs'})
 SHELLS = frozenset({'sh', 'bash', 'dash'})
 PYTHONS = re.compile(r'python(?:3(?:\.[0-9]+)?)?')
 # A non-literal Python argument stands for this dynamic word in the command line it makes.
@@ -431,6 +440,95 @@ def shebang(line):
     return kind, program
 
 
+OPERAND_STATES = SHELLS | {'.', 'source'} | set(PROGRAM_LONG)
+
+
+def long_option(value, names):
+    """The one name of `names` that `--value` spells (GNU getopt takes any unambiguous prefix)."""
+    option = value[2:].split('=', 1)[0]
+    hits = [name for name in names if len(option) >= 2 and name.startswith(option)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def operand_word(state, value, raw):
+    """One word after a program that runs a file or a command line it is given: a shell, Python,
+    `.`/`source`, tar or sort, read as that program's own option parser reads it (option groups,
+    attached arguments, `--`, long-option prefixes). value is None for a non-literal word.
+    Returns (next state, events); an event is (kind, text): 'shell' or 'python' text to read,
+    'dynamic' (a non-literal command line, named), or a RUNS marker with the file it runs."""
+    if isinstance(state, tuple):
+        kind = state[0]
+        if kind == 'option-argument':
+            return (state[1] if state[2] <= 1 else ('option-argument', state[1], state[2] - 1)), []
+        if kind == 'file-next':
+            return None, ([(state[1], value)] if value is not None else [])
+        if value is None:
+            return state[1], [('dynamic', raw)]
+        if kind == 'program-option':
+            return state[1], [('shell', value)]
+        return state[1], ([('shell', value[5:])] if value.startswith('exec=') else [])  # checkpoint
+    if value is None:
+        return (None if state in SHELLS or state in ('.', 'source') or PYTHONS.fullmatch(state) else state), []
+    if state in SHELLS:
+        if value == '--':
+            return ('file-next', '(sh)'), []
+        if value in ('--rcfile', '--init-file'):
+            return ('option-argument', state, 1), []
+        if re.fullmatch(r'[-+][A-Za-z]+', value):
+            letters = value[1:]
+            if value[0] == '-' and 'c' in letters:
+                return 'next', []
+            if value[0] == '-' and 's' in letters:
+                return None, []  # the script is standard input
+            count = sum(letter in 'oO' for letter in letters)  # each -o/-O takes the next word
+            return (('option-argument', state, count) if count else state), []
+        if value.startswith(('-', '+')):
+            return state, []
+        return None, [('(sh)', value)]
+    if state in ('.', 'source'):
+        return (state, []) if value == '--' else (None, [('(src)', value)])
+    if state in PROGRAM_LONG:
+        if value.startswith('--'):
+            option, equals, argument = value[2:].partition('=')
+            if long_option(value, PROGRAM_LONG[state]):
+                return (state, [('shell', argument)]) if equals else (('program-option', state), [])
+            if state == 'tar' and option.startswith('checkpoint-') and 'checkpoint-action'.startswith(option):
+                if equals:
+                    return state, ([('shell', argument[5:])] if argument.startswith('exec=') else [])
+                return ('checkpoint-option', state), []
+            return state, []
+        if state == 'tar' and re.fullmatch(r'-[A-Za-z].*', value):
+            letters = value[1:]
+            for index, letter in enumerate(letters):
+                if letter in TAR_SHORT_ARGUMENT:
+                    rest = letters[index + 1:]
+                    if letter in TAR_SHORT_PROGRAM:
+                        return (state, [('shell', rest)]) if rest else (('program-option', state), [])
+                    return (state if rest else ('option-argument', state, 1)), []
+        return state, []
+    # Python.
+    if value == '--':
+        return ('file-next', '(py)'), []
+    if value == '-':
+        return None, []  # the script is standard input
+    if value in PYTHON_LONG_ARGUMENT:
+        return ('option-argument', state, 1), []
+    if value.startswith('--'):
+        return state, []
+    if value.startswith('-'):
+        letters = value[1:]
+        for index, letter in enumerate(letters):
+            if letter in 'cmWX':
+                rest = letters[index + 1:]
+                if letter == 'c':
+                    return (None, [('python', rest)]) if rest else ('next-python', [])
+                if letter == 'm':
+                    return None, []
+                return (state if rest else ('option-argument', state, 1)), []
+        return state, []
+    return None, [('(py)', value)]
+
+
 def command_words(tokens, calls):
     found, functions = [], set()
     expect, mode, prefix, owner, script = True, None, None, None, None
@@ -448,7 +546,10 @@ def command_words(tokens, calls):
                 calls.extend(python_calls(body, start))
             continue
         if kind == 'redirect':
-            mode = ('target', mode)
+            # `bash < FILE`, `sh -s < FILE`, `python3 - < FILE`: FILE is the script.
+            runs = (not expect and token[1] == '<' and owner
+                    and ('(sh)' if owner in SHELLS else '(py)' if PYTHONS.fullmatch(owner) else None))
+            mode = ('stdin-target', mode, runs) if runs else ('target', mode)
             continue
         if kind == 'op':
             op = token[1]
@@ -479,7 +580,9 @@ def command_words(tokens, calls):
         skip_parens = False
         if mode == 'array':
             continue
-        if mode and mode[0] == 'target':
+        if mode and mode[0] in ('target', 'stdin-target'):
+            if mode[0] == 'stdin-target' and word.literal:
+                found.append((word.line, mode[2] + word.value, True))
             mode = mode[1]
             continue
         if mode == 'function-name':
@@ -517,51 +620,22 @@ def command_words(tokens, calls):
                 else:
                     calls.extend(python_calls(word.value, word.line))
                 script = None
-            elif isinstance(script, tuple) and script[0] == 'program-option':
-                if word.literal:
-                    calls.extend(external(shell_calls(word.value, word.line)))
-                else:
-                    found.append((word.line, word.raw, True))
-                script = script[1]
-            elif isinstance(script, tuple):
-                script = script[1]
-            elif script in SHELLS and word.literal:
-                if re.fullmatch(r'-[a-z]*c[a-z]*', word.value):
-                    script = 'next'
-                elif word.value in SHELL_OPTION_ARGS:
-                    script = ('option-argument', script)
-                elif word.value == '-s':
-                    script = None  # the script is standard input (a here-document, read above)
-                elif not word.value.startswith(('-', '+')):
-                    found.append((word.line, '(sh)' + word.value, True))
-                    script = None
-            elif script and PYTHONS.fullmatch(script) and word.literal:
-                if re.fullmatch(r'-[A-Za-z]*c', word.value):
-                    script = 'next-python'
-                elif word.value in ('-W', '-X'):
-                    script = ('option-argument', script)
-                elif word.value == '-m':
-                    script = None
-                elif not word.value.startswith('-'):
-                    found.append((word.line, '(py)' + word.value, True))
-                    script = None
-            elif script in ('.', 'source') and word.literal:
-                found.append((word.line, '(src)' + word.value, True))
-                script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
             elif script == 'rustup-toolchain':
                 # rustup's `run` subcommand: the word after the toolchain is a command.
                 expect, prefix, script, by_find = True, None, None, True
-            elif script in PROGRAM_OPTIONS and word.literal:
-                option, equals, program = word.value.partition('=')
-                if option in PROGRAM_OPTIONS[script]:
-                    if equals:
-                        calls.extend(external(shell_calls(program, word.line)))
+            elif isinstance(script, tuple) or script in OPERAND_STATES or (script and PYTHONS.fullmatch(script)):
+                script, events = operand_word(script, word.value if word.literal else None, word.raw)
+                for event, text in events:
+                    if event == 'shell':
+                        calls.extend(external(shell_calls(text, word.line)))
+                    elif event == 'python':
+                        calls.extend(python_calls(text, word.line))
+                    elif event == 'dynamic':
+                        found.append((word.line, text, True))
                     else:
-                        script = ('program-option', script)
-                elif script == 'tar' and word.value.startswith('--checkpoint-action=exec='):
-                    calls.extend(external(shell_calls(word.value.split('=', 2)[2], word.line)))
+                        found.append((word.line, event + text, True))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
@@ -804,17 +878,20 @@ def problems(root):
             found.append(f'{label}: not read: {error}')
             continue
         readings[(name, lang)] = calls
-        for _, word, _ in calls:
+        for line, word, _ in calls:
             marker = next((m for m in RUNS if word.startswith(m)), None)
+            target = repo_path(word[len(marker):] if marker else word) if (marker or '/' in word) else None
+            if target not in tracked_files:
+                continue
             if marker:
-                target = repo_path(word[len(marker):])
-                if target in tracked_files:
-                    want(target, RUNS[marker])
-            elif '/' in word:
-                target = repo_path(word)
-                if target in tracked_files and kinds[target][0] != 'other':
-                    # Run as a program: its `#!` decides; without one, the shell runs it as a script.
-                    want(target, kinds[target][0] if kinds[target][0] in ('shell', 'python') else 'shell')
+                want(target, RUNS[marker])
+            elif kinds[target][0] != 'other':
+                # Run as a program: its `#!` decides; without one, the shell runs it as a script.
+                want(target, kinds[target][0] if kinds[target][0] in ('shell', 'python') else 'shell')
+            privileged = sorted(command for command, owners in ONLY_IN.items() if target in owners)
+            if privileged and target != name:
+                found.append(f'{label}:{line}: runs `{target}`, which alone may call '
+                             f'{", ".join(privileged)} (not in the gate image)')
 
     def functions_of(key, seen):
         calls = readings.get(key)
