@@ -80,9 +80,11 @@ ROOT = Path(__file__).resolve().parents[1]
 # The commands any script may call: each one is in the offline gate image, measured with
 # `compgen -c` in localhost/ddf-council-gate:20261026c (image id 8f4ea620d021..., 2026-11-15).
 # That image has no cmp, diff, jq, xxd or file. Adding a name here needs the same measurement.
+# od: measured 2026-11-16 by Keel in the same image (8f4ea620d021): compgen -c lists it, /usr/bin/od,
+# GNU coreutils 9.10 (scripts/tests/release.sh reads gzip header bytes with it; Bastion's LOW).
 IMAGE = frozenset("""
     bash sh env cat cp mv rm ln ls mkdir rmdir chmod touch mktemp dirname basename realpath readlink
-    cut head tail sort uniq tr wc tee sha256sum date sleep stat seq id uname nproc
+    cut head tail sort uniq tr wc tee sha256sum date sleep stat seq id uname nproc od
     sed grep awk tar gzip find xargs curl git python3 cargo rustc rustup rustfmt ssh-keygen
     timeout nice nohup
 """.split())
