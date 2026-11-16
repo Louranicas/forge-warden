@@ -1144,7 +1144,9 @@ mod tests {
         // (lanes/bastion/M7-Q64/git_forms.sh): an edit keeps its mode on the `index` line; a
         // creation, deletion or mode change has its own mode line and none on the `index` line.
         let run = |path: &str, summary: &str, headers: &str| {
-            let patch = format!("diff --git a/{path} b/{path}\n{headers}GIT binary patch\nliteral 3\nKcmZQzXhjE0\n\n");
+            let patch = format!(
+                "diff --git a/{path} b/{path}\n{headers}GIT binary patch\nliteral 3\nKcmZQzXhjE0\n\n"
+            );
             PatchFacts::from_git(
                 format!("-\t-\t{path}\0").as_bytes(),
                 summary.as_bytes(),
@@ -1175,16 +1177,26 @@ mod tests {
             ("", "index 5c080cc..edafd8e\n"),
             ("", ""),
             // A mode on the `index` line beside the section's own mode line.
-            (chmod_summary, "old mode 100644\nnew mode 100755\nindex 0a2aa5b..2ffd657 100755\n"),
-            (create_summary, "new file mode 100755\nindex 0000000..2c53052 100755\n"),
-            (delete_summary, "deleted file mode 100644\nindex 0cb3d2f..0000000 100644\n"),
+            (
+                chmod_summary,
+                "old mode 100644\nnew mode 100755\nindex 0a2aa5b..2ffd657 100755\n",
+            ),
+            (
+                create_summary,
+                "new file mode 100755\nindex 0000000..2c53052 100755\n",
+            ),
+            (
+                delete_summary,
+                "deleted file mode 100644\nindex 0cb3d2f..0000000 100644\n",
+            ),
             // An edit with a mode line but no mode change in Git's summary.
             ("", "new mode 100755\nindex 5c080cc..edafd8e 100755\n"),
         ] {
             assert_eq!(run("b.bin", summary, headers), refused, "{headers:?}");
         }
         // Not binary: a text edit is not read here (its mode is the mode grammar's business).
-        let text = b"diff --git a/t.txt b/t.txt\nindex 1111111..2222222\n--- a/t.txt\n+++ b/t.txt\n";
+        let text =
+            b"diff --git a/t.txt b/t.txt\nindex 1111111..2222222\n--- a/t.txt\n+++ b/t.txt\n";
         assert!(PatchFacts::from_git(b"1\t1\tt.txt\0", b"", text).is_ok());
         // Stated limit: an edit that states the wrong mode (`100644` for an executable) is a
         // well-formed patch; which mode the file really has is known only in bound mode (ADR 0012).
