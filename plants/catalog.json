@@ -10,7 +10,8 @@
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
       "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
-      "G-53 refusal map: row added 2026-11-11 under Lodestar's REFUSAL-MAP ruling (WORKBOARD 04:15Z): every refusal variant and exit has a row in docs/REFUSAL_MAP.md naming the test that observes it; three sampled variant-swap plants, not one per row."
+      "G-53 refusal map: row added 2026-11-11 under Lodestar's REFUSAL-MAP ruling (WORKBOARD 04:15Z): every refusal variant and exit has a row in docs/REFUSAL_MAP.md naming the test that observes it; three sampled variant-swap plants, not one per row.",
+      "G-54 bound mode: row added 2026-11-16 by the register owner (Lodestar ruling P1.6, hive event 1310): the judged patch is the diff of the named commits, made from objects Git re-hashed on copy; every bound-mode refusal is its own variant with a refusal-map row. Nine ADR 0012 plants (acceptance item 8); require_verified ignored comes with step (c)."
     ]
   },
   "cases": [
@@ -2326,6 +2327,242 @@
       "diagnostic": "a_path_is_believed_only_under_the_default_a_and_b_prefixes.*FAILED",
       "cargo": ["test", "-p", "forge-warden-core", "--locked", "--offline", "--lib", "--", "a_path_is_believed_only_under_the_default_a_and_b_prefixes"],
       "required_tools": ["cargo", "git", "python3", "rustc", "rustup"]
+    },
+    {
+      "id": "bound-diff-reads-staging",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "bound_mode_refuses_a_store_whose_objects"
+      ],
+      "old": "format!(\"--git-dir={}\", self.verified),\n            format!(\"--attr-source={empty}\"),",
+      "new": "format!(\"--git-dir={}\", self.staging),\n            format!(\"--attr-source={empty}\"),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-shallow-not-written",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "bound_mode_cuts_at_the_copy_edge_when_head_reaches_older_history_through_a_merge \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "bound_mode_cuts_at_the_copy_edge"
+      ],
+      "old": "        if boundary.is_empty() {",
+      "new": "        if boundary.is_empty() || !verified.as_os_str().is_empty() {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-path-control-unchecked",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "bound_mode_admits_only_a_plain_repository \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "bound_mode_admits_only_a_plain_repository"
+      ],
+      "old": "    if text.contains(':') || text.chars().any(char::is_control) {",
+      "new": "    if text.contains(':') {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-memory-ceiling-removed",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "every_bound_mode_git_child_runs_under_the_memory_caps \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "every_bound_mode_git_child_runs_under_the_memory_caps"
+      ],
+      "old": "        data: DATA_CAP,\n        address_space: ADDRESS_SPACE_CAP,",
+      "new": "        data: u64::MAX,\n        address_space: u64::MAX,",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-full-index-removed",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "bound_mode_makes_the_patch_make_patch_makes \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "bound_mode_makes_the_patch_make_patch_makes"
+      ],
+      "old": "                \"--full-index\",\n",
+      "new": "",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-recheck-skipped",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "the_recheck_refuses"
+      ],
+      "old": "        if again == mb {",
+      "new": "        if true || again == mb {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-comparison-removed",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "right: 4",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--example",
+        "fixture-ranker",
+        "--test",
+        "authority_mode",
+        "--",
+        "bound_mode_accepts_the_patch"
+      ],
+      "old": "    if made.patch == patch {",
+      "new": "    if true || made.patch == patch {",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-template-copied",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "init_flags_are_pinned \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "init_flags_are_pinned"
+      ],
+      "old": "\"--bare\", \"--template=\"];",
+      "new": "\"--bare\"];",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-merge-base-not-all",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "diagnostic": "bound_mode_refuses_several_merge_bases_and_no_common_history \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "bound_mode_refuses_several_merge_bases"
+      ],
+      "old": "&self.staging(&[\"merge-base\", \"--all\", base, head]),",
+      "new": "&self.staging(&[\"merge-base\", base, head]),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
     }
   ],
   "pending_guardrails": [

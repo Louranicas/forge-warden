@@ -232,30 +232,46 @@ common history" (Bastion's row, receipt 31f5ff9a). The sentence stays above; thi
   Accepting the extra base would need staging's ancestry, which is not trusted.
 
 ## Acceptance evidence for step (a): what is delivered, and what moves (dated 2026-11-16T09:54:17Z, for Lodestar's ruling)
-Step (a) is the door and the `--repo` comparison; verified claims are step (b), `require_verified` step (c).
-- **Delivered as tests on the door (`doors/mod.rs`, `child_tests`):** item 2 (a forged blob, tree and commit; a lying
-  pack `.idx`; a garbage commit-graph and multi-pack index that are not read), item 3 in part (abbreviated, mixed-length,
-  upper-case ids; advisory + `--repo`; a `.git` file with the `--git-common-dir` advice; a newline in `DIR`;
-  alternates; a caller's `shallow`; a non-commit id; several merge bases; a patch with abbreviated `index` lines (the
-  one-byte and strict-prefix rows come with step (b)'s core comparison); the time limit, by a budget sweep that always reaches it), item 4 (hostile caller
-  settings: bytes identical), item 5 (a partial clone refused with no fetch), item 6 in part (nothing left in the
-  temporary base after success, every refusal above and a timeout, where the door kills the Git it ran), and the
-  byte-equality rows on a linear history, a merge, a redundant merge, a gitlink, base = head and SHA-256.
-- **Delivered as plants (the step's gate script; into `plants/catalog.json` as H14 next):** comparison removed; the copy skipped (diff through
-  staging); the merge-base recheck always passing (a contract test of the recheck, `the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give`: every known forged store is refused earlier, by an object absent from verified); `shallow` not written; the control-character check removed;
-  `--template=` removed (a pinned-shape test, `init_flags_are_pinned`: the template has no effect on the bytes in a
-  cleared environment); merge-base `--all` removed; the memory ceiling removed (caps set to the maximum); and
-  `--full-index` removed.
-- **Moved, with the reason:**
-  - item 1, byte equality over this repository's N3 commits, Touchstone's relative-patch commits and 20 generated
-    pairs, and a run where the user's Git is not the admitted one: to H16 (dogfood in bound mode in the local gate,
-    after step (c)), where the trusted base judges real merges; this host has one Git, so the second half needs a
-    second Git build in the gate image.
+Step (a) is the door and the `--repo` comparison; verified claims are step (b), `require_verified` step (c). Lodestar
+ruled on this list on 2026-11-16 (rulings P1.3, P1.5; hive events 1290, 1297). "Exit 3" below is the registry's `io`
+exit, "exit 4" its `invalid_input`.
+- **Delivered as tests on the door (`doors/mod.rs`, `child_tests`):**
+  - item 1, byte equality with `make_patch.sh`: 20 named pairs of one generated history (modify, add, non-ASCII name,
+    binary, executable bit, symlink, delete, rename, empty file, no final newline, a side branch, a merge, a reversed
+    pair, base = head) in a SHA-1 **and** a SHA-256 store
+    (`bound_mode_equals_make_patch_on_twenty_generated_pairs_in_both_object_formats`); this repository's own last 20
+    first-parent steps and last 5 merges (`bound_mode_equals_make_patch_on_this_repositorys_history`, ignored by
+    default because it needs a plain clone, run with `--ignored` by the step's gate in its fresh clone); a redundant
+    merge, a gitlink, hostile caller settings;
+  - item 2: a forged blob, tree and commit; a lying pack `.idx`; a garbage commit-graph and multi-pack index, not read;
+  - item 3: abbreviated, mixed-length, upper-case and non-commit ids; several merge bases; no common history; a `.git`
+    file with the `--git-common-dir` advice; a newline in `DIR`; a path that is not UTF-8; alternates and
+    http-alternates; a symlinked `.git` or objects directory; a caller's `shallow`; the time limit;
+  - item 4: hostile caller settings leave the bytes identical; item 5: a partial clone is refused with no fetch;
+  - item 6: nothing is left in the temporary base after success, after every refusal above and after a timeout, where
+    the door kills the Git it ran.
+- **Delivered as CLI tests (`tests/authority_mode.rs`):** advisory + `--repo`; mixed-length ids; a patch that is not
+  the bound diff, made with abbreviated `index` lines, without prefixes, relative to a sub-tree, with `-U5`, or without
+  its final newline: each exit 4, no verdict, the first differing byte and the admitted Git's version in the message.
+- **Every refusal is its own variant** (`BoundFailure`, `RepositoryRefusal`) with a row in `docs/REFUSAL_MAP.md`.
+- **Delivered as plants (guardrail G-54 in `plants/catalog.json`, a register row added by Lodestar's ruling P1.6; the
+  step's gate script runs the same nine):** comparison removed; the copy
+  skipped (diff through staging); the merge-base recheck always passing (a contract test of the recheck,
+  `the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give`: every known forged store is refused earlier,
+  by an object absent from verified); `shallow` not written; the control-character check removed; `--template=`
+  removed (a pinned-shape test, `init_flags_are_pinned`: the template has no effect on the bytes in a cleared
+  environment); merge-base `--all` removed; the memory ceiling removed (caps set to the maximum); `--full-index` removed.
+- **How the time limit is reached:** the ADR asked for a fixture Git that sleeps. Git admission accepts only ELF
+  executables (ADR 0010), so a shell stand-in is refused before it runs. The test instead runs the real admitted Git
+  under budgets of 0, 5, 20 and 50 ms: each result is `make_patch.sh`'s bytes or the time limit (exit 3), and the
+  zero budget always reaches it.
+- **Moved, each with its reason:**
+  - the run where the user's Git is not the admitted one (items 1 and S4): to H16. The gate image holds one Git
+    build; a second one is not provided there.
   - item 3, the memory ceiling as a behaviour (a loose object whose header states a huge size) and a diff over
-    budget: to step (c) unit c3 (injected caps in a `cfg(test)` constructor, so no test writes 256 MiB); today the
-    ceiling is tested as a mechanism (`every_bound_mode_git_child_runs_under_the_memory_caps` reads the child's own
-    `/proc/self/limits`).
-  - item 6, cleanup after a Git killed from outside: admission accepts only ELF executables, so a misbehaving
-    stand-in Git needs a native fixture binary; with c3.
-  - item 8, `require_verified` ignored: step (c), where the key is built.
+    budget: to step (c) unit c3 (P3.10), which adds injected caps through a `cfg(test)` constructor so that no test
+    writes 256 MiB. Today the ceiling is tested as a mechanism: `every_bound_mode_git_child_runs_under_the_memory_caps`
+    reads the child's own `/proc/self/limits`.
+  - item 6, cleanup after a Git killed from outside: also to c3, with a native fixture Git (the ELF rule above).
+  - item 8, `require_verified` ignored: to step (c), where the key is built.
 - **Not a test, said plainly:** the byte caps (`PACK_CAP`, `LIST_CAP`, `STDERR_CAP`) are literals until c3.

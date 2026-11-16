@@ -448,17 +448,28 @@ fn bind(
     patch: &[u8],
 ) -> Result<(), Failure> {
     use doors::child::BoundFailure;
-    let objects = doors::child::admit_repository(repo).map_err(Failure::from_door)?;
-    let made =
-        doors::child::bound_diff(git, &objects, base, head).map_err(|failure| match failure {
-            BoundFailure::Door(error) => Failure::from_door(error),
-            BoundFailure::Input(why) => {
-                Failure::new(Exit::InvalidInput, format!("bound mode: {why}"))
-            }
-            BoundFailure::Store(why) | BoundFailure::Unavailable(why) => {
-                Failure::new(Exit::Io, format!("bound mode: {why}"))
-            }
-        })?;
+    // Every bound-mode refusal by its variant (REFUSAL_MAP): a repository bound mode cannot read and
+    // a store that does not hold what its ids name give no verdict (exit 3); ids that name no
+    // usable pair of commits are a wrong input (exit 4).
+    let fail = |failure: BoundFailure| match failure {
+        BoundFailure::Door(error) => Failure::from_door(error),
+        BoundFailure::Repository(why) => Failure {
+            exit: Exit::Io,
+            message: format!("--repo {}: {why}", repo.display()),
+            next: "check_environment",
+        },
+        why @ (BoundFailure::Ids
+        | BoundFailure::NotACommit { .. }
+        | BoundFailure::NoCommonHistory
+        | BoundFailure::SeveralMergeBases(_)) => {
+            Failure::new(Exit::InvalidInput, format!("bound mode: {why}"))
+        }
+        why @ (BoundFailure::Store(_)
+        | BoundFailure::VerifiedMergeBase(_)
+        | BoundFailure::Unavailable(_)) => Failure::new(Exit::Io, format!("bound mode: {why}")),
+    };
+    let objects = doors::child::admit_repository(repo).map_err(fail)?;
+    let made = doors::child::bound_diff(git, &objects, base, head).map_err(fail)?;
     if made.patch == patch {
         return Ok(());
     }

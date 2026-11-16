@@ -40,18 +40,97 @@ pub(crate) struct BoundDiff {
     pub(crate) merge_base: String,
 }
 
-/// Why bound mode could not make the diff.
+/// Why bound mode could not make the diff. Each refusal is its own variant with a row in
+/// `docs/REFUSAL_MAP.md` (ADR 0012; ruling P1.5). How each reaches the user (`main.rs`, `bind`): the
+/// repository and the store give no verdict (exit 3), the ids are a wrong input (exit 4).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum BoundFailure {
     /// A setup door failed (the private directory, a file it writes): an environment problem.
     Door(DoorError),
-    /// The ids do not name what bound mode needs (not commits, no or several merge bases):
-    /// a wrong input.
-    Input(String),
-    /// The object store does not hold what its ids name, or Git refused it: no verdict.
+    /// `--repo` is not a repository bound mode reads (ADR 0012 D2).
+    Repository(RepositoryRefusal),
+    /// `--base` and `--head` are not full object ids of one length.
+    Ids,
+    /// `--base` (or `--head`) names no commit in the repository.
+    NotACommit {
+        /// `base` or `head`.
+        name: &'static str,
+        /// The id as given.
+        id: String,
+    },
+    /// The two commits share no history.
+    NoCommonHistory,
+    /// The two commits have this many merge bases (more than one).
+    SeveralMergeBases(usize),
+    /// A Git step on the store exited nonzero: the store does not hold what its ids name.
     Store(String),
+    /// The re-hashed copy gives no single merge base, or another one than the repository read.
+    VerifiedMergeBase(String),
     /// Git could not run within its bounds (time, output, a signal): no verdict.
     Unavailable(String),
+}
+
+/// Why `--repo` is not admitted (ADR 0012 D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepositoryRefusal {
+    /// The canonical path is not UTF-8.
+    NotUtf8,
+    /// The canonical path holds `:` or a control character (the alternates file is line-based).
+    PathCharacters,
+    /// `.git` is a file: a linked worktree or a submodule pointer.
+    GitFile,
+    /// `.git` is a symlink.
+    GitSymlink,
+    /// Neither a `.git` directory nor a bare repository (`objects/` and `HEAD`).
+    NotARepository,
+    /// The objects directory is missing or a symlink.
+    ObjectsMissing,
+    /// `objects/info/alternates` or `objects/info/http-alternates` exists.
+    Alternates,
+    /// The repository is shallow.
+    Shallow,
+}
+
+impl std::fmt::Display for RepositoryRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotUtf8 => "the path is not UTF-8",
+            Self::PathCharacters => {
+                "the path contains ':' or a control character, which Git's object lists cannot carry"
+            }
+            Self::GitFile => {
+                "its .git is a file (a linked worktree or a submodule); pass the repository's git \
+                 directory: --repo \"$(git rev-parse --git-common-dir)\""
+            }
+            Self::GitSymlink => "its .git is a symlink",
+            Self::NotARepository => "not a Git repository (no .git directory, not bare)",
+            Self::ObjectsMissing => "its objects directory is missing or a symlink",
+            Self::Alternates => {
+                "objects/info/alternates or objects/info/http-alternates exists: the store borrows objects from elsewhere"
+            }
+            Self::Shallow => "it is a shallow repository: its history is incomplete",
+        })
+    }
+}
+
+impl std::fmt::Display for BoundFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Door(error) => f.write_str(&error.message),
+            Self::Repository(why) => write!(f, "--repo: {why}"),
+            Self::Ids => f.write_str(
+                "--base and --head must be full object ids of one length (40 or 64 lowercase hex digits)",
+            ),
+            Self::NotACommit { name, id } => write!(f, "{name} {id} is not a commit in the repository"),
+            Self::NoCommonHistory => f.write_str("base and head have no common history"),
+            Self::SeveralMergeBases(n) => {
+                write!(f, "base and head have {n} merge bases; name the merge base as --base")
+            }
+            Self::Store(why) | Self::VerifiedMergeBase(why) | Self::Unavailable(why) => {
+                f.write_str(why)
+            }
+        }
+    }
 }
 
 /// The repository `dir` names, admitted for bound mode (ADR 0012 D2): its objects directory.
@@ -64,52 +143,41 @@ pub(crate) enum BoundFailure {
     clippy::disallowed_methods,
     reason = "door: admit_repository (canonicalize and no-follow metadata of the repository the caller names)"
 )]
-pub(crate) fn admit_repository(dir: &Path) -> Result<PathBuf, DoorError> {
-    let refuse = |why: &str| DoorError::environment(format!("--repo {}: {why}", dir.display()));
-    let real = std::fs::canonicalize(dir)
-        .map_err(|e| DoorError::io("canonicalizing the --repo directory", &e))?;
-    let text = real
-        .to_str()
-        .ok_or_else(|| refuse("the path is not UTF-8"))?;
+pub(crate) fn admit_repository(dir: &Path) -> Result<PathBuf, BoundFailure> {
+    use RepositoryRefusal as R;
+    let refuse = BoundFailure::Repository;
+    let real = std::fs::canonicalize(dir).map_err(|e| {
+        BoundFailure::Door(DoorError::io("canonicalizing the --repo directory", &e))
+    })?;
+    let text = real.to_str().ok_or(refuse(R::NotUtf8))?;
     if text.contains(':') || text.chars().any(char::is_control) {
-        return Err(refuse(
-            "the path contains ':' or a control character, which Git's object lists cannot carry",
-        ));
+        return Err(refuse(R::PathCharacters));
     }
     let kind = |path: &Path| std::fs::symlink_metadata(path).ok().map(|m| m.file_type());
     let git_dir = match kind(&real.join(".git")) {
         Some(t) if t.is_dir() => real.join(".git"),
-        Some(t) if t.is_file() => {
-            return Err(refuse(
-                "its .git is a file (a linked worktree or a submodule); pass the repository's git \
-                 directory: --repo \"$(git rev-parse --git-common-dir)\"",
-            ));
-        }
-        Some(_) => return Err(refuse("its .git is a symlink")),
+        Some(t) if t.is_file() => return Err(refuse(R::GitFile)),
+        Some(_) => return Err(refuse(R::GitSymlink)),
         None => {
             let bare = kind(&real.join("objects")).is_some_and(|t| t.is_dir())
                 && kind(&real.join("HEAD")).is_some_and(|t| t.is_file());
             if !bare {
-                return Err(refuse("not a Git repository (no .git directory, not bare)"));
+                return Err(refuse(R::NotARepository));
             }
             real.clone()
         }
     };
     let objects = git_dir.join("objects");
     if !kind(&objects).is_some_and(|t| t.is_dir()) {
-        return Err(refuse("its objects directory is missing or a symlink"));
+        return Err(refuse(R::ObjectsMissing));
     }
     for name in ["info/alternates", "info/http-alternates"] {
         if kind(&objects.join(name)).is_some() {
-            return Err(refuse(&format!(
-                "objects/{name} exists: the store borrows objects from elsewhere"
-            )));
+            return Err(refuse(R::Alternates));
         }
     }
     if kind(&git_dir.join("shallow")).is_some() {
-        return Err(refuse(
-            "it is a shallow repository: its history is incomplete",
-        ));
+        return Err(refuse(R::Shallow));
     }
     Ok(objects)
 }
@@ -153,7 +221,7 @@ pub(in crate::doors) fn bound_diff_in(
     let format = object_format(base, head)?;
     let objects = objects
         .to_str()
-        .ok_or_else(|| BoundFailure::Input("the objects path is not UTF-8".to_owned()))?;
+        .ok_or(BoundFailure::Repository(RepositoryRefusal::NotUtf8))?;
     let isolation = Isolation::create_in(tmp).map_err(BoundFailure::Door)?;
     let staging = isolation.dir.path().join("staging.git");
     let verified = isolation.dir.path().join("verified.git");
@@ -274,9 +342,10 @@ impl Bound<'_> {
             {
                 Ok(kind) if kind == b"commit\n" => {}
                 Ok(_) | Err(ChildFailure::Exit { .. }) => {
-                    return Err(BoundFailure::Input(format!(
-                        "{name} {id} is not a commit in the repository"
-                    )));
+                    return Err(BoundFailure::NotACommit {
+                        name,
+                        id: id.to_owned(),
+                    });
                 }
                 Err(other) => return Err(store("cat-file")(other)),
             }
@@ -384,17 +453,17 @@ impl Bound<'_> {
             &self.verified(&["merge-base", "--all", base, head]),
         )
         .map_err(|e| match e {
-            BoundFailure::Input(why) => BoundFailure::Store(format!(
-                "the verified copy gives no single merge base for base and head ({why})"
-            )),
-            other @ (BoundFailure::Door(_)
-            | BoundFailure::Store(_)
-            | BoundFailure::Unavailable(_)) => other,
+            why @ (BoundFailure::NoCommonHistory | BoundFailure::SeveralMergeBases(_)) => {
+                BoundFailure::VerifiedMergeBase(format!(
+                    "the verified copy gives no single merge base for base and head ({why})"
+                ))
+            }
+            other => other,
         })?;
         if again == mb {
             Ok(())
         } else {
-            Err(BoundFailure::Store(format!(
+            Err(BoundFailure::VerifiedMergeBase(format!(
                 "the merge base read from the repository ({mb}) is not the one its re-hashed objects give ({again})"
             )))
         }
@@ -472,9 +541,7 @@ fn object_format(base: &str, head: &str) -> Result<&'static str, BoundFailure> {
     match (base.len(), head.len()) {
         (40, 40) if hex(base) && hex(head) => Ok("sha1"),
         (64, 64) if hex(base) && hex(head) => Ok("sha256"),
-        _ => Err(BoundFailure::Input(
-            "--base and --head must be full object ids of one length (40 or 64 lowercase hex digits)".to_owned(),
-        )),
+        _ => Err(BoundFailure::Ids),
     }
 }
 
@@ -483,19 +550,13 @@ fn merge_base(run: &Runner<'_>, args: &[String]) -> Result<String, BoundFailure>
     let out = match run.git_owned(args, b"", LIST_CAP) {
         Ok(out) => out,
         // `merge-base` exits 1 when the commits share no history.
-        Err(ChildFailure::Exit { code: 1, .. }) => {
-            return Err(BoundFailure::Input(
-                "base and head have no common history".to_owned(),
-            ));
-        }
+        Err(ChildFailure::Exit { code: 1, .. }) => return Err(BoundFailure::NoCommonHistory),
         Err(other) => return Err(store("merge-base")(other)),
     };
     match lines(&out).as_slice() {
+        [] => Err(BoundFailure::NoCommonHistory),
         [one] => Ok(one.clone()),
-        many => Err(BoundFailure::Input(format!(
-            "base and head have {} merge bases; name the merge base as --base",
-            many.len()
-        ))),
+        many => Err(BoundFailure::SeveralMergeBases(many.len())),
     }
 }
 

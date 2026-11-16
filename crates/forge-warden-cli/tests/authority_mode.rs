@@ -801,6 +801,35 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
         "a refusal emits no verdict: {}",
         refused.stdout
     );
+    // ADR 0012 acceptance item 3: the same change made with other options is a different patch, and
+    // each is refused (exit 4, no verdict): no prefixes (the N3 shape), relative to a sub-tree
+    // (Touchstone's Q55 shape), another context size, and the final newline dropped.
+    let diff = |extra: &[&str]| {
+        let mut args = vec!["diff", "--binary", "--no-renames", "--full-index"];
+        args.extend_from_slice(extra);
+        args.extend([base.as_str(), head.as_str()]);
+        format!("{}\n", git_in(&repo, &args)).into_bytes()
+    };
+    let shapes: [(&str, Vec<u8>); 4] = [
+        ("no-prefix", diff(&["--no-prefix"])),
+        (
+            "relative",
+            diff(&["--relative=docs", "--src-prefix=a/", "--dst-prefix=b/"]),
+        ),
+        ("context", diff(&["-U0", "--src-prefix=a/", "--dst-prefix=b/"])),
+        (
+            "final-newline",
+            made_bytes.strip_suffix(b"\n").unwrap().to_vec(),
+        ),
+    ];
+    for (name, bytes) in shapes {
+        assert_ne!(bytes, made_bytes, "{name}: a different patch");
+        let path = write(&dir, &format!("{name}.patch"), &bytes);
+        let out = authority(&policy, &path, &ranker, &bound);
+        assert_eq!(out.code, 4, "{name}: stdout={} stderr={}", out.stdout, out.stderr);
+        assert!(out.stderr.contains("is not `git diff"), "{name}: {}", out.stderr);
+        assert!(out.stdout.is_empty(), "{name}: {}", out.stdout);
+    }
 }
 
 #[test]

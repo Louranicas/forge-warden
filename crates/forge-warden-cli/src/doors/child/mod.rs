@@ -18,7 +18,7 @@ mod bound;
 pub(in crate::doors) use bound::{
     ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program, recheck_in,
 };
-pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
+pub(crate) use bound::{BoundFailure, RepositoryRefusal, admit_repository, bound_diff};
 pub(crate) use git::{
     AdmittedGit, GitFactsFailure, PinnedGit, admit_git_advisory, admit_git_pinned, git_facts,
     git_version,
