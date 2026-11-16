@@ -74,10 +74,10 @@ fn judge(sections: &[Section], body: &str) -> Verdict {
     let files: Vec<String> = sections
         .iter()
         .map(|s| {
-            let path = s.text.split(' ').nth(2).unwrap().trim_start_matches("a/");
+            let file = s.text.split(' ').nth(2).unwrap().trim_start_matches("a/");
             let signals: Vec<String> = s.signals.iter().map(|x| format!("\"{x}\"")).collect();
             format!(
-                r#"{{"path":"{path}","status":"{}","score":3,"signals":[{}]}}"#,
+                r#"{{"path":"{file}","status":"{}","score":3,"signals":[{}]}}"#,
                 s.status,
                 signals.join(",")
             )
@@ -109,12 +109,14 @@ fn builtin(verdict: &Verdict) -> Option<&RuleResult> {
 
 /// The paths the built-in rule holds, or none when it is not listed.
 fn held(verdict: &Verdict) -> Vec<&str> {
-    builtin(verdict).map_or_else(Vec::new, |rule| {
-        rule.violations
+    match builtin(verdict) {
+        Some(rule) => rule
+            .violations
             .iter()
             .map(|v| v.path.as_deref().unwrap())
-            .collect()
-    })
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 #[test]
@@ -253,11 +255,11 @@ fn no_policy_can_waive_or_declare_the_built_in_rule() {
         "{refused}"
     );
     let declared = PERMISSIVE.replace("no-secrets", ID);
-    let refused =
+    let kebab =
         parse_policy(format!("schema = \"forge-warden.policy.v0\"\n{declared}").as_bytes())
             .unwrap_err()
             .to_string();
-    assert!(refused.contains("kebab-case"), "{refused}");
+    assert!(kebab.contains("kebab-case"), "{kebab}");
 }
 
 #[test]
