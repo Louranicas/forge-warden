@@ -8,7 +8,9 @@
     "fixtures/demo.verdict.json",
     "fixtures/cli-stderr/io.txt",
     "fixtures/cli-stderr/refused.txt",
-    "fixtures/cli-stderr/over-budget.txt"
+    "fixtures/cli-stderr/over-budget.txt",
+    "fixtures/cli-surface/help.txt",
+    "fixtures/cli-surface/usage-errors.txt"
   ],
   "golden_consumers": [
     {
@@ -38,6 +40,16 @@
           "name": "golden_stderr_over_budget",
           "assertion": "assert_golden",
           "golden": "fixtures/cli-stderr/over-budget.txt"
+        },
+        {
+          "name": "cli_help_surface_is_pinned",
+          "assertion": "assert_golden",
+          "golden": "fixtures/cli-surface/help.txt"
+        },
+        {
+          "name": "cli_usage_errors_are_pinned",
+          "assertion": "assert_golden",
+          "golden": "fixtures/cli-surface/usage-errors.txt"
         }
       ]
     }

@@ -765,3 +765,93 @@ fn golden_stderr_over_budget() {
     assert_eq!(out.code, 4);
     common::assert_golden("fixtures/cli-stderr/over-budget.txt", &out.stderr);
 }
+
+// ---- The CLI surface pinned byte for byte (EFFECT-WALL-1 step 3a, P4.8, owner decision D5) ----
+// Before clap moves from derive to builder (step 3b), every help text and usage error is a golden,
+// regenerated only through scripts/golden_output.py (same command list there). The package version
+// is replaced by `<version>` so a release never re-blesses the surface (Lodestar's ruling 1583);
+// `--version` keeps only its exit code and shape pinned.
+
+/// The help texts, in order.
+const HELP_SURFACE: &[&[&str]] = &[
+    &["--help"],
+    &["check", "--help"],
+    &["lint", "--help"],
+    &["explain", "--help"],
+    &["schema", "--help"],
+    &["init", "--help"],
+    &["help"],
+    &["help", "check"],
+];
+
+/// The usage errors, in order.
+const USAGE_SURFACE: &[&[&str]] = &[
+    &[],
+    &["frobnicate"],
+    &["check"],
+    &["check", "--policy", "examples/starter.warden.toml"],
+    &[
+        "check",
+        "--policy",
+        "examples/starter.warden.toml",
+        "--patch",
+        "fixtures/demo.patch",
+        "--advisory",
+    ],
+    &[
+        "check",
+        "--policy",
+        "examples/starter.warden.toml",
+        "--patch",
+        "fixtures/demo.patch",
+        "--advisory",
+        "--rank",
+        "fixtures/demo.rank.json",
+        "--today",
+        "2026-13-01",
+    ],
+    &["lint"],
+    &["explain", "99"],
+    &["schema", "nope"],
+    &["init", "extra"],
+];
+
+/// Each command's exit code, stdout and stderr, in one text, the version replaced by `<version>`.
+fn surface(cases: &[&[&str]]) -> String {
+    let mut text = String::new();
+    for args in cases {
+        let out = run(args, b"");
+        let _ = write!(
+            text,
+            "=== forge-warden {} (exit {})\n--- stdout\n{}--- stderr\n{}",
+            args.join(" "),
+            out.code,
+            out.stdout,
+            out.stderr
+        );
+    }
+    text.replace(env!("CARGO_PKG_VERSION"), "<version>")
+}
+
+#[test]
+fn cli_help_surface_is_pinned() {
+    common::assert_golden("fixtures/cli-surface/help.txt", &surface(HELP_SURFACE));
+}
+
+#[test]
+fn cli_usage_errors_are_pinned() {
+    common::assert_golden(
+        "fixtures/cli-surface/usage-errors.txt",
+        &surface(USAGE_SURFACE),
+    );
+}
+
+#[test]
+fn version_exits_zero_and_names_the_package() {
+    let out = run(&["--version"], b"");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        format!("forge-warden {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}

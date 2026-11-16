@@ -565,6 +565,17 @@ fn registered_golden_consumers_cannot_move_or_inline_their_expectations() {
             "assert_golden",
             "fixtures/cli-stderr/over-budget.txt",
         ),
+        // EFFECT-WALL-1 step 3a (P4.8): the CLI surface pinned before clap moves to the builder.
+        (
+            "cli_help_surface_is_pinned",
+            "assert_golden",
+            "fixtures/cli-surface/help.txt",
+        ),
+        (
+            "cli_usage_errors_are_pinned",
+            "assert_golden",
+            "fixtures/cli-surface/usage-errors.txt",
+        ),
     ];
     assert_eq!(tests.len(), required.len());
     let source = common::read_repository_regular(consumers[0]["path"].as_str().unwrap()).unwrap();

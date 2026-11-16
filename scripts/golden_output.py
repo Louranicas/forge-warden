@@ -12,7 +12,29 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDENS = ("fixtures/demo.verdict.json", "fixtures/cli-stderr/io.txt",
-           "fixtures/cli-stderr/refused.txt", "fixtures/cli-stderr/over-budget.txt")
+           "fixtures/cli-stderr/refused.txt", "fixtures/cli-stderr/over-budget.txt",
+           "fixtures/cli-surface/help.txt", "fixtures/cli-surface/usage-errors.txt")
+# The CLI surface (EFFECT-WALL-1 step 3a, P4.8): the same command lists as tests/cli.rs HELP_SURFACE and
+# USAGE_SURFACE; each command's exit code, stdout and stderr in one text, the version replaced.
+SURFACE = {
+    "fixtures/cli-surface/help.txt": (
+        ("--help",), ("check", "--help"), ("lint", "--help"), ("explain", "--help"),
+        ("schema", "--help"), ("init", "--help"), ("help",), ("help", "check"),
+    ),
+    "fixtures/cli-surface/usage-errors.txt": (
+        (), ("frobnicate",), ("check",), ("check", "--policy", "examples/starter.warden.toml"),
+        ("check", "--policy", "examples/starter.warden.toml", "--patch", "fixtures/demo.patch", "--advisory"),
+        ("check", "--policy", "examples/starter.warden.toml", "--patch", "fixtures/demo.patch", "--advisory",
+         "--rank", "fixtures/demo.rank.json", "--today", "2026-13-01"),
+        ("lint",), ("explain", "99"), ("schema", "nope"), ("init", "extra"),
+    ),
+}
+
+
+def package_version():
+    """The workspace version, read from Cargo.toml's [workspace.package] (the one the binary prints)."""
+    import tomllib
+    return tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
 
 
 def require(condition, message):
@@ -110,7 +132,16 @@ def main():
         command = [f"/proc/self/fd/{artifact.fileno()}", "check", "--policy", "examples/starter.warden.toml",
                    "--patch", "fixtures/demo.patch", "--advisory", "--rank",
                    "fixtures/demo.rank.json", "--today", "2026-11-05", "--json"]
-        if golden == GOLDENS[0]:
+        if golden in SURFACE:
+            text = ""
+            for args in SURFACE[golden]:
+                out = subprocess.run([f"/proc/self/fd/{artifact.fileno()}", *args], cwd=ROOT, env=env,
+                                     pass_fds=(artifact.fileno(),), input=b"", capture_output=True,
+                                     timeout=30, check=False)
+                text += (f"=== forge-warden {' '.join(args)} (exit {out.returncode})\n--- stdout\n"
+                         f"{out.stdout.decode()}--- stderr\n{out.stderr.decode()}")
+            result = text.replace(package_version(), "<version>").encode()
+        elif golden == GOLDENS[0]:
             out = subprocess.run(command, cwd=ROOT, env=env, pass_fds=(artifact.fileno(),), stdin=subprocess.DEVNULL,
                                  capture_output=True, timeout=30, check=False)
             if out.returncode != 7 or out.stderr:
