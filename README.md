@@ -68,7 +68,7 @@ people, scripts, CI and agents together.
 ## Install
 
 ```bash
-cargo install --git https://gitlab.com/lukeomahoney/forge-warden --tag v0.2.0 forge-warden-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/forge-warden --tag v0.2.1 forge-warden-cli --locked
 cargo install --git https://gitlab.com/lukeomahoney/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
 forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
@@ -80,17 +80,18 @@ file sent as a binary section, whose lines no signal rule can read (an executabl
 than the rule lists needs a path rule of your own); read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
-Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.0 is a
+Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.1 is a
 source release: there is no forge-warden binary to download. Authority mode runs only the
 deep-diff-forge binary whose SHA-256 your policy lists, and a binary you build yourself has other
 bytes than the released one ([runbook](docs/RUNBOOK.md), step 3).
 
-The repository of record is GitLab (`gitlab.com/lukeomahoney/forge-warden`); the tag `v0.2.0`
-exists there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
+The repository of record is GitLab (`gitlab.com/lukeomahoney/forge-warden`); the release tags
+(`v0.2.1`, `v0.2.0`) are there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
 its `main` predates the fixes in 0.2.0: see advisory
 [FW-2026-001](docs/advisories/FW-2026-001.md).
 
-Coming from 0.1.0? [Upgrading to 0.2.0](docs/UPGRADING.md) lists what changed and what to do.
+Coming from 0.2.0 or 0.1.0? [Upgrading](docs/UPGRADING.md) lists what changed and what to do: from 0.2.0,
+two starter-policy rules to copy by hand.
 
 forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
 Unix file metadata, and clean up child process groups with `/usr/bin/kill`. It is built, tested and

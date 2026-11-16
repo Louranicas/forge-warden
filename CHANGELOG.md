@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-16
+
+- No change to a published schema or to the exit-code registry: `forge-warden.policy.v0`,
+  `forge-warden.verdict.v2`, `forge-warden.git-allowlist.v1` and the exit codes are as in 0.2.0. Two
+  starter-policy changes below need a hand edit in a policy adopted earlier (Upgrading).
 - New rule `binary-text-is-hidden-text` in the starter policy and in this repository's `warden.toml`
   (ledger Q63): it holds a file that is normally text (125 extensions, 40 exact names including the
   Git hook names, `configure` and `allowed_signers`, and the name prefixes `LICENSE-`, `COPYING.` and
@@ -21,7 +26,7 @@ registry is always listed, because consumers parse them.
   `patch_unverifiable` detail now says the path "changes type: Git deletes it and creates it again
   as a symlink or a file" instead of "git lists PATH more than once" (ledger Q60). What holds is
   unchanged; only the reason is clearer. Any other path Git lists twice keeps the old message.
-- Git's numstat counts are read strictly: each is a decimal, or both are `-` for a binary file;
+- Git's numstat counts are read strictly: each is a decimal of 1 to 20 digits, or both are `-` for a binary file;
   anything else is refused as unreadable Git output (`patch_unverifiable`). Before, an
   unreadable count was read as a content change. Git does not write one.
 - The refusal for a patch without `diff --git a/PATH b/PATH` headers, and the policy reference,
