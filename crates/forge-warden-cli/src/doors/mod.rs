@@ -1449,6 +1449,15 @@ mod child_tests {
         let repo = Repo::new("bound-sha256", "sha256");
         let base = repo.commit("a.txt", "a\n");
         let head = repo.commit("a.txt", "b\n");
+        // 64 digits but not lowercase hex: refused by the door before Git reads it.
+        let upper = base.to_uppercase();
+        assert!(
+            matches!(
+                bound(&repo, &upper, &head).0,
+                Err(super::child::BoundFailure::Input(why)) if why.contains("full object ids of one length")
+            ),
+            "{upper}"
+        );
         let made = bound(&repo, &base, &head).0.unwrap();
         assert_eq!(made.merge_base, base);
         let direct = command("/usr/bin/git")
