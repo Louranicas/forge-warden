@@ -2172,6 +2172,10 @@
         "2a93fd944ad45b3b0124e8a1a1cca8f32f43ee00f2a8439359381ef965769249"
       ],
       [
+        "crates/forge-warden-core/src/builtin.rs",
+        "eac30973927121420165d12df76752b4f914a3762620f9010ff4a635e77effcb"
+      ],
+      [
         "crates/forge-warden-core/src/date.rs",
         "95ed23a3b52c7616bda0c4c41cf44fe96a12143acd71fd977bfe48e63f293c5d"
       ],
@@ -2274,6 +2278,10 @@
       [
         "crates/forge-warden-core/tests/authority.rs",
         "def0d41908d27a00b4e9e0a37d9b414da765cbe1df4b00b52f069385fcb4398a"
+      ],
+      [
+        "crates/forge-warden-core/tests/builtin.rs",
+        "efa576ac8f1f9b87316e5de21e31fee14615942c9ac54af32b95411323bdf98a"
       ],
       [
         "crates/forge-warden-core/tests/coverage.rs",
