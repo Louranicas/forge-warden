@@ -230,6 +230,13 @@ common history" (Bastion's row, receipt 31f5ff9a). The sentence stays above; thi
   When the old commit is `mb`'s own parent, verified keeps `mb`'s edge to it and the run passes. Both are tests
   (`bound_mode_keeps_a_redundant_merges_in_copy_edge`, `bound_mode_refuses_when_both_sides_reach_one_old_commit_past_the_boundary`).
   Accepting the extra base would need staging's ancestry, which is not trusted.
+- **The shallow file is a correctness invariant (added 2026-11-16T17:23:41Z, ledger Q72).** The merge base verified computes is
+  right only because `shallow` names the boundary: Git builds differ in whether they tolerate an absent boundary
+  parent (the gate image's Git passed the redundant-merge row with no `shallow` file; the toolbox Git failed on the
+  absent parent, Train B2 red). So whether a missing file is noticed is not left to Git: the contract test
+  `the_cut_writes_exactly_the_boundary_as_shallow` holds the file's bytes (exactly the boundary; no file for a root
+  merge base), and plant `bound-shallow-not-written` is guarded by it. The recheck (D3 step 4) still refuses a wrong
+  merge base whatever Git does.
 
 ## Acceptance evidence for step (a): what is delivered, and what moves (dated 2026-11-16T09:54:17Z, for Lodestar's ruling)
 Step (a) is the door and the `--repo` comparison; verified claims are step (b), `require_verified` step (c). Lodestar
