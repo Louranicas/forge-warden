@@ -54,7 +54,7 @@ registry is always listed, because consumers parse them.
   it (hooks, permissions, skills), at the root or in a subdirectory, in any letter case (a
   case-insensitive checkout reads `.CLAUDE` as `.claude`), and a `.claude` symlink itself. A repository that adopted the starter
   earlier keeps its own copy; add the path to its policy by hand. The demo verdict's
-  `policy_sha256` changes with the policy bytes; nothing else in it does.
+  `policy_sha256` changes with the policy bytes; this change alters nothing else in it.
 - For contributors (gap G9): the fast gate runs `scripts/script_commands.py`, which reads every
   tracked shell and Python script, here-documents included, and names each command it calls that is
   not in the offline gate image's declared list (that image has no `cmp`, `diff`, `jq`, `xxd` or

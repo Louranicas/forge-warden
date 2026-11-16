@@ -126,6 +126,11 @@ and `Evidence` have private fields and are built only through the parsers; rule 
 enum `Kind` (non-exhaustive: match it with a wildcard arm); `Verdict` is no longer `Clone`; a ranking is judged only through the
 authority and advisory entry points, which take a checked ranking.
 
+### Not covered here
+
+Moving a signed HOLD acknowledgement workflow from an unreleased v1 build; there was no release
+that produced one. Platforms other than x86_64 Linux: nothing is pinned or tested for them.
+
 ## 0.2.0 to 0.2.1
 
 0.2.1 is a drop-in replacement for 0.2.0: the verdict, policy and Git-allowlist schemas and the exit codes are
@@ -153,8 +158,3 @@ an older starter keeps its own rules: nothing changes until you edit it. The sta
   text should match the note code instead.
 - Git's numstat counts are read strictly (1 to 20 decimal digits, or `-` `-` for a binary file); any other
   count is refused as unreadable Git output. Git does not write one, so a patch Git made is unaffected.
-
-## Not covered here
-
-Moving a signed HOLD acknowledgement workflow from an unreleased v1 build; there was no release
-that produced one. Platforms other than x86_64 Linux: nothing is pinned or tested for them.

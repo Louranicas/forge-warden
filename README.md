@@ -86,7 +86,7 @@ deep-diff-forge binary whose SHA-256 your policy lists, and a binary you build y
 bytes than the released one ([runbook](docs/RUNBOOK.md), step 3).
 
 The repository of record is GitLab (`gitlab.com/lukeomahoney/forge-warden`); the release tags
-(`v0.2.1`, `v0.2.0`) are there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
+(`v0.2.0`, and `v0.2.1` once the owner has signed it) are there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
 its `main` predates the fixes in 0.2.0: see advisory
 [FW-2026-001](docs/advisories/FW-2026-001.md).
 

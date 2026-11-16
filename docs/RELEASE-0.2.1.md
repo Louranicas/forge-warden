@@ -25,8 +25,8 @@ two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
   enrolled (`9cb7513`).
 - [x] PROTECT-CLAUDE: the starter's `ci-is-owned` holds `.claude` and everything under it, any letter case (`acaa280`).
 - [x] Q60: a file/symlink type change is refused as a type change (`933ca9f`).
-- [x] HEADER-OWN: forge-warden's own header check refuses a lone `diff --git` header; six Git-written
-  patches under `fixtures/hostile/lone-header/` (`3f5054b`). Test and fixtures only.
+- [x] HEADER-OWN: forge-warden's own header check refuses a lone `diff --git` header; five hostile
+  shapes and a control under `fixtures/hostile/lone-header/`, each with the numstat Git reported (`3f5054b`). Test and fixtures only.
 - [x] Q53: the plants README count is derived from the catalogue (`5e75cc3`). Test only.
 - [x] BINARY-TEXT-HOLD (Q63): rule `binary-text-is-hidden-text` in the starter and in `warden.toml` (`26330b9`).
   Not covered, stated: an executable with a name the rule does not list (Q64; verdict v3).
