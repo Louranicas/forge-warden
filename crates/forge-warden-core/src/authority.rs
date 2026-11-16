@@ -333,7 +333,7 @@ fn judge<P>(
             let verdict = evaluate(policy, &widened(rank, facts), seals, today);
             // The built-in rule reads Git's facts, which only this arm has (M7-Q64); the refusal
             // arm below is held by its note whatever the files are.
-            let builtin = crate::builtin::binary_on_executable(facts, verdict.rules());
+            let builtin = crate::builtin::binary_on_executable(facts);
             verdict
                 .with_builtin_rules(builtin.into_iter().collect())
                 .with_notes(extra)

@@ -221,7 +221,10 @@ fn controls_a_plain_binary_a_deletion_and_a_text_edit_do_not_hold() {
 }
 
 #[test]
-fn one_hold_per_path_a_policy_hold_is_not_doubled_but_a_waived_one_is_not_a_hold() {
+fn the_built_in_hold_is_listed_alongside_a_policy_hold_and_no_waiver_hides_it() {
+    // Lodestar's ruling on M7-Q64 LOW-1: a hold is acknowledged by naming its rules, so another
+    // rule's hold on the same path (here a path rule; Q63's binary-text-is-hidden-text for run.sh,
+    // or a new_file signal rule, alike) never hides the built-in one.
     let section = || binary("scripts/run.sh", "index 88768ef..3e3315e 100755\n", None);
     let protect = r#"
 [[rule]]
@@ -231,16 +234,23 @@ kind = "protect_paths"
 severity = "hold"
 paths = ["scripts/**"]
 "#;
-    // A policy rule already holds the path (as Q63's binary-text-is-hidden-text does for run.sh).
-    let by_policy = judge(&[section()], protect);
-    assert!(builtin(&by_policy).is_none());
-    assert_eq!(by_policy.outcome(), Outcome::Hold);
+    let both = judge(&[section()], protect);
+    assert_eq!(held(&both), ["scripts/run.sh"]);
+    let held_rules: Vec<&str> = both
+        .rules()
+        .iter()
+        .filter(|rule| rule.outcome == RuleOutcome::Hold)
+        .map(|rule| rule.id.as_str())
+        .collect();
+    assert_eq!(held_rules, ["scripts-reviewed", ID]);
+    assert_eq!(both.summary().held, 2);
     // A waiver that covers the policy's hold does not cover the built-in rule.
     let waived = format!(
         "{protect}\n[[waiver]]\nrule = \"scripts-reviewed\"\npaths = [\"scripts/run.sh\"]\nreason = \"The owner reviewed this script change already.\"\nowner = \"release\"\nexpires = \"2099-01-01\"\n"
     );
     let verdict = judge(&[section()], &waived);
     assert_eq!(held(&verdict), ["scripts/run.sh"]);
+    assert!(builtin(&verdict).unwrap().violations[0].waived_by.is_none());
     assert_eq!(verdict.outcome(), Outcome::Hold);
 }
 

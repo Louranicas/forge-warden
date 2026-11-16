@@ -12,7 +12,7 @@
 //! policy ids are kebab-case, so a `builtin:` id is never a policy rule's, and a waiver's rule must
 //! be one of the policy's own.
 
-use crate::facts::{ChangeKind, Mode, PatchFacts};
+use crate::facts::{Mode, PatchFacts};
 use crate::verdict::{RuleOutcome, RuleResult, Violation};
 
 /// The id of the built-in rule (a `:` no policy id may contain).
@@ -23,41 +23,30 @@ pub(crate) const BUILTIN_KIND: &str = "builtin";
 const WHY: &str = "an executable or a symlink sent as a binary section hides its lines from every \
                    signal rule, and the shell can still run it; a person reads it before it merges";
 
-/// The built-in rule over Git's `facts`, after the policy's own rules were `judged`: a hold on
-/// every file that Git reads as binary, that the change does not delete, and whose mode after the
-/// change is executable (`100755`) or a symlink (`120000`), unless a policy rule already holds or
-/// fails that path with a violation no waiver covers (one hold per path, not two). `None` when no
+/// The built-in rule over Git's `facts`: a hold on every file that Git reads as binary, that the
+/// change does not delete, and whose mode after the change is executable (`100755`) or a symlink
+/// (`120000`). It is listed whatever the policy's own rules say about the path (Lodestar's ruling
+/// on M7-Q64 LOW-1): a hold is acknowledged by naming its rules, so what this rule exists to show
+/// is always named in the verdict a person signs, never hidden behind another hold. `None` when no
 /// file qualifies: the rule is listed only when it holds.
 ///
 /// The resulting mode comes from Git's summary for a creation or a mode change, and from the
 /// `index` line for a binary edit that keeps its mode (Git's own in bound mode; in unbound mode
 /// the author's text, so a falsely stated `100644` on an executable is the limit only bound mode
 /// closes: ADR 0012).
-pub(crate) fn binary_on_executable(
-    facts: &PatchFacts,
-    judged: &[RuleResult],
-) -> Option<RuleResult> {
-    let held_by_policy = |path: &str| {
-        judged.iter().any(|rule| {
-            matches!(rule.outcome, RuleOutcome::Hold | RuleOutcome::Fail)
-                && rule
-                    .violations
-                    .iter()
-                    .any(|v| v.waived_by.is_none() && v.path.as_deref() == Some(path))
-        })
-    };
+pub(crate) fn binary_on_executable(facts: &PatchFacts) -> Option<RuleResult> {
     let violations: Vec<Violation> = facts
         .files()
-        .filter(|change| change.binary() && change.kind() != ChangeKind::Deleted)
+        .filter(|change| change.binary())
         .filter_map(|change| {
+            // `resulting_mode` is `None` for a deletion: a deleted file is not run.
             let what = match change.resulting_mode()? {
                 Mode::Exec => "an executable file (100755)",
                 Mode::Symlink => "a symlink (120000)",
                 Mode::File => return None,
             };
-            let path = change.path().as_str();
-            (!held_by_policy(path)).then(|| Violation {
-                path: Some(path.to_owned()),
+            Some(Violation {
+                path: Some(change.path().as_str().to_owned()),
                 message: format!("a binary section on {what}"),
                 signal: None,
                 evidence: Vec::new(),

@@ -314,8 +314,8 @@ review_reason = "C1c core authority corpus tests read committed fixtures and unw
 
 [[data_input]]
 file = "schemas/verdict.v3.schema.json"
-sha256 = "bcc8f6059dbc33f7c77b81e460db0774b8d602b986c6106ac99742ea04c058fe"
-review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled. M7-Q64 (ruling R-a) adds the built-in rule to v3 before its release: a rule id may be `builtin:` then kebab-case, kind gains `builtin`, and an allOf clause ties kind builtin to a builtin: id, severity hold and outcome hold (every other kind keeps the kebab-case id)."
+sha256 = "42a2db5d55cdfc83089c7729e5d3ca8bec9081f28cf49d432cfab76c863ce777"
+review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled. M7-Q64 (ruling R-a) adds the built-in rule to v3 before its release: a rule id may be `builtin:` then kebab-case, kind gains `builtin`, and an allOf clause ties kind builtin to a builtin: id, severity hold, outcome hold and violations without waived_by (every other kind keeps the kebab-case id)."
 
 [[data_input]]
 file = "schemas/policy.v0.schema.json"

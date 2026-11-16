@@ -354,7 +354,7 @@
       ],
       "allOf": [
         {
-          "description": "A built-in rule (M7-Q64) is listed only when it holds; it is never waived. Its id starts with `builtin:` exactly when its kind is `builtin`.",
+          "description": "A built-in rule (M7-Q64) is listed only when it holds, whatever the policy's rules say about the same path; no waiver covers its violations. Its id starts with `builtin:` exactly when its kind is `builtin`.",
           "if": {
             "properties": {
               "kind": {
@@ -372,6 +372,15 @@
               },
               "outcome": {
                 "const": "hold"
+              },
+              "violations": {
+                "items": {
+                  "not": {
+                    "required": [
+                      "waived_by"
+                    ]
+                  }
+                }
               }
             }
           },

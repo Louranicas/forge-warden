@@ -48,7 +48,7 @@ registry is always listed, because consumers parse them.
   `100755` or `120000` holds whatever the policy says: Git's summary gives the mode of a creation or a mode
   change, the `index` line that of a binary edit keeping its mode (Git's own in bound mode). It is a rule
   outcome (`kind: "builtin"`, severity and outcome `hold`), listed after the policy's rules only when it
-  holds and counted in `summary`; a path a policy rule already holds or fails is not held twice. No policy
+  holds and counted in `summary`, also when a policy rule holds the same path. No policy
   can declare or waive it (policy ids are kebab-case); `scripts/hold_ack.py` acknowledges it as any hold.
   `verdict.v3.schema.json`: a rule id may start with `builtin:`, `kind` gains `builtin`, and kind
   `builtin` requires severity and outcome `hold`. The core's `FileChange` gains `resulting_mode()`.

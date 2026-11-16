@@ -91,8 +91,8 @@ mode (`--repo`, ADR 0012), the patch author's text otherwise, so a falsely state
 executable is the limit only bound mode closes.
 
 - It is listed in the verdict's `rules` only when it holds, after the policy's rules, and counted in
-  `summary`. A path a policy rule already holds or fails (with a violation no waiver covers) is not
-  held twice.
+  `summary`. It is listed even when a policy rule holds the same path: a hold is acknowledged by naming
+  its rules, so the person who signs sees that the file is an executable sent as binary.
 - No policy can declare it or waive it: policy ids are kebab-case, and a waiver's `rule` must be the
   policy's own. Acknowledge the hold as any policy hold (`scripts/hold_ack.py`), or keep executables
   out of the patch.
