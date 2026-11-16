@@ -149,6 +149,18 @@ class BoundAck(unittest.TestCase):
                 self.assertEqual(out.returncode, code, out.stderr)
                 if code:
                     self.assertIn(b"verified claims name other commits", out.stderr)
+        # SHA-256 ids (64 hex) are acknowledged like SHA-1 ones; mixed lengths are refused.
+        for base, head, code in (("a" * 64, "b" * 64, 0), ("a" * 40, "b" * 64, 8)):
+            with self.subTest(base_len=len(base), head_len=len(head)):
+                self.verdict = json.loads(original)
+                self.verdict["seals"]["claims"] = {"base": base, "head": head, "merge_base": base,
+                                                   "verified": True}
+                self.write_verdict()
+                saved = self.base, self.head
+                self.base, self.head = base, head
+                out = self.run_helper("prepare", "--signer", "fixture")
+                self.base, self.head = saved
+                self.assertEqual(out.returncode, code, out.stderr)
         # v2 is no longer read: 0.3.0 writes v3 only.
         self.verdict = json.loads(original)
         self.verdict["schema"] = "forge-warden.verdict.v2"

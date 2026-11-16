@@ -554,7 +554,7 @@
         "bash",
         "scripts/tests/dogfood.sh"
       ],
-      "old": "git --git-dir=\"$scratch/diff.git\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
+      "old": "git --git-dir=\"$scratch/diff.git\" \"${nograph[@]}\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
       "new": "git -C \"$repository\" -c core.attributesFile=/dev/null \\",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
@@ -2287,8 +2287,8 @@
         "--",
         "every_bound_mode_git_child_runs_under_the_memory_caps"
       ],
-      "old": "        data: DATA_CAP,\n        address_space: ADDRESS_SPACE_CAP,",
-      "new": "        data: u64::MAX,\n        address_space: u64::MAX,",
+      "old": "        data: caps.data,\n        address_space: caps.address_space,",
+      "new": "        data: caps.data.max(u64::MAX),\n        address_space: caps.address_space.max(u64::MAX),",
       "required_tools": [
         "cargo",
         "git",
@@ -2419,6 +2419,32 @@
       ],
       "old": "&self.staging(&[\"merge-base\", \"--all\", base, head]),",
       "new": "&self.staging(&[\"merge-base\", base, head]),",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "bound-require-verified-ignored",
+      "guardrail": "G-54",
+      "path": "crates/forge-warden-core/src/authority.rs",
+      "diagnostic": "require_verified_holds_an_unverified_authority_run_and_changes_nothing_else \\.\\.\\. FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-core",
+        "--locked",
+        "--offline",
+        "--test",
+        "authority",
+        "--",
+        "require_verified_holds_an_unverified_authority_run"
+      ],
+      "old": "    if policy.require_verified() && !seals.claims.as_ref().is_some_and(Claims::verified) {",
+      "new": "    if false && policy.require_verified() && !seals.claims.as_ref().is_some_and(Claims::verified) {",
       "required_tools": [
         "cargo",
         "git",

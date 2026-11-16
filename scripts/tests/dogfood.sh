@@ -225,6 +225,23 @@ for bad in "nosuchrev $attr_head" "$base nosuchrev" "$base" "$base $attr_head $a
 done
 [ ! -e "$sandbox/x" ] || { echo 'FAIL make_patch: an option was taken as a revision'; exit 1; }
 echo 'PASS make_patch refuses a missing revision, a wrong argument count and an option in place of a revision'
+# ADR 0012 D7: several merge bases are refused with bound mode's message, not resolved by `...`.
+cc="$sandbox/criss-cross"
+git init -q "$cc"
+ccgit() { git -C "$cc" -c user.name=Fixture -c user.email=fixture@example.invalid "$@"; }
+printf 'root\n' > "$cc/r.txt"; ccgit add r.txt; ccgit commit -qm root
+ccgit checkout -qb x; printf 'x\n' > "$cc/x.txt"; ccgit add x.txt; ccgit commit -qm x
+ccgit checkout -q master 2>/dev/null || ccgit checkout -q main
+ccgit checkout -qb y; printf 'y\n' > "$cc/y.txt"; ccgit add y.txt; ccgit commit -qm y
+x="$(ccgit rev-parse x)"; y="$(ccgit rev-parse y)"
+ccgit checkout -qb m1 "$x"; ccgit merge -q --no-edit "$y"
+ccgit checkout -qb m2 "$y"; ccgit merge -q --no-edit "$x"
+if bash "$maker" "$(ccgit rev-parse m1)" "$(ccgit rev-parse m2)" "$cc" > "$sandbox/made.patch" 2> "$sandbox/made.err" \
+  || [ -s "$sandbox/made.patch" ] || ! grep -q '2 merge bases' "$sandbox/made.err"; then
+  echo "FAIL make_patch: several merge bases were not refused: $(cat "$sandbox/made.err")"
+  exit 1
+fi
+echo 'PASS make_patch refuses several merge bases with the door message'
 # SUBMODULE-PIN (outside review O1): a submodule change always reaches the patch as its own
 # `diff --git` section. The candidate's work tree holds the change's own `.gitmodules` with
 # `ignore = all`; with that file alone, a `git diff` without the two submodule options leaves the

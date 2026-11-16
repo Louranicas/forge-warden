@@ -16,6 +16,7 @@ fn front_door_schema_tokens_exist_and_match_code() {
     let known = [
         forge_warden_core::policy::POLICY_SCHEMA,
         forge_warden_core::verdict::VERDICT_SCHEMA,
+        forge_warden_core::policy::POLICY_SCHEMA_V1,
     ];
     let mut references = 0;
     for path in [

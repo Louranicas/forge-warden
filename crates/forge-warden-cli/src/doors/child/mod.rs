@@ -16,8 +16,8 @@ mod bound;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
 pub(in crate::doors) use bound::{
-    ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program, cut_in,
-    recheck_in,
+    ADDRESS_SPACE_CAP, BoundDiff, CAPS, Caps, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program,
+    cut_in, recheck_in,
 };
 pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
 // The admission refusals are named only in tests (the refusal map's rows and the door tests).

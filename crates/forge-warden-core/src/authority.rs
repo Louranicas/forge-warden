@@ -23,7 +23,7 @@ use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_sign
 use crate::policy::{AdmittedProducer, Policy};
 use crate::rank::RankDoc;
 use crate::seal::Sha256Hex;
-use crate::verdict::{Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
+use crate::verdict::{Claims, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
@@ -268,6 +268,18 @@ pub fn evaluate_authority(
                     .to_owned(),
         }],
     };
+    let mut extra = extra;
+    // ADR 0012 D8: a policy that requires verified claims holds a run bound mode did not verify.
+    if policy.require_verified() && !seals.claims.as_ref().is_some_and(Claims::verified) {
+        extra.push(Note {
+            code: NoteCode::ClaimsUnverified,
+            path: None,
+            detail:
+                "the policy requires verified claims ([claims] require_verified) and this run's \
+                     claims were not verified: run check with --repo DIR --base BASE --head HEAD"
+                    .to_owned(),
+        });
+    }
     let seals = provenance(seals, checked.ranking, Provenance::Produced);
     judge(policy, checked, extra, seals, today)
 }
