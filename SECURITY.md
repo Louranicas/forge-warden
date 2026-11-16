@@ -4,7 +4,7 @@
 
 forge-warden reads two untrusted inputs: a ranking (written by deep-diff-forge from a patch
 someone else wrote) and, with `--patch`, the patch bytes. It trusts its policy file, which lives
-in the repository under review and is owned (CODEOWNERS, `protect_paths`).
+in the repository under review and is owned (`protect_paths`; `.github/CODEOWNERS` for a deployer on GitHub).
 
 | Threat | Mitigation |
 | --- | --- |
@@ -14,7 +14,7 @@ in the repository under review and is owned (CODEOWNERS, `protect_paths`).
 | Fail-open on new or empty input | ADR 0003: unknown vocabulary and empty rankings hold; they never pass. |
 | A pull request weakening the gate that judges it | The dogfood driver builds the judge and loads policy from a separate, clean **base checkout**; the candidate is diff data only. This requires a trusted workflow/runner enforced outside the candidate PR. A mutable repository-local workflow is not an independent approval boundary. See ADR 0006 for bootstrap, isolation and deployment prerequisites. |
 | A substituted ranker or Git | Authority mode runs only a deep-diff-forge whose SHA-256 is listed in the policy's `[producer] sha256`, and only a Git whose SHA-256 is enrolled in the owner's allowlist `/etc/forge-warden/git-allowlist.toml` (ADR 0011); with no allowlist, or an unlisted digest, it refuses. Each must be an executable ELF, run from the descriptor that was hashed. With no allowlist installed, advisory mode still runs Git and records `Unpinned` in the verdict; it can at best hold. With an allowlist installed, an unenrolled Git is refused in both modes. |
-| Supply chain | `cargo-deny` (sources, licences, advisories, bans), Dependabot, actions pinned by SHA, `zizmor` workflow audit. |
+| Supply chain | `cargo-deny` (sources, licences, advisories, bans) in `scripts/ci_local.sh` and the integrator gate; dependency updates by hand in a gated change; actions pinned by SHA; `zizmor` when installed (in no gate: see CONTRIBUTING, "Where the gate runs"). |
 | Panics as denial of service | No `unwrap`/`expect`/`panic`/indexing in production code (lint wall); a panic exits 101 and is a bug. |
 
 forge-warden has no `unsafe` code (forbidden) and opens no network connections. Every child
@@ -57,7 +57,7 @@ TOML. Shell tokenization catches known literal-path spellings, including concate
 absolute paths, but does not interpret arbitrary shell programs, scripts, aliases or interpreters.
 Rust text checks are conservative heuristics, not a Rust parser: the hook's shell refusals are a
 list of known spellings, and forms outside it (for example `#[ expect ]` with spaces, a `#[warn]`, or
-the allowed `cargo clippy --fix`) pass the hook and are left to the compiler and CI checks below.
+the allowed `cargo clippy --fix`) pass the hook and are left to the compiler and the gate's checks below.
 Golden regeneration (`scripts/bless.sh`, `just bless`) is refused for agents by the hook's pattern,
 which matches the script name anywhere in a command (`.claude/hooks/guard.py`); the `deny` entries in
 `.claude/settings.json` (the bare commands and the common forms with arguments) are a first filter
@@ -66,7 +66,7 @@ boundary against a person or process outside Claude Code.
 A hook is not a sandbox: bypassing
 the host, changing hook configuration or running an opaque script can avoid it.
 
-Compiler/clippy and CI repo invariants are the enforcing checks for unsafe code, suppressions and
+Compiler/clippy and the gate's repo invariants are the enforcing checks for unsafe code, suppressions and
 member lint inheritance; D6 adds configuration equality, lint floors and an expectation ledger.
 The host should mount protected files read-only for ordinary agent work and use a separate
 owner-controlled change path. No read-only mount or provider setting is configured by this hook.

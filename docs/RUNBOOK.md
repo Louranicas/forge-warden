@@ -191,8 +191,8 @@ mode still runs and records `unpinned`), or by reinstalling the previous forge-w
 
 ## Not covered here
 
-Hosted CI runs dogfood in advisory mode by decision, because a hosted runner has no owner-enrolled Git
-allowlist. Network containment of a self-hosted runner, signing keys for HOLD acknowledgements
+The example hosted workflow runs dogfood in advisory mode by decision, because a hosted runner has no
+owner-enrolled Git allowlist. This repository's own gate uses no hosted job (CONTRIBUTING, "Where the gate runs"). Network containment of a self-hosted runner, signing keys for HOLD acknowledgements
 (`.github/hold-reviewers/README.md`) and releases are separate owner procedures.
 
 A deployer of the released binary has no way to acknowledge a hold. `forge-warden check` has no

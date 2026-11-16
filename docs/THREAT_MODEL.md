@@ -81,7 +81,8 @@ The patch author controls diff bytes, paths and content. The PR author may addit
 change every candidate file, including workflow YAML, agent instructions, policy,
 build configuration and proposed tests. Neither is an authority for the current
 judgment. DDF is an admitted producer whose output can still be wrong or incomplete.
-The CI runner supplies the trusted runtime and must keep candidate execution separate.
+The trusted runner (for this repository, the integrator gate's host) supplies the trusted runtime and
+must keep candidate execution separate.
 Maintainers choose future policy/code and enroll reviewers; an acknowledger may consent
 only within the signed-receipt contract. Claude Code hooks and managed reviewers assist
 work but do not grant merge permission. Other local processes with the same uid, host
@@ -199,7 +200,7 @@ this stack; historical receipts retain their own exact subject identities.
 | R-06 noncanonical paths | B2 implemented | 2 RepoPath after 3 admission | [path.rs](../crates/forge-warden-core/src/path.rs), `dot_prefixed_paths_are_refused_at_the_cli_boundary` in [adversarial.rs](../crates/forge-warden-cli/tests/adversarial.rs). |
 | R-07 rule-kind drift | B1 implemented | 2 Kind enum/exhaustive dispatch | [kind.rs](../crates/forge-warden-core/src/policy/kind.rs), [policy tests](../crates/forge-warden-core/src/policy/tests.rs). |
 | R-08 unpinned/red toolchain | A1 implemented | 4 pinned build/lint gate | [rust-toolchain.toml](../rust-toolchain.toml), [ci_fast.sh](../scripts/ci_fast.sh); pin does not authenticate tool distribution. |
-| R-09 vocabulary revision not attested | B3 + B3.1 implemented | 3 revision resolution/byte comparison | `the_script_attests_exactly_what_the_commit_labels` in [check_vocab.rs](../crates/forge-warden-cli/tests/check_vocab.rs). The script resolves its argument with `rev-parse`, so a branch name is accepted and attests whatever that branch points to; CI passes the full pinned commit (`DDF_REV`). |
+| R-09 vocabulary revision not attested | B3 + B3.1 implemented | 3 revision resolution/byte comparison | `the_script_attests_exactly_what_the_commit_labels` in [check_vocab.rs](../crates/forge-warden-cli/tests/check_vocab.rs). The script resolves its argument with `rev-parse`, so a branch name is accepted and attests whatever that branch points to; The hosted job passed the full pinned commit (`DDF_REV`); for this repository the comparison can be run by hand and is in no gate (CONTRIBUTING, "Where the gate runs"). |
 | R-10 swallowed local failures | A2 + D8 implemented | 3 exact exit propagation, 5 regression evidence | [ci_local.sh fixtures](../scripts/tests/ci_local.sh), including pre-push, judge/ranker and early-failure controls. |
 | R-11 malformed hook input passes | D4 implemented | 3 request parsing | [test_guard.py](../.claude/hooks/test_guard.py); rejection is not shell containment. |
 | R-12 semantic edits evade hook | D4 + B6 + D6 checks implemented | 4 compiler/lint/repository invariants | [repo_invariants.rs](../crates/forge-warden-cli/tests/repo_invariants.rs), [guardrails.py](../scripts/tests/guardrails.py); trusted enforcement required. |
