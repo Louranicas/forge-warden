@@ -152,7 +152,7 @@ fn the_effect_lists_name_every_reviewed_effect() {
     // spellings: an effect it does not name is not refused, so the reviewed names are pinned here
     // as ACTIVE entries (a commented-out line keeps its text and disallows nothing). That clippy
     // then refuses each of them is measured in tests/mint_lint.rs.
-    const BOTH: [&str; 8] = [
+    const BOTH: [&str; 30] = [
         "std::fs::remove_dir",
         "std::fs::hard_link",
         "std::fs::set_permissions",
@@ -161,6 +161,29 @@ fn the_effect_lists_name_every_reviewed_effect() {
         "std::path::Path::metadata",
         "std::os::unix::fs::symlink",
         "std::os::unix::net::UnixStream::connect",
+        // M7-EFFECT-WALL stop-gap (ruling P4.2), measured unlisted on 92a9ac99.
+        "std::path::Path::is_file",
+        "std::path::Path::is_dir",
+        "std::path::Path::read_dir",
+        "std::path::Path::canonicalize",
+        "std::path::Path::read_link",
+        "std::path::Path::symlink_metadata",
+        "std::path::Path::try_exists",
+        "std::fs::exists",
+        "std::fs::File::options",
+        "std::fs::File::create_new",
+        "std::net::ToSocketAddrs::to_socket_addrs",
+        "std::os::unix::net::UnixListener::bind",
+        "std::os::unix::net::UnixDatagram::bind",
+        "std::os::unix::net::UnixDatagram::unbound",
+        "std::os::unix::net::UnixStream::pair",
+        "std::env::current_exe",
+        "std::os::unix::fs::chown",
+        "std::os::unix::fs::lchown",
+        "std::thread::Builder::spawn",
+        "std::thread::scope",
+        "std::time::SystemTime::elapsed",
+        "std::process::id",
     ];
     // Minted only inside the CLI's door modules; the core defines them, so only the root lists them.
     const CLI_ONLY: [&str; 3] = [
@@ -1237,5 +1260,50 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
     assert_eq!(
         allocators, 2,
         "both reviewed scratch allocators must be checked"
+    );
+}
+
+#[test]
+fn only_bound_mode_verifies_claims() {
+    // ADR 0012 D5 as ruled (R1, 2026-11-16): the core's `BoundClaims::from_comparison` is the only
+    // way to verified claims. It is public (a core type cannot be visible to the CLI alone), so the
+    // binary's guarantee is held here: one production call, in `bind`, whose second input is the
+    // diff the door made (`made.patch`). This holds because every other way to a `BoundClaims` or a
+    // verified `Claims` goes through that call (public-api.txt lists no other constructor).
+    let mut calls = Vec::new();
+    for (path, text) in rust_sources() {
+        if !is_production(&path) {
+            continue;
+        }
+        // The whole file, unit tests included: a call anywhere in a production file counts.
+        for (n, line) in code_lines(&text) {
+            assert!(
+                !line.contains("BoundClaims as ") && !line.contains("verdict::*"),
+                "{path}:{}: the name this scan reads is not hidden",
+                n + 1
+            );
+            if line.contains("from_comparison") && !line.contains("pub fn from_comparison(") {
+                calls.push((path.clone(), line.trim().to_owned()));
+            }
+        }
+    }
+    assert_eq!(
+        calls,
+        [(
+            "crates/forge-warden-cli/src/main.rs".to_owned(),
+            "BoundClaims::from_comparison(ids, patch, &made.patch).map_err(|mismatch| {".to_owned()
+        )],
+        "one production call of BoundClaims::from_comparison, in bind, comparing the patch with the door's diff"
+    );
+    let main = read("crates/forge-warden-cli/src/main.rs");
+    let bind = main.find("\nfn bind(").unwrap();
+    let call = main.find("BoundClaims::from_comparison(").unwrap();
+    let next = main.get(bind + 1..).unwrap().find("\nfn ").unwrap() + bind + 1;
+    assert!(bind < call && call < next, "the call is inside bind");
+    assert!(
+        main.get(bind..call)
+            .unwrap()
+            .contains("let made = doors::child::bound_diff(git, &objects, base, head)"),
+        "made is the door's bound diff"
     );
 }

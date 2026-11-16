@@ -8,6 +8,10 @@ fn locked_dependencies_probe() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test re-runs its own test binary under a cold CARGO_HOME; current_exe names that binary"
+)]
 fn empty_cargo_home_has_an_actionable_precondition() {
     let cold = common::scratch("cold-cargo");
     let executable = std::env::current_exe().unwrap();

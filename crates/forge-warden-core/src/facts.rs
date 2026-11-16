@@ -6,6 +6,7 @@
 //! Facts derived this way are Git's, so they outrank the ranking on file identity and change kind;
 //! the ranking still supplies scores and code-evidence signals.
 
+use crate::defaults::NamedDefault;
 use crate::path::RepoPath;
 use crate::rank::{RankDoc, RankedFile};
 use crate::vocab::{Signal, Status};
@@ -99,6 +100,12 @@ pub enum Unverifiable {
     /// headers): Git strips one leading component whatever it is, so the path it reports for
     /// such a patch is not the path the patch was made for. Carries the header or the path.
     HeaderPaths(String),
+    /// A binary section whose file mode is not stated where Git states it (M7-Q64-MODE, ledger Q64):
+    /// an edit that keeps the mode carries it on its `index` line, and a creation, deletion or mode
+    /// change carries it on its own header line with no mode on the `index` line. Without it a binary
+    /// edit of an executable reads as one of a plain file (Git applies such a patch and keeps the
+    /// file executable). Carries the path.
+    BinaryModeUnstated(String),
     /// Output this module does not recognise.
     UnreadableGitOutput(String),
 }
@@ -137,6 +144,12 @@ impl fmt::Display for Unverifiable {
                 f,
                 "{what:?} is not named by exactly one `diff --git a/PATH b/PATH` header; make \
                  the patch with forge-warden's `scripts/make_patch.sh <base> <head>`"
+            ),
+            Self::BinaryModeUnstated(p) => write!(
+                f,
+                "{p:?} is a binary section whose file mode is not stated as Git states it (on the \
+                 `index` line for an edit, on its own header line for a creation, deletion or mode \
+                 change); make the patch with forge-warden's `scripts/make_patch.sh <base> <head>`"
             ),
             Self::UnreadableGitOutput(what) => write!(f, "unreadable git output: {what}"),
         }
@@ -252,6 +265,27 @@ fn check_header_paths(
     patch: &[u8],
     files: &BTreeMap<RepoPath, FileChange>,
 ) -> Result<(), Unverifiable> {
+    let expected = header_spellings(files);
+    let mut seen = BTreeSet::new();
+    for line in patch.split(|b| *b == b'\n') {
+        let Some(header) = line.strip_prefix(b"diff --git ") else {
+            continue;
+        };
+        let refused = || Unverifiable::HeaderPaths(String::from_utf8_lossy(line).into_owned());
+        let reported = expected.get(header).ok_or_else(refused)?;
+        if !seen.insert(*reported) {
+            return Err(refused());
+        }
+    }
+    match files.keys().find(|file| !seen.contains(file.as_str())) {
+        Some(unnamed) => Err(Unverifiable::HeaderPaths(unnamed.as_str().to_owned())),
+        None => Ok(()),
+    }
+}
+
+/// Every `diff --git ` header spelling Git writes for the reported paths (the text after
+/// `diff --git `), with the path each one names: `a/PATH b/PATH` and the reverse, raw or quoted.
+fn header_spellings(files: &BTreeMap<RepoPath, FileChange>) -> BTreeMap<Vec<u8>, &str> {
     let mut expected: BTreeMap<Vec<u8>, &str> = BTreeMap::new();
     for file in files.keys() {
         let reported = file.as_str();
@@ -272,21 +306,78 @@ fn check_header_paths(
             }
         }
     }
-    let mut seen = BTreeSet::new();
-    for line in patch.split(|b| *b == b'\n') {
-        let Some(header) = line.strip_prefix(b"diff --git ") else {
+    expected
+}
+
+/// What one section's header lines say about its mode.
+#[derive(Default)]
+struct SectionModes {
+    /// An `index A..B MODE` line (the mode an edit keeps).
+    index_mode: bool,
+    /// A `new file mode`, `deleted file mode`, `old mode` or `new mode` line.
+    mode_header: bool,
+}
+
+/// A section with neither line (also a path with no section, which [`check_header_paths`] refuses first).
+const NO_MODE_LINES: SectionModes = SectionModes {
+    index_mode: false,
+    mode_header: false,
+};
+
+/// Each binary section states its file mode where Git states it (M7-Q64-MODE, ledger Q64). Git writes
+/// an edit that keeps the mode as `index A..B MODE`, and a creation, deletion or mode change with the
+/// mode on its own header line and none on the `index` line (measured, Git 2.56.1,
+/// `lanes/bastion/M7-Q64/git_forms.sh`). A patch an author wrote can drop that mode or state another,
+/// and `git apply` still applies it and keeps the file's own mode, so a binary edit of an executable
+/// would read as one of a plain file. Runs after [`check_header_paths`], so every column-0
+/// `diff --git ` line names exactly one reported path. Lines are read as [`check_header_modes`] reads
+/// them: hunk lines start with whitespace or `+`/`-`/`\`, and base85 lines have no whitespace.
+fn check_binary_modes(
+    patch: &[u8],
+    files: &BTreeMap<RepoPath, FileChange>,
+) -> Result<(), Unverifiable> {
+    let spellings = header_spellings(files);
+    let mut sections: BTreeMap<&str, SectionModes> = BTreeMap::new();
+    let mut current: Option<&str> = None;
+    for raw in patch.split(|b| *b == b'\n') {
+        if let Some(header) = raw.strip_prefix(b"diff --git ") {
+            current = spellings.get(header).copied();
+            if let Some(path) = current {
+                sections.entry(path).or_default();
+            }
+            continue;
+        }
+        let Some(section) = current.and_then(|path| sections.get_mut(path)) else {
             continue;
         };
-        let refused = || Unverifiable::HeaderPaths(String::from_utf8_lossy(line).into_owned());
-        let reported = expected.get(header).ok_or_else(refused)?;
-        if !seen.insert(*reported) {
-            return Err(refused());
+        let line = String::from_utf8_lossy(raw);
+        if line.starts_with(|c: char| c.is_whitespace()) {
+            continue;
+        }
+        match line.split_whitespace().collect::<Vec<_>>().as_slice() {
+            ["index", _, _] => section.index_mode = true,
+            ["new" | "deleted", "file", "mode", _] | ["old" | "new", "mode", _] => {
+                section.mode_header = true;
+            }
+            _ => {}
         }
     }
-    match files.keys().find(|file| !seen.contains(file.as_str())) {
-        Some(unnamed) => Err(Unverifiable::HeaderPaths(unnamed.as_str().to_owned())),
-        None => Ok(()),
+    for change in files.values().filter(|change| change.binary) {
+        let name = change.path.as_str();
+        // A path with no `diff --git` section states no mode, which is what `NO_MODE_LINES` records: an
+        // edit keeping its mode is then refused, so the default loosens nothing and hides nothing.
+        let stated = sections.get(name).or_fail_safe(&NO_MODE_LINES);
+        let edit_keeping_mode = change.kind == ChangeKind::Modified && change.new_mode.is_none();
+        let as_git_writes = if edit_keeping_mode {
+            stated.index_mode && !stated.mode_header
+        } else {
+            !stated.index_mode
+        };
+        if !as_git_writes {
+            return Err(Unverifiable::BinaryModeUnstated(name.to_owned()));
+        }
     }
+    Ok(())
 }
 
 /// Whether a numstat count column is a decimal number as Git writes one: 1 to 20 ASCII digits
@@ -371,6 +462,7 @@ impl PatchFacts {
         }
         apply_summary(&mut files, summary)?;
         check_header_paths(patch, &files)?;
+        check_binary_modes(patch, &files)?;
         Ok(Self { files })
     }
 
@@ -633,11 +725,33 @@ mod tests {
         headers
     }
 
+    /// [`default_headers`], plus the `index` line Git writes under the header of a binary edit that
+    /// keeps its mode (a binary record the summary does not name): `check_binary_modes` wants it.
+    fn headers_as_git_writes(numstat: &str, summary: &str) -> String {
+        let mut out = String::new();
+        for record in numstat.split('\0').filter(|r| !r.is_empty()) {
+            let mut columns = record.splitn(3, '\t');
+            let (Some(added), Some(deleted), Some(path)) =
+                (columns.next(), columns.next(), columns.next())
+            else {
+                continue;
+            };
+            out.push_str(&default_headers(record));
+            let named = summary
+                .lines()
+                .any(|line| line.ends_with(&format!(" {path}")));
+            if added == "-" && deleted == "-" && !named {
+                out.push_str("index 1111111..2222222 100644\n");
+            }
+        }
+        out
+    }
+
     fn facts(numstat: &str, summary: &str) -> Result<PatchFacts, Unverifiable> {
         PatchFacts::from_git(
             numstat.as_bytes(),
             summary.as_bytes(),
-            default_headers(numstat).as_bytes(),
+            headers_as_git_writes(numstat, summary).as_bytes(),
         )
     }
 
@@ -1026,6 +1140,74 @@ mod tests {
     }
 
     #[test]
+    fn a_binary_section_states_its_mode_as_git_writes_it() {
+        // M7-Q64-MODE (ledger Q64). Git 2.56.1's own forms for each kind of binary section
+        // (lanes/bastion/M7-Q64/git_forms.sh): an edit keeps its mode on the `index` line; a
+        // creation, deletion or mode change has its own mode line and none on the `index` line.
+        let run = |path: &str, summary: &str, headers: &str| {
+            let patch = format!(
+                "diff --git a/{path} b/{path}\n{headers}GIT binary patch\nliteral 3\nKcmZQzXhjE0\n\n"
+            );
+            PatchFacts::from_git(
+                format!("-\t-\t{path}\0").as_bytes(),
+                summary.as_bytes(),
+                patch.as_bytes(),
+            )
+        };
+        let edit_exec = "index 5c080cc..edafd8e 100755\n";
+        let edit_plain = "index fcb17fa..6a0c0ee 100644\n";
+        let chmod = "old mode 100644\nnew mode 100755\nindex 0a2aa5b..2ffd657\n";
+        let create = "new file mode 100755\nindex 0000000..2c53052\n";
+        let delete = "deleted file mode 100644\nindex 0cb3d2f..0000000\n";
+        let chmod_summary = " mode change 100644 => 100755 b.bin\n";
+        let create_summary = " create mode 100755 b.bin\n";
+        let delete_summary = " delete mode 100644 b.bin\n";
+        for (summary, headers) in [
+            ("", edit_exec),
+            ("", edit_plain),
+            (chmod_summary, chmod),
+            (create_summary, create),
+            (delete_summary, delete),
+        ] {
+            assert!(run("b.bin", summary, headers).is_ok(), "{headers:?}");
+        }
+        let refused = Err(Unverifiable::BinaryModeUnstated("b.bin".to_owned()));
+        for (summary, headers) in [
+            // An edit whose `index` line names no mode (Git applies it and keeps an executable
+            // executable), or with no `index` line at all.
+            ("", "index 5c080cc..edafd8e\n"),
+            ("", ""),
+            // A mode on the `index` line beside the section's own mode line.
+            (
+                chmod_summary,
+                "old mode 100644\nnew mode 100755\nindex 0a2aa5b..2ffd657 100755\n",
+            ),
+            (
+                create_summary,
+                "new file mode 100755\nindex 0000000..2c53052 100755\n",
+            ),
+            (
+                delete_summary,
+                "deleted file mode 100644\nindex 0cb3d2f..0000000 100644\n",
+            ),
+            // An edit with a mode line but no mode change in Git's summary.
+            ("", "new mode 100755\nindex 5c080cc..edafd8e 100755\n"),
+        ] {
+            assert_eq!(run("b.bin", summary, headers), refused, "{headers:?}");
+        }
+        // Not binary: a text edit is not read here (its mode is the mode grammar's business).
+        let text =
+            b"diff --git a/t.txt b/t.txt\nindex 1111111..2222222\n--- a/t.txt\n+++ b/t.txt\n";
+        assert!(PatchFacts::from_git(b"1\t1\tt.txt\0", b"", text).is_ok());
+        // Stated limit: an edit that states the wrong mode (`100644` for an executable) is a
+        // well-formed patch; which mode the file really has is known only in bound mode (ADR 0012).
+        assert!(run("b.bin", "", edit_plain).is_ok());
+        // A base85 line of the binary body has no whitespace, so one that begins `index` is not a header.
+        let body = "diff --git a/b.bin b/b.bin\nindex 5c080cc..edafd8e 100755\nGIT binary patch\nliteral 3\nindexKcmZQzXhj\n\n";
+        assert!(PatchFacts::from_git(b"-\t-\tb.bin\0", b"", body.as_bytes()).is_ok());
+    }
+
+    #[test]
     fn every_mode_bearing_header_is_admitted_by_one_total_grammar() {
         let check = |header: &str| check_header_modes(header.as_bytes());
         // Git-accepted whitespace never skips admission (Touchstone C1b-O3-02).
@@ -1119,6 +1301,12 @@ mod tests {
             (
                 Unverifiable::UnreadableModeHeader("index a b c d".to_owned()),
                 "unreadable mode header \"index a b c d\"",
+            ),
+            (
+                Unverifiable::BinaryModeUnstated("b.bin".to_owned()),
+                "\"b.bin\" is a binary section whose file mode is not stated as Git states it (on the \
+                 `index` line for an edit, on its own header line for a creation, deletion or mode \
+                 change); make the patch with forge-warden's `scripts/make_patch.sh <base> <head>`",
             ),
             (
                 Unverifiable::UnreadableGitOutput("q".to_owned()),

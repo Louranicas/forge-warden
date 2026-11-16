@@ -73,6 +73,10 @@ pub(crate) const fn unverifiable(e: &Unverifiable) -> Row {
             "HeaderPaths",
             "crates/forge-warden-core/src/facts.rs::a_path_is_believed_only_under_the_default_a_and_b_prefixes",
         ),
+        Unverifiable::BinaryModeUnstated(..) => (
+            "BinaryModeUnstated",
+            "crates/forge-warden-core/src/facts.rs::a_binary_section_states_its_mode_as_git_writes_it",
+        ),
         Unverifiable::UnreadableGitOutput(..) => (
             "UnreadableGitOutput",
             "crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output",

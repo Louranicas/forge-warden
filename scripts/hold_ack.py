@@ -93,7 +93,12 @@ def expected(args, signer, expires_at):
         require(re.fullmatch(r"[0-9a-f]{40}", commit), "full lowercase commit IDs required")
     raw = read(args.verdict, LIMIT)
     verdict = decode(raw)
-    require(verdict["schema"] == "forge-warden.verdict.v2", "unsupported verdict schema")
+    require(verdict["schema"] == "forge-warden.verdict.v3", "unsupported verdict schema")
+    # v3 (ADR 0012): verified claims bind the patch to base and head; they must be these commits.
+    claims = verdict["seals"].get("claims")
+    if isinstance(claims, dict) and claims.get("verified") is True:
+        require(claims.get("base") == args.base and claims.get("head") == args.head,
+                "the verdict's verified claims name other commits")
     admitted_git(verdict)
     require(verdict["verdict"] == "hold" and verdict["exit"]["code"] == 8,
             "only HOLD may be acknowledged")

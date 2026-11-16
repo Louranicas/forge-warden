@@ -173,3 +173,19 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
 - New: Git's numstat counts are read strictly (1 to 20 decimal digits, or `-` `-` for a binary file); any
   other count is refused as unreadable Git output, where 0.2.0 read it as a content change. Git does not
   write one, so a patch Git made is unaffected.
+
+## 0.2.1 to 0.3.0 (unreleased)
+
+- **The verdict document is `forge-warden.verdict.v3`.** Only `seals.claims` changed. Without `--repo`
+  it is v2's object exactly (`{base?, head?, verified: false}`); a bound run (`--repo`) that matched
+  records `{base, head, merge_base, verified: true}`. Validate against
+  [`schemas/verdict.v3.schema.json`](../schemas/verdict.v3.schema.json); a reader that checks the
+  `schema` member for `forge-warden.verdict.v2` must accept v3.
+- **`scripts/hold_ack.py` reads v3 only.** Acknowledge open holds before upgrading, or run the check
+  again with 0.3.0 and acknowledge that verdict.
+- **Patches for bound mode come from `scripts/make_patch.sh` of 0.3.0** (patch-maker v2, `--full-index`).
+  A patch made by 0.2.x's script has abbreviated `index` lines, so `--repo` refuses it (exit 4); make it
+  again.
+- **Library users:** `Claims` has private fields and two forms (read it with `base()`, `head()`,
+  `merge_base()`, `verified()`); `Unverified` is gone. Verified claims come only from
+  `BoundClaims::from_comparison`.
