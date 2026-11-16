@@ -1,6 +1,12 @@
 schema = "forge-warden.lint-expectations.v1"
 
 [[expectation]]
+file = "crates/forge-warden-core/tests/builtin.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers build fixed inputs; a panic is a failed test"
+review_reason = "M7-Q64: the built-in rule's integration tests build fixed patches, rankings and policies and unwrap their setup; a panic is a failed test. Test-only; production core is unchanged by it."
+
+[[expectation]]
 file = "crates/forge-warden-cli/src/doors/file.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: read_stdin"
