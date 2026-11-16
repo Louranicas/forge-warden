@@ -13,10 +13,12 @@ one new starter rule and two globs in `ci-is-owned` ([Upgrading](UPGRADING.md), 
 - [x] **Policy schema.** It stays `forge-warden.policy.v0`. The starter policy gains rule
   `binary-text-is-hidden-text` and two `.claude` globs in `ci-is-owned`; a policy adopted from the 0.2.0
   starter keeps its own rules until it is edited.
-- [x] **Ranker pin.** It stays deep-diff-forge 0.8.2 (`[producer]` in `warden.toml`, the README install line),
-  although the ranker's advisory GHSA-rq5r-p3g9-phff (published 2026-11-11) is fixed in 0.8.3: changing the
-  pin is the owner's decision (ledger Q22). forge-warden does not take paths or modes from the ranker: it
-  reads them from Git's own reading of the patch, and refuses a lone `diff --git` header (HEADER-OWN).
+- [x] **Ranker pin** (`[producer]` in `warden.toml`, the README install line): the pin stays deep-diff-forge 0.8.2; its advisory GHSA-rq5r-p3g9-phff (published 2026-11-11) is fixed in 0.8.3.
+  Measured with 0.2.1 in authority mode on the advisory's shapes (Touchstone, receipt 88e2f464): the bare-header
+  shape and the three submodule-mode shapes are held on forge-warden's own checks (the header check; "unsupported
+  file mode"); the `new file mode` then `new mode` shape gets the same verdict as Git's own patch for that change,
+  because forge-warden takes the executable and symlink signals from Git's reading, not from the ranker. Moving
+  the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-PIN).
 - [x] **Exit codes.** Unchanged. Two refusal details read differently (a type change; a patch without
   `diff --git a/PATH b/PATH` headers) and one refusal is new (a numstat count that is not 1 to 20 digits);
   the note code is the same (`patch_unverifiable`).

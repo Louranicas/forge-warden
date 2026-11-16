@@ -153,6 +153,15 @@ an older starter keeps its own rules: nothing changes until you edit it. The sta
   any binary section on an executable file needs the file mode and is planned for verdict v3 (ledger Q64).
 - in rule `ci-is-owned`, the two `.claude` globs (any letter case, the entry itself and everything under it).
 
+### The ranker pin
+
+The ranker pin stays deep-diff-forge 0.8.2; its advisory GHSA-rq5r-p3g9-phff (published 2026-11-11) is fixed in 0.8.3.
+Measured with 0.2.1 in authority mode on the advisory's shapes (Touchstone, receipt 88e2f464): the bare-header
+shape and the three submodule-mode shapes are held on forge-warden's own checks (the header check; "unsupported
+file mode"); the `new file mode` then `new mode` shape gets the same verdict as Git's own patch for that change,
+because forge-warden takes the executable and symlink signals from Git's reading, not from the ranker. Moving
+the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-PIN).
+
 ### Refusals that read differently
 - A file replaced by a symlink, or the reverse, is still refused (`patch_unverifiable`); the detail now says
   the path "changes type" instead of "git lists PATH more than once". Automation that matched the old

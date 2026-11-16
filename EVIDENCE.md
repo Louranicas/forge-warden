@@ -13,8 +13,8 @@ re-running the commands. A section for the next release is measured on its relea
 
 Every row below was measured on the release candidate `ab7d734f425b09657da2f3bb102e2bf7f62d1036`, from a fresh `--no-local`
 clone of the integration hub, in a Fedora 44 toolbox on Linux x86_64: Rust 1.99.1 (`rust-toolchain.toml`), MSRV
-1.88, Git 2.56.0. The commit after the candidate changes only this section and the matching line of the
-release checklist. The deep-diff-forge producer pin
+1.88, Git 2.56.0. The commits after the candidate change only documents (this section, the release
+checklist and the upgrade guide). The deep-diff-forge producer pin
 (`[producer]` in `warden.toml`) is the 0.2.0 one, deep-diff-forge 0.8.2, unchanged; the release checklist
 records why it stays although the ranker's advisory GHSA-rq5r-p3g9-phff is fixed in 0.8.3. 0.2.1 is 0.2.0 plus
 the packages listed in [docs/RELEASE-0.2.1.md](docs/RELEASE-0.2.1.md). Between Train A4's gated commit `92a9ac9`
@@ -25,7 +25,7 @@ verdict's version and policy digest; and documents.
 | Claim | Command | Result |
 | --- | --- | --- |
 | The lint wall, tests and docs are green | `bash scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline` | both green |
-| Every test passes | `cargo test --workspace --locked --offline` | 384 passed, 0 failed, 0 ignored, in 27 test binaries |
+| Every test passes | `cargo test --workspace --locked --offline` | 384 passed, 0 failed, 0 ignored, in 27 runs (26 test binaries and the doc-tests) |
 | Every script test passes from a source export, as the hosted-parity phase runs it | each script test of `scripts/ci_fast.sh`, plus `scripts/tests/perimeter.py`, from `git archive <commit> \| tar -x` (no `.git`) in the gate's container image with no network | 14 of 14 pass |
 | The tests catch the viable mutants of each change | `cargo mutants --in-diff` in the merge gate of each train | Train A: 9 mutants, 8 caught, 1 not buildable, 0 missed. Train A2: 10, 9 caught, 1 not buildable, 0 missed. Train A3b: no source mutation sites. Train A4: no Rust change. The whole-workspace count was not rerun for 0.2.1; the 0.2.0 baseline below is for the code it measured |
 | The workspace type-checks with the minimum Rust version | `cargo check --workspace --all-targets --locked --offline` with the Rust 1.88 toolchain (the merge gate's MSRV step: a type check, not a build or a test run) | green on Train A4's `92a9ac9`; the candidate's Rust differs from it only in the version number and one string constant in a test helper |
