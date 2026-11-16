@@ -2358,7 +2358,7 @@
       "id": "bound-shallow-not-written",
       "guardrail": "G-54",
       "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
-      "diagnostic": "bound_mode_cuts_at_the_copy_edge_when_head_reaches_older_history_through_a_merge \\.\\.\\. FAILED",
+      "diagnostic": "bound_mode_keeps_a_redundant_merges_in_copy_edge \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
@@ -2368,7 +2368,7 @@
         "--bin",
         "forge-warden",
         "--",
-        "bound_mode_cuts_at_the_copy_edge"
+        "bound_mode_keeps_a_redundant"
       ],
       "old": "        if boundary.is_empty() {",
       "new": "        if boundary.is_empty() || !verified.as_os_str().is_empty() {",
@@ -2488,7 +2488,7 @@
       "id": "bound-comparison-removed",
       "guardrail": "G-54",
       "path": "crates/forge-warden-cli/src/main.rs",
-      "diagnostic": "right: 4",
+      "diagnostic": "bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
