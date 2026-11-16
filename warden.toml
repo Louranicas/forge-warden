@@ -69,8 +69,9 @@ signals = ["test_removed"]
 # A text file sent as a binary section (`GIT binary patch`, or "Binary files ... differ") has no lines the
 # ranker can read, so every signal rule misses what it adds; a `.gitattributes` the change commits is enough
 # to make Git write one. `binary_change` comes from Git's numstat, not from the ranker. The three globs name
-# files that are normally text, by extension, by exact name (Git hooks, `configure` and others a shell
-# runs) and by name prefix, in any letter case (ledger Q63). An executable with another name is not covered:
+# files that are normally text, by extension, by exact name (ten of Git's hook names, `configure` and
+# others a shell runs) and by name prefix, in any letter case (ledger Q63). Git's other hook names
+# (`post-commit`, `post-rewrite`, ...) are not listed. An executable with another name is not covered:
 # protect `bin/**` and the like with a path rule.
 [[rule]]
 id = "binary-text-is-hidden-text"
