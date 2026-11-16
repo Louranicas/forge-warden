@@ -17,6 +17,21 @@ registry is always listed, because consumers parse them.
 - `scripts/dogfood.sh` downloads the ranker with `--proto-redir =https` as well as
   `--proto =https`, so a redirect cannot leave HTTPS (the archive's pinned SHA-256 was already
   checked).
+- The owner's hold reviewer key is enrolled in `.github/hold-reviewers/allowed_signers`
+  (principal `luke`, namespace `forge-warden-ack`, fingerprint
+  `SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E`; intention 124). A signed acknowledgement
+  from that key is now accepted by an authority-mode run of `scripts/dogfood.sh`. Hosted CI runs
+  dogfood in advisory mode and still fails closed on every hold. README, CONTRIBUTING, the
+  hold-reviewers README and ADR 0007 say so.
+- Documents say who can acknowledge a hold, and for how long (ledger Q61). The `forge-warden`
+  binary has no acknowledgement path; the signed acknowledgement of ADR 0007 belongs to this
+  repository's own driver (`scripts/dogfood.sh`). A receipt binds the verdict's bytes, which carry
+  the UTC date of the run, so it matches only runs on the UTC day it was prepared for, whatever its
+  `expires_at` says. The runbook's exit-8 row, the README, `.github/hold-reviewers/README.md` and a
+  dated amendment to ADR 0007 say so. `scripts/hold_ack.py` now names the fields a refused receipt
+  differs in (and the UTC-day cause when only the verdict bytes differ) and says "signature is not
+  valid for an enrolled reviewer" instead of printing a failed command line; `scripts/dogfood.sh`
+  no longer leaves an `acknowledgement.json` behind when it refuses one.
 
 ## [0.2.0] - 2026-11-13
 

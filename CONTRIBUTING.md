@@ -193,8 +193,9 @@ Planning and every shard must succeed. See [measured budgets](docs/CI_BOUNDS.md)
 
 A `hold` is accepted only with an OpenSSH-signed acknowledgement from a reviewer enrolled in
 `.github/hold-reviewers/allowed_signers` on the base branch (ADR 0007). A label grants nothing.
-Until reviewer keys are enrolled and an external trust root enforces the check (ADR 0006), CI
-fails closed on every hold.
+One reviewer, the owner, is enrolled (principal `luke`). Hosted CI runs dogfood in advisory mode,
+which cannot be acknowledged, and no external trust root enforces the check yet (ADR 0006), so
+hosted CI fails closed on every hold.
 
 ## Periodic full mutation baseline
 
