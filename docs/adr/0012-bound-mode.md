@@ -230,6 +230,13 @@ common history" (Bastion's row, receipt 31f5ff9a). The sentence stays above; thi
   When the old commit is `mb`'s own parent, verified keeps `mb`'s edge to it and the run passes. Both are tests
   (`bound_mode_keeps_a_redundant_merges_in_copy_edge`, `bound_mode_refuses_when_both_sides_reach_one_old_commit_past_the_boundary`).
   Accepting the extra base would need staging's ancestry, which is not trusted.
+- **The shallow file is a correctness invariant (added 2026-11-16T17:23:41Z, ledger Q72).** The merge base verified computes is
+  right only because `shallow` names the boundary: Git builds differ in whether they tolerate an absent boundary
+  parent (the gate image's Git passed the redundant-merge row with no `shallow` file; the toolbox Git failed on the
+  absent parent, Train B2 red). So whether a missing file is noticed is not left to Git: the contract test
+  `the_cut_writes_exactly_the_boundary_as_shallow` holds the file's bytes (exactly the boundary; no file for a root
+  merge base), and plant `bound-shallow-not-written` is guarded by it. The recheck (D3 step 4) still refuses a wrong
+  merge base whatever Git does.
 
 ## Acceptance evidence for step (a): what is delivered, and what moves (dated 2026-11-16T09:54:17Z, for Lodestar's ruling)
 Step (a) is the door and the `--repo` comparison; verified claims are step (b), `require_verified` step (c). Lodestar
@@ -275,3 +282,24 @@ exit, "exit 4" its `invalid_input`.
   - item 6, cleanup after a Git killed from outside: also to c3, with a native fixture Git (the ELF rule above).
   - item 8, `require_verified` ignored: to step (c), where the key is built.
 - **Not a test, said plainly:** the byte caps (`PACK_CAP`, `LIST_CAP`, `STDERR_CAP`) are literals until c3.
+## Correction, 2026-11-16T09:39:42Z: D5's verified form (Lodestar ruling R1, 2026-11-16T09:28:28Z)
+D5 says the verified form is "constructible only by the CLI's bound path (a private-field type, like `AdmittedGit`)".
+That cannot hold across crates: `Claims` is serialized by the core, so its verified form is a core type, and any
+constructor the CLI can call is public to every library user (`AdmittedGit` works only because the crate that defines it
+is the crate that mints it). D5's sentence stays as written above; this entry records what is built instead.
+
+- **The comparison is in the core and is the only constructor.** `BoundClaims::from_comparison(ids: BoundIds, supplied:
+  &[u8], made: &[u8]) -> Result<BoundClaims, PatchMismatch>` is pure (ADR 0001). `BoundIds::new` refuses ids that are
+  not 40 or 64 lowercase hex digits, or not of one length. `PatchMismatch` carries the first differing offset (the
+  shorter length when one input is a prefix of the other) and both lengths, never content.
+- **`Claims` has two forms and private fields.** Asserted (`Claims::new`) serializes exactly as verdict v2's object;
+  bound (`Claims::bound(BoundClaims)`) serializes `{base, head, merge_base, verified: true}`. `Unverified` leaves the
+  public API. `public-api.txt` lists no other way to a `BoundClaims`.
+- **What this guarantees, said plainly.** A verified claim means a byte comparison of two inputs passed and the ids are
+  well formed. The core cannot know where the second input came from: a library caller can pass the same bytes twice,
+  as it could already print any JSON. The property that matters, "the forge-warden binary never says verified without
+  its door's diff", is held in the CLI: `tests/repo_invariants.rs` (`only_bound_mode_verifies_claims`) allows exactly
+  one production call of `from_comparison`, in `bind`, with `made.patch` from the door's `bound_diff` as its second
+  input, and a plant that adds a second call must be caught by that test.
+- **Schema.** `seals.claims` in `verdict.v3.schema.json` is `oneOf` the bound object and v2's asserted object
+  (unchanged), rather than one object with `if`/`then`.

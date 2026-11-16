@@ -324,7 +324,7 @@ fn a_recorded_git_and_the_verdict_report_exactly_what_was_recorded() {
     let checked = check(&supplied, facts("m3-demo-real"));
     let judged = evaluate_advisory(&policy(PERMISSIVE), &checked, seals(), today());
     assert_eq!(judged.verdict().schema(), VERDICT_SCHEMA);
-    assert_eq!(VERDICT_SCHEMA, "forge-warden.verdict.v2");
+    assert_eq!(VERDICT_SCHEMA, "forge-warden.verdict.v3");
 }
 
 #[test]
@@ -470,6 +470,7 @@ fn every_unverifiable() -> Vec<Unverifiable> {
         Unverifiable::UnreadableModeHeader("new mode 7".to_owned()),
         Unverifiable::SymlinkTargetEdit,
         Unverifiable::HeaderPaths("diff --git f f".to_owned()),
+        Unverifiable::BinaryModeUnstated("b.bin".to_owned()),
         Unverifiable::UnreadableGitOutput("?".to_owned()),
     ]
 }
@@ -810,4 +811,101 @@ fn a_no_prefix_patch_is_refused_as_a_repeated_path() {
         facts("ts-no-prefix").err(),
         Some(Unverifiable::RepeatedPath("a".to_owned()))
     );
+}
+
+#[test]
+fn asserted_claims_serialize_exactly_as_in_verdict_v2() {
+    // The v2 shape on 92a9ac99: {base?, head?, verified: false}, in that order.
+    use forge_warden_core::verdict::Claims;
+    let both = Claims::new(Some("1234abcd".to_owned()), Some("abcdef0".to_owned()));
+    assert_eq!(
+        serde_json::to_string(&both).unwrap(),
+        r#"{"base":"1234abcd","head":"abcdef0","verified":false}"#
+    );
+    let head_only = Claims::new(None, Some("abcd".to_owned()));
+    assert_eq!(
+        serde_json::to_string(&head_only).unwrap(),
+        r#"{"head":"abcd","verified":false}"#
+    );
+    assert!(!both.verified());
+    assert_eq!(both.merge_base(), None);
+}
+
+#[test]
+fn bound_ids_are_three_full_ids_of_one_length() {
+    use forge_warden_core::verdict::{BoundIds, IdError};
+    let (b, h, m) = ("1".repeat(40), "2".repeat(40), "3".repeat(40));
+    assert!(BoundIds::new(&b, &h, &m).is_ok());
+    let long = "a".repeat(64);
+    assert!(BoundIds::new(&long, &long, &long).is_ok());
+    assert_eq!(BoundIds::new(&b, &h, &long), Err(IdError::MixedLengths));
+    assert_eq!(BoundIds::new(&long, &h, &m), Err(IdError::MixedLengths));
+    for n in [0, 39, 41, 63, 65] {
+        let odd = "a".repeat(n);
+        assert_eq!(
+            BoundIds::new(&odd, &h, &m),
+            Err(IdError::Length("base")),
+            "{n}"
+        );
+        assert_eq!(
+            BoundIds::new(&b, &odd, &m),
+            Err(IdError::Length("head")),
+            "{n}"
+        );
+        assert_eq!(
+            BoundIds::new(&b, &h, &odd),
+            Err(IdError::Length("merge base")),
+            "{n}"
+        );
+    }
+    let upper = "A".repeat(40);
+    let non_hex = format!("{}g", "a".repeat(39));
+    assert_eq!(
+        BoundIds::new(&upper, &h, &m),
+        Err(IdError::NotLowercaseHex("base"))
+    );
+    assert_eq!(
+        BoundIds::new(&b, &non_hex, &m),
+        Err(IdError::NotLowercaseHex("head"))
+    );
+    assert_eq!(
+        BoundIds::new(&b, &h, &upper),
+        Err(IdError::NotLowercaseHex("merge base"))
+    );
+}
+
+#[test]
+fn bound_claims_come_only_from_a_byte_comparison() {
+    use forge_warden_core::verdict::{BoundClaims, BoundIds, Claims, PatchMismatch};
+    let (b, h, m) = ("1".repeat(40), "2".repeat(40), "3".repeat(40));
+    let ids = || BoundIds::new(&b, &h, &m).unwrap();
+    let bound = BoundClaims::from_comparison(ids(), b"diff\n", b"diff\n").unwrap();
+    assert_eq!(
+        (bound.base(), bound.head(), bound.merge_base()),
+        (b.as_str(), h.as_str(), m.as_str())
+    );
+    let claims = Claims::bound(bound);
+    assert!(claims.verified());
+    assert_eq!(
+        serde_json::to_value(&claims).unwrap(),
+        serde_json::json!({"base": b, "head": h, "merge_base": m, "verified": true})
+    );
+    let mismatch = |supplied: &[u8], made: &[u8]| {
+        let PatchMismatch {
+            first_difference,
+            supplied_len,
+            made_len,
+            ..
+        } = BoundClaims::from_comparison(ids(), supplied, made).unwrap_err();
+        (first_difference, supplied_len, made_len)
+    };
+    let at = |first: usize, supplied: usize, made: usize| (first, supplied, made);
+    assert_eq!(mismatch(b"abcX", b"abcY"), at(3, 4, 4));
+    assert_eq!(mismatch(b"Xbc", b"abc"), at(0, 3, 3));
+    // One a strict prefix of the other: the first difference is where the shorter one ends.
+    assert_eq!(mismatch(b"abc", b"abcd"), at(3, 3, 4));
+    assert_eq!(mismatch(b"abcd", b"ab"), at(2, 4, 2));
+    assert_eq!(mismatch(b"", b"a"), at(0, 0, 1));
+    // Both empty: equal, so bound (what an empty patch then means is the pipeline's own rule).
+    assert!(BoundClaims::from_comparison(ids(), b"", b"").is_ok());
 }

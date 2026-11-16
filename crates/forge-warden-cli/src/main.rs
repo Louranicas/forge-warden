@@ -34,12 +34,12 @@ use forge_warden_core::policy::{PolicyError, parse_policy};
 use forge_warden_core::rank::{RankError, parse_rank};
 use forge_warden_core::render::render_text;
 use forge_warden_core::seal::{Sha256Hex, sha256_hex};
-use forge_warden_core::verdict::{Claims, GitOracle, Seals, Verdict};
+use forge_warden_core::verdict::{BoundClaims, BoundIds, Claims, GitOracle, Seals, Verdict};
 use forge_warden_core::{Date, EXIT_REGISTRY};
 use std::path::{Path, PathBuf};
 
-/// The JSON Schema of `forge-warden.verdict.v2`, committed and checked against the code.
-const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v2.schema.json");
+/// The JSON Schema of `forge-warden.verdict.v3`, committed and checked against the code.
+const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v3.schema.json");
 /// The JSON Schema of `forge-warden.policy.v0` (TOML editors can validate against it).
 const POLICY_SCHEMA_JSON: &str = include_str!("../../../schemas/policy.v0.schema.json");
 /// The starter policy `forge-warden init` prints.
@@ -105,7 +105,7 @@ enum Command {
         /// Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC).
         #[arg(long, value_name = "DATE")]
         today: Option<String>,
-        /// Print the forge-warden.verdict.v2 document instead of the human summary.
+        /// Print the forge-warden.verdict.v3 document instead of the human summary.
         #[arg(long)]
         json: bool,
     },
@@ -359,9 +359,17 @@ fn check(args: &CheckArgs) -> Result<Exit, Failure> {
     let advisory;
     let verdict: &Verdict = if let Some(ranker) = &args.ranker {
         let admitted_git = doors::child::admit_git_pinned(&args.git).map_err(Failure::from_door)?;
-        if let (Some(repo), Some((base, head))) = (&args.repo, bound_ids) {
-            bind(admitted_git.admitted(), repo, base, head, &patch)?;
-        }
+        // Bound mode (ADR 0012 D4): the claims are verified only by the comparison in `bind`.
+        let claims = match (&args.repo, bound_ids) {
+            (Some(repo), Some((base, head))) => Some(Claims::bound(bind(
+                admitted_git.admitted(),
+                repo,
+                base,
+                head,
+                &patch,
+            )?)),
+            _ => claims,
+        };
         let (facts, facts_sha256) = authority_git_facts(&admitted_git, &patch)?;
         let git = git_oracle(admitted_git.admitted(), git_path)?;
         let (ranking, bytes) = doors::child::produce_ranking(ranker, &policy, &patch).map_err(
@@ -439,14 +447,15 @@ fn full_ids<'a>(base: &'a str, head: &'a str) -> Result<(&'a str, &'a str), Fail
 /// Bound mode's comparison (ADR 0012 D4): the patch must be byte-equal to the diff forge-warden
 /// made from a verified copy of the repository's objects. A difference is a wrong input (exit 4);
 /// a store that does not hold what its ids name, or Git out of bounds, gives no verdict (exit 3).
-/// This step does not yet mark the claims verified (M7-PATCH-BOUND step b, verdict v3).
+/// The core's `BoundClaims::from_comparison` is the only way to verified claims, and this is its one
+/// call (`tests/repo_invariants.rs` holds it).
 fn bind(
     git: &doors::child::AdmittedGit,
     repo: &Path,
     base: &str,
     head: &str,
     patch: &[u8],
-) -> Result<(), Failure> {
+) -> Result<BoundClaims, Failure> {
     use doors::child::BoundFailure;
     // Every bound-mode refusal by its variant (REFUSAL_MAP): a repository bound mode cannot read and
     // a store that does not hold what its ids name give no verdict (exit 3); ids that name no
@@ -470,28 +479,29 @@ fn bind(
     };
     let objects = doors::child::admit_repository(repo).map_err(fail)?;
     let made = doors::child::bound_diff(git, &objects, base, head).map_err(fail)?;
-    if made.patch == patch {
-        return Ok(());
-    }
-    // Equal up to the shorter length: the first difference is where the shorter one ends.
-    let first = match made.patch.iter().zip(patch).position(|(a, b)| a != b) {
-        Some(at) => at,
-        None => made.patch.len().min(patch.len()),
-    };
-    // ADR 0012 D4 (review S4): name the admitted Git, whose diff output is the reference. The Git
-    // that made the patch is not known to forge-warden.
-    let version = doors::child::git_version(git)
-        .map(|v| format!("{v:?}"))
-        .or_display("an admitted Git whose version could not be read".to_owned());
-    Err(Failure::new(
-        Exit::InvalidInput,
-        format!(
-            "the patch is not `git diff {}..{head}` of --repo: first difference at byte {first} (patch {} bytes, diff {} bytes); make it with forge-warden's `scripts/make_patch.sh {base} {head}`; forge-warden's diff was made by {version} (the admitted Git), and a patch made by another Git version, or by a make_patch.sh without --full-index, can differ",
-            made.merge_base,
-            patch.len(),
-            made.patch.len()
-        ),
-    ))
+    let ids = BoundIds::new(base, head, &made.merge_base).map_err(|why| {
+        Failure::new(
+            Exit::Io,
+            format!("bound mode: Git's merge base cannot be recorded: {why}"),
+        )
+    })?;
+    BoundClaims::from_comparison(ids, patch, &made.patch).map_err(|mismatch| {
+        // ADR 0012 D4 (review S4): name the admitted Git, whose diff output is the reference. The
+        // Git that made the patch is not known to forge-warden. Read on this path only.
+        let version = doors::child::git_version(git)
+            .map(|v| format!("{v:?}"))
+            .or_display("an admitted Git whose version could not be read".to_owned());
+        Failure::new(
+            Exit::InvalidInput,
+            format!(
+                "the patch is not `git diff {}..{head}` of --repo: first difference at byte {} (patch {} bytes, diff {} bytes); make it with forge-warden's `scripts/make_patch.sh {base} {head}`; forge-warden's diff was made by {version} (the admitted Git), and a patch made by another Git version, or by a make_patch.sh without --full-index, can differ",
+                made.merge_base,
+                mismatch.first_difference,
+                mismatch.supplied_len,
+                mismatch.made_len
+            ),
+        )
+    })
 }
 
 fn report(verdict: &Verdict, json: bool) -> Result<Exit, Failure> {

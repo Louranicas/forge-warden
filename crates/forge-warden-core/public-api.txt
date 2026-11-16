@@ -118,6 +118,7 @@ crate::facts Unverifiable::UnsupportedMode(String),
 crate::facts Unverifiable::UnreadableModeHeader(String),
 crate::facts Unverifiable::SymlinkTargetEdit,
 crate::facts Unverifiable::HeaderPaths(String),
+crate::facts Unverifiable::BinaryModeUnstated(String),
 crate::facts Unverifiable::UnreadableGitOutput(String),
 crate::facts impl fmt::Display for Unverifiable
 crate::facts Unverifiable::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
@@ -336,7 +337,7 @@ crate::seal Sha256Hex::#[must_use] pub fn as_str(&self) -> &str
 crate::seal impl std::fmt::Display for Sha256Hex
 crate::seal Sha256Hex::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex
-crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
+crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v3";
 crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
 crate::verdict Verdict.<11 private field(s)>
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Tool
@@ -366,10 +367,22 @@ crate::verdict GitOracle.<5 private field(s)>
 crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)] #[serde(rename_all = "lowercase")] #[non_exhaustive] pub enum Admission
 crate::verdict Admission::Approved,
 crate::verdict Admission::Unpinned,
-crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Claims
-crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub base: Option<String>,
-crate::verdict Claims.#[serde(skip_serializing_if = "Option::is_none")] pub head: Option<String>,
-crate::verdict Claims.pub verified: Unverified,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct Claims
+crate::verdict Claims.<1 private field(s)>
+crate::verdict impl Serialize for Claims
+crate::verdict Claims::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct BoundIds
+crate::verdict BoundIds.<3 private field(s)>
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)] #[non_exhaustive] pub enum IdError
+crate::verdict IdError::#[error("{0} is not a full object id (40 or 64 lowercase hex digits)")] Length(&'static str),
+crate::verdict IdError::#[error("{0} is not lowercase hex")] NotLowercaseHex(&'static str),
+crate::verdict IdError::#[error("base, head and merge base are not of one length")] MixedLengths,
+crate::verdict #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct BoundClaims
+crate::verdict BoundClaims.<1 private field(s)>
+crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct PatchMismatch
+crate::verdict PatchMismatch.pub first_difference: usize,
+crate::verdict PatchMismatch.pub supplied_len: usize,
+crate::verdict PatchMismatch.pub made_len: usize,
 crate::verdict impl RankedBy
 crate::verdict RankedBy::#[must_use] pub const fn new(version: String, sha256: Option<Sha256Hex>) -> Self
 crate::verdict impl GitOracle
@@ -382,9 +395,18 @@ crate::verdict GitOracle::#[must_use] pub const fn admission(&self) -> Admission
 crate::verdict GitOracle::#[must_use] pub const fn allowlist_sha256(&self) -> Option<&Sha256Hex>
 crate::verdict impl Claims
 crate::verdict Claims::#[must_use] pub const fn new(base: Option<String>, head: Option<String>) -> Self
-crate::verdict #[derive(Debug, Clone, Copy, PartialEq, Eq)] #[non_exhaustive] pub struct Unverified;
-crate::verdict impl Serialize for Unverified
-crate::verdict Unverified::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+crate::verdict Claims::#[must_use] pub const fn bound(claims: BoundClaims) -> Self
+crate::verdict Claims::#[must_use] pub fn base(&self) -> Option<&str>
+crate::verdict Claims::#[must_use] pub fn head(&self) -> Option<&str>
+crate::verdict Claims::#[must_use] pub fn merge_base(&self) -> Option<&str>
+crate::verdict Claims::#[must_use] pub const fn verified(&self) -> bool
+crate::verdict impl BoundIds
+crate::verdict BoundIds::pub fn new(base: &str, head: &str, merge_base: &str) -> Result<Self, IdError>
+crate::verdict impl BoundClaims
+crate::verdict BoundClaims::pub fn from_comparison( ids: BoundIds, supplied: &[u8], made: &[u8], ) -> Result<Self, PatchMismatch>
+crate::verdict BoundClaims::#[must_use] pub fn base(&self) -> &str
+crate::verdict BoundClaims::#[must_use] pub fn head(&self) -> &str
+crate::verdict BoundClaims::#[must_use] pub fn merge_base(&self) -> &str
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct ExitInfo
 crate::verdict ExitInfo.pub code: u8,
 crate::verdict ExitInfo.pub name: &'static str,

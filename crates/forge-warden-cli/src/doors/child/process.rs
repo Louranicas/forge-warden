@@ -79,6 +79,10 @@ pub(in crate::doors) fn pin_within(
 }
 
 /// The path a child runs and the arguments that come before the caller's own (a wrapper's).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "door: run_child (prlimit's /proc/<pid>/fd path)"
+)]
 pub(super) fn program_command(program: &Program<'_>) -> (std::path::PathBuf, Vec<String>) {
     use std::os::fd::AsRawFd as _;
     match program {

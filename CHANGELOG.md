@@ -3,8 +3,8 @@
 All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). A change to a published schema
-(today `forge-warden.policy.v0`, `forge-warden.verdict.v2` and the Git allowlist
-`forge-warden.git-allowlist.v1`; 0.1.0 shipped `forge-warden.verdict.v0`) or to the exit-code
+(today `forge-warden.policy.v0`, `forge-warden.verdict.v3` and the Git allowlist
+`forge-warden.git-allowlist.v1`; 0.1.0 shipped `forge-warden.verdict.v0`, 0.2.x `forge-warden.verdict.v2`) or to the exit-code
 registry is always listed, because consumers parse them.
 
 ## [Unreleased]
@@ -21,7 +21,15 @@ registry is always listed, because consumers parse them.
   byte-equal (exit 4). A store whose objects are not what their ids name, a linked worktree's `.git`
   file, a caller alternates or shallow file, a control character in the path, several merge bases:
   refused. Every bound-mode Git runs under `/usr/bin/prlimit` (1 GiB data, 4 GiB address space) and a
-  60 s budget. `--base`/`--head` stay unverified claims in the verdict until verdict v3.
+  60 s budget.
+- **Verdict schema `forge-warden.verdict.v2` -> `forge-warden.verdict.v3` (published schema change).**
+  Only `seals.claims` changed: without `--repo` it is v2's object exactly (`{base?, head?, verified:
+  false}`); a bound run that matched records `{base, head, merge_base, verified: true}`. The core's
+  `Claims` has private fields and two forms; verified claims come only from
+  `BoundClaims::from_comparison` (the byte comparison, now in the core), and the CLI calls it once.
+  `Unverified` leaves the public API (semver: 0.3.0). `schemas/verdict.v3.schema.json` is new;
+  v2 stays byte-for-byte as history. `scripts/hold_ack.py` reads v3 only: acknowledge open holds
+  before upgrading, or run the check again.
 - `scripts/make_patch.sh` (patch-maker v2) and the documented by-hand command write `--full-index`:
   abbreviated ids depend on how many objects a repository holds, so bound mode could not reproduce
   them. Make patches again with the new script.
@@ -30,6 +38,15 @@ registry is always listed, because consumers parse them.
   under `dist/`; `scripts/release_tag.sh VERSION COMMIT`, run by the owner, signs the tag, keeps it only
   if it verifies against `.github/release-signers/allowed_signers` in that commit, and pushes it to
   GitLab, Gitea and Forgejo only. No release signer is enrolled yet; the script refuses until one is.
+- A binary section must state its file mode where Git states it (ledger Q64, M7-Q64-MODE): a binary edit
+  that keeps its mode carries it on the `index` line (`index A..B 100755`), and a creation, deletion or mode
+  change carries it on its own header line with none on the `index` line. A patch that drops the mode or
+  states it in both places is refused as unverifiable (`patch_unverifiable`, detail "is a binary section
+  whose file mode is not stated as Git states it"). Git applies such a patch and keeps an executable file
+  executable, so before, a binary edit of an executable could read as one of a plain file. Git never writes
+  one: a patch made by `scripts/make_patch.sh` or `git diff` is unaffected. Still not covered without bound
+  mode: an edit stating the wrong mode (`100644` for an executable); bound mode (ADR 0012) compares the patch
+  with Git's own diff.
 
 ## [0.2.1] - 2026-11-16
 
