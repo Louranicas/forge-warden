@@ -31,7 +31,8 @@ pinned="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_archive_sha256)"
 fixture="$(sha256sum < "$sandbox/release.tar.gz" | cut -d' ' -f1)"
 sed -i "s/$pinned/$fixture/" "$trusted/scripts/tool-versions.toml"
 test "$(python3 -I "$trusted/scripts/tool_versions.py" ddf_archive_sha256)" = "$fixture"
-export EXPECTED_URL="https://github.com/Louranicas/deep-diff-forge/releases/download/$release/$ddf_name.tar.gz"
+# The download URL is the driver's own; this test names only its path, never a real service host.
+export EXPECTED_PATH="$release/$ddf_name.tar.gz"
 export FIXTURE_ARCHIVE="$sandbox/release.tar.gz" OTHER_ARCHIVE="$sandbox/other.tar.gz"
 cat > "$trusted/scripts/hold_ack.py" <<'ACK'
 import os, sys
@@ -88,7 +89,8 @@ cat > "$sandbox/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ " $* " == *" --proto =https "* && " $* " == *" --proto-redir =https "* && " $* " == *" --fail "* ]] || exit 91
-[ "${!#}" = "$EXPECTED_URL" ] || exit 92
+[[ "${!#}" == https://*/"$EXPECTED_PATH" ]] || exit 92
+printf '%s\n' "${!#}" >> "$CURL_LOG"
 output=
 while [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then output="$2"; fi; shift; done
 [ -n "$output" ] || exit 90
@@ -97,6 +99,13 @@ cp -- "$ARCHIVE" "$output"
 STUB
 chmod +x "$sandbox/bin/cargo" "$sandbox/bin/curl"
 export PATH="$sandbox/bin:$PATH" EXPECTED_TRUSTED="$trusted"
+# No network even if a plant removes the curl stub: every proxy variable names a closed local port.
+export https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 \
+  ALL_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 NO_PROXY= no_proxy=
+# A local run names the archive (M7-DOGFOOD-LOCAL); only --hosted-advisory downloads it.
+LOCAL=(--ranker-archive "$FIXTURE_ARCHIVE")
+export CURL_LOG="$sandbox/curl.log"
+: > "$CURL_LOG"
 # Attempt an environment override; trusted script must retain its file-owned producer pin.
 export DDF_REV=untrusted-override
 export ARCHIVE="$FIXTURE_ARCHIVE" CURL_EXIT=0
@@ -105,7 +114,7 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'bu
  export BUILD_EXIT RANK_EXIT JUDGE_EXIT
  out="$sandbox/evidence-$name"
  set +e
- bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
  actual=$?
  set -e
  if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL $name: expected $expected got $actual"; exit 1; fi
@@ -135,7 +144,7 @@ git -C "$attr" -c user.name=Fixture -c user.email=fixture@example.invalid commit
 attr_head="$(git -C "$attr" rev-parse HEAD)"
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
 out="$sandbox/evidence-attributes"
-bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
 visible="$(grep -c "^+.*$key" "$out/change.patch" || true)"
 binary="$(grep -c '^GIT binary patch' "$out/change.patch" || true)"
 if [ "$visible" != 2 ] || [ "$binary" != 0 ]; then
@@ -153,7 +162,7 @@ grep -q '^diff --git a/sub/k.rs b/sub/k.rs$' "$clean_patch" || { echo 'FAIL git 
 gitenv() {
  name="$1"; shift
  out="$sandbox/evidence-gitenv-$name"
- env "$@" bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+ env "$@" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
  if ! same_bytes "$clean_patch" "$out/change.patch"; then
   echo "FAIL git environment $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch")"
   exit 1
@@ -172,7 +181,7 @@ candidate_config() {
  name="$1"; key="$2"; value="$3"; where="${4:-$attr}"
  git -C "$attr" config "$key" "$value"
  out="$sandbox/evidence-gitenv-$name"
- bash "$trusted/scripts/dogfood.sh" "$base" "$attr_head" "$where" "$out" > "$sandbox/output" 2>&1
+ bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$attr_head" "$where" "$out" > "$sandbox/output" 2>&1
  git -C "$attr" config --unset "$key"
  if ! same_bytes "$clean_patch" "$out/change.patch"; then
   echo "FAIL candidate config $name: the patch differs from the clean one: $(sed -n 1p "$out/change.patch" | cat -v)"
@@ -296,15 +305,18 @@ by_hand_row the-changes-own-gitmodules-ignore-all
 by_hand_row ignore-submodules-all -c diff.ignoreSubmodules=all
 by_hand_row submodule-log -c diff.submodule=log
 by_hand_row submodule-diff -c diff.submodule=diff
+# Every local run so far left the curl log empty: none of them downloaded the ranker.
+test ! -s "$CURL_LOG" || { cat "$CURL_LOG"; echo 'FAIL a local run called curl'; exit 1; }
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop
 # the run before any ranker exists and before the judge runs, even when the judge would pass.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
-for row in "other-bytes $OTHER_ARCHIVE 0 3" "download-fails $FIXTURE_ARCHIVE 22 22"; do
- read -r name ARCHIVE CURL_EXIT expected <<< "$row"
+for row in "other-bytes $OTHER_ARCHIVE 0 3 local" "download-fails $FIXTURE_ARCHIVE 22 22 hosted"; do
+ read -r name ARCHIVE CURL_EXIT expected how <<< "$row"
  export ARCHIVE CURL_EXIT
  out="$sandbox/archive-$name"
+ if [ "$how" = local ]; then how=(--ranker-archive "$ARCHIVE"); else how=(--hosted-advisory); fi
  set +e
- bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ bash "$trusted/scripts/dogfood.sh" "${how[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
  actual=$?
  set -e
  if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL archive $name: expected $expected got $actual"; exit 1; fi
@@ -313,6 +325,41 @@ for row in "other-bytes $OTHER_ARCHIVE 0 3" "download-fails $FIXTURE_ARCHIVE 22 
  echo "PASS archive $name exit=$actual"
 done
 export ARCHIVE="$FIXTURE_ARCHIVE" CURL_EXIT=0
+# M7-DOGFOOD-LOCAL (ledger Q67): a local run never downloads. Without --ranker-archive and without
+# --hosted-advisory the driver refuses before any effect; a missing or empty archive argument too.
+# A relative archive path works from any directory. (The local runs before the archive rows left
+# the curl log empty; the hosted download row wrote it, so it starts empty again here.)
+: > "$CURL_LOG"
+set +e
+bash "$trusted/scripts/dogfood.sh" --hosted-advisory --ranker-archive '' "$base" "$head" "$candidate" "$sandbox/hosted-empty" > "$sandbox/output" 2>&1
+actual=$?
+set -e
+[ "$actual" = 2 ] && test ! -e "$sandbox/hosted-empty" && test ! -s "$CURL_LOG" \
+  || { cat "$sandbox/output"; echo "FAIL --hosted-advisory with an empty --ranker-archive: got $actual"; exit 1; }
+echo 'PASS an empty --ranker-archive is refused, also with --hosted-advisory (no silent download)'
+export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
+for row in 'no-archive' 'missing-file --ranker-archive /nonexistent/archive.tar.gz' 'no-value --ranker-archive' 'empty-value --ranker-archive ='; do
+ read -r name flag value <<< "$row"
+ args=(); if [ -n "${flag:-}" ]; then args=("$flag"); fi
+ if [ "${value:-}" = '=' ]; then args+=(''); elif [ -n "${value:-}" ]; then args+=("$value"); fi
+ out="$sandbox/local-$name"
+ set +e
+ bash "$trusted/scripts/dogfood.sh" "${args[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ if [ "$actual" -ne 2 ]; then cat "$sandbox/output"; echo "FAIL local $name: expected 2 got $actual"; exit 1; fi
+ if [ "$name" = no-archive ]; then grep -q 'a local run takes --ranker-archive' "$sandbox/output"; fi
+ case "$name" in empty-value) grep -q "needs a file" "$sandbox/output" ;; no-value|missing-file) grep -q "is not a file" "$sandbox/output" ;; esac
+ test ! -e "$out"
+ test ! -s "$CURL_LOG"
+ echo "PASS local $name refused before any effect"
+done
+out="$sandbox/local-relative"
+( cd "$sandbox" && bash "$trusted/scripts/dogfood.sh" --ranker-archive release.tar.gz "$base" "$head" "$candidate" "$out" ) > "$sandbox/output" 2>&1 \
+  || { cat "$sandbox/output"; echo 'FAIL local relative archive path'; exit 1; }
+grep -qx 'ranker_archive=local' "$out/provenance.txt"
+test ! -s "$CURL_LOG"
+echo 'PASS a relative --ranker-archive is the local archive; curl never ran'
 # DOGFOOD-HOSTED-MODE. The trusted policy here pins a producer. (1) Asked with --hosted-advisory,
 # the driver judges in advisory mode (the stub judge exits 98 if it is given --ranker), says why,
 # still fetches the pinned ranker, and cannot be acknowledged into a pass. (2) Without the
@@ -340,7 +387,7 @@ done
 export JUDGE_EXIT=0 EXPECT_MODE=authority ALLOWLIST=absent
 out="$sandbox/no-allowlist"
 set +e
-bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
 actual=$?
 set -e
 [ "$actual" = 3 ] || { cat "$sandbox/output"; echo "FAIL no-allowlist: got $actual"; exit 1; }
@@ -351,7 +398,7 @@ export ALLOWLIST=enrolled
 for variable in HOSTED_ADVISORY DOGFOOD_MODE DOGFOOD_HOSTED_ADVISORY FORGE_WARDEN_MODE hosted_advisory mode; do
  out="$sandbox/env-$variable"
  set +e
- env "$variable=advisory" "DOGFOOD_ARGS=--hosted-advisory" bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ env "$variable=advisory" "DOGFOOD_ARGS=--hosted-advisory" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
  actual=$?
  set -e
  [ "$actual" = 0 ] || { cat "$sandbox/output"; echo "FAIL env $variable: got $actual (98 = the judge was asked for advisory mode)"; exit 1; }
@@ -360,7 +407,7 @@ done
 echo 'PASS no environment variable selects advisory mode'
 # The argument counts only in first place; anywhere else it is a usage error before any effect.
 set +e
-bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/misplaced" --hosted-advisory > "$sandbox/output" 2>&1
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$sandbox/misplaced" --hosted-advisory > "$sandbox/output" 2>&1
 misplaced=$?
 set -e
 [ "$misplaced" = 2 ] && test ! -e "$sandbox/misplaced"
@@ -373,7 +420,7 @@ for row in 'accepted 8 0 0' 'stale 8 8 8' 'broken-verifier 8 3 8' 'fail-with-ack
  read -r name JUDGE_EXIT ACK_EXIT expected <<< "$row"
  export JUDGE_EXIT ACK_EXIT
  set +e
- bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/ack-$name" \
+ bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$sandbox/ack-$name" \
    "$sandbox/receipt.json" "$sandbox/receipt.sig" > "$sandbox/output" 2>&1
  actual=$?
  set -e
@@ -399,7 +446,7 @@ for RANK_EXIT in 0 9; do
  export RANK_EXIT
  out="$sandbox/advisory-$RANK_EXIT"
  set +e
- bash "$advice/scripts/dogfood.sh" "$advice_base" "$advice_head" "$sandbox/advisory-candidate" "$out" "$sandbox/receipt.json" "$sandbox/receipt.sig" > "$sandbox/output" 2>&1
+ bash "$advice/scripts/dogfood.sh" "${LOCAL[@]}" "$advice_base" "$advice_head" "$sandbox/advisory-candidate" "$out" "$sandbox/receipt.json" "$sandbox/receipt.sig" > "$sandbox/output" 2>&1
  actual=$?
  set -e
  expected=8; if [ "$RANK_EXIT" != 0 ]; then expected=9; fi
@@ -416,7 +463,7 @@ ln -s "$trusted" "$sandbox/trusted-link"
 for row in "same-path $trusted" "same-through-link $sandbox/trusted-link"; do
  read -r name given <<< "$row"
  set +e
- bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$given" "$sandbox/s3-$name" > "$sandbox/output" 2>&1
+ bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$given" "$sandbox/s3-$name" > "$sandbox/output" 2>&1
  actual=$?
  set -e
  [ "$actual" = 2 ] && grep -q 'judge checkout must be the distinct trusted base' "$sandbox/output" && test ! -e "$sandbox/s3-$name" || { cat "$sandbox/output"; echo "FAIL trusted as candidate $name: got $actual"; exit 1; }
@@ -426,7 +473,7 @@ printf 'ignored.txt\n' >> "$trusted/.git/info/exclude"
 printf 'ignored\n' > "$trusted/ignored.txt"
 test -z "$(git -C "$trusted" status --porcelain --untracked-files=all)"
 set +e
-bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/s3-ignored" > "$sandbox/output" 2>&1
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$sandbox/s3-ignored" > "$sandbox/output" 2>&1
 actual=$?
 set -e
 rm -- "$trusted/ignored.txt"
@@ -445,7 +492,7 @@ git -C "$attr" fetch -q "$moved" HEAD
 export EXPECTED_TRUSTED="$moved"
 out="$sandbox/s3-diverged"
 set +e
-bash "$moved/scripts/dogfood.sh" "$moved_base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+bash "$moved/scripts/dogfood.sh" "${LOCAL[@]}" "$moved_base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
 set -e
 export EXPECTED_TRUSTED="$trusted"
 if ! same_bytes "$clean_patch" "$out/change.patch"; then
@@ -455,10 +502,10 @@ fi
 echo 'PASS diverged history: the patch is the change from the merge base to head'
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
 set +e
-bash "$trusted/scripts/dogfood.sh" "$head" "$head" "$candidate" "$sandbox/wrong-base" >/dev/null 2>&1
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$head" "$head" "$candidate" "$sandbox/wrong-base" >/dev/null 2>&1
 wrong=$?
 printf 'dirty\n' >> "$trusted/warden.toml"
-bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/dirty" >/dev/null 2>&1
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$sandbox/dirty" >/dev/null 2>&1
 dirty=$?
 set -e
 [ "$wrong" = 2 ] && [ "$dirty" = 2 ]

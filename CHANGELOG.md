@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- `scripts/dogfood.sh` takes `--ranker-archive FILE`: a local copy of the pinned deep-diff-forge release
+  archive, copied into the evidence directory and checked against the same pinned SHA-256 (other bytes:
+  exit 3). Only a run with `--hosted-advisory` downloads the archive; a run with neither argument is a
+  usage error (exit 2) before any effect, so a local run never reaches the network (ledger Q67). The
+  provenance file says `ranker_archive=local` or `downloaded`. The hosted job is unchanged.
 - New rule `binary-text-is-hidden-text` in the starter policy and in this repository's `warden.toml`
   (ledger Q63): it holds a file that is normally text (125 extensions, 40 exact names including the
   Git hook names, `configure` and `allowed_signers`, and the name prefixes `LICENSE-`, `COPYING.` and

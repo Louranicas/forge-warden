@@ -250,7 +250,10 @@ from a separate base checkout. The candidate is only diff data, and the driver p
 advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). On a hosted runner
 it is asked for advisory mode (`--hosted-advisory`): the runner has no owner-enrolled Git allowlist
 ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)), so that job reports evidence and cannot PASS. It
-still fetches the pinned deep-diff-forge release and checks its bytes. Authority mode is claimed
+still fetches the pinned deep-diff-forge release and checks its bytes. Only that hosted job downloads:
+a local run names a copy of the pinned release archive with `--ranker-archive FILE` (the driver copies
+it and checks the copy against the same pinned SHA-256), and without either argument the driver
+refuses before it does anything. Authority mode is claimed
 only for a machine whose owner enrolled the allowlist. A workflow file in
 the repository is not an independent approval boundary, so the trust root must be enforced
 outside the pull request (see [`SECURITY.md`](SECURITY.md)).
