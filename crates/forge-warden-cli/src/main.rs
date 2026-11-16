@@ -27,6 +27,7 @@ use doors::child::{GitFactsFailure, RankerFailure};
 use forge_warden_core::authority::{
     Ranking, SuppliedCopy, check as check_coverage, evaluate_advisory, evaluate_authority,
 };
+use forge_warden_core::defaults::NamedDefault as _;
 use forge_warden_core::exit::{Exit, entry_by_code, entry_by_name};
 use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::{PolicyError, parse_policy};
@@ -466,10 +467,15 @@ fn bind(
         Some(at) => at,
         None => made.patch.len().min(patch.len()),
     };
+    // ADR 0012 D4 (review S4): name the admitted Git, whose diff output is the reference. The Git
+    // that made the patch is not known to forge-warden.
+    let version = doors::child::git_version(git)
+        .map(|v| format!("{v:?}"))
+        .or_display("an admitted Git whose version could not be read".to_owned());
     Err(Failure::new(
         Exit::InvalidInput,
         format!(
-            "the patch is not `git diff {}..{head}` of --repo: first difference at byte {first} (patch {} bytes, diff {} bytes); make it with forge-warden's `scripts/make_patch.sh {base} {head}` (a patch made by another Git version, or a make_patch.sh without --full-index, can differ)",
+            "the patch is not `git diff {}..{head}` of --repo: first difference at byte {first} (patch {} bytes, diff {} bytes); make it with forge-warden's `scripts/make_patch.sh {base} {head}`; forge-warden's diff was made by {version} (the admitted Git), and a patch made by another Git version, or by a make_patch.sh without --full-index, can differ",
             made.merge_base,
             patch.len(),
             made.patch.len()

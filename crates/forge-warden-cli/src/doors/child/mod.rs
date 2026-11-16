@@ -16,17 +16,16 @@ mod bound;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
 pub(in crate::doors) use bound::{
-    ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, bound_diff_in, bound_program,
+    ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program, recheck_in,
 };
 pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
 pub(crate) use git::{
     AdmittedGit, GitFactsFailure, PinnedGit, admit_git_advisory, admit_git_pinned, git_facts,
+    git_version,
 };
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use git::{
-    GIT_STDERR_CAP, fixture_git, git_facts_in, git_version, parse_git_allowlist,
-};
+pub(in crate::doors) use git::{GIT_STDERR_CAP, fixture_git, git_facts_in, parse_git_allowlist};
 
 /// How a child ended, or why it was refused.
 #[derive(Debug, PartialEq, Eq)]

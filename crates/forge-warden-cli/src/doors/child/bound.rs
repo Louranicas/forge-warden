@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 /// Wall-clock budget for one whole bound run (ADR 0012 D3.6; measured worst 1.8 s on a
 /// 100k-commit repository with a 99,896-object copy, warm cache).
 const BOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How both private repositories are made (ADR 0012 D3.1). `--template=`: no template is copied
+/// (no hook samples, no `info/exclude`). In a cleared environment Git's default template has no
+/// effect on the bytes, so a test pins this list rather than a behaviour (`init_flags_are_pinned`).
+pub(in crate::doors) const INIT_FLAGS: &[&str] = &["init", "--quiet", "--bare", "--template="];
 /// The largest pack the copy may move: 256 MiB (measured worst 14 MB).
 const PACK_CAP: usize = 268_435_456;
 /// Object and commit lists Git prints while enumerating (one id per line): 64 MiB.
@@ -122,10 +126,18 @@ pub(crate) fn bound_diff(
     base: &str,
     head: &str,
 ) -> Result<BoundDiff, BoundFailure> {
-    bound_diff_in(git, objects, base, head, &std::env::temp_dir())
+    bound_diff_in(
+        git,
+        objects,
+        base,
+        head,
+        &std::env::temp_dir(),
+        BOUND_TIMEOUT,
+    )
 }
 
-/// [`bound_diff`] under the temporary base `tmp` (tests use this).
+/// [`bound_diff`] under the temporary base `tmp` and the time budget `budget` for the whole run
+/// (production passes 60 s; tests use a shorter one to reach the deadline).
 #[expect(
     clippy::disallowed_methods,
     reason = "door: bound_diff_in (its one deadline for the whole bound run)"
@@ -136,6 +148,7 @@ pub(in crate::doors) fn bound_diff_in(
     base: &str,
     head: &str,
     tmp: &Path,
+    budget: std::time::Duration,
 ) -> Result<BoundDiff, BoundFailure> {
     let format = object_format(base, head)?;
     let objects = objects
@@ -147,7 +160,7 @@ pub(in crate::doors) fn bound_diff_in(
     // Dropped before `isolation`, so the private directory is empty when it is removed.
     let _repositories = Remove(vec![staging.clone(), verified.clone()]);
     let deadline = std::time::Instant::now()
-        .checked_add(BOUND_TIMEOUT)
+        .checked_add(budget)
         .ok_or_else(|| {
             BoundFailure::Unavailable("the clock cannot hold the bound run's deadline".to_owned())
         })?;
@@ -162,14 +175,49 @@ pub(in crate::doors) fn bound_diff_in(
     };
     bound.init(format, objects, &staging)?;
     let mb = bound.check_and_merge_base(base, head)?;
-    let rows = bound.copy(&mb, base, head)?;
-    Bound::cut(&mb, &rows, &verified)?;
+    let boundary = bound.copy(&mb, base, head)?;
+    Bound::cut(&boundary, &verified)?;
     bound.recheck(&mb, base, head)?;
     let patch = bound.diff(&mb, head)?;
     Ok(BoundDiff {
         patch,
         merge_base: mb,
     })
+}
+
+/// The recheck (D3 step 4) alone, against `verified_git_dir` as the verified repository: the contract
+/// test for a step every known forged store fails before (a forged object is absent from verified,
+/// so an earlier step refuses it). Tests only.
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test door: recheck_in (one deadline for one recheck)"
+)]
+pub(in crate::doors) fn recheck_in(
+    git: &AdmittedGit,
+    verified_git_dir: &Path,
+    mb: &str,
+    base: &str,
+    head: &str,
+    tmp: &Path,
+) -> Result<(), BoundFailure> {
+    let isolation = Isolation::create_in(tmp).map_err(BoundFailure::Door)?;
+    let deadline = std::time::Instant::now()
+        .checked_add(BOUND_TIMEOUT)
+        .ok_or_else(|| {
+            BoundFailure::Unavailable("the clock cannot hold the deadline".to_owned())
+        })?;
+    let bound = Bound {
+        run: Runner {
+            git,
+            isolation: &isolation,
+            deadline,
+        },
+        staging: String::new(),
+        verified: utf8(verified_git_dir)?,
+    };
+    bound.recheck(mb, base, head)
 }
 
 /// One bound run: its runner and its two private repositories.
@@ -184,19 +232,10 @@ impl Bound<'_> {
     fn init(&self, format: &str, objects: &str, staging: &Path) -> Result<(), BoundFailure> {
         let object_format = format!("--object-format={format}");
         for dir in [&self.staging, &self.verified] {
+            let mut args = INIT_FLAGS.to_vec();
+            args.extend([object_format.as_str(), dir.as_str()]);
             self.run
-                .git(
-                    &[
-                        "init",
-                        "--quiet",
-                        "--bare",
-                        "--template=",
-                        &object_format,
-                        dir,
-                    ],
-                    b"",
-                    LIST_CAP,
-                )
+                .git(&args, b"", LIST_CAP)
                 .map_err(store("git init"))?;
         }
         write_private(
@@ -227,13 +266,19 @@ impl Bound<'_> {
     /// Both ids name commits in staging, and they have exactly one merge base: its id.
     fn check_and_merge_base(&self, base: &str, head: &str) -> Result<String, BoundFailure> {
         for (name, id) in [("base", base), ("head", head)] {
-            let kind = self
+            // Git's answer (another type, or `cat-file` exiting nonzero for an absent id) is about
+            // the input; Git out of time or killed is not, and gives no verdict like every step.
+            match self
                 .run
-                .git_owned(&self.staging(&["cat-file", "-t", id]), b"", LIST_CAP);
-            if kind.as_deref() != Ok(b"commit\n".as_slice()) {
-                return Err(BoundFailure::Input(format!(
-                    "{name} {id} is not a commit in the repository"
-                )));
+                .git_owned(&self.staging(&["cat-file", "-t", id]), b"", LIST_CAP)
+            {
+                Ok(kind) if kind == b"commit\n" => {}
+                Ok(_) | Err(ChildFailure::Exit { .. }) => {
+                    return Err(BoundFailure::Input(format!(
+                        "{name} {id} is not a commit in the repository"
+                    )));
+                }
+                Err(other) => return Err(store("cat-file")(other)),
             }
         }
         merge_base(
@@ -242,10 +287,10 @@ impl Bound<'_> {
         )
     }
 
-    /// Packs the commits of `^mb^@ base head` and the complete trees of `mb` and `head` in staging
-    /// and copies them into verified with `index-pack`. Returns the copied commits with their
-    /// parents (`rev-list --parents` rows).
-    fn copy(&self, mb: &str, base: &str, head: &str) -> Result<Vec<Vec<String>>, BoundFailure> {
+    /// Packs the commits of `^mb^@ base head`, the commit objects of their parents outside that
+    /// set (the boundary), and the complete trees of `mb` and `head` in staging, and copies them into
+    /// verified with `index-pack`. Returns the boundary: the commits `shallow` must name.
+    fn copy(&self, mb: &str, base: &str, head: &str) -> Result<Vec<String>, BoundFailure> {
         let parents = lines(
             &self
                 .run
@@ -284,9 +329,23 @@ impl Bound<'_> {
                 )
                 .map_err(store("rev-list --objects"))?,
         );
-        let wanted: BTreeSet<&str> = rows
+        let copied: BTreeSet<&str> = rows
             .iter()
             .filter_map(|row| row.first().map(String::as_str))
+            .collect();
+        // A parent outside the copy is copied as a commit object only (re-hashed like the rest) and
+        // becomes a shallow boundary, so every copied commit keeps all its edges (Bastion, round 2:
+        // shallowing the copied commit itself dropped a redundant merge's in-copy edge).
+        let boundary: BTreeSet<&str> = rows
+            .iter()
+            .flat_map(|row| row.iter().skip(1))
+            .map(String::as_str)
+            .filter(|parent| !copied.contains(parent))
+            .collect();
+        let wanted: BTreeSet<&str> = copied
+            .iter()
+            .chain(&boundary)
+            .copied()
             .chain(trees.iter().map(String::as_str))
             .collect();
         let mut list = wanted.into_iter().collect::<Vec<_>>().join("\n");
@@ -302,23 +361,18 @@ impl Bound<'_> {
         self.run
             .git_owned(&self.verified(&["index-pack", "--stdin"]), &pack, LIST_CAP)
             .map_err(store("index-pack"))?;
-        Ok(rows)
+        Ok(boundary.into_iter().map(str::to_owned).collect())
     }
 
-    /// forge-warden's own `shallow` file in verified: `mb` and every copied commit with a parent
-    /// outside the copy. Every edge left is a re-hashed, real edge; a cut only removes ancestry.
-    fn cut(mb: &str, rows: &[Vec<String>], verified: &Path) -> Result<(), BoundFailure> {
-        let copied: BTreeSet<&str> = rows
-            .iter()
-            .filter_map(|row| row.first().map(String::as_str))
-            .collect();
-        let mut cut: BTreeSet<&str> = rows
-            .iter()
-            .filter(|row| row.iter().skip(1).any(|p| !copied.contains(p.as_str())))
-            .filter_map(|row| row.first().map(String::as_str))
-            .collect();
-        cut.insert(mb);
-        let mut shallow = cut.into_iter().collect::<Vec<_>>().join("\n");
+    /// forge-warden's own `shallow` file in verified: the boundary commits (parents of copied commits
+    /// that are not themselves copied). Their own parents are absent, so history in verified stops
+    /// there; every copied commit keeps all its edges, each re-hashed and real. A root merge base with
+    /// no outside parent leaves no boundary and no file.
+    fn cut(boundary: &[String], verified: &Path) -> Result<(), BoundFailure> {
+        if boundary.is_empty() {
+            return Ok(());
+        }
+        let mut shallow = boundary.join("\n");
         shallow.push('\n');
         write_private(&verified.join("shallow"), shallow.as_bytes())
     }
@@ -330,7 +384,9 @@ impl Bound<'_> {
             &self.verified(&["merge-base", "--all", base, head]),
         )
         .map_err(|e| match e {
-            BoundFailure::Input(why) => BoundFailure::Store(why),
+            BoundFailure::Input(why) => BoundFailure::Store(format!(
+                "the verified copy gives no single merge base for base and head ({why})"
+            )),
             other @ (BoundFailure::Door(_)
             | BoundFailure::Store(_)
             | BoundFailure::Unavailable(_)) => other,

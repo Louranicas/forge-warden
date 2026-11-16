@@ -790,6 +790,12 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
         "{}",
         refused.stderr
     );
+    // ADR 0012 D4 (review S4): the refusal names the admitted Git's version.
+    assert!(
+        refused.stderr.contains("git version") && refused.stderr.contains("(the admitted Git)"),
+        "{}",
+        refused.stderr
+    );
     assert!(
         refused.stdout.is_empty(),
         "a refusal emits no verdict: {}",
