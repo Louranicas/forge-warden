@@ -55,6 +55,14 @@ registry is always listed, because consumers parse them.
   case-insensitive checkout reads `.CLAUDE` as `.claude`), and a `.claude` symlink itself. A repository that adopted the starter
   earlier keeps its own copy; add the path to its policy by hand. The demo verdict's
   `policy_sha256` changes with the policy bytes; nothing else in it does.
+- For contributors (gap G9): the fast gate runs `scripts/script_commands.py`, which reads every
+  tracked shell and Python script, here-documents included, and names each command it calls that is
+  not in the offline gate image's declared list (that image has no `cmp`, `diff`, `jq`, `xxd` or
+  `file`). A construct the reader does not handle is a failure, not a skip. It reads a source export
+  without `.git` as well as a checkout. `GateImageCommands` in `scripts/tests/perimeter.py` runs it,
+  and CONTRIBUTING says how to add a command. No change to the `forge-warden` binary.
+- The demo verdict (`fixtures/demo.verdict.json`) names tool version 0.2.1; it was regenerated from
+  the built binary.
 
 ## [0.2.0] - 2026-11-13
 

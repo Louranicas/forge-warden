@@ -30,14 +30,16 @@ two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
 - [x] Q53: the plants README count is derived from the catalogue (`5e75cc3`). Test only.
 - [x] BINARY-TEXT-HOLD (Q63): rule `binary-text-is-hidden-text` in the starter and in `warden.toml` (`26330b9`).
   Not covered, stated: an executable with a name the rule does not list (Q64; verdict v3).
-- [ ] G9: the gate image's commands are checked against every tracked script (`@G9_MERGE@`).
+- [x] G9: the gate image's commands are checked against every tracked script (`92a9ac9`). Test and fast gate only.
 
 ## The release preparation
 
 - [x] Workspace version and both `Cargo.lock` entries 0.2.0 to 0.2.1 (this preparation).
-- [ ] `fixtures/demo.verdict.json`: one line changed, the tool version; regenerated from the built binary by
-  the bless path and byte-equal by another lane; its reviewed digest in `lint-expectations.toml` updated (`@BLESS@`).
-- [ ] README: the demo block shows what the 0.2.1 binary prints; the install line pins `v0.2.1` (this preparation).
+- [x] `fixtures/demo.verdict.json`: one line changed, the tool version; regenerated from the built binary by
+  the bless path; its reviewed digest in `lint-expectations.toml` updated (this preparation). Byte-equal by another
+  lane: the verifier's.
+- [x] README: the demo block shows what the 0.2.1 binary prints (run in the gate image, which has no Git
+  allowlist); the install line pins `v0.2.1` (this preparation).
 - [x] CHANGELOG: `[0.2.1]` under an empty `[Unreleased]`, with the schema and exit-code statement (this preparation).
 - [x] [The runbook](RUNBOOK.md), step 2: what was run for v0.2.0, and that 0.2.1's install run comes after
   the tag (this preparation).
@@ -50,8 +52,9 @@ two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
   lines' mutants 9: 8 caught, 1 not buildable, none missed.
 - [x] Train A2: GREEN on `5e75cc3` (Q60, HEADER-OWN, Q53); 10 mutants: 9 caught, 1 not buildable, none missed.
 - [x] Train A3b: GREEN on `26330b9` (BINARY-TEXT-HOLD); no source mutation sites. Train A3 before it was red
-  on the hosted-parity export (G9's reader needed Git there); G9 was fixed and goes in its own train.
-- [ ] The gate on the release commit (G9 and this preparation).
+  on the hosted-parity export (G9's reader needed Git there); G9 was fixed and went in its own train.
+- [x] Train A4: GREEN on `92a9ac9` (G9), the hosted-parity export phase included; no Rust change.
+- [ ] The gate on the release commit (this preparation).
 
 ## After the tag, by a lane
 
