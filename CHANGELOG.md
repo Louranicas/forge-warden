@@ -9,6 +9,12 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- New rule `binary-text-is-hidden-text` in the starter policy and in this repository's `warden.toml`
+  (ledger Q63): it holds a file that is normally text (by extension or exact name, any letter case)
+  when the patch carries it as a binary section. Git's own numstat says "binary" (`binary_change`), so
+  any patch maker that hides text this way, such as a `.gitattributes` the change commits, is held for a
+  person instead of passing every signal rule. A repository that adopted the starter earlier adds the
+  rule by hand (Upgrading). The demo verdict gains the rule (it passes there) and a new policy digest.
 - A file replaced by a symlink, or the reverse, is refused as a type change: the
   `patch_unverifiable` detail now says the path "changes type: Git deletes it and creates it again
   as a symlink or a file" instead of "git lists PATH more than once" (ledger Q60). What holds is

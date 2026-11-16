@@ -288,6 +288,127 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
     }
 }
 
+/// The text names of rule `binary-text-is-hidden-text` (ledger Q63): extensions after the last dot,
+/// and exact file names, both compared in any ASCII letter case.
+const TEXT_EXTENSIONS: [&str; 111] = [
+    "adoc", "awk", "bash", "bat", "bzl", "c", "cc", "cfg", "cjs", "clj", "cljs", "cmake", "cmd",
+    "conf", "cpp", "cs", "css", "csv", "cts", "cxx", "dart", "diff", "edn", "el", "env", "erl",
+    "ex", "exs", "fish", "fs", "fsx", "go", "gql", "gradle", "graphql", "groovy", "h", "hcl",
+    "hh", "hpp", "hrl", "hs", "htm", "html", "hxx", "ini", "java", "jl", "jq", "js", "json",
+    "json5", "jsonc", "jsx", "just", "kt", "kts", "less", "lock", "lua", "m", "markdown", "md",
+    "mjs", "mk", "ml", "mli", "mm", "mts", "nim", "nix", "patch", "php", "pl", "pm",
+    "properties", "proto", "ps1", "py", "pyi", "r", "rb", "rs", "rst", "sass", "scala", "scss",
+    "sed", "sh", "sol", "sql", "star", "svelte", "svg", "swift", "tex", "tf", "tfvars", "toml",
+    "ts", "tsv", "tsx", "txt", "vb", "vim", "vue", "xml", "yaml", "yml", "zig", "zsh"
+];
+const TEXT_NAMES: [&str; 28] = [
+    ".editorconfig", ".envrc", ".gitattributes", ".gitignore", ".gitmodules", ".mailmap",
+    ".npmrc", "AUTHORS", "BUILD", "CHANGELOG", "CODEOWNERS", "Containerfile", "COPYING",
+    "Dockerfile", "Gemfile", "GNUmakefile", "go.mod", "go.sum", "Jenkinsfile", "Justfile",
+    "LICENSE", "Makefile", "NOTICE", "Procfile", "Rakefile", "README", "Vagrantfile",
+    "WORKSPACE"
+];
+
+/// `word` with each ASCII letter as a class of both cases, the way the policy spells it.
+fn any_case(word: &str) -> String {
+    word.chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() {
+                format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// The two globs of `binary-text-is-hidden-text`, rebuilt from the lists above.
+fn text_globs() -> [String; 2] {
+    let join = |items: &[&str]| items.iter().map(|i| any_case(i)).collect::<Vec<_>>().join(",");
+    [
+        format!("**/*.{{{}}}", join(&TEXT_EXTENSIONS)),
+        format!("**/{{{}}}", join(&TEXT_NAMES)),
+    ]
+}
+
+/// The starter and this repository's own policy carry exactly the globs the lists give, so the list
+/// in this file is the one reviewed and a hand edit of a glob cannot drift from it.
+#[test]
+fn the_binary_text_globs_are_the_text_list() {
+    for policy in [
+        include_str!("../../../examples/starter.warden.toml"),
+        include_str!("../../../warden.toml"),
+    ] {
+        let (_, rule) = policy
+            .split_once("id = \"binary-text-is-hidden-text\"")
+            .unwrap();
+        let rule = rule.split("[[rule]]").next().unwrap();
+        let globs: Vec<&str> = rule
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix('"')?.strip_suffix("\","))
+            .collect();
+        assert_eq!(globs, text_globs().to_vec());
+    }
+}
+
+/// The starter holds a binary section on a path that is normally text, in any letter case, and only
+/// there (M7-BINARY-TEXT-HOLD, ledger Q63).
+#[test]
+fn the_starter_policy_holds_a_binary_section_on_a_text_path() {
+    let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
+    let rule_says = |path: &str, signals: &[&str]| {
+        let verdict = evaluate(
+            &starter,
+            &rank(vec![file(path, "binary_changed", 1, signals)]),
+            seals(),
+            today(),
+        );
+        verdict
+            .rules()
+            .iter()
+            .find(|rule| rule.id == "binary-text-is-hidden-text")
+            .unwrap()
+            .outcome
+    };
+    for path in [
+        "src/lib.rs",
+        "lib.RS",
+        "Main.Py",
+        "a.tar.rs",
+        "scripts/ci_local.sh",
+        "Makefile",
+        "MAKEFILE",
+        ".gitattributes",
+        ".github/workflows/ci.yml",
+        "go.mod",
+        "deep/dir/CODEOWNERS",
+        "docs/README.md",
+    ] {
+        assert_eq!(
+            rule_says(path, &["binary_change"]),
+            RuleOutcome::Hold,
+            "{path}"
+        );
+    }
+    for path in [
+        "logo.png",
+        "LOGO.PNG",
+        "font.woff2",
+        "fixtures/a.bin",
+        "a.rs.orig",
+        "rs",
+        "Makefile.bak",
+        "notes.rsx",
+    ] {
+        assert_eq!(
+            rule_says(path, &["binary_change"]),
+            RuleOutcome::Pass,
+            "{path} is not a text name"
+        );
+    }
+    assert_eq!(rule_says("src/lib.rs", &[]), RuleOutcome::Pass, "no binary section");
+}
+
 #[test]
 fn score_and_file_budgets() {
     let p = policy(

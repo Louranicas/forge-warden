@@ -16,7 +16,7 @@ use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::{RankDoc, parse_rank};
 use forge_warden_core::testing::evaluate;
-use forge_warden_core::verdict::{Provenance, RankedBy, Seals};
+use forge_warden_core::verdict::{Provenance, RankedBy, RuleOutcome, Seals};
 use forge_warden_core::{Date, Outcome, Policy};
 use std::path::PathBuf;
 
@@ -521,6 +521,37 @@ fn a_facts_error_never_passes_anywhere_in_the_corpus() {
         raw_passes > 0 && judged >= raw_passes,
         "{raw_passes}/{judged}"
     );
+}
+
+#[test]
+fn a_text_file_sent_as_a_binary_section_is_held_by_the_starter() {
+    // M7-BINARY-TEXT-HOLD (ledger Q63, W1): real Git output (Git 2.56.1, `*.rs binary` in a
+    // `.gitattributes` the change commits) and the real deep-diff-forge 0.8.2 ranking of it. The
+    // `unsafe` block the change adds to `build.rs` is inside a binary section, so the ranking carries
+    // only `binary_change` and no unsafe rule sees it; the starter's binary-text rule holds it, the
+    // verdict has no note, so a reviewer can acknowledge it.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/hostile/binary-text");
+    let read = |suffix: &str| std::fs::read(dir.join(format!("text-as-binary-rs.{suffix}"))).unwrap();
+    let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
+    let ranking = produced(parse_rank(&read("rank.json")).unwrap());
+    let facts = PatchFacts::from_git(&read("numstat"), &read("summary"), &read("patch"));
+    let checked = check(&ranking, facts);
+    let verdict = evaluate_authority(
+        &starter,
+        &checked,
+        SuppliedCopy::Absent,
+        produced_seals(),
+        today(),
+    );
+    assert_eq!(verdict.outcome(), Outcome::Hold);
+    let held: Vec<&str> = verdict
+        .rules()
+        .iter()
+        .filter(|rule| rule.outcome != RuleOutcome::Pass)
+        .map(|rule| rule.id.as_str())
+        .collect();
+    assert_eq!(held, ["binary-text-is-hidden-text"]);
+    assert_eq!(codes(verdict.notes()), Vec::<&str>::new());
 }
 
 #[test]
