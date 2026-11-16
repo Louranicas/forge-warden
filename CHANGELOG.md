@@ -32,6 +32,12 @@ registry is always listed, because consumers parse them.
   differs in (and the UTC-day cause when only the verdict bytes differ) and says "signature is not
   valid for an enrolled reviewer" instead of printing a failed command line; `scripts/dogfood.sh`
   no longer leaves an `acknowledgement.json` behind when it refuses one.
+- The starter policy (`forge-warden init`, `examples/starter.warden.toml`) protects a coding
+  agent's configuration: rule `ci-is-owned` now also holds a change to `.claude` or anything under
+  it (hooks, permissions, skills), at the root or in a subdirectory, in any letter case (a
+  case-insensitive checkout reads `.CLAUDE` as `.claude`), and a `.claude` symlink itself. A repository that adopted the starter
+  earlier keeps its own copy; add the path to its policy by hand. The demo verdict's
+  `policy_sha256` changes with the policy bytes; nothing else in it does.
 
 ## [0.2.0] - 2026-11-13
 

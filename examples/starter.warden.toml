@@ -53,12 +53,23 @@ severity = "fail"
 when = ["src/**", "crates/*/src/**"]
 require = ["tests/**", "crates/*/tests/**", "**/*_test.*", "**/test_*.*"]
 
+# `.claude` is a coding agent's configuration (hooks, permissions, skills): it decides which checks
+# the agent runs before a change reaches this gate, so it is owned like CI. The first pattern holds
+# the entry itself (a `.claude` symlink to another directory); the letter classes hold `.Claude` and
+# `.CLAUDE`, which a case-insensitive checkout (macOS, Windows) reads as `.claude`.
 [[rule]]
 id = "ci-is-owned"
 why = "CI and supply-chain configuration decide what every other check means."
 kind = "protect_paths"
 severity = "hold"
-paths = [".github/**", "deny.toml", "clippy.toml", "warden.toml"]
+paths = [
+    ".github/**",
+    "deny.toml",
+    "clippy.toml",
+    "warden.toml",
+    "**/.[cC][lL][aA][uU][dD][eE]",
+    "**/.[cC][lL][aA][uU][dD][eE]/**",
+]
 
 [[rule]]
 id = "reviewable-size"
