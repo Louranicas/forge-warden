@@ -51,6 +51,9 @@ if [ "$rc" -eq 0 ] && (cd "$W/dist/$v" && sha256sum -c --quiet SHA256SUMS) \
   && grep -q '^- one change$' "$W/dist/$v/NOTES.md" && ! grep -q 'old' "$W/dist/$v/NOTES.md"; then
   pass "prepare writes archive, notes and checksums and prints the owner's command"
 else fail "prepare happy path: rc=$rc $(tail -2 "$S/out")"; fi
+# gzip -n: the header's MTIME field (bytes 4 to 7) is zero, so the bytes do not depend on the time of the run.
+mtime="$(head -c 8 "$W/dist/$v/forge-warden-$v.tar.gz" | tail -c 4 | od -An -tx1 | tr -d ' \n')"
+[ "$mtime" = 00000000 ] && pass "the archive header carries no time" || fail "archive header MTIME is $mtime"
 first="$(cat "$W/dist/$v/SHA256SUMS")"; rm -r -- "$W/dist"; prepare "$v"; rc=$?
 [ "$rc" -eq 0 ] && [ "$(cat "$W/dist/$v/SHA256SUMS")" = "$first" ] && pass "a second prepare gives the same archive bytes" || fail "archive not repeatable"
 for r in gitlab gitea forgejo; do remote_has_tag "$r" && fail "prepare pushed a tag to $r"; done
