@@ -646,7 +646,7 @@ pub(in crate::doors) fn bound_program(git: &AdmittedGit) -> Program<'_> {
     bound_program_with(git, CAPS)
 }
 
-/// [`bound_program`] with `caps`' memory limits.
+/// `bound_program` with `caps`' memory limits.
 fn bound_program_with(git: &AdmittedGit, caps: Caps) -> Program<'_> {
     Program::Limited {
         pinned: git.executable(),
