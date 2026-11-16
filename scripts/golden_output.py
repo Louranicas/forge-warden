@@ -134,11 +134,13 @@ def main():
                    "fixtures/demo.rank.json", "--today", "2026-11-05", "--json"]
         if golden in SURFACE:
             text = ""
-            for args in SURFACE[golden]:
-                out = subprocess.run([f"/proc/self/fd/{artifact.fileno()}", *args], cwd=ROOT, env=env,
-                                     pass_fds=(artifact.fileno(),), input=b"", capture_output=True,
-                                     timeout=30, check=False)
-                text += (f"=== forge-warden {' '.join(args)} (exit {out.returncode})\n--- stdout\n"
+            for argv in SURFACE[golden]:  # not `args`: that is the argparse namespace, read below
+                # The verified descriptor runs, but argv[0] is `forge-warden` as a shell gives it: clap
+                # names the program in its usage lines from argv[0] ("Usage: 3" from the descriptor).
+                out = subprocess.run(["forge-warden", *argv], executable=f"/proc/self/fd/{artifact.fileno()}",
+                                     cwd=ROOT, env=env, pass_fds=(artifact.fileno(),), input=b"",
+                                     capture_output=True, timeout=30, check=False)
+                text += (f"=== forge-warden {' '.join(argv)} (exit {out.returncode})\n--- stdout\n"
                          f"{out.stdout.decode()}--- stderr\n{out.stderr.decode()}")
             result = text.replace(package_version(), "<version>").encode()
         elif golden == GOLDENS[0]:

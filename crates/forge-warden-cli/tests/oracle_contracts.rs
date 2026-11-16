@@ -609,6 +609,8 @@ fn stderr_golden_producers_catch_each_corrupted_expectation() {
         "fixtures/cli-stderr/io.txt",
         "fixtures/cli-stderr/refused.txt",
         "fixtures/cli-stderr/over-budget.txt",
+        "fixtures/cli-surface/help.txt",
+        "fixtures/cli-surface/usage-errors.txt",
     ] {
         let before = common::read_bytes(golden);
         let valid = common::check_stderr_golden(golden, false);
