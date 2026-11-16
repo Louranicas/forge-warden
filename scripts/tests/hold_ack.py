@@ -225,6 +225,16 @@ class BoundAck(unittest.TestCase):
         (self.root / "ack.sig").write_bytes(bytes(64))
         self.verify(refusal="signature is not valid for an enrolled reviewer")
 
+    def test_the_receipt_names_the_gitlab_repository(self):
+        # Owner decision D3(c), 2026-11-16: merges are admitted on GitLab, so the receipt names that
+        # repository; a receipt signed over the old GitHub slug is refused as another subject.
+        self.assertEqual(json.loads((self.root / "ack.json").read_bytes())["repository"], "lukeomahoney/forge-warden")
+        receipt = json.loads((self.root / "ack.json").read_bytes())
+        receipt["repository"] = "Louranicas/forge-warden"
+        (self.root / "ack.json").write_text(json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n")
+        self.sign()
+        self.verify(refusal="does not match current subject and verdict: repository")
+
     def test_signed_incomplete_rules_and_extra_fields(self):
         original = (self.root / "ack.json").read_bytes()
         for field, value in [("held_rules", []), ("held_rules", ["extra-rule"]), ("repository", "other/repo"), ("extra", True)]:

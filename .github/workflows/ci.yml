@@ -1,3 +1,5 @@
+# An example for deployers on GitHub: this project does not run it (owner decision D3, 2026-11-16);
+# its gate of record is the local integrator gate, and its merges are admitted on GitLab.
 # Required checks retain their names; mutation workers report through one aggregate check.
 # Hardening: read-only token by default, no persisted credentials, every action pinned to a commit
 # SHA (the trailing comment names the tag; dependabot keeps both current), and `zizmor` audits

@@ -127,7 +127,7 @@ def expected(args, signer, expires_at):
             held.append(rule["id"])
     require(held and verdict["summary"]["held"] == len(held) and verdict["summary"]["failed"] == 0,
             "inconsistent HOLD summary")
-    return {"schema": "forge-warden.hold-ack.v1", "repository": "Louranicas/forge-warden",
+    return {"schema": "forge-warden.hold-ack.v1", "repository": "lukeomahoney/forge-warden",
             "base": args.base, "head": args.head, "verdict_sha256": hashlib.sha256(raw).hexdigest(),
             "held_rules": sorted(held), "signer": signer, "expires_at": expires_at}
 

@@ -1841,167 +1841,6 @@
       ]
     },
     {
-      "id": "route-pull-request",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "            push|schedule|workflow_dispatch)",
-      "new": "            push|schedule|workflow_dispatch|pull_request)",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-unprotected-main",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": " && [ \"$PROTECTED\" = true ]; then",
-      "new": "; then",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-case-folded-ref",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "[ \"$REF\" = refs/heads/main ]",
-      "new": "[ \"${REF,,}\" = refs/heads/main ]",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-pool-fallback",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_every_job_is_hosted_or_routed_through_the_route_job",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}",
-      "new": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'runner-up-kinoite' }}",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-ambient-env",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_routing_ignores_a_hostile_ambient_environment",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "              if [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; then",
-      "new": "              if { [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; } || [ -n \"${GITHUB_HEAD_REF:-}\" ]; then",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-ambient-arith",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_the_route_job_is_exactly_the_reviewed_job",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "          runner=ubuntu-latest\n",
-      "new": "          runner=ubuntu-latest\n          (( GITHUB_RUN_ATTEMPT > 1 )) && { EVENT=push; REF=refs/heads/main; PROTECTED=true; }\n",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-defaults-template",
-      "guardrail": "G-52",
-      "path": ".github/workflows/mutation-baseline.yml",
-      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "\njobs:\n",
-      "new": "\n\"defaults\":\n  run:\n    shell: env EVENT=push REF=refs/heads/main PROTECTED=true bash {0}\n\njobs:\n",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-indented-job",
-      "guardrail": "G-52",
-      "path": ".github/workflows/ci.yml",
-      "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "append": "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
-      "id": "route-repeated-job",
-      "guardrail": "G-52",
-      "path": ".github/workflows/ci.yml",
-      "diagnostic": "FAIL: test_every_workflow_file_is_pinned_whole",
-      "command": [
-        "python3",
-        "-I",
-        "scripts/tests/runner_routing.py"
-      ],
-      "old": "\njobs:\n",
-      "new": "\njobs:\n  sneak:\n    name: \"a\n    runs-on: ubuntu-latest\n  vocabulary:\n    env: \"\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n",
-      "required_tools": [
-        "bash",
-        "coreutils",
-        "python3"
-      ]
-    },
-    {
       "id": "door-list-drops-module",
       "guardrail": "G-06",
       "path": "crates/forge-warden-cli/tests/common/mod.rs",
@@ -2615,18 +2454,194 @@
       ]
     }
   ],
-  "pending_guardrails": [
+  "pending_guardrails": [],
+  "retired_guardrails": [
     {
       "id": "G-38",
       "title": "Required CI check names drift",
-      "status": "PENDING",
-      "reason": "Waits on owner input (Luke; ledger Q23): an exported copy of the GitHub ruleset's required check names, to pin offline. Required-check names are enforced by hosted admission; this offline runner has no approved snapshot, so no plant is claimed."
+      "status": "RETIRED",
+      "decision": "D3",
+      "reason": "Retired from 1.0 by owner decision D3 (2026-11-16): not applicable while nothing of this project runs at GitHub (GitLab, Gitea and Forgejo only). Required check names are a GitHub ruleset feature; the gate of record is the local integrator gate.",
+      "was": "PENDING: Waits on owner input (Luke; ledger Q23): an exported copy of the GitHub ruleset's required check names, to pin offline. Required-check names are enforced by hosted admission; this offline runner has no approved snapshot, so no plant is claimed."
     },
     {
       "id": "G-47",
       "title": "Workflow hardening drift",
-      "status": "PENDING",
-      "reason": "Waits on owner input (Luke; ledger Q23): zizmor installed in the trusted offline gate image, or a ruling that G-47 is enforced hosted-only. The hosted zizmor audit exists; no installation or weaker replacement audit is performed offline."
+      "status": "RETIRED",
+      "decision": "D3",
+      "reason": "Retired from 1.0 by owner decision D3 (2026-11-16): not applicable while nothing of this project runs at GitHub (GitLab, Gitea and Forgejo only). The workflow audit (zizmor) audits GitHub Actions workflows; .github/workflows/ci.yml stays only as an example for deployers on GitHub, which this project does not run.",
+      "was": "PENDING: Waits on owner input (Luke; ledger Q23): zizmor installed in the trusted offline gate image, or a ruling that G-47 is enforced hosted-only. The hosted zizmor audit exists; no installation or weaker replacement audit is performed offline."
+    },
+    {
+      "id": "G-52",
+      "title": "Runner routing",
+      "status": "RETIRED",
+      "decision": "D3",
+      "reason": "Retired from 1.0 by owner decision D3 (2026-11-16): not applicable while nothing of this project runs at GitHub (GitLab, Gitea and Forgejo only). mutation-baseline.yml routes GitHub-hosted and self-hosted runner jobs; no runner of this project exists. The nine route-* recipes are kept here unrun, so the row can be restored.",
+      "was": "COVERED by the nine route-* plants below (scripts/tests/runner_routing.py).",
+      "cases": [
+        {
+          "id": "route-pull-request",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "            push|schedule|workflow_dispatch)",
+          "new": "            push|schedule|workflow_dispatch|pull_request)",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-unprotected-main",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": " && [ \"$PROTECTED\" = true ]; then",
+          "new": "; then",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-case-folded-ref",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_only_merged_protected_main_code_routes_to_the_pool",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "[ \"$REF\" = refs/heads/main ]",
+          "new": "[ \"${REF,,}\" = refs/heads/main ]",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-pool-fallback",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_every_job_is_hosted_or_routed_through_the_route_job",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'ubuntu-latest' }}",
+          "new": "    needs: [route, mutation-plan]\n    if: ${{ !cancelled() && needs.mutation-plan.result == 'success' }}\n    runs-on: ${{ needs.route.outputs.runner || 'runner-up-kinoite' }}",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-ambient-env",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_routing_ignores_a_hostile_ambient_environment",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "              if [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; then",
+          "new": "              if { [ \"$REF\" = refs/heads/main ] && [ \"$PROTECTED\" = true ]; } || [ -n \"${GITHUB_HEAD_REF:-}\" ]; then",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-ambient-arith",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_the_route_job_is_exactly_the_reviewed_job",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "          runner=ubuntu-latest\n",
+          "new": "          runner=ubuntu-latest\n          (( GITHUB_RUN_ATTEMPT > 1 )) && { EVENT=push; REF=refs/heads/main; PROTECTED=true; }\n",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-defaults-template",
+          "guardrail": "G-52",
+          "path": ".github/workflows/mutation-baseline.yml",
+          "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "\njobs:\n",
+          "new": "\n\"defaults\":\n  run:\n    shell: env EVENT=push REF=refs/heads/main PROTECTED=true bash {0}\n\njobs:\n",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-indented-job",
+          "guardrail": "G-52",
+          "path": ".github/workflows/ci.yml",
+          "diagnostic": "FAIL: test_every_workflow_file_is_listed_and_of_the_reviewed_shape",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "append": "  nightly-more:\n      timeout-minutes: 5\n      runs-on: ${{ format('runner-up-{0}', 'kinoite') }}\n      steps:\n        - run: echo x\nrun-name: |\n    runs-on: ubuntu-latest\n",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        },
+        {
+          "id": "route-repeated-job",
+          "guardrail": "G-52",
+          "path": ".github/workflows/ci.yml",
+          "diagnostic": "FAIL: test_every_workflow_file_is_pinned_whole",
+          "command": [
+            "python3",
+            "-I",
+            "scripts/tests/runner_routing.py"
+          ],
+          "old": "\njobs:\n",
+          "new": "\njobs:\n  sneak:\n    name: \"a\n    runs-on: ubuntu-latest\n  vocabulary:\n    env: \"\n    runs-on: self-hosted\n    steps:\n      - run: echo x\n",
+          "required_tools": [
+            "bash",
+            "coreutils",
+            "python3"
+          ]
+        }
+      ]
     }
   ]
 }

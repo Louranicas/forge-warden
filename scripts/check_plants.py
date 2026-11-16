@@ -20,7 +20,8 @@ def validate_report(report, revision, ids):
         raise ValueError("plant receipt subject or case coverage mismatch")
     if any(row["status"] != "CAUGHT" for row in rows):
         raise ValueError("not every runnable plant was caught")
-    print(f"plants gate: {len(rows)} CAUGHT; pending coverage remains explicit: {report['pending_guardrails']}")
+    retired = [row['id'] for row in report.get('retired_guardrails', [])]
+    print(f"plants gate: {len(rows)} CAUGHT; pending coverage remains explicit: {report['pending_guardrails']}; retired (owner decision): {retired}")
 
 
 def run():
