@@ -33,6 +33,26 @@ pub(in crate::doors) const DATA_CAP: u64 = 1 << 30;
 /// "unable to create thread").
 pub(in crate::doors) const ADDRESS_SPACE_CAP: u64 = 4 << 30;
 
+/// The bounds of one bound run's Git children (ADR 0012 D3.6). Production uses [`CAPS`]; tests
+/// pass smaller ones to reach each refusal without writing hundreds of megabytes (step c3, H1.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::doors) struct Caps {
+    pub(in crate::doors) pack: usize,
+    pub(in crate::doors) list: usize,
+    pub(in crate::doors) stderr: usize,
+    pub(in crate::doors) data: u64,
+    pub(in crate::doors) address_space: u64,
+}
+
+/// The production caps.
+pub(in crate::doors) const CAPS: Caps = Caps {
+    pack: PACK_CAP,
+    list: LIST_CAP,
+    stderr: STDERR_CAP,
+    data: DATA_CAP,
+    address_space: ADDRESS_SPACE_CAP,
+};
+
 /// The diff bound mode made, and the merge base it used.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BoundDiff {
@@ -201,6 +221,7 @@ pub(crate) fn bound_diff(
         head,
         &std::env::temp_dir(),
         BOUND_TIMEOUT,
+        CAPS,
     )
 }
 
@@ -217,6 +238,7 @@ pub(in crate::doors) fn bound_diff_in(
     head: &str,
     tmp: &Path,
     budget: std::time::Duration,
+    caps: Caps,
 ) -> Result<BoundDiff, BoundFailure> {
     let format = object_format(base, head)?;
     let objects = objects
@@ -237,6 +259,7 @@ pub(in crate::doors) fn bound_diff_in(
             git,
             isolation: &isolation,
             deadline,
+            caps,
         },
         staging: utf8(&staging)?,
         verified: utf8(&verified)?,
@@ -281,6 +304,7 @@ pub(in crate::doors) fn recheck_in(
             git,
             isolation: &isolation,
             deadline,
+            caps: CAPS,
         },
         staging: String::new(),
         verified: utf8(verified_git_dir)?,
@@ -312,7 +336,7 @@ impl Bound<'_> {
             let mut args = INIT_FLAGS.to_vec();
             args.extend([object_format.as_str(), dir.as_str()]);
             self.run
-                .git(&args, b"", LIST_CAP)
+                .git(&args, b"", self.run.caps.list)
                 .map_err(store("git init"))?;
         }
         write_private(
@@ -345,10 +369,11 @@ impl Bound<'_> {
         for (name, id) in [("base", base), ("head", head)] {
             // Git's answer (another type, or `cat-file` exiting nonzero for an absent id) is about
             // the input; Git out of time or killed is not, and gives no verdict like every step.
-            match self
-                .run
-                .git_owned(&self.staging(&["cat-file", "-t", id]), b"", LIST_CAP)
-            {
+            match self.run.git_owned(
+                &self.staging(&["cat-file", "-t", id]),
+                b"",
+                self.run.caps.list,
+            ) {
                 Ok(kind) if kind == b"commit\n" => {}
                 Ok(_) | Err(ChildFailure::Exit { .. }) => {
                     return Err(BoundFailure::NotACommit {
@@ -375,7 +400,7 @@ impl Bound<'_> {
                 .git_owned(
                     &self.staging(&["rev-parse", &format!("{mb}^@")]),
                     b"",
-                    LIST_CAP,
+                    self.run.caps.list,
                 )
                 .map_err(store("rev-parse"))?,
         );
@@ -385,7 +410,7 @@ impl Bound<'_> {
         let rows: Vec<Vec<String>> = lines(
             &self
                 .run
-                .git_owned(&rev_list, b"", LIST_CAP)
+                .git_owned(&rev_list, b"", self.run.caps.list)
                 .map_err(store("rev-list"))?,
         )
         .iter()
@@ -403,7 +428,7 @@ impl Bound<'_> {
                         &format!("{head}^{{tree}}"),
                     ]),
                     b"",
-                    LIST_CAP,
+                    self.run.caps.list,
                 )
                 .map_err(store("rev-list --objects"))?,
         );
@@ -433,11 +458,15 @@ impl Bound<'_> {
             .git_owned(
                 &self.staging(&["-c", "pack.threads=1", "pack-objects", "--stdout", "-q"]),
                 list.as_bytes(),
-                PACK_CAP,
+                self.run.caps.pack,
             )
             .map_err(store("pack-objects"))?;
         self.run
-            .git_owned(&self.verified(&["index-pack", "--stdin"]), &pack, LIST_CAP)
+            .git_owned(
+                &self.verified(&["index-pack", "--stdin"]),
+                &pack,
+                self.run.caps.list,
+            )
             .map_err(store("index-pack"))?;
         Ok(boundary.into_iter().map(str::to_owned).collect())
     }
@@ -493,7 +522,7 @@ impl Bound<'_> {
                 .git_owned(
                     &self.verified(&["hash-object", "-t", "tree", "--stdin"]),
                     b"",
-                    LIST_CAP,
+                    self.run.caps.list,
                 )
                 .map_err(store("hash-object"))?,
         );
@@ -562,7 +591,7 @@ fn object_format(base: &str, head: &str) -> Result<&'static str, BoundFailure> {
 
 /// The single merge base Git prints for `args` (`merge-base --all`), or why there is not one.
 fn merge_base(run: &Runner<'_>, args: &[String]) -> Result<String, BoundFailure> {
-    let out = match run.git_owned(args, b"", LIST_CAP) {
+    let out = match run.git_owned(args, b"", run.caps.list) {
         Ok(out) => out,
         // `merge-base` exits 1 when the commits share no history.
         Err(ChildFailure::Exit { code: 1, .. }) => return Err(BoundFailure::NoCommonHistory),
@@ -611,11 +640,18 @@ fn store(step: &'static str) -> impl Fn(ChildFailure) -> BoundFailure {
 
 /// How every bound-mode Git child runs: the admitted Git under `/usr/bin/prlimit` with the data
 /// and address-space caps (Lodestar's ruling on review S2).
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
 pub(in crate::doors) fn bound_program(git: &AdmittedGit) -> Program<'_> {
+    bound_program_with(git, CAPS)
+}
+
+/// [`bound_program`] with `caps`' memory limits.
+fn bound_program_with(git: &AdmittedGit, caps: Caps) -> Program<'_> {
     Program::Limited {
         pinned: git.executable(),
-        data: DATA_CAP,
-        address_space: ADDRESS_SPACE_CAP,
+        data: caps.data,
+        address_space: caps.address_space,
     }
 }
 
@@ -624,20 +660,21 @@ struct Runner<'a> {
     git: &'a AdmittedGit,
     isolation: &'a Isolation,
     deadline: std::time::Instant,
+    caps: Caps,
 }
 
 impl Runner<'_> {
     fn git(&self, args: &[&str], stdin: &[u8], stdout_cap: usize) -> Result<Vec<u8>, ChildFailure> {
         let env = self.isolation.env();
         run_child(&ChildSpec {
-            program: bound_program(self.git),
+            program: bound_program_with(self.git, self.caps),
             args,
             stdin,
             env: &env,
             cwd: self.isolation.dir.path(),
             timeout: self.remaining()?,
             stdout_cap,
-            stderr_cap: STDERR_CAP,
+            stderr_cap: self.caps.stderr,
         })
         .map(|out| out.stdout)
     }

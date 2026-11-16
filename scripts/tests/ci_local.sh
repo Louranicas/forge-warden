@@ -7,6 +7,8 @@ trap 'rm -rf "$sandbox"' EXIT
 mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/plants" "$sandbox/repo/scripts/tests"
 cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
 cp "$source_root/scripts/judge_mode.py" "$sandbox/repo/scripts/judge_mode.py"
+# The judged patch comes from the patch-maker (H17); its own test is scripts/tests/dogfood.sh.
+printf '#!/usr/bin/env bash\nprintf "fixture patch\\n"\n' > "$sandbox/repo/scripts/make_patch.sh"
 printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tool_versions.py"
 printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/plants/test_runner.py"
 printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_plants.py"

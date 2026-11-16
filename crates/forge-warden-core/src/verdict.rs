@@ -659,6 +659,8 @@ note_codes! {
     RankUnverified => "rank_unverified",
     "The ranking supplied with `--rank` differs from the one forge-warden produced."
     RankMismatch => "rank_mismatch",
+    "The policy requires verified claims (`[claims] require_verified`) and bound mode did not verify them."
+    ClaimsUnverified => "claims_unverified",
 }
 
 impl Serialize for NoteCode {
