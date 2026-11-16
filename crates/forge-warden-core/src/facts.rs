@@ -6,6 +6,7 @@
 //! Facts derived this way are Git's, so they outrank the ranking on file identity and change kind;
 //! the ranking still supplies scores and code-evidence signals.
 
+use crate::defaults::NamedDefault;
 use crate::path::RepoPath;
 use crate::rank::{RankDoc, RankedFile};
 use crate::vocab::{Signal, Status};
@@ -364,8 +365,10 @@ fn check_binary_modes(
         }
     }
     for change in files.values().filter(|change| change.binary) {
-        let path = change.path.as_str();
-        let stated = sections.get(path).unwrap_or(&SectionModes::NONE);
+        let name = change.path.as_str();
+        // A path with no `diff --git` section states no mode, which is what `NONE` records: an edit
+        // keeping its mode is then refused, so the default loosens nothing and hides nothing.
+        let stated = sections.get(name).or_fail_safe(&SectionModes::NONE);
         let edit_keeping_mode = change.kind == ChangeKind::Modified && change.new_mode.is_none();
         let as_git_writes = if edit_keeping_mode {
             stated.index_mode && !stated.mode_header
@@ -373,7 +376,7 @@ fn check_binary_modes(
             !stated.index_mode
         };
         if !as_git_writes {
-            return Err(Unverifiable::BinaryModeUnstated(path.to_owned()));
+            return Err(Unverifiable::BinaryModeUnstated(name.to_owned()));
         }
     }
     Ok(())
