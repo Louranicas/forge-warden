@@ -1990,8 +1990,8 @@
         "--",
         "door_files_are_exactly_the_listed_modules"
       ],
-      "old": "pub(crate) const DOOR_FILES: [&str; 9] = [\n    \"crates/forge-warden-cli/src/doors/child/entropy.rs\",\n",
-      "new": "pub(crate) const DOOR_FILES: [&str; 8] = [\n",
+      "old": "pub(crate) const DOOR_FILES: [&str; 10] = [\n    \"crates/forge-warden-cli/src/doors/child/bound.rs\",\n",
+      "new": "pub(crate) const DOOR_FILES: [&str; 9] = [\n",
       "required_tools": [
         "cargo",
         "git",

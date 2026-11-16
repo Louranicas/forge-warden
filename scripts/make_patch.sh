@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# forge-warden patch-maker v1
+# forge-warden patch-maker v2
 # Write, on stdout, the patch forge-warden should judge for the change from BASE to HEAD.
 # Usage: make_patch.sh <base> <head> [<repository>]      (repository: default, the current directory)
 #
@@ -45,5 +45,5 @@ empty_tree="$(git --git-dir="$scratch/diff.git" hash-object -t tree /dev/null)"
 # that the README and the runbook print the same command.
 git --git-dir="$scratch/diff.git" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
   -c core.quotePath=true \
-  diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none \
+  diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none \
   "$base...$head"

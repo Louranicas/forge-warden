@@ -26,7 +26,7 @@ whole-decision replacement using the structured fields. Changing the decision st
 ADR 0001's effect-door boundary includes child process execution: see ADR 0005 and ADR 0010
 for the bounded child and isolated Git-data contracts. This clarification extends the original
 examples; it does not move effects into the pure core. Current decision text is in [the ADR
-set](adr/0001-pure-core-and-effect-doors.md), starting at 0001 through 0012 (0012, bound mode, is Proposed).
+set](adr/0001-pure-core-and-effect-doors.md), starting at 0001 through 0012.
 
 Every ADR also declares exactly one `Owner-deployment: Required` or
 `Owner-deployment: Not-required` field. Required means the decision specifies separately

@@ -1,11 +1,15 @@
 # ADR 0012: Bound mode — forge-warden makes the diff it judges, and refuses a patch that differs
 
-Status: Proposed
+Status: Accepted
 Owner-deployment: Required
+
+Accepted = design contract, not deployment; see [ADR status](../ADR_STATUS.md).
 
 Historical status record: drafted by Keel (O2) 2026-11-16 (M7-PATCH-BOUND, 0.3.0); security review by Bastion (O4):
 CHANGES (M1 forged objects, M2 control characters in the path, M3 multi-pack index; S1-S5), then accepted for code with
-one correction to D3.3 (measured, receipts 64ec6308 and 8a6ce212). Closes, when built: ledger Q55; removes by
+one correction to D3.3 (measured, receipts 64ec6308 and 8a6ce212). Accepted as design by Lodestar (O1) on 2026-11-16 (event 1122);
+the memory ceiling's mechanism (`/usr/bin/prlimit` as an exec wrapper) by Lodestar's ruling on review S2 (event 1129).
+D8's gate configuration is the owner's step after 0.3.0 ships. Closes, when built: ledger Q55; removes by
 construction the patch-maker half of Q54 and Q59. Amends ADR 0010 when accepted (section "Amendment to ADR 0010").
 
 ## Context
@@ -99,11 +103,13 @@ caller's store. Two repositories inside the private 0700 directory (ADR 0010 `Is
    object is an error, never a fetch.
 6. Bounds for every Git child of bound mode (staging enumeration, pack-objects, index-pack, merge-base, diff): stdout
    cap `MAX_INPUT_BYTES` for the diff; a time limit `GIT_BOUND_TIMEOUT` = 60 s for the whole bound run (measured, warm
-   cache: worst 1.8 s, a 100k-commit repository with a 99,896-object copy; the M7-PATCH-BOUND Q-C record, 2026-11-16); **and a memory ceiling**
-   RLIMIT_DATA = 1 GiB per Git child (worst measured peak RSS 174 MB): RLIMIT_DATA
-   (RLIMIT_AS also counts Git's pack mmap windows, `core.packedGitWindowSize`/`packedGitLimit`, and would turn into false
-   refusals on large packs; Bastion's re-read), value measured on the 100k-commit fixture; a loose object's header states
-   its size and index-pack inflates every object (review S2). Overflow, timeout or the ceiling: exit 3 (environment), no verdict.
+   cache: worst 1.8 s, a 100k-commit repository with a 99,896-object copy; the M7-PATCH-BOUND Q-C record, 2026-11-16); **and a memory ceiling**: every bound-mode Git child runs as `/usr/bin/prlimit --data=1GiB --as=4GiB --
+   /proc/<forge-warden>/fd/<n>` (Lodestar's ruling on review S2: the caps exist before Git's first instruction, no new
+   dependency, the pattern of `/usr/bin/kill`; the admitted descriptor is reached through forge-warden's own `/proc`
+   entry because it is close-on-exec). RLIMIT_DATA 1 GiB (worst measured peak RSS 174 MB); RLIMIT_AS 4 GiB, because
+   Git's pack windows and thread stacks count there (measured: the worst case passes at 1 GiB, fails at 512 MiB with
+   "unable to create thread"); staging packs with `pack.threads=1`. A missing `/usr/bin/prlimit` fails the spawn:
+   bound mode refuses (exit 3), never runs uncapped. util-linux is required for bound mode. Overflow, timeout or the ceiling: exit 3 (environment), no verdict.
 7. Cleanup: bounded, no-follow recursive removal of `<private>/staging.git` and `<private>/verified.git` only
    (openat/unlinkat on descriptors), then the existing empty-directory removal.
 
@@ -156,7 +162,7 @@ goes back to unbound. A policy can forbid that:
 - `scripts/dogfood.sh` runs bound and asserts `claims.verified == true` in the verdict it judged; forge-warden's own
   `warden.toml` sets `require_verified = true`.
 
-## Amendment to ADR 0010 (to be appended to 0010 when this is accepted)
+## Amendment to ADR 0010 (appended to ADR 0010 on acceptance, 2026-11-16)
 ADR 0010 says: never discover a repository; no candidate `.git` config, index or work tree is consulted; object
 alternates are never inherited. Bound mode (ADR 0012) adds exactly one effect: the CLI Git door may READ the object
 directory of a repository the caller names with `--repo`, through an alternates file in a STAGING repository

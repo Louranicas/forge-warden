@@ -11,6 +11,14 @@ pub(in crate::doors) use process::{
 pub(crate) use process::{PinnedExecutable, pin_executable, run_child};
 
 mod git;
+// Bound mode (ADR 0012): the diff of two commits from a verified copy of a repository's objects.
+mod bound;
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+pub(in crate::doors) use bound::{
+    ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, bound_diff_in, bound_program,
+};
+pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
 pub(crate) use git::{
     AdmittedGit, GitFactsFailure, PinnedGit, admit_git_advisory, admit_git_pinned, git_facts,
 };
@@ -73,6 +81,16 @@ pub(crate) enum Program<'a> {
     Absolute(&'a Path),
     /// An executable pinned by content.
     Pinned(&'a PinnedExecutable),
+    /// A pinned executable run under `/usr/bin/prlimit` with these `RLIMIT_DATA` and `RLIMIT_AS` caps,
+    /// set before the executable's first instruction (bound mode, ADR 0012 D3.6). The executable
+    /// is reached as `/proc/<this process>/fd/<n>`: the descriptor is close-on-exec, so prlimit,
+    /// once it runs, no longer has `/proc/self/fd/<n>`. A missing prlimit fails the spawn: never an
+    /// uncapped run.
+    Limited {
+        pinned: &'a PinnedExecutable,
+        data: u64,
+        address_space: u64,
+    },
 }
 
 mod entropy;
