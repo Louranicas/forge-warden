@@ -187,8 +187,8 @@ commits, so whoever makes the patch is part of the trust boundary. See the [know
 
 ## Verdicts
 
-`forge-warden check --json` prints a `forge-warden.verdict.v2` document
-([schema](schemas/verdict.v2.schema.json)):
+`forge-warden check --json` prints a `forge-warden.verdict.v3` document
+([schema](schemas/verdict.v3.schema.json)):
 
 - `seals`:
   - `policy_sha256`, `rank_sha256` and `patch_sha256`;
@@ -197,7 +197,9 @@ commits, so whoever makes the patch is part of the trust boundary. See the [know
   - `ranked_by`: `{version, sha256}`, where `sha256` is the ranker binary's digest, or `null` for a
     supplied ranking;
   - `git`: path, version, executable SHA-256, admission state, and exact owner-policy digest;
-  - optionally `claims`: `--base` and `--head` as given, always `verified: false` and never used.
+  - optionally `claims`, never used by the judgement: `--base` and `--head` as given with
+    `verified: false`; or, in bound mode (`--repo`) when the patch was byte-equal to the diff
+    forge-warden made, `{base, head, merge_base, verified: true}`.
 - `verdict`: the verdict level `pass`, `hold` or `fail`, the strictest of every rule, note and expired waiver.
 - `rules`: one rule outcome per rule in policy order, each with its violations in deep-diff-forge's
   risk order. Waived violations stay listed with `waived_by`, so exceptions remain visible.

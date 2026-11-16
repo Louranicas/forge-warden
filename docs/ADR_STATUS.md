@@ -8,7 +8,10 @@ release. ADR 0011 is implemented (2026-11-10): `check` admits Git through the al
 `forge-warden.verdict.v2` document records the admission (`Approved` or `Unpinned`,
 `crates/forge-warden-core/src/verdict.rs`); installing the allowlist is the owner's step.
 ADRs 0006–0010 describe accepted contracts already used by the gate; their earlier proposal
-labels remain dated history. External deployment and owner provisioning remain separate.
+labels remain dated history. ADR 0012 (bound mode) is built in two of three steps on the 0.3.0 line:
+the door and `--repo` comparison (`doors/child/bound.rs`), then verdict v3 with verified claims
+(`BoundClaims::from_comparison` in `crates/forge-warden-core/src/verdict.rs`, its D5 correction entry);
+D8 (`[claims] require_verified`) is not built yet. External deployment and owner provisioning remain separate.
 
 An Accepted ADR is current within its stated scope. Proposed is under discussion and is not
 binding; Deprecated is retired without a replacement. Superseded-by-NNNN retires the whole ADR
