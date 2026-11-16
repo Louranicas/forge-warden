@@ -177,7 +177,7 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
 
 - **To require bound mode, move the policy to `forge-warden.policy.v1`** and add the table `[claims]` with `require_verified = true`
   (POLICY_REFERENCE). A policy that stays on v0 is read unchanged. A forge-warden older than 0.3.0 refuses a v1
-  policy, so upgrade the binary before the policy. Under the key, `check` without `--repo` holds (`claims_unverified`).
+  policy, so upgrade the binary before the policy. Under the key, `check` without `--repo` holds (`claims_unverified`); a `claims_unverified` hold cannot be acknowledged; re-run in bound mode.
 
 - **The verdict document is `forge-warden.verdict.v3`.** Only `seals.claims` changed. Without `--repo`
   it is v2's object exactly (`{base?, head?, verified: false}`); a bound run (`--repo`) that matched

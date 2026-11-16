@@ -30,7 +30,7 @@ require_verified = true
 ```
 
 With `require_verified = true`, an authority run whose claims bound mode did not verify (no `--repo`, or no
-`--base`/`--head`) gets the note `claims_unverified` and is held at best: a person decides. With bound claims the key
+`--base`/`--head`) gets the note `claims_unverified` and is held at best: a `claims_unverified` hold cannot be acknowledged; re-run in bound mode (`--repo` with full ids). With bound claims the key
 changes nothing. Advisory runs are unchanged (they never pass). `[claims]` under `forge-warden.policy.v0` is refused
 with a message naming v1; a forge-warden older than 0.3.0 refuses a v1 policy, which is the safe direction (ADR 0012 D8).
 
