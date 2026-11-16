@@ -2,6 +2,7 @@
 """G-18: a skipped gate must not read as a passed gate. Shims only; no tool is downloaded or run."""
 import importlib.util
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -223,6 +224,27 @@ class Toolchain(unittest.TestCase):
         (self.root / "CHANGELOG.md").write_text("- 2020: built with `cargo " + PLUS + "1.40.0`\n")
         (self.root / "target").mkdir()
         (self.root / "target/old.sh").write_text(DEFAULT + "1.40.0\n")
+        tool_versions.check_toolchain_sites(self.root)
+
+    def test_build_output_is_skipped_only_at_the_root(self):
+        # Q66: a site under a nested `target/` or `mutants.out/` is scanned, with Git and without it.
+        import subprocess
+        for name in ("crates/x/target/site.sh", "plants/mutants.out/site.sh"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(DEFAULT + "1.70.0\n")
+            with self.assertRaisesRegex(ValueError, f"{re.escape(name)}:1: toolchain 1\\.70\\.0 drifts"):
+                tool_versions.check_toolchain_sites(self.root)
+            git = ["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@local.invalid"]
+            subprocess.run([*git, "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+            subprocess.run([*git, "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+            with self.assertRaisesRegex(ValueError, f"{re.escape(name)}:1: toolchain 1\\.70\\.0 drifts"):
+                tool_versions.check_toolchain_sites(self.root)
+            shutil.rmtree(self.root / ".git")
+            (self.root / name).unlink()
+        # A `.git` Git does not accept (no HEAD) is walked around at any depth, not scanned.
+        for name in (".git/hooks/site.sh", "crates/x/.git/site.sh"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(DEFAULT + "1.70.0\n")
         tool_versions.check_toolchain_sites(self.root)
 
 
