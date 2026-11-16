@@ -128,8 +128,13 @@ authority and advisory entry points, which take a checked ranking.
 an older starter keeps its own rules: nothing changes until you edit it. The starter has gained, since
 0.2.0 (changelog, Unreleased):
 - rule `binary-text-is-hidden-text` (hold): a file that is normally text, carried by the patch as a
-  binary section. Copy the whole rule from `examples/starter.warden.toml`; its two globs are generated
-  from the list in `crates/forge-warden-core/tests/authority.rs`.
+  binary section. Copy the whole rule from `examples/starter.warden.toml`; its three globs are generated
+  from the lists in `crates/forge-warden-core/tests/authority.rs` (extensions; exact names, the Git hook
+  names, `configure` and `allowed_signers` among them; name prefixes `LICENSE-`, `COPYING.`,
+  `Dockerfile.`). **Not covered:** an executable with another name (a `bin/tool` with no extension) sent
+  as a binary section is not held by this rule; a shell still runs a script whose first NUL byte is past
+  its 80-byte check. Protect such paths with a `protect_paths` rule (`bin/**`, `tools/**`). A hold for
+  any binary section on an executable file needs the file mode and comes with verdict v3 (ledger Q64).
 - in rule `ci-is-owned`, the two `.claude` globs (any letter case, the entry itself and everything under it).
 
 ## Not covered here

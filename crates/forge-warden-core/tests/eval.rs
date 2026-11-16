@@ -320,6 +320,17 @@ fn the_starter_policy_holds_a_binary_section_on_a_text_path() {
         "go.mod",
         "deep/dir/CODEOWNERS",
         "docs/README.md",
+        ".githooks/pre-push",
+        "scripts/hooks/PRE-COMMIT",
+        "configure",
+        ".github/allowed_signers",
+        "deploy/app.service",
+        "X.SERVICE",
+        "config.h.in",
+        "start.S",
+        "LICENSE-MIT",
+        "COPYING.LIB",
+        "dockerfile.dev",
     ] {
         assert_eq!(
             rule_says(path, &["binary_change"]),
@@ -336,6 +347,10 @@ fn the_starter_policy_holds_a_binary_section_on_a_text_path() {
         "rs",
         "Makefile.bak",
         "notes.rsx",
+        "bin/tool",
+        "pre-commit.sample",
+        "Dockerfilex",
+        "LICENSES",
     ] {
         assert_eq!(
             rule_says(path, &["binary_change"]),

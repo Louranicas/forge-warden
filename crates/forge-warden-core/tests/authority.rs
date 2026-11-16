@@ -525,8 +525,11 @@ fn a_facts_error_never_passes_anywhere_in_the_corpus() {
 
 /// The text names of rule `binary-text-is-hidden-text` (ledger Q63): extensions after the last dot,
 /// and exact file names, both compared in any ASCII letter case.
-const TEXT_EXTENSIONS: [&str; 111] = [
+const TEXT_EXTENSIONS: [&str; 125] = [
+    "ac",
     "adoc",
+    "am",
+    "asm",
     "awk",
     "bash",
     "bat",
@@ -551,6 +554,7 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "edn",
     "el",
     "env",
+    "erb",
     "erl",
     "ex",
     "exs",
@@ -571,7 +575,9 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "htm",
     "html",
     "hxx",
+    "in",
     "ini",
+    "j2",
     "java",
     "jl",
     "jq",
@@ -579,6 +585,7 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "json",
     "json5",
     "jsonc",
+    "jsonl",
     "jsx",
     "just",
     "kt",
@@ -587,6 +594,7 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "lock",
     "lua",
     "m",
+    "m4",
     "markdown",
     "md",
     "mjs",
@@ -600,6 +608,7 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "patch",
     "php",
     "pl",
+    "plist",
     "pm",
     "properties",
     "proto",
@@ -610,11 +619,14 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "rb",
     "rs",
     "rst",
+    "s",
     "sass",
     "scala",
     "scss",
     "sed",
+    "service",
     "sh",
+    "socket",
     "sol",
     "sql",
     "star",
@@ -624,6 +636,8 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "tex",
     "tf",
     "tfvars",
+    "timer",
+    "tmpl",
     "toml",
     "ts",
     "tsv",
@@ -638,7 +652,7 @@ const TEXT_EXTENSIONS: [&str; 111] = [
     "zig",
     "zsh",
 ];
-const TEXT_NAMES: [&str; 28] = [
+const TEXT_NAMES: [&str; 40] = [
     ".editorconfig",
     ".envrc",
     ".gitattributes",
@@ -646,10 +660,13 @@ const TEXT_NAMES: [&str; 28] = [
     ".gitmodules",
     ".mailmap",
     ".npmrc",
+    "allowed_signers",
     "AUTHORS",
     "BUILD",
     "CHANGELOG",
     "CODEOWNERS",
+    "commit-msg",
+    "configure",
     "Containerfile",
     "COPYING",
     "Dockerfile",
@@ -662,12 +679,25 @@ const TEXT_NAMES: [&str; 28] = [
     "LICENSE",
     "Makefile",
     "NOTICE",
+    "post-checkout",
+    "post-merge",
+    "post-receive",
+    "pre-commit",
+    "pre-push",
+    "pre-rebase",
+    "pre-receive",
+    "prepare-commit-msg",
     "Procfile",
     "Rakefile",
     "README",
+    "update",
     "Vagrantfile",
     "WORKSPACE",
 ];
+
+/// Name prefixes: a file whose name starts with one of these (`LICENSE-MIT`, `COPYING.LIB`,
+/// `Dockerfile.dev`), in any ASCII letter case.
+const TEXT_NAME_PREFIXES: [&str; 3] = ["COPYING.", "Dockerfile.", "LICENSE-"];
 
 /// `word` with each ASCII letter as a class of both cases, the way the policy spells it.
 fn any_case(word: &str) -> String {
@@ -682,8 +712,8 @@ fn any_case(word: &str) -> String {
         .collect()
 }
 
-/// The two globs of `binary-text-is-hidden-text`, rebuilt from the lists above.
-fn text_globs() -> [String; 2] {
+/// The three globs of `binary-text-is-hidden-text`, rebuilt from the lists above.
+fn text_globs() -> [String; 3] {
     let join = |items: &[&str]| {
         items
             .iter()
@@ -694,6 +724,14 @@ fn text_globs() -> [String; 2] {
     [
         format!("**/*.{{{}}}", join(&TEXT_EXTENSIONS)),
         format!("**/{{{}}}", join(&TEXT_NAMES)),
+        format!(
+            "**/{{{}}}",
+            TEXT_NAME_PREFIXES
+                .iter()
+                .map(|p| format!("{}*", any_case(p)))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
     ]
 }
 
