@@ -418,7 +418,8 @@ class Runner(unittest.TestCase):
         pending={c['id'] for c in catalog['pending_guardrails']}
         retired={c['id'] for c in catalog['retired_guardrails']}
         self.assertFalse(runnable & pending or runnable & retired or pending & retired)
-        self.assertEqual(runnable | pending | retired, {f'G-{i:02}' for i in range(1,54)})
+        # G-54 (bound mode) added 2026-11-16 by the register owner (Lodestar ruling P1.6).
+        self.assertEqual(runnable | pending | retired, {f'G-{i:02}' for i in range(1,55)})
         self.assertTrue(all(c['status']=='PENDING' for c in catalog['pending_guardrails']))
         # Owner decision D3 (2026-11-16): each retired row names its decision, its reason and what it was.
         self.assertTrue(all(c['status']=='RETIRED' and c['decision'] and c['reason'] and c['was']

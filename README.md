@@ -94,7 +94,8 @@ Coming from 0.2.0 or 0.1.0? [Upgrading](docs/UPGRADING.md) lists what changed an
 one new starter rule and two globs in `ci-is-owned` to copy by hand.
 
 forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
-Unix file metadata, and clean up child process groups with `/usr/bin/kill`. It is built, tested and
+Unix file metadata, clean up child process groups with `/usr/bin/kill`, and cap bound mode's Git
+children with `/usr/bin/prlimit` (util-linux). It is built, tested and
 measured on x86_64 Linux only; the deep-diff-forge release this repository pins exists for that
 platform alone.
 
@@ -178,7 +179,7 @@ patch is refused), `diff.relative` in a subdirectory leaves out every change out
 `.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
 cannot read; no check of the patch can see any of these. If you must use Git directly, run what
 the script runs,
-`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level, with Git 2.40 or later: the first two options take attributes from the empty
 tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
 repository root: forge-warden does not check that the patch is the whole change between two
@@ -286,7 +287,7 @@ is a convenience that catches mistakes early, not a boundary (CI and the build c
 | Layer | What it stops | Where |
 | --- | --- | --- |
 | **Lint wall** | `unsafe`, panics (`unwrap`, `expect`, `panic!`, indexing, unchecked arithmetic, `as` casts), missing docs, wildcard matches, `print!`, `#[allow]`; every warning is an error | `Cargo.toml` `[workspace.lints]`, [ADR 0002](docs/adr/0002-the-lint-wall.md) |
-| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git and `/usr/bin/kill` for cleanup); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors/`](crates/forge-warden-cli/src/doors/mod.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
+| **Effect doors** | file, stdin, stdout, clock, environment and child-process access anywhere but one reviewed module (its only children are the pinned ranker, Git, `/usr/bin/kill` for cleanup and `/usr/bin/prlimit` as bound mode's exec wrapper); minting a ranking or judging raw input outside it; hash-ordered collections anywhere | `clippy.toml`, [`doors/`](crates/forge-warden-cli/src/doors/mod.rs), [ADR 0001](docs/adr/0001-pure-core-and-effect-doors.md) |
 | **A pure core** | I/O, clocks and threads in the engine: they are compile errors in `forge-warden-core` | [`crates/forge-warden-core/clippy.toml`](crates/forge-warden-core/clippy.toml) |
 | **Contracts as tests** | schema, README, registry and vocabulary drift; non-determinism; unsafe output | `crates/forge-warden-cli/tests/` |
 | **Properties** | whole classes of bugs: adding a rule never loosens a verdict; dates round-trip; rendered output is always printable ASCII | `proptest` in both crates |

