@@ -49,7 +49,10 @@ pub(crate) const fn unverifiable(e: &Unverifiable) -> Row {
             "crates/forge-warden-core/tests/authority.rs::a_no_prefix_patch_is_refused_as_a_repeated_path",
         ),
         Unverifiable::SummaryPathUnknown(..) => ("SummaryPathUnknown", GIT_ANSWERS),
-        Unverifiable::TypeChange(..) => ("TypeChange", GIT_ANSWERS),
+        Unverifiable::TypeChange(..) => (
+            "TypeChange",
+            "crates/forge-warden-core/tests/authority.rs::a_real_type_change_is_refused_as_a_type_change",
+        ),
         Unverifiable::RenameOrCopy => (
             "RenameOrCopy",
             "crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output",

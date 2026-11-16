@@ -524,6 +524,20 @@ fn a_facts_error_never_passes_anywhere_in_the_corpus() {
 }
 
 #[test]
+fn a_real_type_change_is_refused_as_a_type_change() {
+    // Q60: Git's real output for a file replaced by a symlink (`git diff --no-renames`): numstat
+    // lists the path twice, the summary deletes it as a file and creates it as a symlink. The
+    // refusal names the type change, not a repeated path.
+    for (name, path) in [("ts-file-to-symlink", "a"), ("m-file-to-symlink", "lnk2")] {
+        assert_eq!(
+            facts(name).err(),
+            Some(Unverifiable::TypeChange(path.to_owned())),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn a_no_prefix_patch_is_refused_as_a_repeated_path() {
     // The patch was made with `--no-prefix` and changes `other src/a` and `src/a`. Git strips one
     // leading component from each, so its numstat lists the path `a` twice. The corpus pins only
