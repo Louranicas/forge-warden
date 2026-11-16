@@ -129,7 +129,7 @@ an older starter keeps its own rules: nothing changes until you edit it. The sta
 0.2.0 (changelog, Unreleased):
 - rule `binary-text-is-hidden-text` (hold): a file that is normally text, carried by the patch as a
   binary section. Copy the whole rule from `examples/starter.warden.toml`; its two globs are generated
-  from the list in `crates/forge-warden-core/tests/eval.rs`.
+  from the list in `crates/forge-warden-core/tests/authority.rs`.
 - in rule `ci-is-owned`, the two `.claude` globs (any letter case, the entry itself and everything under it).
 
 ## Not covered here
