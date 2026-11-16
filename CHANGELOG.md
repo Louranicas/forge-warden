@@ -9,6 +9,17 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- **Ranker pin: deep-diff-forge v0.8.3** (owner decision D4: the newest release, with its stated limits), from
+  v0.8.2: `warden.toml` `[producer]` lists the v0.8.3 x86_64-unknown-linux-gnu binary
+  (`4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1`); `scripts/tool-versions.toml` names tag
+  commit `a74bf91f` and the archive's SHA-256 (`b7734168…`, the release's own `.sha256`); the runbook, README
+  install line and CI's `DDF_REV` follow. Measured before the move, on every fixture patch: the same signal and
+  status vocabulary, identical rows (path, status, signals, score) on 71 of 74 patches, the hostile-input rankings
+  unchanged; 0.8.3 refuses three more (padded `index`-line modes, its GHSA-rq5r-p3g9-phff fix). Stated limit: two
+  open high findings of 0.8.3 (G1 `Files … differ` after an `index` line; G2 several sections on one path);
+  forge-warden holds both itself, and four `ddf083-*` cases in `fixtures/coverage` keep that as a test. The
+  coverage corpus's other rankings stay 0.7.0's: the honest ones are byte-equal under 0.8.3 and the forged ones are
+  forgeries by design.
 - `scripts/dogfood.sh` takes `--ranker-archive FILE`: a local copy of the pinned deep-diff-forge release
   archive, copied into the evidence directory and checked against the same pinned SHA-256 (other bytes:
   exit 3). Only a run with `--hosted-advisory` downloads the archive; a run with neither argument is a
