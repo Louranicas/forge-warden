@@ -81,7 +81,8 @@ pub enum Unverifiable {
     RepeatedPath(String),
     /// A summary record names a path the numstat does not.
     SummaryPathUnknown(String),
-    /// More than one summary record for one path (a file/symlink type change).
+    /// A file/symlink type change: Git deletes the path with one file type and creates it with the
+    /// other (numstat lists the path twice; Q60), or a summary names one path more than once.
     TypeChange(String),
     /// A rename or a copy: rank `git diff --no-renames` instead.
     RenameOrCopy,
@@ -114,7 +115,11 @@ impl fmt::Display for Unverifiable {
             Self::SummaryPathUnknown(p) => {
                 write!(f, "git's summary names {p:?}, which its numstat does not")
             }
-            Self::TypeChange(p) => write!(f, "{p:?} changes type (more than one summary record)"),
+            Self::TypeChange(p) => write!(
+                f,
+                "{p:?} changes type: Git deletes it and creates it again as a symlink or a file; \
+                 that change cannot be verified per file"
+            ),
             Self::RenameOrCopy => {
                 f.write_str("the patch renames or copies a file; rank `git diff --no-renames`")
             }
@@ -354,6 +359,10 @@ impl PatchFacts {
                 content: binary || added != b"0" || deleted != b"0",
             };
             if files.insert(repo_path, change).is_some() {
+                // Git writes a type change as a deletion and a creation of one path (Q60).
+                if summary_type_change(summary, text) {
+                    return Err(Unverifiable::TypeChange(text.to_owned()));
+                }
                 return Err(Unverifiable::RepeatedPath(text.to_owned()));
             }
         }
@@ -368,6 +377,34 @@ impl PatchFacts {
     /// Every file Git sees, by path.
     pub fn files(&self) -> impl Iterator<Item = &FileChange> {
         self.files.values()
+    }
+}
+
+/// Whether Git's summary deletes `path` with one file type and creates it with the other (a
+/// symlink and a regular file), whole-line and byte for byte as [`apply_summary`] reads it: the
+/// shape `git diff --no-renames` writes for a type change, whose numstat lists the path twice (Q60).
+/// Two regular files of one path (prefixes folded by `--no-prefix`) are not a type change.
+fn summary_type_change(summary: &[u8], path: &str) -> bool {
+    let mut deleted: Option<Mode> = None;
+    let mut created: Option<Mode> = None;
+    for raw in summary.split(|b| *b == b'\n') {
+        let Ok(line) = std::str::from_utf8(raw) else {
+            continue;
+        };
+        let (slot, rest) = if let Some(rest) = line.strip_prefix(" delete mode ") {
+            (&mut deleted, rest)
+        } else if let Some(rest) = line.strip_prefix(" create mode ") {
+            (&mut created, rest)
+        } else {
+            continue;
+        };
+        if let Some((stated, _)) = rest.split_once(' ').filter(|(_, named)| *named == path) {
+            *slot = mode(stated).ok();
+        }
+    }
+    match (deleted, created) {
+        (Some(old), Some(new)) => (old == Mode::Symlink) != (new == Mode::Symlink),
+        _ => false,
     }
 }
 
@@ -816,6 +853,45 @@ mod tests {
     }
 
     #[test]
+    fn a_type_change_is_named_as_one() {
+        // Q60: Git's own output for a type change with `--no-renames` (measured, Git 2.56.1): the
+        // path twice in numstat, a deletion and a creation in the summary.
+        let twice = concat!("0\t1\tl\0", "1\t0\tl\0");
+        for summary in [
+            " delete mode 100644 l\n create mode 120000 l\n",
+            " delete mode 100755 l\n create mode 120000 l\n",
+            " delete mode 120000 l\n create mode 100644 l\n",
+            " create mode 100644 l\n delete mode 120000 l\n",
+        ] {
+            assert_eq!(
+                facts(twice, summary),
+                Err(Unverifiable::TypeChange("l".to_owned())),
+                "{summary:?}"
+            );
+        }
+        // Anything else that lists a path twice stays a repeated path.
+        for summary in [
+            "",
+            " delete mode 100644 l\n",
+            " create mode 120000 l\n",
+            " delete mode 100644 l\n create mode 100644 l\n",
+            " delete mode 100644 l\n create mode 100755 l\n",
+            " delete mode 120000 l\n create mode 120000 l\n",
+            " delete mode 100644 l\n create mode 120000 xl\n",
+            " delete mode 100644 xl\n create mode 120000 l\n",
+            " delete mode 100644 l\n create mode 120000 l \n",
+            " delete mode 100644 l\n create mode 160000 l\n",
+            " delete mode 100644 l\n create  mode 120000 l\n",
+        ] {
+            assert_eq!(
+                facts(twice, summary),
+                Err(Unverifiable::RepeatedPath("l".to_owned())),
+                "{summary:?}"
+            );
+        }
+    }
+
+    #[test]
     fn numstat_counts_are_two_decimals_or_two_dashes() {
         // Q58: Git writes `ADDED\tDELETED\tPATH`, each count a decimal, or `-` `-` for binary.
         for record in [
@@ -1025,7 +1101,8 @@ mod tests {
             ),
             (
                 Unverifiable::TypeChange("a".to_owned()),
-                "\"a\" changes type (more than one summary record)",
+                "\"a\" changes type: Git deletes it and creates it again as a symlink or a file; \
+                 that change cannot be verified per file",
             ),
             (
                 Unverifiable::RenameOrCopy,

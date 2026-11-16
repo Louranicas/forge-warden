@@ -9,6 +9,10 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- A file replaced by a symlink, or the reverse, is refused as a type change: the
+  `patch_unverifiable` detail now says the path "changes type: Git deletes it and creates it again
+  as a symlink or a file" instead of "git lists PATH more than once" (ledger Q60). What holds is
+  unchanged; only the reason is clearer. Any other path Git lists twice keeps the old message.
 - Git's numstat counts are read strictly: each is a decimal, or both are `-` for a binary file;
   anything else is refused as unreadable Git output (`patch_unverifiable`). Before, an
   unreadable count was read as a content change. Git does not write one.
