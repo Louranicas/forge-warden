@@ -7,6 +7,7 @@
 # main branch on GitLab and that the version is the same everywhere a release states it, writes the
 # source archive, the release notes and their checksums under dist/<version>/, and prints the one
 # command the repository's owner runs to sign and push the tag (scripts/release_tag.sh).
+# The GitHub check reads every remote URL, not where ssh or proxy settings then send it.
 set -euo pipefail
 version="${1:-}"
 die() { echo "release_prepare: $*" >&2; exit 1; }

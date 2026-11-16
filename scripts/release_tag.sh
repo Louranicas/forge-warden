@@ -8,6 +8,9 @@
 # trust root, not the working tree and not the key being used), and pushes the tag, and only the tag,
 # to the remotes gitlab, gitea and forgejo. A remote whose URL names GitHub is refused before anything
 # is created. A tag signed by a key that is not enrolled is deleted before any push.
+# The GitHub check reads every remote URL (fetch and push, insteadOf expanded), not where ssh or proxy
+# settings then send it (an ssh Host alias, core.sshCommand, http.proxy, remote.<name>.receivepack):
+# those are the owner's own configuration on the owner's clone.
 # The key: FW_TAG_KEY (default ~/.ssh/id_ed25519_forge_warden_release_signing); only its .pub path is
 # given to git, so the private key never leaves the owner's ~/.ssh. The tagger is the owner's own
 # git config (user.name, user.email).
