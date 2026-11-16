@@ -1,5 +1,5 @@
 {
-  "schema": "forge-warden.verdict.v2",
+  "schema": "forge-warden.verdict.v3",
   "tool": {
     "name": "forge-warden",
     "version": "0.2.1"

@@ -1,7 +1,7 @@
-# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v2`)
+# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v3`)
 
 The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v0.schema.json`
-gives editors the same rules as you type, and `schemas/verdict.v2.schema.json` describes every
+gives editors the same rules as you type, and `schemas/verdict.v3.schema.json` describes every
 verdict; tests keep both equal to the code, and keep the note and seal tables below complete.
 
 Contents: the policy file (top level, `[producer]`, rules, kinds, signals, globs, waivers), then
@@ -136,9 +136,11 @@ argument group in `src/main.rs`), and refuses with a usage error (exit 2) when n
   can only add.
 - `--git PATH` (default `/usr/bin/git`) must be absolute; it is recorded, with `git --version`.
 - `--base REV` / `--head REV` (4–64 lowercase hex) are recorded as `claims` with
-  `verified: false`. They never change an outcome.
+  `verified: false`. They never change an outcome. With `--repo DIR` (authority mode, full ids of one
+  length) forge-warden makes the diff itself and refuses a patch that is not byte-equal (exit 4); a
+  match records the claims as verified, with the merge base (ADR 0012).
 
-## Verdict seals (`forge-warden.verdict.v2`)
+## Verdict seals (`forge-warden.verdict.v3`)
 
 | Member | Meaning |
 | --- | --- |
@@ -149,7 +151,7 @@ argument group in `src/main.rs`), and refuses with a usage error (exit 2) when n
 | `provenance` | `produced` (authority) or `supplied` (advisory). |
 | `ranked_by` | `{version, sha256}`: the version the ranking reports, and the ranker binary's SHA-256 (`null` when supplied). |
 | `git` | The Git that read the patch: `{path, version, sha256, admission, allowlist_sha256}`. `sha256` is the executable read through the descriptor every Git call used; `admission` is `approved` when that digest is enrolled in the owner's allowlist and `unpinned` only in advisory mode with no allowlist installed (with an allowlist, an unenrolled digest is refused in both modes); `allowlist_sha256` is the SHA-256 of the admitted allowlist bytes, `null` when unpinned. `path` and `version` are recorded for audit, not attested. |
-| `claims` | Only when `--base`/`--head` were given: `{base?, head?, verified: false}`. |
+| `claims` | Only when `--base`/`--head` were given: `{base?, head?, verified: false}`; in bound mode (`--repo`) after a byte-equal comparison, `{base, head, merge_base, verified: true}`. |
 
 `sha256sum` reproduces every digest. v0's `patch_verified` is gone: the patch is always hashed.
 

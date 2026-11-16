@@ -1,12 +1,13 @@
-//! The verdict document, `forge-warden.verdict.v2`.
+//! The verdict document, `forge-warden.verdict.v3`.
 //!
 //! Field order is the serialization order, and every list is in a defined order (rules in policy
 //! order, violations in deep-diff-forge's risk order), so the same inputs always serialize to the
 //! same bytes. `forge-warden schema verdict` prints the JSON Schema, which is committed at
-//! `schemas/verdict.v2.schema.json` and checked against the code by a test.
+//! `schemas/verdict.v3.schema.json` and checked against the code by a test.
 //!
 //! v1 (ADR 0005 §5) seals where the ranking came from (`provenance`, `ranked_by.sha256`), what Git
-//! saw in the patch (`patch_facts_sha256`, `git`), and any unverified `claims` about the change.
+//! saw in the patch (`patch_facts_sha256`, `git`), and any `claims` about the change; v3 (ADR 0012)
+//! adds verified claims with the merge base when bound mode made the diff.
 
 use crate::date::Date;
 use crate::defaults::NamedDefault as _;
@@ -16,7 +17,7 @@ use crate::seal::Sha256Hex;
 use serde::Serialize;
 
 /// The schema name every verdict carries.
-pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v2";
+pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v3";
 
 /// A sealed, deterministic verdict. It cannot be cloned out of a shared judged view.
 ///
@@ -175,18 +176,103 @@ pub enum Admission {
     Unpinned,
 }
 
-/// What the caller claimed about the change. Recorded, never checked, never used.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// What the caller said about the change (`--base`, `--head`), and whether forge-warden bound the
+/// patch to it (ADR 0012). Claims never change an outcome.
+///
+/// Two forms. Asserted claims ([`Claims::new`]) serialize exactly as in verdict v2:
+/// `{base?, head?, verified: false}`. Bound claims ([`Claims::bound`]) serialize as
+/// `{base, head, merge_base, verified: true}` and can only be made from a [`BoundClaims`], whose
+/// one constructor is the byte comparison [`BoundClaims::from_comparison`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Claims {
-    /// The claimed base commit.
+    form: ClaimsForm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaimsForm {
+    Asserted {
+        base: Option<String>,
+        head: Option<String>,
+    },
+    Bound(BoundClaims),
+}
+
+/// The wire shape of [`Claims`]: member order is the serialization order (ADR 0004).
+#[derive(Serialize)]
+struct ClaimsWire<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub base: Option<String>,
-    /// The claimed head commit.
+    base: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub head: Option<String>,
-    /// Always `false`: forge-warden did not verify the claims.
-    pub verified: Unverified,
+    head: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merge_base: Option<&'a str>,
+    verified: bool,
+}
+
+impl Serialize for Claims {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ClaimsWire {
+            base: self.base(),
+            head: self.head(),
+            merge_base: self.merge_base(),
+            verified: self.verified(),
+        }
+        .serialize(serializer)
+    }
+}
+
+/// Three full object ids of one length (40 or 64 lowercase hex digits): bound mode's base, head
+/// and the merge base its diff was made from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BoundIds {
+    base: String,
+    head: String,
+    merge_base: String,
+}
+
+/// Why three ids are not [`BoundIds`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum IdError {
+    /// An id is not 40 or 64 characters long.
+    #[error("{0} is not a full object id (40 or 64 lowercase hex digits)")]
+    Length(&'static str),
+    /// An id has a byte that is not a lowercase hex digit.
+    #[error("{0} is not lowercase hex")]
+    NotLowercaseHex(&'static str),
+    /// The ids are full ids of different lengths (SHA-1 and SHA-256 mixed).
+    #[error("base, head and merge base are not of one length")]
+    MixedLengths,
+}
+
+/// A verified binding of a patch to a change: the supplied patch was byte-equal to the diff made
+/// from `merge_base` to `head` (ADR 0012 D4). Its only constructor is
+/// [`BoundClaims::from_comparison`].
+///
+/// What this type guarantees, and what it does not: a value exists only if a byte comparison of two
+/// inputs passed and the ids are well formed. It cannot know where the second input came from; the
+/// forge-warden binary passes the diff its door made from a verified copy of the repository's
+/// objects, and a fence in the CLI's tests holds that it is the only call. A library caller can pass
+/// any bytes, as it could already print any JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct BoundClaims {
+    ids: BoundIds,
+}
+
+/// The supplied patch is not the diff that was made: where they first differ, and both lengths.
+/// No patch content is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PatchMismatch {
+    /// Offset of the first byte that differs; the shorter length when one is a prefix of the other.
+    pub first_difference: usize,
+    /// Length of the supplied patch.
+    pub supplied_len: usize,
+    /// Length of the diff that was made.
+    pub made_len: usize,
 }
 
 impl RankedBy {
@@ -260,26 +346,126 @@ impl GitOracle {
 }
 
 impl Claims {
-    /// What the caller claimed about the change. Never verified: `verified` is always `false`,
-    /// and no caller can say otherwise (the field's type has no other value and no public constructor).
+    /// What the caller claimed about the change, unverified (`verified` is `false`, no merge base).
     #[must_use]
     pub const fn new(base: Option<String>, head: Option<String>) -> Self {
         Self {
-            base,
-            head,
-            verified: Unverified,
+            form: ClaimsForm::Asserted { base, head },
         }
+    }
+
+    /// Verified claims: the binding a byte comparison produced.
+    #[must_use]
+    pub const fn bound(claims: BoundClaims) -> Self {
+        Self {
+            form: ClaimsForm::Bound(claims),
+        }
+    }
+
+    /// The claimed base commit.
+    #[must_use]
+    pub fn base(&self) -> Option<&str> {
+        match &self.form {
+            ClaimsForm::Asserted { base, .. } => base.as_deref(),
+            ClaimsForm::Bound(bound) => Some(bound.base()),
+        }
+    }
+
+    /// The claimed head commit.
+    #[must_use]
+    pub fn head(&self) -> Option<&str> {
+        match &self.form {
+            ClaimsForm::Asserted { head, .. } => head.as_deref(),
+            ClaimsForm::Bound(bound) => Some(bound.head()),
+        }
+    }
+
+    /// The merge base the bound diff was made from; `Some` exactly when [`Claims::verified`].
+    #[must_use]
+    pub fn merge_base(&self) -> Option<&str> {
+        match &self.form {
+            ClaimsForm::Asserted { .. } => None,
+            ClaimsForm::Bound(bound) => Some(bound.merge_base()),
+        }
+    }
+
+    /// Whether forge-warden bound the patch to these claims.
+    #[must_use]
+    pub const fn verified(&self) -> bool {
+        matches!(self.form, ClaimsForm::Bound(_))
     }
 }
 
-/// A value that serializes as `false` and has no other state: claims are never verified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Unverified;
+impl BoundIds {
+    /// `base`, `head` and `merge_base`, each 40 or 64 lowercase hex digits, all of one length.
+    ///
+    /// # Errors
+    /// [`IdError`] names the first id that is not a full object id, or says the lengths differ.
+    pub fn new(base: &str, head: &str, merge_base: &str) -> Result<Self, IdError> {
+        for (name, id) in [("base", base), ("head", head), ("merge base", merge_base)] {
+            if !matches!(id.len(), 40 | 64) {
+                return Err(IdError::Length(name));
+            }
+            if !id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(IdError::NotLowercaseHex(name));
+            }
+        }
+        if base.len() != head.len() || head.len() != merge_base.len() {
+            return Err(IdError::MixedLengths);
+        }
+        Ok(Self {
+            base: base.to_owned(),
+            head: head.to_owned(),
+            merge_base: merge_base.to_owned(),
+        })
+    }
+}
 
-impl Serialize for Unverified {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bool(false)
+impl BoundClaims {
+    /// Binds `ids` to the change when `supplied` (the patch being judged) is byte-equal to `made`
+    /// (the diff made from `ids`' merge base to head).
+    ///
+    /// # Errors
+    /// [`PatchMismatch`] with the first differing offset and both lengths.
+    pub fn from_comparison(
+        ids: BoundIds,
+        supplied: &[u8],
+        made: &[u8],
+    ) -> Result<Self, PatchMismatch> {
+        if supplied == made {
+            return Ok(Self { ids });
+        }
+        // Equal up to the shorter length: the first difference is where the shorter one ends.
+        let first_difference = match supplied.iter().zip(made).position(|(a, b)| a != b) {
+            Some(at) => at,
+            None => supplied.len().min(made.len()),
+        };
+        Err(PatchMismatch {
+            first_difference,
+            supplied_len: supplied.len(),
+            made_len: made.len(),
+        })
+    }
+
+    /// The bound base commit.
+    #[must_use]
+    pub fn base(&self) -> &str {
+        &self.ids.base
+    }
+
+    /// The bound head commit.
+    #[must_use]
+    pub fn head(&self) -> &str {
+        &self.ids.head
+    }
+
+    /// The merge base the diff was made from.
+    #[must_use]
+    pub fn merge_base(&self) -> &str {
+        &self.ids.merge_base
     }
 }
 

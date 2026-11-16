@@ -844,6 +844,70 @@ fn bound_mode_compares_before_any_ranker_is_admitted() {
 }
 
 #[test]
+fn bound_mode_verifies_the_claims_only_through_the_comparison() {
+    // Verdict v3 (ADR 0012 D4/D5, step b): a matching bound run records verified claims with Git's
+    // merge base; a mismatch is refused before the ranker runs; without --repo the claims stay
+    // unverified, exactly as in 0.2.x.
+    let (dir, policy, ranker) = setup("bound-claims");
+    let (repo, base, head) = bound_repo("bound-claims-repo");
+    let bound = [
+        "--repo",
+        text(&repo),
+        "--base",
+        base.as_str(),
+        "--head",
+        head.as_str(),
+    ];
+    let made_bytes = make_patch(&repo, &base, &head);
+    let made = write(&dir, "made.patch", &made_bytes);
+    let ok = authority(&policy, &made, &ranker, &bound);
+    assert_eq!(ok.code, 0, "stdout={} stderr={}", ok.stdout, ok.stderr);
+    // Verdict v3 (ADR 0012 D4/D5): the claims are verified and name Git's merge base.
+    assert_eq!(verdict(&ok)["schema"], "forge-warden.verdict.v3");
+    let merge_base = git_in(&repo, &["merge-base", &base, &head]);
+    assert_eq!(
+        verdict(&ok)["seals"]["claims"],
+        serde_json::json!({"base": base, "head": head, "merge_base": merge_base, "verified": true})
+    );
+    // A mismatch is refused before the ranker runs, and echoes no patch content: the supplied patch
+    // carries a ranker directive that would fail the run differently if the ranker ran first.
+    let probe = String::from_utf8(made_bytes.clone())
+        .unwrap()
+        .replace("+more notes\n", "+fixture-ranker: garbage\n");
+    assert_ne!(probe.as_bytes(), made_bytes.as_slice());
+    let probe_path = write(&dir, "probe.patch", probe.as_bytes());
+    let early = authority(&policy, &probe_path, &ranker, &bound);
+    assert_eq!(
+        early.code, 4,
+        "stdout={} stderr={}",
+        early.stdout, early.stderr
+    );
+    assert!(
+        early.stderr.contains("is not `git diff"),
+        "{}",
+        early.stderr
+    );
+    assert!(early.stdout.is_empty(), "{}", early.stdout);
+    assert!(
+        !early.stderr.contains("fixture-ranker") && !early.stderr.contains("garbage"),
+        "no patch content in the refusal: {}",
+        early.stderr
+    );
+    // The same patch and ids without --repo: claims recorded, not verified, no merge base.
+    let plain = authority(
+        &policy,
+        &made,
+        &ranker,
+        &["--base", base.as_str(), "--head", head.as_str()],
+    );
+    assert_eq!(plain.code, 0, "{}", plain.stderr);
+    assert_eq!(
+        verdict(&plain)["seals"]["claims"],
+        serde_json::json!({"base": base, "head": head, "verified": false})
+    );
+}
+
+#[test]
 fn bound_mode_refuses_a_patch_made_with_other_options() {
     let (dir, policy, ranker) = setup("bound-shapes");
     let (repo, base, head) = bound_repo("bound-shapes-repo");
