@@ -37,9 +37,11 @@ problem, not a skip. A word run through `command`, `exec`, `env` or another pref
 excused by a shell function of the same name.
 
 A tracked file that a call runs or sources by a literal path (`./FILE`, `bash FILE`,
-`python3 FILE`, `. FILE`, `bash < FILE`, `python3 - < FILE`) is read in the language it runs in,
-with or without an extension or a `#!` line; the functions of a sourced file count for the file
-that sources it. A file another file runs by a literal path may not be one that ONLY_IN lets
+`python3 FILE`, `. FILE`, `bash < FILE`, `< FILE bash`, `0< FILE sh`, `python3 - < FILE`) is read
+in the language it runs in; standard input (`<`, `0<`, or a here-string `<<< TEXT`, whose TEXT is
+read) counts as the script only when the shell or Python got no script file and no `-c`. It is
+read with or without an extension or a `#!` line; the functions of a sourced file count for the
+file that sources it. A file another file runs by a literal path may not be one that ONLY_IN lets
 call commands the gate image lacks (it is named).
 
 Stated limits (each needs a deliberate author): a Python call whose program is not a literal
@@ -131,6 +133,7 @@ PYTHONS = re.compile(r'python(?:3(?:\.[0-9]+)?)?')
 PY_DYNAMIC = '"$python_expression"'
 OPERATORS = (';;&', ';;', ';&', '&&', '||', '|&', '&', '|', ';', '(', ')', '\n')
 REDIRECTS = ('<<<', '<<-', '<<', '&>>', '&>', '>>', '>&', '<&', '<>', '>|', '>', '<')
+FD_REDIRECT = re.compile(r'([0-9]+)(?=<|>)')
 ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=')
 # `env NAME=value` and `env "$name=value"`: a name, literal or one parameter, then `=`.
 ENV_ASSIGNMENT = re.compile(r'["\']?(?:[A-Za-z_][A-Za-z0-9_]*|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)=')
@@ -220,10 +223,15 @@ class Lexer:
                 self.i += 2
                 self.substitution()
                 out.append(('word', Word(self.line, '<(...)', None, False)))
-            elif text.startswith(REDIRECTS, self.i) and not (c == '&' and text.startswith('&&', self.i)):
+            elif FD_REDIRECT.match(text, self.i) or (
+                    text.startswith(REDIRECTS, self.i) and not (c == '&' and text.startswith('&&', self.i))):
+                # `0< FILE`, `2>/dev/null`: the descriptor number is part of the redirect, not a word.
+                fd = FD_REDIRECT.match(text, self.i)
+                if fd:
+                    self.i = fd.end(1)
                 op = next(r for r in REDIRECTS if text.startswith(r, self.i))
                 self.i += len(op)
-                out.append(('redirect', op, self.line))
+                out.append(('redirect', op, self.line, fd.group(1) if fd else None))
                 if op in ('<<', '<<-'):
                     while text[self.i:self.i + 1] in (' ', '\t'):
                         self.i += 1
@@ -477,11 +485,11 @@ def operand_word(state, value, raw):
             return ('option-argument', state, 1), []
         if re.fullmatch(r'[-+][A-Za-z]+', value):
             letters = value[1:]
-            if value[0] == '-' and 'c' in letters:
-                return 'next', []
-            if value[0] == '-' and 's' in letters:
-                return None, []  # the script is standard input
             count = sum(letter in 'oO' for letter in letters)  # each -o/-O takes the next word
+            if value[0] == '-' and 'c' in letters:
+                return (('option-argument', 'next', count) if count else 'next'), []
+            if value[0] == '-' and 's' in letters:
+                return 'stdin-sh', []  # the script is standard input; later words are arguments
             return (('option-argument', state, count) if count else state), []
         if value.startswith(('-', '+')):
             return state, []
@@ -511,7 +519,7 @@ def operand_word(state, value, raw):
     if value == '--':
         return ('file-next', '(py)'), []
     if value == '-':
-        return None, []  # the script is standard input
+        return 'stdin-py', []  # the script is standard input; later words are arguments
     if value in PYTHON_LONG_ARGUMENT:
         return ('option-argument', state, 1), []
     if value.startswith('--'):
@@ -530,10 +538,37 @@ def operand_word(state, value, raw):
     return None, [('(py)', value)]
 
 
+def stdin_runner(script):
+    """The RUNS marker when the command's standard input is its script: a shell or Python that got
+    no script file and no `-c` (also after `-s` or `-`, or with an option argument pending)."""
+    base = script[1] if isinstance(script, tuple) and script[0] == 'option-argument' else script
+    if base in SHELLS or base == 'stdin-sh':
+        return '(sh)'
+    if base == 'stdin-py' or (isinstance(base, str) and PYTHONS.fullmatch(base)):
+        return '(py)'
+    return None
+
+
+def flush_stdin(script, stdin_words, found, calls):
+    """At the end of a simple command: `bash < FILE`, `< FILE bash`, `0< FILE sh` run FILE, and
+    `bash <<< 'TEXT'` runs TEXT. Returns the emptied list."""
+    runner = stdin_runner(script) if stdin_words else None
+    for operator, word in stdin_words if runner else []:
+        if operator == '<<<' and word.literal:
+            text = word.value
+            calls.extend(shell_calls(text, word.line) if runner == '(sh)' else python_calls(text, word.line))
+        elif operator == '<<<':
+            found.append((word.line, word.raw, True))  # a dynamic script text is named
+        elif word.literal:
+            found.append((word.line, runner + word.value, True))
+    return []
+
+
 def command_words(tokens, calls):
     found, functions = [], set()
     expect, mode, prefix, owner, script = True, None, None, None, None
     finding = by_find = skip_parens = after_coproc = False
+    stdin_words = []  # (operator, word) of `<`/`<<<` in the current simple command
     for index, token in enumerate(tokens):
         kind = token[0]
         if kind == 'heredoc':
@@ -547,13 +582,14 @@ def command_words(tokens, calls):
                 calls.extend(python_calls(body, start))
             continue
         if kind == 'redirect':
-            # `bash < FILE`, `sh -s < FILE`, `python3 - < FILE`: FILE is the script.
-            runs = (not expect and token[1] == '<' and owner
-                    and ('(sh)' if owner in SHELLS else '(py)' if PYTHONS.fullmatch(owner) else None))
-            mode = ('stdin-target', mode, runs) if runs else ('target', mode)
+            # Standard input (`<`, `0<`, `<<<`), before or after the command word: decided at the
+            # end of the simple command, when it is known whether a shell or Python got a script.
+            stdin = token[1] in ('<', '<<<') and (len(token) < 4 or token[3] in (None, '0'))
+            mode = ('stdin-target', mode, token[1]) if stdin else ('target', mode)
             continue
         if kind == 'op':
             op = token[1]
+            stdin_words = flush_stdin(script, stdin_words, found, calls)
             if mode == 'array':
                 if op == ')':
                     mode = None
@@ -582,8 +618,8 @@ def command_words(tokens, calls):
         if mode == 'array':
             continue
         if mode and mode[0] in ('target', 'stdin-target'):
-            if mode[0] == 'stdin-target' and word.literal:
-                found.append((word.line, mode[2] + word.value, True))
+            if mode[0] == 'stdin-target':
+                stdin_words.append((mode[2], word))
             mode = mode[1]
             continue
         if mode == 'function-name':
@@ -651,6 +687,14 @@ def command_words(tokens, calls):
                 expect = False
             elif prefix == 'command' and word.value in ('-v', '-V'):
                 expect, prefix = False, 'probe'
+            elif not word.value.startswith('--'):
+                # A cluster (`-0rn 1`, `-iu X`): the first letter that takes an argument takes the
+                # rest of the cluster, or the next word when it ends the cluster.
+                for index, letter in enumerate(word.value[1:]):
+                    if '-' + letter in PREFIX_OPTIONS[prefix]:
+                        if index == len(word.value) - 2:
+                            mode = ('target', mode)
+                        break
             continue
         if prefix == 'env' and ENV_ASSIGNMENT.match(word.raw):
             continue
@@ -689,6 +733,7 @@ def command_words(tokens, calls):
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
+    flush_stdin(script, stdin_words, found, calls)
     return found + [(0, '()' + name, False) for name in functions]
 
 
@@ -809,27 +854,40 @@ def python_calls(text, line=1):
     return found
 
 
-SKIPPED_DIRS = frozenset({'.git', 'target', 'mutants.out', 'mutants.out.old'})
+# `.git` is never a tracked path at any depth; build output is skipped only at the root, since
+# Git can track `x/target/f`.
+ROOT_SKIPPED_DIRS = frozenset({'target', 'mutants.out', 'mutants.out.old'})
+# Git's own list of repository-local variables (`git rev-parse --local-env-vars`, Git 2.56.1):
+# inherited, they would make the Git calls below answer for another repository or index.
+GIT_LOCAL_ENV = frozenset({
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+    'GIT_OBJECT_DIRECTORY', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE',
+    'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX',
+    'GIT_SHALLOW_FILE', 'GIT_COMMON_DIR'})
 
 
 def tracked(root):
     """Git's tracked files when `root` is the top of a Git work tree; otherwise (a source export,
     such as the hosted-parity export phase, which holds exactly the tracked files) every file
     below `root`, a symlink as a file: a tree without Git is read, never skipped."""
+    env = {key: value for key, value in os.environ.items()
+           if key not in GIT_LOCAL_ENV and not key.startswith('GIT_CONFIG_KEY_')
+           and not key.startswith('GIT_CONFIG_VALUE_')}
     try:
-        top = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'],
+        top = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'], env=env,
                              stdin=subprocess.DEVNULL, capture_output=True, check=False)
     except OSError:
         top = None
     if top is not None and top.returncode == 0 and Path(top.stdout.decode().strip()).resolve() == Path(root).resolve():
-        names = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], check=True,
+        names = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], check=True, env=env,
                                stdout=subprocess.PIPE, stdin=subprocess.DEVNULL).stdout.decode().split('\0')
         return [name for name in names if name]
     found = []
     for directory, subdirectories, files in os.walk(root):
         base = Path(directory).relative_to(root)
         links = [d for d in subdirectories if (Path(directory) / d).is_symlink()]
-        subdirectories[:] = sorted(d for d in subdirectories if d not in SKIPPED_DIRS and d not in links)
+        subdirectories[:] = sorted(d for d in subdirectories if d != '.git' and d not in links
+                                   and not (base == Path('.') and d in ROOT_SKIPPED_DIRS))
         found.extend((base / name).as_posix() for name in files + links)
     return sorted(found)
 
