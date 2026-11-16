@@ -21,8 +21,8 @@ forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.p
 
 ```text
 forge-warden 0.2.0: FAIL (exit 7 policy_fail, next: change_input)
-  patch bbf580931c67, policy 9a08b3feaf2b, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
-  4 file(s), 9 rule(s): 4 pass, 0 waived, 4 hold, 1 fail
+  patch bbf580931c67, policy a0ac60726c9b, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
+  4 file(s), 10 rule(s): 5 pass, 0 waived, 4 hold, 1 fail
   [PASS  ] no-secrets (forbid_signal, fail)
   [PASS  ] no-hidden-text (forbid_signal, fail)
   [FAIL  ] no-ci-privilege (forbid_signal, fail)
@@ -75,7 +75,9 @@ forge-warden lint warden.toml       # lists every problem at once
 ```
 
 The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
-agent's configuration (`.claude` and everything under it) for a person's review; read `examples/starter.warden.toml`
+agent's configuration (`.claude` and everything under it) for a person's review, and so it does a text
+file sent as a binary section, whose lines no signal rule can read (an executable with another name
+than the rule lists needs a path rule of your own); read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
 Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.0 is a

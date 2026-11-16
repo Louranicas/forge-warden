@@ -45,6 +45,24 @@ kind = "forbid_signal"
 severity = "hold"
 signals = ["test_removed"]
 
+# A text file sent as a binary section (`GIT binary patch`, or "Binary files ... differ") has no lines the
+# ranker can read, so every signal rule misses what it adds; a `.gitattributes` the change commits is enough
+# to make Git write one. `binary_change` comes from Git's numstat, not from the ranker. The three globs name
+# files that are normally text, by extension, by exact name (Git hooks, `configure` and others a shell
+# runs) and by name prefix, in any letter case (ledger Q63). An executable with another name is not covered:
+# protect `bin/**` and the like with a path rule.
+[[rule]]
+id = "binary-text-is-hidden-text"
+why = "A text file sent as a binary section hides its lines from every signal rule; a person reads it."
+kind = "forbid_signal"
+severity = "hold"
+signals = ["binary_change"]
+paths = [
+    "**/*.{[aA][cC],[aA][dD][oO][cC],[aA][mM],[aA][sS][mM],[aA][wW][kK],[bB][aA][sS][hH],[bB][aA][tT],[bB][zZ][lL],[cC],[cC][cC],[cC][fF][gG],[cC][jJ][sS],[cC][lL][jJ],[cC][lL][jJ][sS],[cC][mM][aA][kK][eE],[cC][mM][dD],[cC][oO][nN][fF],[cC][pP][pP],[cC][sS],[cC][sS][sS],[cC][sS][vV],[cC][tT][sS],[cC][xX][xX],[dD][aA][rR][tT],[dD][iI][fF][fF],[eE][dD][nN],[eE][lL],[eE][nN][vV],[eE][rR][bB],[eE][rR][lL],[eE][xX],[eE][xX][sS],[fF][iI][sS][hH],[fF][sS],[fF][sS][xX],[gG][oO],[gG][qQ][lL],[gG][rR][aA][dD][lL][eE],[gG][rR][aA][pP][hH][qQ][lL],[gG][rR][oO][oO][vV][yY],[hH],[hH][cC][lL],[hH][hH],[hH][pP][pP],[hH][rR][lL],[hH][sS],[hH][tT][mM],[hH][tT][mM][lL],[hH][xX][xX],[iI][nN],[iI][nN][iI],[jJ]2,[jJ][aA][vV][aA],[jJ][lL],[jJ][qQ],[jJ][sS],[jJ][sS][oO][nN],[jJ][sS][oO][nN]5,[jJ][sS][oO][nN][cC],[jJ][sS][oO][nN][lL],[jJ][sS][xX],[jJ][uU][sS][tT],[kK][tT],[kK][tT][sS],[lL][eE][sS][sS],[lL][oO][cC][kK],[lL][uU][aA],[mM],[mM]4,[mM][aA][rR][kK][dD][oO][wW][nN],[mM][dD],[mM][jJ][sS],[mM][kK],[mM][lL],[mM][lL][iI],[mM][mM],[mM][tT][sS],[nN][iI][mM],[nN][iI][xX],[pP][aA][tT][cC][hH],[pP][hH][pP],[pP][lL],[pP][lL][iI][sS][tT],[pP][mM],[pP][rR][oO][pP][eE][rR][tT][iI][eE][sS],[pP][rR][oO][tT][oO],[pP][sS]1,[pP][yY],[pP][yY][iI],[rR],[rR][bB],[rR][sS],[rR][sS][tT],[sS],[sS][aA][sS][sS],[sS][cC][aA][lL][aA],[sS][cC][sS][sS],[sS][eE][dD],[sS][eE][rR][vV][iI][cC][eE],[sS][hH],[sS][oO][cC][kK][eE][tT],[sS][oO][lL],[sS][qQ][lL],[sS][tT][aA][rR],[sS][vV][eE][lL][tT][eE],[sS][vV][gG],[sS][wW][iI][fF][tT],[tT][eE][xX],[tT][fF],[tT][fF][vV][aA][rR][sS],[tT][iI][mM][eE][rR],[tT][mM][pP][lL],[tT][oO][mM][lL],[tT][sS],[tT][sS][vV],[tT][sS][xX],[tT][xX][tT],[vV][bB],[vV][iI][mM],[vV][uU][eE],[xX][mM][lL],[yY][aA][mM][lL],[yY][mM][lL],[zZ][iI][gG],[zZ][sS][hH]}",
+    "**/{.[eE][dD][iI][tT][oO][rR][cC][oO][nN][fF][iI][gG],.[eE][nN][vV][rR][cC],.[gG][iI][tT][aA][tT][tT][rR][iI][bB][uU][tT][eE][sS],.[gG][iI][tT][iI][gG][nN][oO][rR][eE],.[gG][iI][tT][mM][oO][dD][uU][lL][eE][sS],.[mM][aA][iI][lL][mM][aA][pP],.[nN][pP][mM][rR][cC],[aA][lL][lL][oO][wW][eE][dD]_[sS][iI][gG][nN][eE][rR][sS],[aA][uU][tT][hH][oO][rR][sS],[bB][uU][iI][lL][dD],[cC][hH][aA][nN][gG][eE][lL][oO][gG],[cC][oO][dD][eE][oO][wW][nN][eE][rR][sS],[cC][oO][mM][mM][iI][tT]-[mM][sS][gG],[cC][oO][nN][fF][iI][gG][uU][rR][eE],[cC][oO][nN][tT][aA][iI][nN][eE][rR][fF][iI][lL][eE],[cC][oO][pP][yY][iI][nN][gG],[dD][oO][cC][kK][eE][rR][fF][iI][lL][eE],[gG][eE][mM][fF][iI][lL][eE],[gG][nN][uU][mM][aA][kK][eE][fF][iI][lL][eE],[gG][oO].[mM][oO][dD],[gG][oO].[sS][uU][mM],[jJ][eE][nN][kK][iI][nN][sS][fF][iI][lL][eE],[jJ][uU][sS][tT][fF][iI][lL][eE],[lL][iI][cC][eE][nN][sS][eE],[mM][aA][kK][eE][fF][iI][lL][eE],[nN][oO][tT][iI][cC][eE],[pP][oO][sS][tT]-[cC][hH][eE][cC][kK][oO][uU][tT],[pP][oO][sS][tT]-[mM][eE][rR][gG][eE],[pP][oO][sS][tT]-[rR][eE][cC][eE][iI][vV][eE],[pP][rR][eE]-[cC][oO][mM][mM][iI][tT],[pP][rR][eE]-[pP][uU][sS][hH],[pP][rR][eE]-[rR][eE][bB][aA][sS][eE],[pP][rR][eE]-[rR][eE][cC][eE][iI][vV][eE],[pP][rR][eE][pP][aA][rR][eE]-[cC][oO][mM][mM][iI][tT]-[mM][sS][gG],[pP][rR][oO][cC][fF][iI][lL][eE],[rR][aA][kK][eE][fF][iI][lL][eE],[rR][eE][aA][dD][mM][eE],[uU][pP][dD][aA][tT][eE],[vV][aA][gG][rR][aA][nN][tT][fF][iI][lL][eE],[wW][oO][rR][kK][sS][pP][aA][cC][eE]}",
+    "**/{[cC][oO][pP][yY][iI][nN][gG].*,[dD][oO][cC][kK][eE][rR][fF][iI][lL][eE].*,[lL][iI][cC][eE][nN][sS][eE]-*}",
+]
+
 [[rule]]
 id = "tests-travel-with-code"
 why = "Behaviour that changes without a test change is behaviour nobody pinned down."

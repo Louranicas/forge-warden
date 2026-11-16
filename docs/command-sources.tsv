@@ -41,6 +41,7 @@ docs/claude-project/INSTRUCTIONS.md	0
 docs/claude-project/README.md	0
 docs/runner-up.md	0
 fixtures/hostile/README.md	0
+fixtures/hostile/binary-text/README.md	0
 fixtures/hostile/lone-header/README.md	0
 fixtures/hostile/patch-prefix/README.md	0
 justfile	1
