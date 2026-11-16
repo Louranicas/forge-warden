@@ -929,6 +929,10 @@ fn history_heading(heading: &str) -> bool {
 }
 
 /// Whether a backticked `tests/…rs` reference names a file: as written from the root, or under a crate.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test door: asks whether a file the documentation names exists in this checkout"
+)]
 fn test_path_exists(root: &std::path::Path, members: &[String], reference: &str) -> bool {
     if reference.starts_with("crates/") {
         return root.join(reference).is_file();

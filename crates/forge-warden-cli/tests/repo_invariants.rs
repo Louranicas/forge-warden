@@ -152,7 +152,7 @@ fn the_effect_lists_name_every_reviewed_effect() {
     // spellings: an effect it does not name is not refused, so the reviewed names are pinned here
     // as ACTIVE entries (a commented-out line keeps its text and disallows nothing). That clippy
     // then refuses each of them is measured in tests/mint_lint.rs.
-    const BOTH: [&str; 8] = [
+    const BOTH: [&str; 30] = [
         "std::fs::remove_dir",
         "std::fs::hard_link",
         "std::fs::set_permissions",
@@ -161,6 +161,29 @@ fn the_effect_lists_name_every_reviewed_effect() {
         "std::path::Path::metadata",
         "std::os::unix::fs::symlink",
         "std::os::unix::net::UnixStream::connect",
+        // M7-EFFECT-WALL stop-gap (ruling P4.2), measured unlisted on 92a9ac99.
+        "std::path::Path::is_file",
+        "std::path::Path::is_dir",
+        "std::path::Path::read_dir",
+        "std::path::Path::canonicalize",
+        "std::path::Path::read_link",
+        "std::path::Path::symlink_metadata",
+        "std::path::Path::try_exists",
+        "std::fs::exists",
+        "std::fs::File::options",
+        "std::fs::File::create_new",
+        "std::net::ToSocketAddrs::to_socket_addrs",
+        "std::os::unix::net::UnixListener::bind",
+        "std::os::unix::net::UnixDatagram::bind",
+        "std::os::unix::net::UnixDatagram::unbound",
+        "std::os::unix::net::UnixStream::pair",
+        "std::env::current_exe",
+        "std::os::unix::fs::chown",
+        "std::os::unix::fs::lchown",
+        "std::thread::Builder::spawn",
+        "std::thread::scope",
+        "std::time::SystemTime::elapsed",
+        "std::process::id",
     ];
     // Minted only inside the CLI's door modules; the core defines them, so only the root lists them.
     const CLI_ONLY: [&str; 3] = [
