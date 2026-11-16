@@ -37,9 +37,10 @@ problem, not a skip. A word run through `command`, `exec`, `env` or another pref
 excused by a shell function of the same name.
 
 A tracked file that a call runs or sources by a literal path (`./FILE`, `bash FILE`,
-`python3 FILE`, `. FILE`, `bash < FILE`, `< FILE bash`, `0< FILE sh`, `python3 - < FILE`) is read
-in the language it runs in; standard input (`<`, `0<`, or a here-string `<<< TEXT`, whose TEXT is
-read) counts as the script only when the shell or Python got no script file and no `-c`. It is
+`python3 FILE`, `. FILE`, `bash < FILE`, `< FILE bash`, `0< FILE sh`, `bash <>FILE`,
+`python3 - < FILE`, `bash -- < FILE`) is read in the language it runs in; standard input on the
+simple command itself (`<`, `0<`, `<>`, `0<>`, or a here-string `<<< TEXT`, whose TEXT is read)
+counts as the script only when the shell or Python got no script file and no `-c`. It is
 read with or without an extension or a `#!` line; the functions of a sourced file count for the
 file that sources it. A file another file runs by a literal path may not be one that ONLY_IN lets
 call commands the gate image lacks (it is named).
@@ -48,7 +49,10 @@ Stated limits (each needs a deliberate author): a Python call whose program is n
 (a variable, `sys.executable`, an argument list built by a call other than `'...'.split()` and
 `shlex.split('...')`, a process function bound to another name by assignment) is not resolved;
 a script run or sourced through a non-literal path, a pipe (`cat FILE | bash`) or a process
-substitution (`bash <(...)`, `. <(...)`) is not read; a data here-document that a later line
+substitution (`bash <(...)`, `. <(...)`) is not read, nor standard input the shell or Python
+inherits from elsewhere: a redirect on a group, subshell or loop (`{ bash; } < FILE`,
+`( bash ) < FILE`, `done < FILE`), an earlier `exec < FILE`, a duplicated descriptor
+(`exec 3< FILE` then `bash <&3`), or a Python `stdin=` argument; a data here-document that a later line
 runs is not read; a command reached only through a non-literal path is pinned by
 DYNAMIC, not resolved; commands run by another program's own language or configuration are not
 read: a program in IMAGE told to run a command by an argument, an option, its configuration or
@@ -540,7 +544,10 @@ def operand_word(state, value, raw):
 
 def stdin_runner(script):
     """The RUNS marker when the command's standard input is its script: a shell or Python that got
-    no script file and no `-c` (also after `-s` or `-`, or with an option argument pending)."""
+    no script file and no `-c` (also after `-s`, `-` or a `--` with no file after it, or with an
+    option argument pending)."""
+    if isinstance(script, tuple) and script[0] == 'file-next' and script[1] in ('(sh)', '(py)'):
+        return script[1]  # `bash -- < FILE`, `python3 -- < FILE`: no file came after `--`
     base = script[1] if isinstance(script, tuple) and script[0] == 'option-argument' else script
     if base in SHELLS or base == 'stdin-sh':
         return '(sh)'
@@ -568,7 +575,7 @@ def command_words(tokens, calls):
     found, functions = [], set()
     expect, mode, prefix, owner, script = True, None, None, None, None
     finding = by_find = skip_parens = after_coproc = False
-    stdin_words = []  # (operator, word) of `<`/`<<<` in the current simple command
+    stdin_words = []  # (operator, word) of `<`/`<>`/`<<<` in the current simple command
     for index, token in enumerate(tokens):
         kind = token[0]
         if kind == 'heredoc':
@@ -582,9 +589,9 @@ def command_words(tokens, calls):
                 calls.extend(python_calls(body, start))
             continue
         if kind == 'redirect':
-            # Standard input (`<`, `0<`, `<<<`), before or after the command word: decided at the
+            # Standard input (`<`, `0<`, `<>`, `0<>`, `<<<`), before or after the command word: decided at the
             # end of the simple command, when it is known whether a shell or Python got a script.
-            stdin = token[1] in ('<', '<<<') and (len(token) < 4 or token[3] in (None, '0'))
+            stdin = token[1] in ('<', '<>', '<<<') and (len(token) < 4 or token[3] in (None, '0'))
             mode = ('stdin-target', mode, token[1]) if stdin else ('target', mode)
             continue
         if kind == 'op':

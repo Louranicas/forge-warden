@@ -181,6 +181,14 @@ TOOLCHAIN_FORM = re.compile(
 # cargo-mutants write only there, and Git can track a file such as `x/target/site.sh`, which must be
 # scanned. `.git` is never a tracked path and is skipped at any depth in the walk.
 ROOT_SKIPPED_DIRS = {"target", "mutants.out", "mutants.out.old"}
+# Git's own list of repository-local variables (`git rev-parse --local-env-vars`, Git 2.56.1), the
+# same list scripts/script_commands.py drops (Q66): inherited, `ls-files` would answer for another
+# repository or index.
+GIT_LOCAL_ENV = frozenset({
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX",
+    "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"})
 
 
 def canonical_toolchains(values):
@@ -213,8 +221,10 @@ def toolchain_candidates(root):
     registry copy is not a site, Keel F5), else every file below `root` (a git-less export such as
     fw-verify's holds only tracked files, and walking everything is the stricter fallback)."""
     try:
+        env = {key: value for key, value in os.environ.items()
+               if key not in GIT_LOCAL_ENV and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
         listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], stdin=subprocess.DEVNULL,
-                                capture_output=True, timeout=60, check=False)
+                                capture_output=True, timeout=60, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired):
         listed = None
     if listed is not None and listed.returncode == 0 and listed.stdout:

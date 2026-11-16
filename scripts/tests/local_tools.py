@@ -248,6 +248,27 @@ class Toolchain(unittest.TestCase):
         tool_versions.check_toolchain_sites(self.root)
 
 
+    def test_inherited_git_variables_do_not_choose_another_index(self):
+        # Bastion LOW on M7-Q65 2df4ed6f: a caller's decoy GIT_DIR / GIT_INDEX_FILE (Q66's class).
+        import subprocess
+        from unittest import mock
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@local.invalid"]
+        decoy = Path(self.directory.name + "-decoy")
+        self.addCleanup(shutil.rmtree, decoy, True)
+        subprocess.run([*git, "init", "-q", str(decoy)], check=True, stdin=subprocess.DEVNULL)
+        (decoy / "ok.txt").write_text("nothing\n")
+        subprocess.run([*git, "-C", str(decoy), "add", "ok.txt"], check=True, stdin=subprocess.DEVNULL)
+        subprocess.run([*git, "-C", str(self.root), "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+        subprocess.run([*git, "-C", str(self.root), "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+        (self.root / "scripts/drift.sh").write_text(DEFAULT + "1.70.0\n")
+        subprocess.run([*git, "-C", str(self.root), "add", "scripts/drift.sh"], check=True, stdin=subprocess.DEVNULL)
+        for decoys in ({"GIT_DIR": str(decoy / ".git"), "GIT_WORK_TREE": str(decoy)},
+                       {"GIT_INDEX_FILE": str(decoy / ".git" / "index")}):
+            with self.subTest(decoys=sorted(decoys)), mock.patch.dict(os.environ, decoys):
+                with self.assertRaisesRegex(ValueError, r"scripts/drift\.sh:1: toolchain 1\.70\.0 drifts"):
+                    tool_versions.check_toolchain_sites(self.root)
+
+
 class ToolchainKeelAttacks(unittest.TestCase):
     """Keel's REQUEST CHANGES e6f07f96 on G-16, F2-F5, kept as planted cases (Toolchain's fixture)."""
 
