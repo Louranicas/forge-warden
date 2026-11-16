@@ -1,13 +1,13 @@
 # Refusal map
 
-Every variant of the 11 enums listed below (10 refusal enums and `Exit`), with the one test that
+Every variant of the 13 enums listed below (12 refusal enums and `Exit`), with the one test that
 observes it. Generated from `crates/forge-warden-core/src/refusal_rows.rs` and
 `crates/forge-warden-cli/src/refusal_rows.rs`, and checked byte for byte by
 `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.
 
-Scope: exactly these 11 enums (`Unverifiable`, `PathError`, `PolicyError`, `RankError`, `SealError`,
-`DateError`, `Exit` in the core; `DoorErrorKind`, `ChildFailure`, `RankerFailure`, `GitFactsFailure` in
-the CLI). Outside it: the reasons inside `RankError::Invalid` (one row for all of them), `Disagreement`
+Scope: exactly these 13 enums (`Unverifiable`, `PathError`, `PolicyError`, `RankError`, `SealError`,
+`DateError`, `Exit` in the core; `DoorErrorKind`, `ChildFailure`, `RankerFailure`, `GitFactsFailure`,
+`BoundFailure`, `RepositoryRefusal` in the CLI). Outside it: the reasons inside `RankError::Invalid` (one row for all of them), `Disagreement`
 (a disagreement with Git becomes a note, not a refusal), the Git allowlist's admission refusals and the
 CLI's named error messages (each reaches the user as one of the exits below), and the refusals of the
 repository scripts (`scripts/hold_ack.py`, `scripts/dogfood.sh`), which have their own tests.
@@ -72,3 +72,20 @@ proven by a plant.
 | `GitFactsFailure::Door` | `crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git` |
 | `GitFactsFailure::Refused` | `crates/forge-warden-cli/src/doors/mod.rs::git_facts_reproduces_the_coverage_corpus_captures_byte_for_byte` |
 | `GitFactsFailure::Unavailable` | `crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git` |
+| `BoundFailure::Door` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_names_a_setup_failure_as_a_door_failure` |
+| `BoundFailure::Repository` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `BoundFailure::Ids` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_takes_only_full_commit_ids` |
+| `BoundFailure::NotACommit` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_takes_only_full_commit_ids` |
+| `BoundFailure::NoCommonHistory` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_several_merge_bases_and_no_common_history` |
+| `BoundFailure::SeveralMergeBases` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_several_merge_bases_and_no_common_history` |
+| `BoundFailure::Store` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name` |
+| `BoundFailure::VerifiedMergeBase` | `crates/forge-warden-cli/src/doors/mod.rs::the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give` |
+| `BoundFailure::Unavailable` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_stops_at_its_deadline_and_leaves_nothing` |
+| `RepositoryRefusal::NotUtf8` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::PathCharacters` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::GitFile` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::GitSymlink` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::NotARepository` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::ObjectsMissing` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::Alternates` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |
+| `RepositoryRefusal::Shallow` | `crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository` |

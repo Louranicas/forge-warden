@@ -1206,7 +1206,7 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
                     (common::is_door_file(self.path)
                         && matches!(
                             name.as_str(),
-                            "git_facts" | "git_version" | "produce_ranking"
+                            "git_facts" | "git_version" | "produce_ranking" | "bound_diff"
                         ))
                         || self.path == "crates/forge-warden-cli/tests/check_vocab.rs",
                     "{}::{name}: raw temporary root requires a reviewed unique allocator",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# forge-warden patch-maker v1
+# forge-warden patch-maker v2
 # Write, on stdout, the patch forge-warden should judge for the change from BASE to HEAD.
 # Usage: make_patch.sh <base> <head> [<repository>]      (repository: default, the current directory)
 #
@@ -32,7 +32,14 @@ head="$(git -C "$repository" rev-parse --verify --quiet --end-of-options "$2^{co
 objects="$(git -C "$repository" rev-parse --path-format=absolute --git-path objects)"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
-git init --quiet --bare "$scratch/diff.git"
+# The private repository has the store's object format (40 hex digits: SHA-1, 64: SHA-256), as the
+# door's bound mode does; a SHA-1 repository cannot read a SHA-256 store's objects (H18).
+case "${#base}" in
+  40) format=sha1 ;;
+  64) format=sha256 ;;
+  *) echo "make_patch: unexpected object id length ${#base}: $base" >&2; exit 2 ;;
+esac
+git init --quiet --bare --object-format="$format" "$scratch/diff.git"
 printf '%s\n' "$objects" > "$scratch/diff.git/objects/info/alternates"
 # Attributes come from the empty tree, not from any work tree: a `.gitattributes` saying `-diff`
 # or `binary` would otherwise turn added text into a binary patch the judge cannot read.
@@ -45,5 +52,5 @@ empty_tree="$(git --git-dir="$scratch/diff.git" hash-object -t tree /dev/null)"
 # that the README and the runbook print the same command.
 git --git-dir="$scratch/diff.git" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
   -c core.quotePath=true \
-  diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none \
+  diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none \
   "$base...$head"
