@@ -2449,7 +2449,7 @@
         "every_bound_mode_git_child_runs_under_the_memory_caps"
       ],
       "old": "        data: caps.data,\n        address_space: caps.address_space,",
-      "new": "        data: u64::MAX,\n        address_space: u64::MAX,",
+      "new": "        data: caps.data.max(u64::MAX),\n        address_space: caps.address_space.max(u64::MAX),",
       "required_tools": [
         "cargo",
         "git",
