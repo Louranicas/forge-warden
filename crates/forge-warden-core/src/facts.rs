@@ -702,10 +702,10 @@ impl FileChange {
     /// mode closes). `None` for a deletion, and for a text edit, whose mode the facts do not read.
     #[must_use]
     pub const fn resulting_mode(&self) -> Option<Mode> {
-        match (self.kind, self.new_mode, self.kept_mode) {
-            (ChangeKind::Deleted, _, _) => None,
-            (_, Some(mode), _) | (_, None, Some(mode)) => Some(mode),
-            (_, None, None) => None,
+        match (self.kind, self.new_mode) {
+            (ChangeKind::Deleted, _) => None,
+            (_, Some(mode)) => Some(mode),
+            (_, None) => self.kept_mode,
         }
     }
 }
