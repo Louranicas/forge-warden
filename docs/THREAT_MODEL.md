@@ -140,7 +140,12 @@ implemented control for each property and why a stronger claim is unavailable.
   (`patch_unverifiable`). **A verdict is about the patch bytes it was
   given, with paths read from the repository root. forge-warden does not check that the patch
   is the whole change between two commits; `--base` and `--head` are recorded as unverified
-  claims.** Whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which
+  claims.** That stays true for runs without `--repo`. For a bound run (`--repo`, ADR 0012 D6) the
+  patch is `git diff merge-base..head` of the named commits, made by the admitted Git from objects it
+  re-hashed when copying them out of the named repository: a store that holds bytes other than its
+  ids name is refused, not believed, and the verdict records the claims as verified. forge-warden does
+  not attest that those commits are the ones your pull request names (that is your CI's checkout and
+  the ids it passes). Without `--repo`, whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which
   `scripts/dogfood.sh` calls and the documents tell operators to use, makes it in a repository
   of its own that reads no configuration, with every option fixed. A patch made by hand
   with other settings can still pass for less than the change it claims to be.
@@ -165,8 +170,9 @@ implemented control for each property and why a stronger claim is unavailable.
   version string did not uniquely identify the parser-fix revision. Digest enrollment
   identifies an executable; the owner must qualify its provenance and behavior.
   Warden does not fix or certify DDF's parser, upstream release, or all code findings.
-- Patch seals do not prove applicability to a specific base tree. CLI base/head claims
-  are caller assertions; an external controller must bind the actual diff and subject.
+- Patch seals do not prove applicability to a specific base tree. Without `--repo`, CLI base/head
+  claims are caller assertions; an external controller must bind the actual diff and subject. With
+  `--repo`, forge-warden binds the diff to the commits but not to the pull request that names them.
   A signed HOLD receipt is scoped consent, not a signature on every verdict or a way
   to turn missing evidence into PASS.
 - Source checks cover the supported gate platform, default features/all-targets and

@@ -78,7 +78,7 @@ fn rich_verdict() -> Value {
 
 #[test]
 fn verdict_schema_tracks_the_serialized_document() {
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v3.schema.json")).unwrap();
     let defs = &schema["$defs"];
     let v = rich_verdict();
 
@@ -89,7 +89,30 @@ fn verdict_schema_tracks_the_serialized_document() {
     let seals = &schema["properties"]["seals"]["properties"];
     conforms(&v["seals"]["ranked_by"], &seals["ranked_by"], "ranked_by");
     conforms(&v["seals"]["git"], &seals["git"]["oneOf"][0], "git");
-    conforms(&v["seals"]["claims"], &seals["claims"], "claims");
+    // Claims (v3): oneOf bound or asserted; the rich verdict's claims are asserted, exactly v2's shape.
+    conforms(
+        &v["seals"]["claims"],
+        &seals["claims"]["oneOf"][1],
+        "claims",
+    );
+    let v2: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
+    assert_eq!(
+        seals["claims"]["oneOf"][1], v2["properties"]["seals"]["properties"]["claims"],
+        "asserted claims are v2's object, unchanged"
+    );
+    // A bound claims object fits the bound shape, and v2 refuses it (verified is const false there).
+    let bound = serde_json::json!({
+        "base": "1".repeat(40), "head": "2".repeat(40), "merge_base": "3".repeat(40), "verified": true
+    });
+    conforms(&bound, &seals["claims"]["oneOf"][0], "bound claims");
+    assert_eq!(
+        seals["claims"]["oneOf"][0]["properties"]["verified"]["const"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        v2["properties"]["seals"]["properties"]["claims"]["properties"]["verified"]["const"],
+        Value::Bool(false)
+    );
     let mut seen = BTreeSet::new();
     for rule in v["rules"].as_array().unwrap() {
         conforms(rule, &defs["rule"], "rule");
@@ -173,7 +196,7 @@ fn policy_schema_tracks_the_reader() {
 fn schema_subcommand_prints_the_committed_files() {
     assert_eq!(
         run(&["schema", "verdict"], b"").stdout,
-        read("schemas/verdict.v2.schema.json")
+        read("schemas/verdict.v3.schema.json")
     );
     assert_eq!(
         run(&["schema", "policy"], b"").stdout,
@@ -190,7 +213,7 @@ fn schema_subcommand_prints_the_committed_files() {
 #[test]
 fn every_note_code_is_in_the_schema_and_nothing_else_is() {
     // B2 added `duplicate_paths` without the schema enum; the code list now drives this check.
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v3.schema.json")).unwrap();
     let enumerated = strings(&schema["$defs"]["note"]["properties"]["code"]["enum"]);
     let codes: BTreeSet<String> = forge_warden_core::verdict::NoteCode::ALL
         .iter()
@@ -237,7 +260,7 @@ fn the_reference_documents_every_note_code_and_seal_exactly_once() {
         "the Notes table lists every NoteCode once, in declaration order"
     );
 
-    let schema: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/verdict.v3.schema.json")).unwrap();
     let seals: BTreeSet<String> = table_keys(&doc, "\n## Verdict seals").into_iter().collect();
     assert_eq!(seals, keys(&schema["properties"]["seals"]["properties"]));
     assert_eq!(

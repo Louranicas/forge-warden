@@ -145,9 +145,8 @@ an authority-mode `check`, and forge-warden makes `git diff merge-base..head` it
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
 (exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). In a
 linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
-(util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. In this revision the
-comparison runs and refuses a mismatch, but the verdict still records `--base` and `--head` as
-unverified claims; verdict v3 records them as verified.
+(util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. A match records the
+claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
 next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.

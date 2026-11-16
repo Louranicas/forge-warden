@@ -57,7 +57,7 @@ class BoundAck(unittest.TestCase):
         self.base, self.head = "a" * 40, "b" * 40
         self.verdict = json.loads((ROOT / "fixtures/demo.verdict.json").read_bytes())
         # The golden is advisory (supplied ranking); an acknowledgeable HOLD is authority mode.
-        self.verdict["schema"] = "forge-warden.verdict.v2"
+        self.verdict["schema"] = "forge-warden.verdict.v3"
         self.verdict["seals"]["git"].update({"admission": "approved", "sha256": "d" * 64,
             "allowlist_sha256": hashlib.sha256(self.git_policy.read_bytes()).hexdigest()})
         self.verdict["seals"]["provenance"] = "produced"
@@ -134,6 +134,26 @@ class BoundAck(unittest.TestCase):
         self.verify(True)
         self.head = "c" * 40
         self.verify()
+
+    def test_verified_claims_must_name_the_acknowledged_commits(self):
+        # v3 (ADR 0012): bound-mode claims are verified; they must be the ack's base and head.
+        original = json.dumps(self.verdict)
+        for label, base, head, code in (("same", self.base, self.head, 0), ("other-base", "c" * 40, self.head, 8),
+                                        ("other-head", self.base, "c" * 40, 8)):
+            with self.subTest(label=label):
+                self.verdict = json.loads(original)
+                self.verdict["seals"]["claims"] = {"base": base, "head": head, "merge_base": base,
+                                                   "verified": True}
+                self.write_verdict()
+                out = self.run_helper("prepare", "--signer", "fixture")
+                self.assertEqual(out.returncode, code, out.stderr)
+                if code:
+                    self.assertIn(b"verified claims name other commits", out.stderr)
+        # v2 is no longer read: 0.3.0 writes v3 only.
+        self.verdict = json.loads(original)
+        self.verdict["schema"] = "forge-warden.verdict.v2"
+        self.write_verdict()
+        self.assertEqual(self.run_helper("prepare", "--signer", "fixture").returncode, 8)
 
     def test_new_base_invalidates(self):
         self.base = "d" * 40

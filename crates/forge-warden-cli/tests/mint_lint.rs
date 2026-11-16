@@ -142,7 +142,7 @@ pub fn pickers(
 
 /// EFFECT-WALL.2 (review candidate C1, reproduced on main): effects the lists did not name. Each
 /// `// FORM:` line must be refused under the CLI configuration and under the core's.
-const EFFECT_PLANTS: &str = r"
+const EFFECT_PLANTS: &str = r#"
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
@@ -157,10 +157,33 @@ pub fn forms(p: &Path) -> usize {
     let _f = std::os::unix::fs::symlink(p, p); // FORM: std::os::unix::fs::symlink
     let _g = std::os::unix::net::UnixStream::connect(p); // FORM: std::os::unix::net::UnixStream::connect
     let _h = Path::exists(p); // FORM: Path::exists UFCS
+    // M7-EFFECT-WALL stop-gap: the effects measured unlisted on 92a9ac99.
+    let _s00 = p.is_file(); // FORM: std::path::Path::is_file
+    let _s01 = p.is_dir(); // FORM: std::path::Path::is_dir
+    let _s02 = p.read_dir(); // FORM: std::path::Path::read_dir
+    let _s03 = p.canonicalize(); // FORM: std::path::Path::canonicalize
+    let _s04 = p.read_link(); // FORM: std::path::Path::read_link
+    let _s05 = p.symlink_metadata(); // FORM: std::path::Path::symlink_metadata
+    let _s06 = p.try_exists(); // FORM: std::path::Path::try_exists
+    let _s07 = std::fs::exists(p); // FORM: std::fs::exists
+    let _s08 = std::fs::File::options().read(true).open(p); // FORM: std::fs::File::options
+    let _s09 = std::fs::File::create_new(p); // FORM: std::fs::File::create_new
+    let _s10 = std::net::ToSocketAddrs::to_socket_addrs("localhost:1"); // FORM: std::net::ToSocketAddrs::to_socket_addrs
+    let _s11 = std::os::unix::net::UnixListener::bind(p); // FORM: std::os::unix::net::UnixListener::bind
+    let _s12 = std::os::unix::net::UnixDatagram::bind(p); // FORM: std::os::unix::net::UnixDatagram::bind
+    let _s13 = std::os::unix::net::UnixDatagram::unbound(); // FORM: std::os::unix::net::UnixDatagram::unbound
+    let _s14 = std::os::unix::net::UnixStream::pair(); // FORM: std::os::unix::net::UnixStream::pair
+    let _s15 = std::env::current_exe(); // FORM: std::env::current_exe
+    let _s16 = std::os::unix::fs::chown(p, None, None); // FORM: std::os::unix::fs::chown
+    let _s17 = std::os::unix::fs::lchown(p, None, None); // FORM: std::os::unix::fs::lchown
+    let _s18 = std::thread::Builder::new().spawn(|| ()); // FORM: std::thread::Builder::spawn
+    let _s19 = std::thread::scope(|_| ()); // FORM: std::thread::scope
+    let _s20 = std::time::SystemTime::UNIX_EPOCH.elapsed(); // FORM: std::time::SystemTime::elapsed
+    let _s21 = std::process::id(); // FORM: std::process::id
     n += usize::from(p.is_absolute()); // CONTROL: a question about the path that reads nothing
     n
 }
-";
+"#;
 
 /// EFFECT-WALL.2 (review candidate C4, reproduced): the two `GitOracle` constructors were listed in
 /// `clippy.toml` and guarded by nothing; removing either entry turned no test red. Each form must be

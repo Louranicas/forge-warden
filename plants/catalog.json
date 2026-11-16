@@ -651,6 +651,32 @@
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
+      "id": "bound-claims-second-call",
+      "guardrail": "G-12",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "only_bound_mode_verifies_claims.*FAILED",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "only_bound_mode_verifies_claims"
+      ],
+      "old": "            _ => claims,\n",
+      "new": "            _ => claims.or_else(|| { let same = BoundIds::new(&\"a\".repeat(40), &\"a\".repeat(40), &\"a\".repeat(40)).ok()?; BoundClaims::from_comparison(same, &patch, &patch).ok().map(Claims::bound) }),\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
       "id": "post-msrv-string-api",
       "guardrail": "G-51",
       "path": "crates/forge-warden-core/src/render.rs",
@@ -1215,8 +1241,8 @@
         "scripts/tests/hold_ack.py",
         "BoundAck.test_unpinned_git_and_v1_are_refused"
       ],
-      "old": "verdict[\"schema\"] == \"forge-warden.verdict.v2\"",
-      "new": "verdict[\"schema\"] in (\"forge-warden.verdict.v1\", \"forge-warden.verdict.v2\")",
+      "old": "verdict[\"schema\"] == \"forge-warden.verdict.v3\"",
+      "new": "verdict[\"schema\"] in (\"forge-warden.verdict.v1\", \"forge-warden.verdict.v3\")",
       "required_tools": [
         "python3",
         "ssh-keygen"
@@ -2326,7 +2352,7 @@
     {
       "id": "bound-comparison-removed",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/main.rs",
+      "path": "crates/forge-warden-core/src/verdict.rs",
       "diagnostic": "bound_mode_compares_before_any_ranker_is_admitted \\.\\.\\. FAILED",
       "cargo": [
         "test",
@@ -2339,8 +2365,8 @@
         "--",
         "bound_mode_compares_before_any_ranker_is_admitted"
       ],
-      "old": "    if made.patch == patch {",
-      "new": "    if true || made.patch == patch {",
+      "old": "        if supplied == made {",
+      "new": "        if true || supplied == made {",
       "required_tools": [
         "cargo",
         "git",
