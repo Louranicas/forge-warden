@@ -1,0 +1,128 @@
+=== forge-warden --help (exit 0)
+--- stdout
+Change policy as code for deep-diff-forge reviews: a sealed, deterministic gate.
+
+Usage: forge-warden <COMMAND>
+
+Commands:
+  check    Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+  lint     Validate a policy without judging anything; lists every issue at once
+  explain  Explain an exit code (by number or name) and the action it asks for
+  schema   Print a JSON Schema or the exit-code registry
+  init     Print a starter policy: `forge-warden init > warden.toml`
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Exit codes: forge-warden schema exit-codes · forge-warden explain <code>
+--- stderr
+=== forge-warden check --help (exit 0)
+--- stdout
+Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+
+Usage: forge-warden check [OPTIONS] --policy <FILE> --patch <FILE> <--ranker <FILE>|--advisory>
+
+Options:
+      --policy <FILE>  The policy file
+      --patch <FILE>   The patch to judge (`git diff --binary --no-renames`). Read once; the ranker and Git both read that one buffer. `--patch -` is refused: stdin is reserved for `--rank -`
+      --ranker <FILE>  Authority mode: the deep-diff-forge binary to run. Its SHA-256 must be listed in the policy's `[producer] sha256`
+      --advisory       Advisory mode: judge the ranking given with `--rank`. The verdict is hold or fail, never pass
+      --rank <FILE>    A ranking document (`-` reads stdin). Advisory mode judges it; authority mode compares it with the produced ranking and holds (`rank_mismatch`) if they differ
+      --git <FILE>     The Git that reads the patch's facts (absolute; recorded in the verdict) [default: /usr/bin/git]
+      --base <REV>     A claimed base commit (hex), recorded unverified in the verdict
+      --head <REV>     A claimed head commit (hex), recorded unverified in the verdict
+      --repo <DIR>     Bound mode (ADR 0012, authority mode only): the repository whose objects hold --base and --head (full ids). forge-warden makes `git diff merge-base..head` itself, from a verified copy of those objects, and refuses a --patch that is not byte-equal to it. For a linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`
+      --today <DATE>   Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC)
+      --json           Print the forge-warden.verdict.v3 document instead of the human summary
+  -h, --help           Print help
+--- stderr
+=== forge-warden lint --help (exit 0)
+--- stdout
+Validate a policy without judging anything; lists every issue at once
+
+Usage: forge-warden lint [OPTIONS] <POLICY>
+
+Arguments:
+  <POLICY>  The policy file
+
+Options:
+      --json  Print the forge-warden.lint.v1 document; failures are one JSON line on stderr
+  -h, --help  Print help
+--- stderr
+=== forge-warden explain --help (exit 0)
+--- stdout
+Explain an exit code (by number or name) and the action it asks for
+
+Usage: forge-warden explain [OPTIONS] <CODE>
+
+Arguments:
+  <CODE>  A code such as `7`, or a name such as `policy_hold`
+
+Options:
+      --json  Keep the JSON result; also format failures as one JSON line on stderr
+  -h, --help  Print help
+--- stderr
+=== forge-warden schema --help (exit 0)
+--- stdout
+Print a JSON Schema or the exit-code registry
+
+Usage: forge-warden schema [OPTIONS] <WHAT>
+
+Arguments:
+  <WHAT>  What to print [possible values: verdict, policy, exit-codes, lint, error, exit-entry, exit-codes-schema]
+
+Options:
+      --json  Keep the JSON result; also format failures as one JSON line on stderr
+  -h, --help  Print help
+--- stderr
+=== forge-warden init --help (exit 0)
+--- stdout
+Print a starter policy: `forge-warden init > warden.toml`
+
+Usage: forge-warden init
+
+Options:
+  -h, --help  Print help
+--- stderr
+=== forge-warden help (exit 0)
+--- stdout
+Change policy as code for deep-diff-forge reviews: a sealed, deterministic gate.
+
+Usage: forge-warden <COMMAND>
+
+Commands:
+  check    Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+  lint     Validate a policy without judging anything; lists every issue at once
+  explain  Explain an exit code (by number or name) and the action it asks for
+  schema   Print a JSON Schema or the exit-code registry
+  init     Print a starter policy: `forge-warden init > warden.toml`
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Exit codes: forge-warden schema exit-codes · forge-warden explain <code>
+--- stderr
+=== forge-warden help check (exit 0)
+--- stdout
+Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+
+Usage: forge-warden check [OPTIONS] --policy <FILE> --patch <FILE> <--ranker <FILE>|--advisory>
+
+Options:
+      --policy <FILE>  The policy file
+      --patch <FILE>   The patch to judge (`git diff --binary --no-renames`). Read once; the ranker and Git both read that one buffer. `--patch -` is refused: stdin is reserved for `--rank -`
+      --ranker <FILE>  Authority mode: the deep-diff-forge binary to run. Its SHA-256 must be listed in the policy's `[producer] sha256`
+      --advisory       Advisory mode: judge the ranking given with `--rank`. The verdict is hold or fail, never pass
+      --rank <FILE>    A ranking document (`-` reads stdin). Advisory mode judges it; authority mode compares it with the produced ranking and holds (`rank_mismatch`) if they differ
+      --git <FILE>     The Git that reads the patch's facts (absolute; recorded in the verdict) [default: /usr/bin/git]
+      --base <REV>     A claimed base commit (hex), recorded unverified in the verdict
+      --head <REV>     A claimed head commit (hex), recorded unverified in the verdict
+      --repo <DIR>     Bound mode (ADR 0012, authority mode only): the repository whose objects hold --base and --head (full ids). forge-warden makes `git diff merge-base..head` itself, from a verified copy of those objects, and refuses a --patch that is not byte-equal to it. For a linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`
+      --today <DATE>   Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC)
+      --json           Print the forge-warden.verdict.v3 document instead of the human summary
+  -h, --help           Print help
+--- stderr

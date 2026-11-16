@@ -1,0 +1,92 @@
+=== forge-warden  (exit 2)
+--- stdout
+--- stderr
+Change policy as code for deep-diff-forge reviews: a sealed, deterministic gate.
+
+Usage: forge-warden <COMMAND>
+
+Commands:
+  check    Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+  lint     Validate a policy without judging anything; lists every issue at once
+  explain  Explain an exit code (by number or name) and the action it asks for
+  schema   Print a JSON Schema or the exit-code registry
+  init     Print a starter policy: `forge-warden init > warden.toml`
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Exit codes: forge-warden schema exit-codes \u{00b7} forge-warden explain <code>
+=== forge-warden frobnicate (exit 2)
+--- stdout
+--- stderr
+error: unrecognized subcommand 'frobnicate'
+
+Usage: forge-warden <COMMAND>
+
+For more information, try '--help'.
+=== forge-warden check (exit 2)
+--- stdout
+--- stderr
+error: the following required arguments were not provided:
+  --policy <FILE>
+  --patch <FILE>
+  <--ranker <FILE>|--advisory>
+
+Usage: forge-warden check --policy <FILE> --patch <FILE> <--ranker <FILE>|--advisory>
+
+For more information, try '--help'.
+=== forge-warden check --policy examples/starter.warden.toml (exit 2)
+--- stdout
+--- stderr
+error: the following required arguments were not provided:
+  --patch <FILE>
+  <--ranker <FILE>|--advisory>
+
+Usage: forge-warden check --policy <FILE> --patch <FILE> <--ranker <FILE>|--advisory>
+
+For more information, try '--help'.
+=== forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.patch --advisory (exit 2)
+--- stdout
+--- stderr
+error: the following required arguments were not provided:
+  --rank <FILE>
+
+Usage: forge-warden check --policy <FILE> --patch <FILE> --rank <FILE> <--ranker <FILE>|--advisory>
+
+For more information, try '--help'.
+=== forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.patch --advisory --rank fixtures/demo.rank.json --today 2026-13-01 (exit 2)
+--- stdout
+--- stderr
+forge-warden: --today "2026-13-01" is not a YYYY-MM-DD date: it is not a calendar date
+next: fix_invocation (forge-warden explain 2)
+=== forge-warden lint (exit 2)
+--- stdout
+--- stderr
+error: the following required arguments were not provided:
+  <POLICY>
+
+Usage: forge-warden lint <POLICY>
+
+For more information, try '--help'.
+=== forge-warden explain 99 (exit 2)
+--- stdout
+--- stderr
+forge-warden: "99" is not a documented exit code or name
+next: fix_invocation (forge-warden explain 2)
+=== forge-warden schema nope (exit 2)
+--- stdout
+--- stderr
+error: invalid value 'nope' for '<WHAT>'
+  [possible values: verdict, policy, exit-codes, lint, error, exit-entry, exit-codes-schema]
+
+For more information, try '--help'.
+=== forge-warden init extra (exit 2)
+--- stdout
+--- stderr
+error: unexpected argument 'extra' found
+
+Usage: forge-warden init
+
+For more information, try '--help'.
