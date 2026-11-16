@@ -44,7 +44,8 @@ two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
 - [x] [The runbook](RUNBOOK.md), step 2: what was run for v0.2.0, and that 0.2.1's install run comes after
   the tag (this preparation).
 - [x] [Upgrading](UPGRADING.md): "0.2.0 to 0.2.1" (this preparation).
-- [ ] `EVIDENCE.md`: a 0.2.1 section with the numbers of the release commit.
+- [x] `EVIDENCE.md`: a 0.2.1 section with the numbers of the release candidate (this preparation); the integrator
+  gate's receipt on the release commit is the one line left for the integrator.
 
 ## Gate
 
