@@ -38,8 +38,9 @@ COUNT_SENTENCE = re.compile(
     r'This revision implements (?P<plants>\d+) named plants over (?P<rows>\d+) guardrail rows '
     r'\(the gate admits at most (?P<capacity>\d+): `GATE_PLANT_CAPACITY` in `scripts/plant_tools\.py`\); '
     r'Q3-07/Q3-10 strengthen G-45/G-24, and (?P<z3>\d+) `z3-\*` cases exercise G-45\. '
-    r'The remaining (?P<pending>\d+) register rows \((?P<pending_ids>G-\d+(?:, G-\d+)*)\) '
-    r'are explicitly PENDING')
+    r'Of the remaining register rows, (?P<pending>\d+) are explicitly PENDING'
+    r'(?: \((?P<pending_ids>G-\d+(?:, G-\d+)*)\))? and (?P<retired>\d+) are RETIRED '
+    r'\((?P<retired_ids>G-\d+(?:, G-\d+)*)\)')
 
 
 def problems(root, cases):
@@ -93,6 +94,7 @@ def readme_problems(readme, catalog, capacity):
                 '(its shape is COUNT_SENTENCE in plants/anchors.py)']
     said = matches[0].groupdict()
     cases, pending = catalog['cases'], catalog['pending_guardrails']
+    retired = catalog['retired_guardrails']
     z3 = [case for case in cases if case['id'].startswith('z3-')]
     derived = {
         'plants': str(len(cases)),
@@ -101,9 +103,15 @@ def readme_problems(readme, catalog, capacity):
         'z3': str(len(z3)),
         'pending': str(len(pending)),
         'pending_ids': ', '.join(row['id'] for row in pending),
+        'retired': str(len(retired)),
+        'retired_ids': ', '.join(row['id'] for row in retired),
     }
-    found = [f'README: {key} says {said[key]!r}, the catalogue gives {value!r}'
-             for key, value in derived.items() if said[key] != value]
+    found = [f'README: {key} says {said[key] or ""!r}, the catalogue gives {value!r}'
+             for key, value in derived.items() if (said[key] or '') != value]
+    if any(row.get('status') != 'RETIRED' or not row.get('decision') for row in retired):
+        found.append('README: a retired register row has no RETIRED status or no decision')
+    if {row['id'] for row in retired} & {case['guardrail'] for case in cases}:
+        found.append('README: a retired register row still has a runnable case')
     if any(case['guardrail'] != 'G-45' for case in z3):
         found.append('README: a z3-* case does not exercise G-45')
     return found

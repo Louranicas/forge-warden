@@ -89,30 +89,59 @@ fn verdict_schema_tracks_the_serialized_document() {
     let seals = &schema["properties"]["seals"]["properties"];
     conforms(&v["seals"]["ranked_by"], &seals["ranked_by"], "ranked_by");
     conforms(&v["seals"]["git"], &seals["git"]["oneOf"][0], "git");
-    // Claims (v3): oneOf bound or asserted; the rich verdict's claims are asserted, exactly v2's shape.
-    conforms(
-        &v["seals"]["claims"],
-        &seals["claims"]["oneOf"][1],
-        "claims",
-    );
+    // Claims (v3): oneOf bound with SHA-1 ids, bound with SHA-256 ids, or asserted (ledger Q73: one shape per
+    // id length, so the schema says what BoundIds enforces); the rich verdict's claims are asserted.
+    let shapes = seals["claims"]["oneOf"].as_array().unwrap();
+    assert_eq!(shapes.len(), 3);
+    let asserted = shapes.get(2).unwrap();
+    conforms(&v["seals"]["claims"], asserted, "claims");
     let v2: Value = serde_json::from_str(&read("schemas/verdict.v2.schema.json")).unwrap();
     assert_eq!(
-        seals["claims"]["oneOf"][1], v2["properties"]["seals"]["properties"]["claims"],
+        *asserted, v2["properties"]["seals"]["properties"]["claims"],
         "asserted claims are v2's object, unchanged"
-    );
-    // A bound claims object fits the bound shape, and v2 refuses it (verified is const false there).
-    let bound = serde_json::json!({
-        "base": "1".repeat(40), "head": "2".repeat(40), "merge_base": "3".repeat(40), "verified": true
-    });
-    conforms(&bound, &seals["claims"]["oneOf"][0], "bound claims");
-    assert_eq!(
-        seals["claims"]["oneOf"][0]["properties"]["verified"]["const"],
-        Value::Bool(true)
     );
     assert_eq!(
         v2["properties"]["seals"]["properties"]["claims"]["properties"]["verified"]["const"],
-        Value::Bool(false)
+        Value::Bool(false),
+        "v2 refuses a bound claim"
     );
+    // A bound claim fits exactly the shape of its id length; a mixed-length claim fits none.
+    let fits = |claim: &Value, shape: &Value| {
+        let pattern_len = |key: &str| {
+            let p = shape["properties"][key]["pattern"].as_str().unwrap();
+            p.strip_prefix("^[0-9a-f]{")
+                .and_then(|rest| rest.strip_suffix("}$"))
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+        };
+        shape["properties"]["verified"]["const"] == Value::Bool(true)
+            && ["base", "head", "merge_base"].iter().all(|key| {
+                claim[*key].as_str().is_some_and(|id| {
+                    id.len() == pattern_len(key)
+                        && id
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+            })
+    };
+    let (sha1, sha256) = (shapes.first().unwrap(), shapes.get(1).unwrap());
+    let claim = |b: usize, h: usize, m: usize| {
+        serde_json::json!({
+            "base": "1".repeat(b), "head": "2".repeat(h), "merge_base": "3".repeat(m), "verified": true
+        })
+    };
+    for (shape, n) in [(sha1, 40), (sha256, 64)] {
+        conforms(&claim(n, n, n), shape, "bound claims");
+        assert!(fits(&claim(n, n, n), shape), "{n}");
+    }
+    assert!(!fits(&claim(40, 40, 40), sha256) && !fits(&claim(64, 64, 64), sha1));
+    for mixed in [claim(40, 64, 40), claim(64, 40, 64), claim(40, 40, 64)] {
+        assert!(
+            !fits(&mixed, sha1) && !fits(&mixed, sha256),
+            "a mixed-length claim fits no shape: {mixed}"
+        );
+    }
     let mut seen = BTreeSet::new();
     for rule in v["rules"].as_array().unwrap() {
         conforms(rule, &defs["rule"], "rule");
@@ -150,7 +179,24 @@ fn verdict_schema_tracks_the_serialized_document() {
 
 #[test]
 fn policy_schema_tracks_the_reader() {
-    let schema: Value = serde_json::from_str(&read("schemas/policy.v0.schema.json")).unwrap();
+    let schema: Value = serde_json::from_str(&read("schemas/policy.v1.schema.json")).unwrap();
+    // v1 = v0 plus the optional [claims] table (ADR 0012 D8); v0 stays as history, unchanged below it.
+    let v0: Value = serde_json::from_str(&read("schemas/policy.v0.schema.json")).unwrap();
+    let mut v1_top = keys(&schema["properties"]);
+    assert!(v1_top.remove("claims"));
+    assert_eq!(v1_top, keys(&v0["properties"]));
+    assert_eq!(
+        schema["$defs"], v0["$defs"],
+        "rules, waivers and signals are v0's"
+    );
+    assert_eq!(
+        keys(&schema["properties"]["claims"]["properties"]),
+        BTreeSet::from(["require_verified".to_owned()])
+    );
+    assert_eq!(
+        schema["properties"]["claims"]["additionalProperties"],
+        Value::Bool(false)
+    );
     let rule = &schema["$defs"]["rule"];
     let mut accepted: BTreeSet<String> = ["id", "why", "kind", "severity"]
         .iter()
@@ -200,7 +246,7 @@ fn schema_subcommand_prints_the_committed_files() {
     );
     assert_eq!(
         run(&["schema", "policy"], b"").stdout,
-        read("schemas/policy.v0.schema.json")
+        read("schemas/policy.v1.schema.json")
     );
     let registry: Value =
         serde_json::from_str(&run(&["schema", "exit-codes"], b"").stdout).unwrap();

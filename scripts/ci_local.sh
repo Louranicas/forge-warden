@@ -36,7 +36,8 @@ if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config
 if command -v deep-diff-forge >/dev/null; then
   step dogfood
   base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
-  git diff --binary --no-renames "$base" > target/change.patch
+  # The judged patch comes from the patch-maker (committed changes only; no caller configuration: H17).
+  bash scripts/make_patch.sh "$base" HEAD > target/change.patch
   if [ -s target/change.patch ]; then
     mode="$(python3 -I scripts/judge_mode.py warden.toml)"
     if [ "$mode" = authority ]; then
