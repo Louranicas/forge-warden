@@ -657,3 +657,57 @@ fn the_hostile_corpus_replays() {
         policy_holds(&bytes);
     }
 }
+
+/// A lone `diff --git` header over a traditional section for another path
+/// (`fixtures/hostile/lone-header/`, M7-HEADER-OWN). Git reports the section's path; the patch
+/// names it in no header, so forge-warden's own check refuses it whatever a ranker believes.
+#[test]
+fn a_lone_git_header_over_another_path_is_never_believed() {
+    let believed = |name: &str| {
+        let read = |suffix: &str| {
+            std::fs::read(root().join(format!("fixtures/hostile/lone-header/{name}.{suffix}")))
+                .unwrap()
+        };
+        PatchFacts::from_git(&read("numstat"), b"", &read("patch")).map(|facts| {
+            facts
+                .files()
+                .map(|file| file.path().as_str().to_owned())
+                .collect::<Vec<_>>()
+        })
+    };
+    let refused = |header: &str| Err(Unverifiable::HeaderPaths(header.to_owned()));
+    assert_eq!(believed("control-good"), Ok(vec!["docs/ok.md".to_owned()]));
+    for name in [
+        "lone-then-traditional",
+        "lone-index-then-traditional",
+        "lone-then-creation",
+        "lone-blank-unprefixed",
+    ] {
+        assert_eq!(
+            believed(name),
+            refused("diff --git a/docs/ok.md b/docs/ok.md"),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        believed("good-then-lone-then-traditional"),
+        refused("diff --git a/docs/n.md b/docs/n.md")
+    );
+    let expected: Vec<String> = [
+        "control-good",
+        "good-then-lone-then-traditional",
+        "lone-blank-unprefixed",
+        "lone-index-then-traditional",
+        "lone-then-creation",
+        "lone-then-traditional",
+    ]
+    .iter()
+    .flat_map(|name| [format!("{name}.numstat"), format!("{name}.patch")])
+    .collect();
+    let found: Vec<String> = files("fixtures/hostile/lone-header", "")
+        .into_iter()
+        .filter_map(|(name, _)| Some(Path::new(&name).file_name()?.to_str()?.to_owned()))
+        .filter(|name| name != "README.md")
+        .collect();
+    assert_eq!(found, expected, "every corpus file is replayed above");
+}

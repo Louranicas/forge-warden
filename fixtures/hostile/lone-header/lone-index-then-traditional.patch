@@ -1,0 +1,7 @@
+diff --git a/docs/ok.md b/docs/ok.md
+index 7898192..6178079 100644
+--- a/scripts/x.sh
++++ b/scripts/x.sh
+@@ -1 +1 @@
+-x
++y

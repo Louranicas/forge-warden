@@ -27,3 +27,5 @@ default; a header Git writes under another setting (`diff.noprefix`, other `diff
 output) was never produced, and that is how a prefix-less patch reached an authority pass on the frozen commit. Those shapes
 are covered by PATCH-PREFIX's own tests and regression patches, and by an attack that lets Git write the patch under each
 documented setting and judges it in authority mode (recorded in docs/THREAT_MODEL.md, scope section).
+`lone-header/` (M7-HEADER-OWN) holds a lone `diff --git` header over a traditional section for another path: forge-warden's
+own header check refuses each whatever a ranker believes (`a_lone_git_header_over_another_path_is_never_believed`).
