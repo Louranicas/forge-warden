@@ -409,6 +409,51 @@ class GateImageCommands(unittest.TestCase):
     def test_every_tracked_script_calls_only_declared_commands(self):
         self.assertEqual(COMMANDS.problems(ROOT), [])
 
+    def test_a_source_export_is_read_like_the_checkout(self):
+        # Train A3's hosted-parity export phase has no .git: the check must read the files there.
+        with tempfile.TemporaryDirectory(prefix="script-commands-export-") as directory:
+            copy = Path(directory)
+            for name in COMMANDS.tracked(ROOT):
+                source, target = ROOT / name, copy / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if source.is_symlink():
+                    target.symlink_to(os.readlink(source))
+                elif source.is_file():
+                    shutil.copyfile(source, target)
+            self.assertFalse((copy / ".git").exists())
+            self.assertEqual(sorted(COMMANDS.tracked(copy)), sorted(COMMANDS.tracked(ROOT)))
+            self.assertEqual(COMMANDS.problems(copy), COMMANDS.problems(ROOT))
+
+    def test_an_export_inside_another_repository_is_read(self):
+        # Git answers for the enclosing repository there; the export's own files must still be read.
+        with tempfile.TemporaryDirectory(prefix="script-commands-outer-") as directory:
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": directory}
+            subprocess.run(["git", "init", "-q", directory], check=True, env=env, stdin=subprocess.DEVNULL)
+            export = Path(directory) / "export"
+            export.mkdir()
+            (export / "s.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
+            found = COMMANDS.problems(export)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("s.sh:2: calls `cmp`"), found)
+
+    def test_the_walk_skips_a_git_directory(self):
+        # A `.git` Git does not accept (no HEAD) is walked around, not read as tracked files.
+        with tempfile.TemporaryDirectory(prefix="script-commands-dotgit-") as directory:
+            hooks = Path(directory) / ".git" / "hooks"
+            hooks.mkdir(parents=True)
+            (hooks / "x.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
+            (Path(directory) / "ok.sh").write_text("#!/usr/bin/env bash\ntrue\n")
+            self.assertEqual(COMMANDS.tracked(Path(directory)), ["ok.sh"])
+            self.assertEqual(COMMANDS.problems(Path(directory)), [])
+
+    def test_a_tree_without_git_is_read_not_skipped(self):
+        with tempfile.TemporaryDirectory(prefix="script-commands-nogit-") as directory:
+            (Path(directory) / "s.sh").write_text("#!/usr/bin/env bash\ncmp a b\n")
+            found = COMMANDS.problems(Path(directory))
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("s.sh:2: calls `cmp`"), found)
+
     def test_the_declared_set_has_none_of_the_commands_the_image_lacks(self):
         absent = {"cmp", "diff", "jq", "xxd", "file", "apt-get", "zizmor", "deep-diff-forge"}
         self.assertEqual(COMMANDS.IMAGE & absent, set())

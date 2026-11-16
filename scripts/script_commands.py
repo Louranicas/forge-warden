@@ -60,6 +60,7 @@ would run as the real command.
 usage: python3 -I scripts/script_commands.py     (exit 1 names each undeclared call)
 """
 import ast
+import os
 from pathlib import Path
 import posixpath
 import re
@@ -808,10 +809,29 @@ def python_calls(text, line=1):
     return found
 
 
+SKIPPED_DIRS = frozenset({'.git', 'target', 'mutants.out', 'mutants.out.old'})
+
+
 def tracked(root):
-    names = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], check=True,
-                           stdout=subprocess.PIPE, stdin=subprocess.DEVNULL).stdout.decode().split('\0')
-    return [name for name in names if name]
+    """Git's tracked files when `root` is the top of a Git work tree; otherwise (a source export,
+    such as the hosted-parity export phase, which holds exactly the tracked files) every file
+    below `root`, a symlink as a file: a tree without Git is read, never skipped."""
+    try:
+        top = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'],
+                             stdin=subprocess.DEVNULL, capture_output=True, check=False)
+    except OSError:
+        top = None
+    if top is not None and top.returncode == 0 and Path(top.stdout.decode().strip()).resolve() == Path(root).resolve():
+        names = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], check=True,
+                               stdout=subprocess.PIPE, stdin=subprocess.DEVNULL).stdout.decode().split('\0')
+        return [name for name in names if name]
+    found = []
+    for directory, subdirectories, files in os.walk(root):
+        base = Path(directory).relative_to(root)
+        links = [d for d in subdirectories if (Path(directory) / d).is_symlink()]
+        subdirectories[:] = sorted(d for d in subdirectories if d not in SKIPPED_DIRS and d not in links)
+        found.extend((base / name).as_posix() for name in files + links)
+    return sorted(found)
 
 
 def classify(root, name):
