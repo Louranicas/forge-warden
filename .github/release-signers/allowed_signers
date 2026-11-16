@@ -1,0 +1,3 @@
+# Release signers (scripts/release_tag.sh). One line per key: principal, namespaces="git", key.
+# No signer is enrolled: release_tag.sh refuses to tag until the owner enrols the release key in a
+# separately reviewed change (like .github/hold-reviewers/allowed_signers, ADR 0007).

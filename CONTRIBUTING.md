@@ -277,6 +277,8 @@ repository's own gate reads two of them:
 - `.github/hold-reviewers/allowed_signers` is not GitHub-specific: `scripts/hold_ack.py` reads it
   wherever the driver runs, and the path stays as it is (an acknowledgement receipt's `repository`
   field still names the GitHub repository; that changes in a separate change to the script).
+- `.github/release-signers/allowed_signers` is not GitHub-specific either: `scripts/release_tag.sh`
+  verifies a release tag against it as committed in the tagged commit (see "Releases" below).
 
 ## Periodic full mutation baseline
 
@@ -294,6 +296,21 @@ Any MISSED mutant makes the job fail; there is no survivor budget or automatic w
 always-uploaded per-shard artifact contains `mutants.out` and exact-subject/tool provenance, including failed
 runs. Review caught, missed, unviable and timeout counts separately. An interrupted run is partial
 evidence, not a completed baseline. The weekly job does not replace diff mutation on pull requests.
+
+## Releases
+
+A release is two scripts and two people. In a clean clone whose remotes `gitlab`, `gitea` and
+`forgejo` are the three services (never GitHub), `scripts/release_prepare.sh VERSION` checks that
+HEAD is GitLab's `main` and that the version is the same in `Cargo.toml`, `Cargo.lock`, the
+CHANGELOG (a dated section under an empty Unreleased), the README's install line, `EVIDENCE.md` and
+`docs/RELEASE-VERSION.md`. It writes the source archive, the release notes and `SHA256SUMS` under
+`dist/VERSION/`, creates no tag and pushes nothing, and prints the owner's command. The owner runs
+that command, `scripts/release_tag.sh VERSION COMMIT`: it signs the tag with the release key, keeps
+it only if it verifies against `.github/release-signers/allowed_signers` as committed in that
+commit, and pushes the tag alone to the three services. Both scripts refuse a remote with any URL naming
+GitHub; they read the URLs, not where ssh or proxy settings then send them. No signer is enrolled yet, so the script
+refuses to tag until the owner enrols the release key in a reviewed change. Tests:
+`scripts/tests/release.sh` (local remotes and throwaway keys, no network).
 
 ## Decisions
 

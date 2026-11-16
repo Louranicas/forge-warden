@@ -417,7 +417,8 @@ class Runner(unittest.TestCase):
         runnable={c['guardrail'] for c in catalog['cases']}
         pending={c['id'] for c in catalog['pending_guardrails']}
         self.assertFalse(runnable & pending)
-        self.assertEqual(runnable | pending, {f'G-{i:02}' for i in range(1,54)})
+        # G-54 (bound mode) added 2026-11-16 by the register owner (Lodestar ruling P1.6).
+        self.assertEqual(runnable | pending, {f'G-{i:02}' for i in range(1,55)})
         self.assertTrue(all(c['status']=='PENDING' for c in catalog['pending_guardrails']))
 
     def test_cli_receipt_is_incomplete_and_source_is_unchanged(self):

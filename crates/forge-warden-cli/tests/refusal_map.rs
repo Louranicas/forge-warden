@@ -32,8 +32,9 @@ const UNREACHABLE: &str = "UNREACHABLE: ";
 const UNREACHABLE_AT_MOST: usize = 1;
 /// Rows still without an observing test. It only goes down, and is zero when the package is READY.
 const MISSING_AT_MOST: usize = 0;
-/// The enums the map covers (DESIGN scope: 10 refusal enums and Exit). Rows that drop one are red.
-const ENUMS: [&str; 11] = [
+/// The enums the map covers (DESIGN scope: 12 refusal enums and Exit; bound mode's two since ADR 0012,
+/// ruling P1.5). Rows that drop one are red.
+const ENUMS: [&str; 13] = [
     "Unverifiable",
     "PathError",
     "PolicyError",
@@ -45,6 +46,8 @@ const ENUMS: [&str; 11] = [
     "ChildFailure",
     "RankerFailure",
     "GitFactsFailure",
+    "BoundFailure",
+    "RepositoryRefusal",
 ];
 /// The test-module gates the repository uses; any other `cfg` hides a test from the gate.
 const TEST_GATES: [&str; 2] = ["test", "not(fw_fixture_cli)"];
@@ -279,14 +282,14 @@ fn runnable_tests(label: &str, source: &str) -> Result<Vec<String>, String> {
 fn render(rows: &[Row]) -> Result<String, String> {
     let mut text = String::from(
         "# Refusal map\n\n\
-         Every variant of the 11 enums listed below (10 refusal enums and `Exit`), with the one test that\n\
+         Every variant of the 13 enums listed below (12 refusal enums and `Exit`), with the one test that\n\
          observes it. Generated from `crates/forge-warden-core/src/refusal_rows.rs` and\n\
          `crates/forge-warden-cli/src/refusal_rows.rs`, and checked byte for byte by\n\
          `crates/forge-warden-cli/tests/refusal_map.rs`; edit the rows, not this file.\n\
          \n\
-         Scope: exactly these 11 enums (`Unverifiable`, `PathError`, `PolicyError`, `RankError`, `SealError`,\n\
-         `DateError`, `Exit` in the core; `DoorErrorKind`, `ChildFailure`, `RankerFailure`, `GitFactsFailure` in\n\
-         the CLI). Outside it: the reasons inside `RankError::Invalid` (one row for all of them), `Disagreement`\n\
+         Scope: exactly these 13 enums (`Unverifiable`, `PathError`, `PolicyError`, `RankError`, `SealError`,\n\
+         `DateError`, `Exit` in the core; `DoorErrorKind`, `ChildFailure`, `RankerFailure`, `GitFactsFailure`,\n\
+         `BoundFailure`, `RepositoryRefusal` in the CLI). Outside it: the reasons inside `RankError::Invalid` (one row for all of them), `Disagreement`\n\
          (a disagreement with Git becomes a note, not a refusal), the Git allowlist's admission refusals and the\n\
          CLI's named error messages (each reaches the user as one of the exits below), and the refusals of the\n\
          repository scripts (`scripts/hold_ack.py`, `scripts/dogfood.sh`), which have their own tests.\n\

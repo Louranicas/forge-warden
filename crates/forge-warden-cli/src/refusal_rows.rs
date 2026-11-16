@@ -8,7 +8,9 @@
 //! `path::function`. Every CLI row has its observing test.
 
 use crate::doors::DoorErrorKind;
-use crate::doors::child::{ChildFailure, GitFactsFailure, RankerFailure};
+use crate::doors::child::{
+    BoundFailure, ChildFailure, GitFactsFailure, RankerFailure, RepositoryRefusal,
+};
 
 /// A row: the variant's own name and the `path::function` of the test that observes it.
 pub(crate) type Row = (&'static str, &'static str);
@@ -95,6 +97,64 @@ pub(crate) const fn git(e: &GitFactsFailure) -> Row {
     }
 }
 
+/// Rows for [`BoundFailure`], why bound mode made no diff (ADR 0012; ruling P1.5).
+pub(crate) const fn bound(e: &BoundFailure) -> Row {
+    match e {
+        BoundFailure::Door(..) => (
+            "Door",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_names_a_setup_failure_as_a_door_failure",
+        ),
+        BoundFailure::Repository(..) => (
+            "Repository",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository",
+        ),
+        BoundFailure::Ids => (
+            "Ids",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_takes_only_full_commit_ids",
+        ),
+        BoundFailure::NotACommit { .. } => (
+            "NotACommit",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_takes_only_full_commit_ids",
+        ),
+        BoundFailure::NoCommonHistory => (
+            "NoCommonHistory",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_several_merge_bases_and_no_common_history",
+        ),
+        BoundFailure::SeveralMergeBases(..) => (
+            "SeveralMergeBases",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_several_merge_bases_and_no_common_history",
+        ),
+        BoundFailure::Store(..) => (
+            "Store",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name",
+        ),
+        BoundFailure::VerifiedMergeBase(..) => (
+            "VerifiedMergeBase",
+            "crates/forge-warden-cli/src/doors/mod.rs::the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give",
+        ),
+        BoundFailure::Unavailable(..) => (
+            "Unavailable",
+            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_stops_at_its_deadline_and_leaves_nothing",
+        ),
+    }
+}
+
+/// Rows for [`RepositoryRefusal`], why `--repo` is not admitted (ADR 0012 D2).
+pub(crate) const fn repository(e: RepositoryRefusal) -> Row {
+    const ADMIT: &str =
+        "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository";
+    match e {
+        RepositoryRefusal::NotUtf8 => ("NotUtf8", ADMIT),
+        RepositoryRefusal::PathCharacters => ("PathCharacters", ADMIT),
+        RepositoryRefusal::GitFile => ("GitFile", ADMIT),
+        RepositoryRefusal::GitSymlink => ("GitSymlink", ADMIT),
+        RepositoryRefusal::NotARepository => ("NotARepository", ADMIT),
+        RepositoryRefusal::ObjectsMissing => ("ObjectsMissing", ADMIT),
+        RepositoryRefusal::Alternates => ("Alternates", ADMIT),
+        RepositoryRefusal::Shallow => ("Shallow", ADMIT),
+    }
+}
+
 #[test]
 fn every_row_function_answers_with_a_name_and_a_test() {
     // Uses each function once (the rows themselves are checked by tests/refusal_map.rs).
@@ -102,4 +162,6 @@ fn every_row_function_answers_with_a_name_and_a_test() {
     assert_eq!(child(&ChildFailure::Timeout).0, "Timeout");
     assert_eq!(ranker(&RankerFailure::Failed(String::new())).0, "Failed");
     assert_eq!(git(&GitFactsFailure::Refused(String::new())).0, "Refused");
+    assert_eq!(bound(&BoundFailure::Ids).0, "Ids");
+    assert_eq!(repository(RepositoryRefusal::Shallow).0, "Shallow");
 }
