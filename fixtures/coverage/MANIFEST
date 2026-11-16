@@ -2036,6 +2036,10 @@
         "931b57b90e1f122d8bc16c90d9acb0f9a83b84596cb33b27502fdcead9bc0460"
       ],
       [
+        "crates/forge-warden-cli/src/doors/child/bound.rs",
+        "83ea9e47262e45bc867e54ef1de6d7e6f473a6ed42178b9788bcc0e0f593c857"
+      ],
+      [
         "crates/forge-warden-cli/src/doors/child/entropy.rs",
         "f30e2f20bb61cafd5bd967fa50f3ee298cfb096d65ab0076b5b2a72f3b87d56b"
       ],

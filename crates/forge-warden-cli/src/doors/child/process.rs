@@ -78,17 +78,43 @@ pub(in crate::doors) fn pin_within(
     })
 }
 
-pub(super) fn program_path(program: &Program<'_>) -> std::path::PathBuf {
+/// The path a child runs and the arguments that come before the caller's own (a wrapper's).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "door: run_child (prlimit's /proc/<pid>/fd path)"
+)]
+pub(super) fn program_command(program: &Program<'_>) -> (std::path::PathBuf, Vec<String>) {
     use std::os::fd::AsRawFd as _;
     match program {
         #[cfg(test)]
         #[cfg(not(fw_fixture_cli))]
-        Program::Absolute(path) => path.to_path_buf(),
-        Program::Pinned(pinned) => {
-            std::path::PathBuf::from(format!("/proc/self/fd/{}", pinned.file.as_raw_fd()))
-        }
+        Program::Absolute(path) => (path.to_path_buf(), Vec::new()),
+        Program::Pinned(pinned) => (
+            std::path::PathBuf::from(format!("/proc/self/fd/{}", pinned.file.as_raw_fd())),
+            Vec::new(),
+        ),
+        Program::Limited {
+            pinned,
+            data,
+            address_space,
+        } => (
+            std::path::PathBuf::from(PRLIMIT),
+            vec![
+                format!("--data={data}"),
+                format!("--as={address_space}"),
+                "--".to_owned(),
+                format!(
+                    "/proc/{}/fd/{}",
+                    std::process::id(),
+                    pinned.file.as_raw_fd()
+                ),
+            ],
+        ),
     }
 }
+
+/// The exec wrapper that sets a bound-mode Git child's memory caps before it runs.
+pub(super) const PRLIMIT: &str = "/usr/bin/prlimit";
 
 /// Run one child within its bounds. The child gets its own process group; on every way out
 /// (exit, timeout, overflow, error) the whole group is killed and reaped, so a grandchild that
@@ -110,7 +136,7 @@ pub(in crate::doors) fn run_child_killing_with(
     use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
 
-    let program = program_path(&spec.program);
+    let (program, prefix) = program_command(&spec.program);
     if !program.is_absolute() {
         return Err(ChildFailure::Spawn(format!(
             "{} is not an absolute path",
@@ -118,6 +144,7 @@ pub(in crate::doors) fn run_child_killing_with(
         )));
     }
     let mut child = Command::new(&program)
+        .args(&prefix)
         .args(spec.args)
         .env_clear()
         .envs(spec.env.iter().copied())

@@ -9,6 +9,23 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Bound mode, first slice (ADR 0012, accepted): `check --repo DIR --base BASE --head HEAD` (authority
+  mode, full commit ids) makes `git diff merge-base..head` from a copy of the repository's objects
+  that Git re-hashes (a staging repository enumerates; `index-pack` copies into a repository with no
+  alternate; forge-warden cuts history at the copy's edge) and refuses a `--patch` that is not
+  byte-equal (exit 4). A store whose objects are not what their ids name, a linked worktree's `.git`
+  file, a caller alternates or shallow file, a control character in the path, several merge bases:
+  refused. Every bound-mode Git runs under `/usr/bin/prlimit` (1 GiB data, 4 GiB address space) and a
+  60 s budget. `--base`/`--head` stay unverified claims in the verdict until verdict v3.
+- `scripts/make_patch.sh` (patch-maker v2) and the documented by-hand command write `--full-index`:
+  abbreviated ids depend on how many objects a repository holds, so bound mode could not reproduce
+  them. Make patches again with the new script.
+- Release scripts (ledger Q42): `scripts/release_prepare.sh VERSION` checks the version everywhere a
+  release states it and that HEAD is GitLab `main`, and writes the source archive, notes and checksums
+  under `dist/`; `scripts/release_tag.sh VERSION COMMIT`, run by the owner, signs the tag, keeps it only
+  if it verifies against `.github/release-signers/allowed_signers` in that commit, and pushes it to
+  GitLab, Gitea and Forgejo only. No release signer is enrolled yet; the script refuses until one is.
+
 ## [0.2.1] - 2026-11-16
 
 - No change to a published schema or to the exit-code registry: `forge-warden.policy.v0`,

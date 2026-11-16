@@ -141,6 +141,12 @@ review_reason = "C1a bounded child execution is the reviewed sole process spawn 
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors/child/process.rs"
 lint = "clippy::disallowed_methods"
+source_reason = "door: run_child (prlimit's /proc/<pid>/fd path)"
+review_reason = "M7-EFFECT-WALL-STOPGAP (Bastion MUST 1 on f6dd0d00): std::process::id joins the disallowed list; program_command reads this process's id once to name the pinned executable's descriptor for prlimit (/proc/<pid>/fd/N), which PATCH-BOUND's bound mode runs as the memory-capped Git wrapper. Reads only its own id; no other process state."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/process.rs"
+lint = "clippy::disallowed_methods"
 source_reason = "door: run_child (/proc/<pid>/stat)"
 review_reason = "Q-DOOR: reads only the spawned child PID status to observe exit without reaping before group cleanup. Q-DOOR-SPLIT (Q2-14): the probe is read_exited; the poll sleep and the deadline clock moved into run_child_killing_with's door, so wait_bounded is pure and carries no expectation."
 
@@ -379,8 +385,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "4f9fcc0adf580100a6aacb890a6ebb39bbeb821ad9add978f9aa397cf26cdda1"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged. WP-EFFECT-WALL.2 adds two groups, effect-plants (ten lines: eight std effects, one UFCS form, one control) and git-oracle-plants (five lines), for the new clippy controls in tests/mint_lint.rs; no existing entry changes. M7-EFFECT-WALL stop-gap adds 22 effect-plants lines (the 20 effects measured unlisted on 92a9ac99 plus UnixDatagram::unbound and lchown), one per new clippy.toml entry; no existing entry changes."
+sha256 = "0d68d8316847329a7bc0aae69f3e157bfe3c69417ee9c58c8091783dbdf6d91c"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged. WP-EFFECT-WALL.2 adds two groups, effect-plants (ten lines: eight std effects, one UFCS form, one control) and git-oracle-plants (five lines), for the new clippy controls in tests/mint_lint.rs; no existing entry changes. M7-PATCH-BOUND adds only the crates/forge-warden-cli/src/doors/child/bound.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. M7-EFFECT-WALL stop-gap adds 22 effect-plants lines (the 20 effects measured unlisted on 92a9ac99 plus UnixDatagram::unbound and lchown), one per new clippy.toml entry; no existing entry changes."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"
@@ -559,3 +565,45 @@ file = "crates/forge-warden-core/tests/hostile_input.rs"
 lint = "clippy::disallowed_types"
 source_reason = "the harness bounds each parse by wall time: Instant is the clock it measures with"
 review_reason = "WP-HOSTILE-INPUT: Instant measures each parse against the 2 s bound; the harness is a test and does not reach production timing."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: admit_repository (canonicalize and no-follow metadata of the repository the caller names)"
+review_reason = "ADR 0012 D2: canonicalize the --repo path once and read no-follow metadata of .git, objects, info/alternates and shallow to admit or refuse it; no repository content is read here."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: bound_diff_in (its one deadline for the whole bound run)"
+review_reason = "ADR 0012 D3.6: one Instant deadline for the whole bound run; every Git child gets only the time left."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "test door: recheck_in (one deadline for one recheck)"
+review_reason = "Test-only (cfg(test), not fw_fixture_cli): one Instant deadline for the contract test of ADR 0012 D3 step 4, the merge-base recheck against a given verified repository."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: Runner::remaining (the time left in the bound run's one deadline)"
+review_reason = "ADR 0012 D3.6: reads the clock only to compute the remaining child timeout from the run's one deadline."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: write_private (two files bound mode writes in its own private directory)"
+review_reason = "ADR 0012 D3.1/D3.3: writes of the staging alternates file and forge-warden's own verified shallow file, inside the run's private 0700 directory only; nothing outside it is written."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: Remove::drop (removes the two repositories bound mode created in its private directory)"
+review_reason = "ADR 0012 D3.7: removes only staging.git and verified.git inside the run's private directory; remove_dir_all does not follow symlinks."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
+source_reason = "door: bound_diff (the system temp dir)"
+review_reason = "ADR 0012: bound_diff reads the system temp base once and hands it to the isolated private-directory adapter, exactly as git_facts does."

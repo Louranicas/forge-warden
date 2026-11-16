@@ -57,3 +57,17 @@ C1 retains its own measured timeout/stream/process-group/runtime admission requi
 small object-bundle helper does not substitute for them. A trusted repository and these flags do
 not sandbox a compromised Git/runtime or an arbitrary same-uid writer. C1's owner must cite or
 reconcile this contract in the Rust implementation evidence rather than infer shared code reuse.
+
+## Amendment (2026-11-16): bound mode, ADR 0012
+
+ADR 0010 says: never discover a repository; no candidate `.git` config, index or work tree is consulted; object
+alternates are never inherited. Bound mode (ADR 0012) adds exactly one effect: the CLI Git door may READ the object
+directory of a repository the caller names with `--repo`, through an alternates file in a STAGING repository
+forge-warden creates in its private directory, only to enumerate and pack objects. Every object the judgement uses is
+copied into a second private repository with no alternate through `index-pack`, which names each object by the hash
+of its content; forge-warden writes that repository's own `shallow` file at the merge base (never a caller's shallow
+file, which stays refused); the merge base and the diff are computed there. The door still never discovers a repository, never inherits an alternate from
+the environment, never reads that repository's config, refs, index, hooks, `info/` or work tree, refuses alternates
+chains, shallow repositories, `gitdir:` pointers and control characters in the path, and turns off commit-graph and
+multi-pack-index reading in staging. The private directory may hold the two repositories Git wrote; its cleanup is a
+bounded no-follow removal of exactly those two. Every Git child of bound mode has a time limit and a memory ceiling.
