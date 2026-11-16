@@ -251,6 +251,25 @@ if bash "$maker" "$(ccgit rev-parse m1)" "$(ccgit rev-parse m2)" "$cc" > "$sandb
   exit 1
 fi
 echo 'PASS make_patch refuses several merge bases with the door message'
+# Bastion LOW (1591): a failure of Git is not called "no common history". Unrelated histories are
+# (merge-base exits 1, silent); a shallow clone lacking the commits between base and head is Git's
+# error, shown with its first line and the remedy.
+ccgit checkout -q --orphan unrelated; ccgit rm -rqf .; printf 'u\n' > "$cc/u.txt"; ccgit add u.txt; ccgit commit -qm unrelated
+if bash "$maker" "$x" "$(ccgit rev-parse unrelated)" "$cc" > "$sandbox/made.patch" 2> "$sandbox/made.err" \
+  || [ -s "$sandbox/made.patch" ] || ! grep -q 'no common history' "$sandbox/made.err"; then
+  echo "FAIL make_patch: unrelated histories were not refused as such: $(cat "$sandbox/made.err")"
+  exit 1
+fi
+# Only x and y, one commit deep: their common parent is not in the clone.
+git clone -q --depth 1 --single-branch --branch x "file://$cc" "$sandbox/shallow" 2> /dev/null
+git -C "$sandbox/shallow" fetch -q --depth 1 origin y:refs/remotes/origin/y 2> /dev/null
+if bash "$maker" "$(git -C "$sandbox/shallow" rev-parse HEAD)" "$(git -C "$sandbox/shallow" rev-parse origin/y)" "$sandbox/shallow" \
+  > "$sandbox/made.patch" 2> "$sandbox/made.err" || [ -s "$sandbox/made.patch" ] \
+  || ! grep -q 'git merge-base failed' "$sandbox/made.err" || grep -q 'no common history' "$sandbox/made.err"; then
+  echo "FAIL make_patch: a shallow clone's missing history was called something else: $(cat "$sandbox/made.err")"
+  exit 1
+fi
+echo 'PASS make_patch tells unrelated histories from a Git failure (shallow clone)'
 # SUBMODULE-PIN (outside review O1): a submodule change always reaches the patch as its own
 # `diff --git` section. The candidate's work tree holds the change's own `.gitmodules` with
 # `ignore = all`; with that file alone, a `git diff` without the two submodule options leaves the
