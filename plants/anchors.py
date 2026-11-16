@@ -11,11 +11,16 @@ could apply:
 In every case the path is relative, stays out of `.git`, and its file and parents are not symlinks.
 The recipe shape is `run.py`'s own `recipe_kind`, so there is one definition of a valid recipe.
 
+It also derives every number in the plants README's count sentence from the catalogue and the gate
+capacity (ledger Q53: a clean merge once kept "109" for a catalogue of 110). The sentence has one
+pinned shape; a README without it, or with it twice, is refused rather than skipped.
+
 usage: python3 -I plants/anchors.py   (exit 1 names every case that would not apply)
 """
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 
 sys.dont_write_bytecode = True
@@ -23,6 +28,18 @@ HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location('plants_runner', HERE / 'run.py')
 RUN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN)
+CAPS_SPEC = importlib.util.spec_from_file_location('plant_tools', HERE.parent / 'scripts/plant_tools.py')
+CAPS = importlib.util.module_from_spec(CAPS_SPEC)
+CAPS_SPEC.loader.exec_module(CAPS)
+
+# The one allowed shape of the README's count sentence (whitespace collapsed). Every number in it is
+# a capture that readme_problems compares with a value derived from the catalogue or plant_tools.
+COUNT_SENTENCE = re.compile(
+    r'This revision implements (?P<plants>\d+) named plants over (?P<rows>\d+) guardrail rows '
+    r'\(the gate admits at most (?P<capacity>\d+): `GATE_PLANT_CAPACITY` in `scripts/plant_tools\.py`\); '
+    r'Q3-07/Q3-10 strengthen G-45/G-24, and (?P<z3>\d+) `z3-\*` cases exercise G-45\. '
+    r'The remaining (?P<pending>\d+) register rows \((?P<pending_ids>G-\d+(?:, G-\d+)*)\) '
+    r'are explicitly PENDING')
 
 
 def problems(root, cases):
@@ -67,15 +84,44 @@ def problems(root, cases):
     return found
 
 
+def readme_problems(readme, catalog, capacity):
+    """Each number of the README's count sentence that the catalogue or capacity contradicts."""
+    text = ' '.join(readme.split())
+    matches = list(COUNT_SENTENCE.finditer(text))
+    if len(matches) != 1:
+        return [f'README: the count sentence occurs {len(matches)} times, not exactly once '
+                '(its shape is COUNT_SENTENCE in plants/anchors.py)']
+    said = matches[0].groupdict()
+    cases, pending = catalog['cases'], catalog['pending_guardrails']
+    z3 = [case for case in cases if case['id'].startswith('z3-')]
+    derived = {
+        'plants': str(len(cases)),
+        'rows': str(len({case['guardrail'] for case in cases})),
+        'capacity': str(capacity),
+        'z3': str(len(z3)),
+        'pending': str(len(pending)),
+        'pending_ids': ', '.join(row['id'] for row in pending),
+    }
+    found = [f'README: {key} says {said[key]!r}, the catalogue gives {value!r}'
+             for key, value in derived.items() if said[key] != value]
+    if any(case['guardrail'] != 'G-45' for case in z3):
+        found.append('README: a z3-* case does not exercise G-45')
+    return found
+
+
 def main():
     root = HERE.parent
-    cases = json.loads((HERE / 'catalog.json').read_text(encoding='utf-8'))['cases']
+    catalog = json.loads((HERE / 'catalog.json').read_text(encoding='utf-8'))
+    cases = catalog['cases']
     found = problems(root, cases)
+    found += readme_problems((HERE / 'README.md').read_text(encoding='utf-8'), catalog,
+                             CAPS.GATE_PLANT_CAPACITY)
     for line in found:
         print('plant anchors: ' + line, file=sys.stderr)
     if found:
         return 1
-    print(f'plant anchors: all {len(cases)} catalogue recipes apply to this tree')
+    print(f'plant anchors: all {len(cases)} catalogue recipes apply to this tree, '
+          'and the README count sentence matches the catalogue')
     return 0
 
 

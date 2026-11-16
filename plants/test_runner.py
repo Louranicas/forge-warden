@@ -510,5 +510,55 @@ class Anchors(unittest.TestCase):
         self.assertEqual(ANCHORS.problems(Path(__file__).resolve().parents[1], cases), [])
 
 
+class ReadmeCounts(unittest.TestCase):
+    """Q53: every number in the plants README's count sentence is derived from the catalogue."""
+
+    HERE = Path(__file__).resolve().parent
+
+    def actual(self):
+        readme = (self.HERE / 'README.md').read_text(encoding='utf-8')
+        catalog = json.loads((self.HERE / 'catalog.json').read_text(encoding='utf-8'))
+        return readme, catalog
+
+    def problems(self, readme, catalog):
+        return ANCHORS.readme_problems(readme, catalog, ANCHORS.CAPS.GATE_PLANT_CAPACITY)
+
+    def test_this_readme_matches_this_catalogue(self):
+        self.assertEqual(self.problems(*self.actual()), [])
+
+    def test_a_stale_number_in_the_readme_is_named(self):
+        readme, catalog = self.actual()
+        text = ' '.join(readme.split())
+        said = ANCHORS.COUNT_SENTENCE.search(text)
+        for key in ('plants', 'rows', 'capacity', 'z3', 'pending', 'pending_ids'):
+            with self.subTest(key=key):
+                start, end = said.span(key)
+                stale = 'G-99, G-47' if key == 'pending_ids' else str(int(said[key]) - 1)
+                found = self.problems(text[:start] + stale + text[end:], catalog)
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith(f'README: {key} says '), found)
+
+    def test_a_catalogue_change_without_a_readme_change_is_named(self):
+        readme, catalog = self.actual()
+        grown = dict(catalog, cases=catalog['cases'] + [dict(catalog['cases'][0], id='extra')])
+        self.assertEqual(self.problems(readme, grown),
+                         [f"README: plants says '{len(catalog['cases'])}', the catalogue gives "
+                          f"'{len(catalog['cases']) + 1}'"])
+        closed = dict(catalog, pending_guardrails=catalog['pending_guardrails'][1:])
+        self.assertEqual(len(self.problems(readme, closed)), 2)
+        moved = dict(catalog, cases=[dict(case, guardrail='G-01') if case['id'].startswith('z3-')
+                                     else case for case in catalog['cases']])
+        self.assertIn('README: a z3-* case does not exercise G-45', self.problems(readme, moved))
+
+    def test_a_readme_without_the_sentence_or_with_it_twice_is_refused(self):
+        readme, catalog = self.actual()
+        sentence = ANCHORS.COUNT_SENTENCE.search(' '.join(readme.split()))[0]
+        for text in (readme.replace('This revision implements', 'This revision has'),
+                     readme + '\n' + sentence + '\n'):
+            found = self.problems(text, catalog)
+            self.assertEqual(len(found), 1, found)
+            self.assertIn('not exactly once', found[0])
+
+
 if __name__ == '__main__':
     unittest.main()
