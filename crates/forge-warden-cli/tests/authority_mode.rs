@@ -526,7 +526,7 @@ fn a_patch_without_the_default_prefixes_never_passes() {
             held["notes"].as_array().unwrap().iter().any(|note| {
                 note["detail"]
                     .as_str()
-                    .is_some_and(|d| d.contains(&header) && d.contains("--src-prefix=a/"))
+                    .is_some_and(|d| d.contains(&header) && d.contains("scripts/make_patch.sh"))
             }),
             "{name}: {held}"
         );

@@ -40,6 +40,10 @@ its hash and binding corrections for duplicate paths, producer authentication, n
 mutation measurement are included. In particular the README table plant checks the currently
 implemented missing-row direction; it does not claim an extra-row drift check exists.
 
+The numbers in the sentence that opens the paragraph above are not typed by hand: `plants/anchors.py`
+(fast gate) and `plants/test_runner.py` (`ReadmeCounts`) derive each one from `catalog.json` and
+`GATE_PLANT_CAPACITY`, and refuse the change when the sentence and the catalogue disagree (Q53).
+
 The named lint diagnostics may use underscores in Clippy help anchors or hyphens in compiler
 command-line notes. Regexes admit both spellings while still requiring the named lint. The direct
 Rust plants test current enforcement, not future stronger controls proposed in the register.

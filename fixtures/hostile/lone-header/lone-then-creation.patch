@@ -1,0 +1,5 @@
+diff --git a/docs/ok.md b/docs/ok.md
+--- /dev/null
++++ b/scripts/new.sh
+@@ -0,0 +1 @@
++echo hi

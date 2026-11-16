@@ -81,7 +81,8 @@ pub enum Unverifiable {
     RepeatedPath(String),
     /// A summary record names a path the numstat does not.
     SummaryPathUnknown(String),
-    /// More than one summary record for one path (a file/symlink type change).
+    /// A file/symlink type change: Git deletes the path with one file type and creates it with the
+    /// other (numstat lists the path twice; Q60), or a summary names one path more than once.
     TypeChange(String),
     /// A rename or a copy: rank `git diff --no-renames` instead.
     RenameOrCopy,
@@ -114,7 +115,11 @@ impl fmt::Display for Unverifiable {
             Self::SummaryPathUnknown(p) => {
                 write!(f, "git's summary names {p:?}, which its numstat does not")
             }
-            Self::TypeChange(p) => write!(f, "{p:?} changes type (more than one summary record)"),
+            Self::TypeChange(p) => write!(
+                f,
+                "{p:?} changes type: Git deletes it and creates it again as a symlink or a file; \
+                 that change cannot be verified per file"
+            ),
             Self::RenameOrCopy => {
                 f.write_str("the patch renames or copies a file; rank `git diff --no-renames`")
             }
@@ -131,7 +136,7 @@ impl fmt::Display for Unverifiable {
             Self::HeaderPaths(what) => write!(
                 f,
                 "{what:?} is not named by exactly one `diff --git a/PATH b/PATH` header; make \
-                 the patch with `git diff --src-prefix=a/ --dst-prefix=b/`"
+                 the patch with forge-warden's `scripts/make_patch.sh <base> <head>`"
             ),
             Self::UnreadableGitOutput(what) => write!(f, "unreadable git output: {what}"),
         }
@@ -284,6 +289,12 @@ fn check_header_paths(
     }
 }
 
+/// Whether a numstat count column is a decimal number as Git writes one: 1 to 20 ASCII digits
+/// (20 is the length of the largest 64-bit count).
+fn decimal(column: &[u8]) -> bool {
+    (1..=20).contains(&column.len()) && column.iter().all(u8::is_ascii_digit)
+}
+
 fn utf8(bytes: &[u8]) -> Result<&str, Unverifiable> {
     std::str::from_utf8(bytes).map_err(|_| Unverifiable::NonUtf8Path)
 }
@@ -316,6 +327,16 @@ impl PatchFacts {
                     "short numstat record".to_owned(),
                 ));
             };
+            // Git writes each count as a decimal, or `-` and `-` for a binary file (Q58).
+            let binary = match (added, deleted) {
+                (b"-", b"-") => true,
+                _ if decimal(added) && decimal(deleted) => false,
+                _ => {
+                    return Err(Unverifiable::UnreadableGitOutput(
+                        "numstat counts are not two decimals or `-` and `-`".to_owned(),
+                    ));
+                }
+            };
             if path_bytes.is_empty() {
                 // `add\tdel\t\0old\0new\0`: the rename/copy form.
                 return Err(Unverifiable::RenameOrCopy);
@@ -329,7 +350,6 @@ impl PatchFacts {
                     path: text.to_owned(),
                     why,
                 })?;
-            let binary = added == b"-" && deleted == b"-";
             let change = FileChange {
                 path: repo_path.clone(),
                 kind: ChangeKind::Modified,
@@ -339,6 +359,10 @@ impl PatchFacts {
                 content: binary || added != b"0" || deleted != b"0",
             };
             if files.insert(repo_path, change).is_some() {
+                // Git writes a type change as a deletion and a creation of one path (Q60).
+                if summary_type_change(summary, text) {
+                    return Err(Unverifiable::TypeChange(text.to_owned()));
+                }
                 return Err(Unverifiable::RepeatedPath(text.to_owned()));
             }
         }
@@ -353,6 +377,34 @@ impl PatchFacts {
     /// Every file Git sees, by path.
     pub fn files(&self) -> impl Iterator<Item = &FileChange> {
         self.files.values()
+    }
+}
+
+/// Whether Git's summary deletes `path` with one file type and creates it with the other (a
+/// symlink and a regular file), whole-line and byte for byte as [`apply_summary`] reads it: the
+/// shape `git diff --no-renames` writes for a type change, whose numstat lists the path twice (Q60).
+/// Two regular files of one path (prefixes folded by `--no-prefix`) are not a type change.
+fn summary_type_change(summary: &[u8], path: &str) -> bool {
+    let mut deleted: Option<Mode> = None;
+    let mut created: Option<Mode> = None;
+    for raw in summary.split(|b| *b == b'\n') {
+        let Ok(line) = std::str::from_utf8(raw) else {
+            continue;
+        };
+        let (slot, rest) = if let Some(rest) = line.strip_prefix(" delete mode ") {
+            (&mut deleted, rest)
+        } else if let Some(rest) = line.strip_prefix(" create mode ") {
+            (&mut created, rest)
+        } else {
+            continue;
+        };
+        if let Some((stated, _)) = rest.split_once(' ').filter(|(_, named)| *named == path) {
+            *slot = mode(stated).ok();
+        }
+    }
+    match (deleted, created) {
+        (Some(old), Some(new)) => (old == Mode::Symlink) != (new == Mode::Symlink),
+        _ => false,
     }
 }
 
@@ -758,8 +810,13 @@ mod tests {
     #[test]
     fn binary_means_both_columns_are_dashes() {
         assert!(one("-\t-\ta.bin\0", "").binary());
-        assert!(!one("-\t3\ta.txt\0", "").binary());
-        assert!(!one("3\t-\ta.txt\0", "").binary());
+        // One dash is not a binary file but an unreadable record (Q58): Git writes both or neither.
+        for record in ["-\t3\ta.txt\0", "3\t-\ta.txt\0"] {
+            assert!(matches!(
+                facts(record, ""),
+                Err(Unverifiable::UnreadableGitOutput(_))
+            ));
+        }
         let change = one("2\t1\tsrc/a.rs\0", "");
         assert_eq!(
             (change.path().as_str(), change.kind()),
@@ -793,6 +850,83 @@ mod tests {
             ),
             Err(Unverifiable::TypeChange("a".to_owned()))
         );
+    }
+
+    #[test]
+    fn a_type_change_is_named_as_one() {
+        // Q60: Git's own output for a type change with `--no-renames` (measured, Git 2.56.1): the
+        // path twice in numstat, a deletion and a creation in the summary.
+        let twice = concat!("0\t1\tl\0", "1\t0\tl\0");
+        for summary in [
+            " delete mode 100644 l\n create mode 120000 l\n",
+            " delete mode 100755 l\n create mode 120000 l\n",
+            " delete mode 120000 l\n create mode 100644 l\n",
+            " create mode 100644 l\n delete mode 120000 l\n",
+        ] {
+            assert_eq!(
+                facts(twice, summary),
+                Err(Unverifiable::TypeChange("l".to_owned())),
+                "{summary:?}"
+            );
+        }
+        // Anything else that lists a path twice stays a repeated path.
+        for summary in [
+            "",
+            " delete mode 100644 l\n",
+            " create mode 120000 l\n",
+            " delete mode 100644 l\n create mode 100644 l\n",
+            " delete mode 100644 l\n create mode 100755 l\n",
+            " delete mode 120000 l\n create mode 120000 l\n",
+            " delete mode 100644 l\n create mode 120000 xl\n",
+            " delete mode 100644 xl\n create mode 120000 l\n",
+            " delete mode 100644 l\n create mode 120000 l \n",
+            " delete mode 100644 l\n create mode 160000 l\n",
+            " delete mode 100644 l\n create  mode 120000 l\n",
+        ] {
+            assert_eq!(
+                facts(twice, summary),
+                Err(Unverifiable::RepeatedPath("l".to_owned())),
+                "{summary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn numstat_counts_are_two_decimals_or_two_dashes() {
+        // Q58: Git writes `ADDED\tDELETED\tPATH`, each count a decimal, or `-` `-` for binary.
+        for record in [
+            "x\t1\ta\0",
+            "1\tx\ta\0",
+            "\t1\ta\0",
+            "1\t\ta\0",
+            "-\t1\ta\0",
+            "1\t-\ta\0",
+            "+1\t0\ta\0",
+            "1 \t0\ta\0",
+            " 1\t0\ta\0",
+            "0x1\t0\ta\0",
+            "\u{661}\t0\ta\0",
+            "123456789012345678901\t0\ta\0",
+            "0\t123456789012345678901\ta\0",
+        ] {
+            assert_eq!(
+                facts(record, ""),
+                Err(Unverifiable::UnreadableGitOutput(
+                    "numstat counts are not two decimals or `-` and `-`".to_owned()
+                )),
+                "{record:?}"
+            );
+        }
+        let read = |record: &str| {
+            let facts = facts(record, "").unwrap();
+            let change = facts.files().next().unwrap().clone();
+            (change.binary, change.content)
+        };
+        assert_eq!(read("0\t0\ta\0"), (false, false));
+        assert_eq!(read("12\t0\ta\0"), (false, true));
+        assert_eq!(read("0\t3\ta\0"), (false, true));
+        assert_eq!(read("-\t-\ta\0"), (true, true));
+        assert_eq!(read("12345678901234567890\t0\ta\0"), (false, true));
     }
 
     #[test]
@@ -967,7 +1101,8 @@ mod tests {
             ),
             (
                 Unverifiable::TypeChange("a".to_owned()),
-                "\"a\" changes type (more than one summary record)",
+                "\"a\" changes type: Git deletes it and creates it again as a symlink or a file; \
+                 that change cannot be verified per file",
             ),
             (
                 Unverifiable::RenameOrCopy,

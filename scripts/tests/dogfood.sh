@@ -87,7 +87,7 @@ STUB
 cat > "$sandbox/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ " $* " == *" --proto =https "* && " $* " == *" --fail "* ]] || exit 91
+[[ " $* " == *" --proto =https "* && " $* " == *" --proto-redir =https "* && " $* " == *" --fail "* ]] || exit 91
 [ "${!#}" = "$EXPECTED_URL" ] || exit 92
 output=
 while [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then output="$2"; fi; shift; done
@@ -193,7 +193,7 @@ candidate_config relative-from-a-subdirectory diff.relative true "$attr/sub"
 # driver's clean patch, whatever the user's own Git configuration, environment and directory are.
 maker="$trusted/scripts/make_patch.sh"
 mkdir -p "$sandbox/user-home" "$sandbox/maker-tmp"
-printf '[diff]\n\tnoprefix = true\n\trelative = true\n\tcontext = 0\n\tmnemonicPrefix = true\n\talgorithm = histogram\n[color]\n\tui = always\n[core]\n\tquotePath = false\n' > "$sandbox/user-home/.gitconfig"
+printf '[diff]\n\tnoprefix = true\n\trelative = true\n\tcontext = 0\n\tmnemonicPrefix = true\n\talgorithm = histogram\n[color]\n\tui = always\n[core]\n\tquotePath = false\n\thooksPath = %s/no-hooks\n\tfsmonitor = %s/no-fsmonitor\n' "$sandbox" "$sandbox" > "$sandbox/user-home/.gitconfig"
 made() {
  name="$1"; shift
  if ! "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || ! same_bytes "$clean_patch" "$sandbox/made.patch"; then
@@ -209,6 +209,11 @@ git -C "$attr" branch maker-base "$base"
 git -C "$attr" branch maker-head "$attr_head"
 made with-branch-names bash "$maker" maker-base maker-head "$attr"
 made from-a-subdirectory-with-relative bash -c 'cd "$1/sub" && env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$2" bash "$3" "$4" "$5"' _ "$attr" "$sandbox/user-home" "$maker" "$base" "$attr_head"
+# Q58 S1: no repository at the caller's current directory is read; a SHA-256 one there once
+# made the empty-tree id the wrong length for the SHA-1 scratch repository.
+git init -q --object-format=sha256 "$sandbox/cwd-sha256"
+made from-a-sha256-directory bash -c 'cd "$1" && bash "$2" "$3" "$4" "$5"' _ "$sandbox/cwd-sha256" "$maker" "$base" "$attr_head" "$attr"
+made hostile-git-dir env GIT_DIR="$sandbox/cwd-sha256/.git" GIT_OBJECT_DIRECTORY="$sandbox/cwd-sha256/.git/objects" GIT_WORK_TREE="$sandbox/cwd-sha256" bash "$maker" "$base" "$attr_head" "$attr"
 made leaves-no-scratch env TMPDIR="$sandbox/maker-tmp" bash "$maker" "$base" "$attr_head" "$attr"
 if [ -n "$(ls -A "$sandbox/maker-tmp")" ]; then echo 'FAIL make_patch: scratch repository left behind'; exit 1; fi
 for bad in "nosuchrev $attr_head" "$base nosuchrev" "$base" "$base $attr_head $attr extra" "--output=$sandbox/x $attr_head"; do
@@ -373,6 +378,9 @@ for row in 'accepted 8 0 0' 'stale 8 8 8' 'broken-verifier 8 3 8' 'fail-with-ack
  actual=$?
  set -e
  if [ "$actual" -ne "$expected" ]; then cat "$sandbox/output"; echo "FAIL ack $name"; exit 1; fi
+ # Only an accepted acknowledgement leaves acknowledgement.json; a refused one leaves no file.
+ if [ "$name" = accepted ]; then test -s "$sandbox/ack-$name/acknowledgement.json"
+ elif [ -e "$sandbox/ack-$name/acknowledgement.json" ]; then echo "FAIL ack $name left acknowledgement.json"; exit 1; fi
  echo "PASS ack $name exit=$actual"
 done
 # A source revision is not a binary hash enrollment. Without a producer section,
@@ -401,6 +409,50 @@ for RANK_EXIT in 0 9; do
  echo "PASS explicit advisory cannot acknowledge or mask ranker failure: $actual"
 done
 export EXPECTED_TRUSTED="$trusted"
+# Q58 S3 (third read): the trusted checkout given as the candidate, by its path and through a
+# symbolic link, and an ignored file in the trusted checkout, each refuse before any effect.
+export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
+ln -s "$trusted" "$sandbox/trusted-link"
+for row in "same-path $trusted" "same-through-link $sandbox/trusted-link"; do
+ read -r name given <<< "$row"
+ set +e
+ bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$given" "$sandbox/s3-$name" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ [ "$actual" = 2 ] && grep -q 'judge checkout must be the distinct trusted base' "$sandbox/output" && test ! -e "$sandbox/s3-$name" || { cat "$sandbox/output"; echo "FAIL trusted as candidate $name: got $actual"; exit 1; }
+ echo "PASS trusted checkout as the candidate ($name) refused before effects"
+done
+printf 'ignored.txt\n' >> "$trusted/.git/info/exclude"
+printf 'ignored\n' > "$trusted/ignored.txt"
+test -z "$(git -C "$trusted" status --porcelain --untracked-files=all)"
+set +e
+bash "$trusted/scripts/dogfood.sh" "$base" "$head" "$candidate" "$sandbox/s3-ignored" > "$sandbox/output" 2>&1
+actual=$?
+set -e
+rm -- "$trusted/ignored.txt"
+[ "$actual" = 2 ] && grep -q 'trusted checkout must be clean, including ignored files' "$sandbox/output" && test ! -e "$sandbox/s3-ignored" || { cat "$sandbox/output"; echo "FAIL ignored file in the trusted checkout: got $actual"; exit 1; }
+echo 'PASS an ignored file in the trusted checkout refused before effects'
+# Diverged history: the trusted base moved on after the candidate forked. The judged change is
+# from the merge base to head (base...head), so the patch is the clean one; base..head would also
+# undo the base's own new commit.
+git clone -q --no-local "$trusted" "$sandbox/moved-trusted"
+moved="$sandbox/moved-trusted"
+printf 'a later trusted commit\n' > "$moved/later.txt"
+git -C "$moved" add -- later.txt
+git -C "$moved" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm later -- later.txt
+moved_base="$(git -C "$moved" rev-parse HEAD)"
+git -C "$attr" fetch -q "$moved" HEAD
+export EXPECTED_TRUSTED="$moved"
+out="$sandbox/s3-diverged"
+set +e
+bash "$moved/scripts/dogfood.sh" "$moved_base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
+set -e
+export EXPECTED_TRUSTED="$trusted"
+if ! same_bytes "$clean_patch" "$out/change.patch"; then
+ echo "FAIL diverged history: the patch is not base...head ($(grep -c '^diff --git' "$out/change.patch" || true) sections)"
+ exit 1
+fi
+echo 'PASS diverged history: the patch is the change from the merge base to head'
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
 set +e
 bash "$trusted/scripts/dogfood.sh" "$head" "$head" "$candidate" "$sandbox/wrong-base" >/dev/null 2>&1

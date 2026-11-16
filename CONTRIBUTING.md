@@ -31,6 +31,12 @@ The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned i
 (G-18). `zizmor` and `deep-diff-forge` are hosted-only (the `[local_gate]` table says why). When they
 are absent, the gate's last line names them as not run here instead of claiming that everything passed.
 
+Scripts and their tests run in an offline gate image that has fewer commands than a developer's
+machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` (fast gate, and
+`GateImageCommands` in `scripts/tests/perimeter.py`) names every command a tracked shell or Python
+script calls that is not in its declared list; adding a command to that list means first seeing it
+in the gate image.
+
 ## First rule: a passing example and a failing control
 
 This adds a policy rule using the existing `protect_paths` kind; adding a new Rust rule kind
@@ -193,8 +199,9 @@ Planning and every shard must succeed. See [measured budgets](docs/CI_BOUNDS.md)
 
 A `hold` is accepted only with an OpenSSH-signed acknowledgement from a reviewer enrolled in
 `.github/hold-reviewers/allowed_signers` on the base branch (ADR 0007). A label grants nothing.
-Until reviewer keys are enrolled and an external trust root enforces the check (ADR 0006), CI
-fails closed on every hold.
+One reviewer, the owner, is enrolled (principal `luke`). Hosted CI runs dogfood in advisory mode,
+which cannot be acknowledged, and no external trust root enforces the check yet (ADR 0006), so
+hosted CI fails closed on every hold.
 
 ## Periodic full mutation baseline
 

@@ -68,3 +68,41 @@ receipt parsing and signature verification are runtime admission. Types cannot p
 authorship of external bytes. Tests plant removed head/digest checks and signature bypass; a passing
 fixture does not establish external deployment authority. The receipt is not a replacement for
 coverage verification (C1) or permission to turn unknown evidence into PASS.
+
+## Amendment (M7-Q61, 2026-11-15): who can acknowledge, and for how long
+
+The text above is unchanged; this section corrects two readings of it.
+
+**Who.** The acknowledgement is a feature of this repository's driver, not of the product. The
+`forge-warden` binary has no acknowledgement option. `scripts/hold_ack.py` writes
+`"repository": "Louranicas/forge-warden"` into every receipt and reads `allowed_signers` from the trusted
+checkout it sits in, and `scripts/dogfood.sh` is the only caller. A deployer of the released binary
+therefore has no acknowledgement path: a hold stays a hold until the change or the policy changes in
+review, or until the deployer builds its own admission step outside the pull request. Whether the
+product should carry one is an open owner decision (ledger Q61).
+
+**How long.** The receipt binds the SHA-256 of the exact verdict bytes, and the verdict carries
+`evaluated_on`, the UTC date of the run (`dogfood.sh` passes no `--today`). A run on a later UTC day
+writes different bytes, so a receipt matches only runs on the UTC day it was prepared for; after
+00:00 UTC it is refused with "acknowledgement does not match current subject and verdict", whatever
+`expires_at` says. The effective lifetime is the earlier of `expires_at` and the end of that UTC day.
+This fails closed. "Before expiry, a rollback to the same base/head and identical verdict is the same
+acknowledged subject" above holds only within that day, because the next day's verdict is not
+identical. Measured 2026-11-14 00:27Z (Keel, HOLD-ACK-TEST on 7bd9e655): a receipt accepted at
+23:31Z the day before, replayed on the same change about 23 hours before its `expires_at`, was refused
+(exit 8); the two verdicts differed only in `evaluated_on`.
+
+**One enrolled reviewer can admit another.** A change to `allowed_signers` is held like any other
+`.github/**` change (rule `quality-config-is-owned`), and that hold is itself acknowledgeable, so a
+reviewer already enrolled in the trusted base can acknowledge a change that enrols a second one. This
+is the "separately reviewed trusted-base change" of `.github/hold-reviewers/README.md`; the owner
+should know that the review is one reviewer's signature unless the external controller asks for more.
+(Read from `warden.toml` and this ADR; not measured.)
+
+**First enrolment (HOLD-REVIEWER, 2026-11-15).** "No production keys ship with this change" above
+describes the change that introduced the helper. One reviewer is now enrolled in
+`.github/hold-reviewers/allowed_signers`: principal `luke`, the owner's key, fingerprint
+`SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E`, namespace `forge-warden-ack` only. The owner
+made the key and placed its public half for enrolment; the private key never left the owner's machine.
+The external controller of "Deployment and invalidation" still does not exist, so the enrolment
+makes the local path usable, not the hosted one.

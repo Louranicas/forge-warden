@@ -197,7 +197,8 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
 - **A patch without the default `a/` and `b/` prefixes** (made with `diff.noprefix`,
   `diff.mnemonicPrefix` or other prefixes, or with no `diff --git` header) → `patch_unverifiable`.
   Git removes one leading path component whatever it is, so it would report `scripts/x` as `x`
-  and no path rule would match. Pass `--src-prefix=a/ --dst-prefix=b/` to `git diff`. A reverse
+  and no path rule would match. Make the patch with `scripts/make_patch.sh <base> <head>`
+  ([runbook](RUNBOOK.md)), or pass `--src-prefix=a/ --dst-prefix=b/` to `git diff`. A reverse
   diff (`git diff -R`, `b/` then `a/`) is read, and judged as the change its bytes make: the
   inverse of the change it was made from. Prefixes that themselves begin `a/` and `b/`
   cannot be told from a real path and are believed as written.
@@ -272,6 +273,7 @@ fails when the two disagree. The same test holds the README's sample output to
 | `no-ci-privilege` | `forbid_signal` | `fail` |
 | `no-silent-suppression` | `forbid_signal` | `hold` |
 | `keep-the-tests` | `forbid_signal` | `hold` |
+| `binary-text-is-hidden-text` | `forbid_signal` | `hold` |
 | `tests-travel-with-code` | `require_companion` | `hold` |
 | `schema-changes-are-versioned` | `require_companion` | `fail` |
 | `quality-config-is-owned` | `protect_paths` | `hold` |

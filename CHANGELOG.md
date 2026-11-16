@@ -9,6 +9,63 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-16
+
+- No change to a published schema or to the exit-code registry: `forge-warden.policy.v0`,
+  `forge-warden.verdict.v2`, `forge-warden.git-allowlist.v1` and the exit codes are as in 0.2.0. Two
+  starter-policy changes below need a hand edit in a policy adopted earlier (Upgrading).
+- New rule `binary-text-is-hidden-text` in the starter policy and in this repository's `warden.toml`
+  (ledger Q63): it holds a file that is normally text (125 extensions, 40 exact names including ten of
+  Git's hook names (`pre-commit`, `commit-msg`, `pre-push`, `post-checkout` and others; Git's other hook
+  names, such as `post-commit` and `post-rewrite`, are not listed), `configure` and `allowed_signers`, and the name prefixes `LICENSE-`, `COPYING.` and
+  `Dockerfile.`; any letter case) when the patch carries it as a binary section. An executable with
+  another name is not covered (protect it with a path rule; Upgrading). Git's own numstat says "binary" (`binary_change`), so
+  any patch maker that hides text this way, such as a `.gitattributes` the change commits, is held for a
+  person instead of passing every signal rule. A repository that adopted the starter earlier adds the
+  rule by hand (Upgrading). The demo verdict gains the rule (it passes there) and a new policy digest.
+- A file replaced by a symlink, or the reverse, is refused as a type change: the
+  `patch_unverifiable` detail now says the path "changes type: Git deletes it and creates it again
+  as a symlink or a file" instead of "git lists PATH more than once" (ledger Q60). What holds is
+  unchanged; only the reason is clearer. Any other path Git lists twice keeps the old message.
+- Git's numstat counts are read strictly: each is a decimal of 1 to 20 digits, or both are `-` for a binary file;
+  anything else is refused as unreadable Git output (`patch_unverifiable`). Before, an
+  unreadable count was read as a content change. Git does not write one.
+- The refusal for a patch without `diff --git a/PATH b/PATH` headers, and the policy reference,
+  now name `scripts/make_patch.sh` as the way to make the patch.
+- `scripts/dogfood.sh` downloads the ranker with `--proto-redir =https` as well as
+  `--proto =https`, so a redirect cannot leave HTTPS (the archive's pinned SHA-256 was already
+  checked).
+- The owner's hold reviewer key is enrolled in `.github/hold-reviewers/allowed_signers`
+  (principal `luke`, namespace `forge-warden-ack`, fingerprint
+  `SHA256:ynROoorgFjRNx4689OUBe4eff4atYzIWvzuskmuF79E`; intention 124). A signed acknowledgement
+  from that key is now accepted by an authority-mode run of `scripts/dogfood.sh`. Hosted CI runs
+  dogfood in advisory mode and still fails closed on every hold. README, CONTRIBUTING, the
+  hold-reviewers README and ADR 0007 say so.
+- Documents say who can acknowledge a hold, and for how long (ledger Q61). The `forge-warden`
+  binary has no acknowledgement path; the signed acknowledgement of ADR 0007 belongs to this
+  repository's own driver (`scripts/dogfood.sh`). A receipt binds the verdict's bytes, which carry
+  the UTC date of the run, so it matches only runs on the UTC day it was prepared for, whatever its
+  `expires_at` says. The runbook's exit-8 row, the README, `.github/hold-reviewers/README.md` and a
+  dated amendment to ADR 0007 say so. `scripts/hold_ack.py` now names the fields a refused receipt
+  differs in (and the UTC-day cause when only the verdict bytes differ) and says "signature is not
+  valid for an enrolled reviewer" instead of printing a failed command line; `scripts/dogfood.sh`
+  no longer leaves an `acknowledgement.json` behind when it refuses one.
+- The starter policy (`forge-warden init`, `examples/starter.warden.toml`) protects a coding
+  agent's configuration: rule `ci-is-owned` now also holds a change to `.claude` or anything under
+  it (hooks, permissions, skills), at the root or in a subdirectory, in any letter case (a
+  case-insensitive checkout reads `.CLAUDE` as `.claude`), and a `.claude` symlink itself. A repository that adopted the starter
+  earlier keeps its own copy; add the path to its policy by hand. The demo verdict's
+  `policy_sha256` changes with the policy bytes; this change alters nothing else in it.
+- For contributors (gap G9): the fast gate runs `scripts/script_commands.py`, which reads every
+  tracked shell and Python script, here-documents included, and names each command it calls that is
+  not in the offline gate image's declared list (that image has no `cmp`, `diff`, `jq`, `xxd` or
+  `file`), within the limits its docstring states. A construct the reader does not handle is a failure,
+  not a skip. It reads a source export
+  without `.git` as well as a checkout. `GateImageCommands` in `scripts/tests/perimeter.py` runs it,
+  and CONTRIBUTING says how to add a command. No change to the `forge-warden` binary.
+- The demo verdict (`fixtures/demo.verdict.json`) names tool version 0.2.1; it was regenerated from
+  the built binary.
+
 ## [0.2.0] - 2026-11-13
 
 - The documented by-hand `git diff` (README, runbook) now takes attributes from the empty tree

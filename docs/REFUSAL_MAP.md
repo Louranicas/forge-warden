@@ -26,7 +26,7 @@ proven by a plant.
 | `Unverifiable::NonCanonicalPath` | `crates/forge-warden-core/src/facts.rs::a_non_canonical_git_path_keeps_its_reason` |
 | `Unverifiable::RepeatedPath` | `crates/forge-warden-core/tests/authority.rs::a_no_prefix_patch_is_refused_as_a_repeated_path` |
 | `Unverifiable::SummaryPathUnknown` | `crates/forge-warden-core/src/facts.rs::each_unreadable_answer_from_git_is_refused_with_its_own_variant` |
-| `Unverifiable::TypeChange` | `crates/forge-warden-core/src/facts.rs::each_unreadable_answer_from_git_is_refused_with_its_own_variant` |
+| `Unverifiable::TypeChange` | `crates/forge-warden-core/tests/authority.rs::a_real_type_change_is_refused_as_a_type_change` |
 | `Unverifiable::RenameOrCopy` | `crates/forge-warden-core/src/facts.rs::renames_and_copies_refuse_in_either_output` |
 | `Unverifiable::UnsupportedMode` | `crates/forge-warden-core/src/facts.rs::every_mode_bearing_header_is_admitted_by_one_total_grammar` |
 | `Unverifiable::UnreadableModeHeader` | `crates/forge-warden-core/src/facts.rs::every_mode_bearing_header_is_admitted_by_one_total_grammar` |
