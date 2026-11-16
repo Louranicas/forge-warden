@@ -11,31 +11,33 @@ re-running the commands. A section for the next release is measured on its relea
 
 ## 0.2.1 (2026-11-16)
 
-Measured on the release candidate `4def1c51f2c6f4682010c498cb6cae318e02dde8`, from a clean `--no-local` clone
-of the integration hub (the fast gate and the source-export run: on the release commit, the branch tip), in a Fedora 44 toolbox on Linux x86_64: Rust 1.99.1 (`rust-toolchain.toml`), MSRV
-1.88, Git 2.56.0. The commits after the candidate change only documents (this section, the README, the
-changelog, the upgrade guide and the release checklist). The deep-diff-forge producer pin
-(`[producer]` in `warden.toml`) is the 0.2.0 one, unchanged. 0.2.1 is 0.2.0 plus the packages listed in
-[docs/RELEASE-0.2.1.md](docs/RELEASE-0.2.1.md); between Train A4's gated commit `92a9ac9` and the candidate,
-only the version number, the demo verdict's version line, its reviewed digest in `lint-expectations.toml`
-and documents changed.
+Every row below was measured on the release candidate `ab7d734f425b09657da2f3bb102e2bf7f62d1036`, from a fresh `--no-local`
+clone of the integration hub, in a Fedora 44 toolbox on Linux x86_64: Rust 1.99.1 (`rust-toolchain.toml`), MSRV
+1.88, Git 2.56.0. The commit after the candidate changes only this section and the matching line of the
+release checklist. The deep-diff-forge producer pin
+(`[producer]` in `warden.toml`) is the 0.2.0 one, deep-diff-forge 0.8.2, unchanged; the release checklist
+records why it stays although the ranker's advisory GHSA-rq5r-p3g9-phff is fixed in 0.8.3. 0.2.1 is 0.2.0 plus
+the packages listed in [docs/RELEASE-0.2.1.md](docs/RELEASE-0.2.1.md). Between Train A4's gated commit `92a9ac9`
+and the candidate, these changed: the version number; a comment in both policy files (so the starter's digest,
+which a test helper, `fixtures/adversarial/seal-reference.json` and `lint-expectations.toml` name); the demo
+verdict's version and policy digest; and documents.
 
 | Claim | Command | Result |
 | --- | --- | --- |
-| The lint wall, tests and docs are green | `bash scripts/ci_fast.sh` on the release commit; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline` | both green |
+| The lint wall, tests and docs are green | `bash scripts/ci_fast.sh`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline` | both green |
 | Every test passes | `cargo test --workspace --locked --offline` | 384 passed, 0 failed, 0 ignored, in 27 test binaries |
 | Every script test passes from a source export, as the hosted-parity phase runs it | each script test of `scripts/ci_fast.sh`, plus `scripts/tests/perimeter.py`, from `git archive <commit> \| tar -x` (no `.git`) in the gate's container image with no network | 14 of 14 pass |
 | The tests catch the viable mutants of each change | `cargo mutants --in-diff` in the merge gate of each train | Train A: 9 mutants, 8 caught, 1 not buildable, 0 missed. Train A2: 10, 9 caught, 1 not buildable, 0 missed. Train A3b: no source mutation sites. Train A4: no Rust change. The whole-workspace count was not rerun for 0.2.1; the 0.2.0 baseline below is for the code it measured |
-| The minimum Rust version builds and passes | the merge gate's MSRV step (`fw-verify --msrv`) | green on Train A4's `92a9ac9` (the same Rust source, apart from the version number) |
+| The workspace type-checks with the minimum Rust version | `cargo +1.88.0 check --workspace --all-targets --locked --offline` (the merge gate's MSRV step: a type check, not a build or a test run) | green on Train A4's `92a9ac9`; the candidate's Rust differs from it only in the version number and one string constant in a test helper |
 | Supply chain is clean | `cargo deny --offline check` | advisories, bans, licences, sources ok (advisory database as cached on the machine) |
-| Bad code is refused | `python3 -I plants/run.py --source <hub> --revision <commit> --output <new dir>` | 114 of 114 planted defects caught over 51 guardrail rows; 2 rows (G-38, G-47) are pending, each waiting on a named owner input ([plants/README.md](plants/README.md)); the runner exits 2 because rows are pending |
+| Bad code is refused | `python3 -I plants/run.py --source <hub> --revision <commit> --output <new dir>` | 114 of 114 planted defects caught over 51 guardrail rows; 2 rows (G-38, G-47) are pending, each waiting on a named owner input ([plants/README.md](plants/README.md)); the runner exits 2 because rows are pending. The catalogue is unchanged since 0.2.0: the 0.2.1 changes are covered by tests and diff mutants, not by a plant |
 | Every refusal and exit has a test that observes it | `cargo test -p forge-warden-cli --locked --offline --test refusal_map` | [docs/REFUSAL_MAP.md](docs/REFUSAL_MAP.md): 53 rows, 52 observed by a test, 1 stated unreachable (`Exit::Internal`), 0 without a test; 3 rows also proven by a plant. 0.2.1 adds no refusal variant: the table at 0.2.0's release commit has the same 53 rows, which the 0.2.0 section below counts as "52 rows, 1 stated unreachable" |
 | A real deep-diff-forge corpus is read | `cargo test -p forge-warden-cli --locked --offline --test corpus`; `ls fixtures/corpus/*.rank.json \| wc -l` | passes; 40 rankings |
 | The 0.1.0 review findings stay fixed | `cargo test --workspace --locked --offline -- renames_and_copies_hold_because_their_source_is_invisible binary_deletions_and_unknowable_binary_changes_are_not_companions status_unknown_holds` | 3 pass |
 | Agent guardrails bite | `python3 -I .claude/hooks/test_guard.py` | pass |
-| The demo verdict is the reviewed golden | `python3 -I scripts/golden_output.py --binary <fixture CLI> --receipt <its receipt> --subject <its subject> --write`, then the same command without `--write` by another lane | `fixtures/demo.verdict.json`, SHA-256 `178524d21daf5d41d87f020e9d8acaa929090560be9367cc82ec52812c4f34ba`. Against 0.2.0's golden: `tool.version`, `seals.policy_sha256`, the summary (10 rules, 5 passed) and the new `binary-text-is-hidden-text` entry (it passes); the preparation itself changed one line, `tool.version` |
+| The demo verdict is the reviewed golden | `python3 -I scripts/golden_output.py --binary <fixture CLI> --receipt <its receipt> --subject <its subject> --write`, then the same command without `--write` by another lane | `fixtures/demo.verdict.json`, SHA-256 `9dc1971e27ae781632e23db71c368b6afa193cb9048789eda8990c44909b6ca7`. Against 0.2.0's golden: `tool.version`, `seals.policy_sha256`, the summary (10 rules, 5 passed) and the new `binary-text-is-hidden-text` entry (it passes); the preparation itself changed two lines, `tool.version` and `seals.policy_sha256` |
 | The README demo is real output | the README's advisory command with `--today 2026-11-05`, built 0.2.1 CLI, in the gate's container image with no network and no Git allowlist | every line the README shows, in order, including the NOTE line's Git part |
-| The integrator gate on the release commit | `fw-verify --mutants --msrv` on the release commit | `@GATE_RECEIPT@` (Lodestar) |
+| The integrator gate on the release commit | `fw-verify --mutants --msrv` | recorded by the integrator outside this tree, on the commit that carries this section |
 
 Not verified here, for 0.2.1:
 - The whole-workspace mutation count, the contributing walkthrough and the documented-command sweep of the

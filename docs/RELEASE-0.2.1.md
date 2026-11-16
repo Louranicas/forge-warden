@@ -50,7 +50,7 @@ one new starter rule and two globs in `ci-is-owned` ([Upgrading](UPGRADING.md), 
   the tag (this preparation).
 - [x] [Upgrading](UPGRADING.md): "0.2.0 to 0.2.1" (this preparation).
 - [x] `EVIDENCE.md`: a 0.2.1 section with the numbers of the release candidate (this preparation); the integrator
-  gate's receipt on the release commit is the one line left for the integrator.
+  records its gate's receipt on the release commit outside the tree.
 
 ## Gate
 
