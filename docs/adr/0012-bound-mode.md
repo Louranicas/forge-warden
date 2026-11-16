@@ -275,3 +275,24 @@ exit, "exit 4" its `invalid_input`.
   - item 6, cleanup after a Git killed from outside: also to c3, with a native fixture Git (the ELF rule above).
   - item 8, `require_verified` ignored: to step (c), where the key is built.
 - **Not a test, said plainly:** the byte caps (`PACK_CAP`, `LIST_CAP`, `STDERR_CAP`) are literals until c3.
+## Correction, 2026-11-16T09:39:42Z: D5's verified form (Lodestar ruling R1, 2026-11-16T09:28:28Z)
+D5 says the verified form is "constructible only by the CLI's bound path (a private-field type, like `AdmittedGit`)".
+That cannot hold across crates: `Claims` is serialized by the core, so its verified form is a core type, and any
+constructor the CLI can call is public to every library user (`AdmittedGit` works only because the crate that defines it
+is the crate that mints it). D5's sentence stays as written above; this entry records what is built instead.
+
+- **The comparison is in the core and is the only constructor.** `BoundClaims::from_comparison(ids: BoundIds, supplied:
+  &[u8], made: &[u8]) -> Result<BoundClaims, PatchMismatch>` is pure (ADR 0001). `BoundIds::new` refuses ids that are
+  not 40 or 64 lowercase hex digits, or not of one length. `PatchMismatch` carries the first differing offset (the
+  shorter length when one input is a prefix of the other) and both lengths, never content.
+- **`Claims` has two forms and private fields.** Asserted (`Claims::new`) serializes exactly as verdict v2's object;
+  bound (`Claims::bound(BoundClaims)`) serializes `{base, head, merge_base, verified: true}`. `Unverified` leaves the
+  public API. `public-api.txt` lists no other way to a `BoundClaims`.
+- **What this guarantees, said plainly.** A verified claim means a byte comparison of two inputs passed and the ids are
+  well formed. The core cannot know where the second input came from: a library caller can pass the same bytes twice,
+  as it could already print any JSON. The property that matters, "the forge-warden binary never says verified without
+  its door's diff", is held in the CLI: `tests/repo_invariants.rs` (`only_bound_mode_verifies_claims`) allows exactly
+  one production call of `from_comparison`, in `bind`, with `made.patch` from the door's `bound_diff` as its second
+  input, and a plant that adds a second call must be caught by that test.
+- **Schema.** `seals.claims` in `verdict.v3.schema.json` is `oneOf` the bound object and v2's asserted object
+  (unchanged), rather than one object with `if`/`then`.
