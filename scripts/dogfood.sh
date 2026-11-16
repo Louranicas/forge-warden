@@ -73,7 +73,7 @@ ddf_release="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_release)"
 ddf_archive_sha256="$(python3 -I "$trusted/scripts/tool_versions.py" ddf_archive_sha256)"
 ddf_name="deep-diff-forge-$ddf_release-x86_64-unknown-linux-gnu"
 mkdir -- "$out/ranker" "$out/ranker/bin"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 300 \
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 300 \
   --output "$out/ranker/$ddf_name.tar.gz" \
   "https://github.com/Louranicas/deep-diff-forge/releases/download/$ddf_release/$ddf_name.tar.gz"
 printf '%s  %s\n' "$ddf_archive_sha256" "$out/ranker/$ddf_name.tar.gz" | sha256sum --check --strict --status || {
