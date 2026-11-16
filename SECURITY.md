@@ -36,8 +36,17 @@ It writes no other files.
 
 ## Reporting
 
-Please report vulnerabilities privately through GitHub's "Report a vulnerability" on this
-repository rather than in a public issue.
+Please report vulnerabilities privately as a confidential issue on the repository of record,
+https://gitlab.com/lukeomahoney/forge-warden/-/issues (tick "This issue is confidential"),
+rather than in a public issue.
+
+## Advisories
+
+- [FW-2026-001](docs/advisories/FW-2026-001.md): a change to a protected path could PASS when the
+  patch was made with a non-default Git prefix, from a subdirectory with `diff.relative`, or
+  without the submodule change. Every commit published before the tag `v0.2.0` is affected,
+  including builds that already say 0.2.0. Fixed in 0.2.0 for patches made with
+  `scripts/make_patch.sh`; the advisory lists what a patch made by hand can still hide.
 
 ## Agent hooks are convenience checks (WP-D4)
 

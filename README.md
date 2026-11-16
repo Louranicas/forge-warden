@@ -68,8 +68,8 @@ people, scripts, CI and agents together.
 ## Install
 
 ```bash
-cargo install --git https://github.com/Louranicas/forge-warden --tag v0.2.0 forge-warden-cli --locked
-cargo install --git https://github.com/Louranicas/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/forge-warden --tag v0.2.0 forge-warden-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
 forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
 ```
@@ -78,6 +78,11 @@ Both lines pin a release tag; pin what you deploy (`--rev` with a commit works t
 source release: there is no forge-warden binary to download. Authority mode runs only the
 deep-diff-forge binary whose SHA-256 your policy lists, and a binary you build yourself has other
 bytes than the released one ([runbook](docs/RUNBOOK.md), step 3).
+
+The repository of record is GitLab (`gitlab.com/lukeomahoney/forge-warden`); the tag `v0.2.0`
+exists there and on its mirrors, not on GitHub. The GitHub repository is no longer updated, and
+its `main` predates the fixes in 0.2.0: see advisory
+[FW-2026-001](docs/advisories/FW-2026-001.md).
 
 Coming from 0.1.0? [Upgrading to 0.2.0](docs/UPGRADING.md) lists what changed and what to do.
 
@@ -162,11 +167,13 @@ the ranking reports, never remove them. Make the patch with
 installed: it writes the same bytes whatever your Git configuration, environment and current
 directory are. A plain `git diff` does not: `diff.noprefix` drops the `a/` `b/` prefixes (such a
 patch is refused), `diff.relative` in a subdirectory leaves out every change outside it, and
-`ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change; no
-check of the patch can see either omission. If you must use Git directly, run what the script runs,
-`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
-from the top level (the script also reads no Git configuration and takes attributes from the empty
-tree, which a plain command cannot). A verdict is about the patch bytes it was given, with paths read from the
+`ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change, and a
+`.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
+cannot read; no check of the patch can see any of these. If you must use Git directly, run what
+the script runs,
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+from the top level, with Git 2.40 or later: the first two options take attributes from the empty
+tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
 repository root: forge-warden does not check that the patch is the whole change between two
 commits, so whoever makes the patch is part of the trust boundary. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
@@ -311,6 +318,6 @@ deep-diff-forge's action names.
 
 MIT OR Apache-2.0, at your option.
 
-[deep-diff-forge]: https://github.com/Louranicas/deep-diff-forge
+[deep-diff-forge]: https://gitlab.com/lukeomahoney/deep-diff-forge
 
 Terminology: [glossary](docs/GLOSSARY.md). Design status: [ADR status](docs/ADR_STATUS.md).

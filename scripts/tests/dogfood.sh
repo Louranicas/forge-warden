@@ -227,6 +227,10 @@ echo 'PASS make_patch refuses a missing revision, a wrong argument count and an 
 # repository, so its rows pass with or without the options; the by-hand rows are the ones that
 # fail without them. They run the option line read from the script, and the README and the
 # runbook must print that same line, so the three cannot drift apart.
+# M7-WORKTREE-ATTACK W1: the change also commits `.gitattributes` with `*.rs -diff`. Read from the
+# work tree, it makes Git write `build.rs` as a binary section the ranker cannot read. The
+# documented command takes attributes from the empty tree, as the script does; a control row
+# shows the same command without those two options gives other bytes.
 git clone -q --no-local "$trusted" "$sandbox/sub-candidate"
 sub="$sandbox/sub-candidate"
 fixture_commit() { git -C "$sub" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "$1"; }
@@ -236,7 +240,8 @@ sub_base="$(git -C "$sub" rev-parse HEAD)"
 git -C "$sub" update-index --cacheinfo "160000,$sub_base,scripts/sub"
 printf '[submodule "sub"]\n\tpath = scripts/sub\n\turl = ./sub\n\tignore = all\n' > "$sub/.gitmodules"
 printf 'trusted-build\nfn beside_the_bump() {}\n' > "$sub/build.rs"
-git -C "$sub" add -- .gitmodules build.rs
+printf '*.rs -diff\n' > "$sub/.gitattributes"
+git -C "$sub" add -- .gitmodules build.rs .gitattributes
 fixture_commit bump
 sub_head="$(git -C "$sub" rev-parse HEAD)"
 sub_patch="$sandbox/sub-clean.patch"
@@ -258,14 +263,24 @@ if [ "$(printf '%s\n' "$by_hand" | grep -c -- '--dst-prefix=b/')" != 1 ]; then
  echo "FAIL by hand: make_patch.sh has no single line of diff options: $by_hand"
  exit 1
 fi
-grep -qF "\`git $by_hand <base>...<head>\`" "$source_root/README.md" || { echo "FAIL by hand: README.md does not print: git $by_hand <base>...<head>"; exit 1; }
-grep -qF "\`git $by_hand main...HEAD\`" "$source_root/docs/RUNBOOK.md" || { echo "FAIL by hand: docs/RUNBOOK.md does not print: git $by_hand main...HEAD"; exit 1; }
+attr_options='--attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null'
+grep -qF "\`git $attr_options $by_hand <base>...<head>\`" "$source_root/README.md" || { echo "FAIL by hand: README.md does not print: git $attr_options $by_hand <base>...<head>"; exit 1; }
+grep -qF "\`git $attr_options $by_hand main...HEAD\`" "$source_root/docs/RUNBOOK.md" || { echo "FAIL by hand: docs/RUNBOOK.md does not print: git $attr_options $by_hand main...HEAD"; exit 1; }
 echo 'PASS the README and the runbook print the diff command make_patch.sh runs'
+grep -q '^diff --git a/build.rs b/build.rs$' "$sub_patch" && grep -q '^+fn beside_the_bump() {}$' "$sub_patch" || { echo 'FAIL attributes: make_patch did not write build.rs as text'; exit 1; }
+empty_tree="$(git -C "$sub" hash-object -t tree /dev/null)"
+# shellcheck disable=SC2086
+git -C "$sub" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
+if same_bytes "$sub_patch" "$sandbox/made.patch" || grep -q '^+fn beside_the_bump() {}$' "$sandbox/made.patch"; then
+ echo 'FAIL attributes control: without the attribute options the committed *.rs -diff should hide build.rs'
+ exit 1
+fi
+echo 'PASS attributes control: without the attribute options build.rs becomes a binary section'
 by_hand_row() {
  name="$1"; shift
  # The option line is split into words on purpose, as a shell would split the documented command.
  # shellcheck disable=SC2086
- git -C "$sub" "$@" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
+ git -C "$sub" --attr-source="$empty_tree" -c core.attributesFile=/dev/null "$@" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
  if ! same_bytes "$sub_patch" "$sandbox/made.patch"; then
   echo "FAIL by hand $name: the documented command does not give make_patch's patch ($(grep -c '^diff --git a/scripts/sub ' "$sandbox/made.patch" || true) submodule sections)"
   exit 1

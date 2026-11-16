@@ -27,10 +27,10 @@ the branch instead.
 Pin what you deploy: a release tag, or a commit you have reviewed.
 
 ```bash
-cargo install --git https://github.com/Louranicas/forge-warden --rev <commit> forge-warden-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/forge-warden --rev <commit> forge-warden-cli --locked
 forge-warden schema exit-codes   # the exit codes your automation will see
 curl --fail --location --proto '=https' --output make_patch.sh \
-  "https://raw.githubusercontent.com/Louranicas/forge-warden/<commit>/scripts/make_patch.sh"
+  "https://gitlab.com/lukeomahoney/forge-warden/-/raw/<commit>/scripts/make_patch.sh"
 sed -n 2p make_patch.sh          # forge-warden patch-maker v1
 ```
 
@@ -41,7 +41,9 @@ keep it where only you can write it.
 
 Authority mode runs deep-diff-forge itself and admits it only by the SHA-256 of its bytes. Use the
 released binary: a binary built from the same source on another machine has other bytes (its build
-paths are embedded) and will not match.
+paths are embedded) and will not match. The released binary is published only on deep-diff-forge's
+GitHub release page, so the download below reads from there; the GitLab mirror carries the same
+`v0.8.2` tag for the source.
 
 ```bash
 v=v0.8.2; a=deep-diff-forge-$v-x86_64-unknown-linux-gnu
@@ -123,10 +125,13 @@ every path starts with (forge-warden refuses such a patch as unverifiable, exit 
 would read `scripts/x` as `x`), and with `diff.relative` in a subdirectory it writes a well-formed
 patch that leaves out every change outside that directory, which nothing can check for you. The
 same goes for a submodule change when `.gitmodules` (which the change itself can commit) says
-`ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. If
-you have to use Git directly, run what the script runs, from the top level:
-`git diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
-(the script also reads no Git configuration and takes attributes from the empty tree).
+`ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. And a
+`.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
+binary sections the ranker cannot read. If you have to use Git directly, run what the script
+runs, from the top level, with Git 2.40 or later:
+`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
+(the first two options take attributes from the empty tree; the script also reads no Git
+configuration).
 
 What a verdict is about: these patch bytes, with paths read from the repository root.
 forge-warden does not check that the patch is the whole change between two commits; `--base`
