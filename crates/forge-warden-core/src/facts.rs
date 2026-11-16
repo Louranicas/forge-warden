@@ -318,13 +318,11 @@ struct SectionModes {
     mode_header: bool,
 }
 
-impl SectionModes {
-    /// A section with neither line (also a path with no section, which [`check_header_paths`] refuses first).
-    const NONE: Self = Self {
-        index_mode: false,
-        mode_header: false,
-    };
-}
+/// A section with neither line (also a path with no section, which [`check_header_paths`] refuses first).
+const NO_MODE_LINES: SectionModes = SectionModes {
+    index_mode: false,
+    mode_header: false,
+};
 
 /// Each binary section states its file mode where Git states it (M7-Q64-MODE, ledger Q64). Git writes
 /// an edit that keeps the mode as `index A..B MODE`, and a creation, deletion or mode change with the
@@ -366,9 +364,9 @@ fn check_binary_modes(
     }
     for change in files.values().filter(|change| change.binary) {
         let name = change.path.as_str();
-        // A path with no `diff --git` section states no mode, which is what `NONE` records: an edit
-        // keeping its mode is then refused, so the default loosens nothing and hides nothing.
-        let stated = sections.get(name).or_fail_safe(&SectionModes::NONE);
+        // A path with no `diff --git` section states no mode, which is what `NO_MODE_LINES` records: an
+        // edit keeping its mode is then refused, so the default loosens nothing and hides nothing.
+        let stated = sections.get(name).or_fail_safe(&NO_MODE_LINES);
         let edit_keeping_mode = change.kind == ChangeKind::Modified && change.new_mode.is_none();
         let as_git_writes = if edit_keeping_mode {
             stated.index_mode && !stated.mode_header
