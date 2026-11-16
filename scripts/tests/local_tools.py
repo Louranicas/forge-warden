@@ -2,6 +2,7 @@
 """G-18: a skipped gate must not read as a passed gate. Shims only; no tool is downloaded or run."""
 import importlib.util
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -224,6 +225,48 @@ class Toolchain(unittest.TestCase):
         (self.root / "target").mkdir()
         (self.root / "target/old.sh").write_text(DEFAULT + "1.40.0\n")
         tool_versions.check_toolchain_sites(self.root)
+
+    def test_build_output_is_skipped_only_at_the_root(self):
+        # Q66: a site under a nested `target/` or `mutants.out/` is scanned, with Git and without it.
+        import subprocess
+        for name in ("crates/x/target/site.sh", "plants/mutants.out/site.sh"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(DEFAULT + "1.70.0\n")
+            with self.assertRaisesRegex(ValueError, f"{re.escape(name)}:1: toolchain 1\\.70\\.0 drifts"):
+                tool_versions.check_toolchain_sites(self.root)
+            git = ["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@local.invalid"]
+            subprocess.run([*git, "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+            subprocess.run([*git, "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+            with self.assertRaisesRegex(ValueError, f"{re.escape(name)}:1: toolchain 1\\.70\\.0 drifts"):
+                tool_versions.check_toolchain_sites(self.root)
+            shutil.rmtree(self.root / ".git")
+            (self.root / name).unlink()
+        # A `.git` Git does not accept (no HEAD) is walked around at any depth, not scanned.
+        for name in (".git/hooks/site.sh", "crates/x/.git/site.sh"):
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(DEFAULT + "1.70.0\n")
+        tool_versions.check_toolchain_sites(self.root)
+
+
+    def test_inherited_git_variables_do_not_choose_another_index(self):
+        # Bastion LOW on M7-Q65 2df4ed6f: a caller's decoy GIT_DIR / GIT_INDEX_FILE (Q66's class).
+        import subprocess
+        from unittest import mock
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@local.invalid"]
+        decoy = Path(self.directory.name + "-decoy")
+        self.addCleanup(shutil.rmtree, decoy, True)
+        subprocess.run([*git, "init", "-q", str(decoy)], check=True, stdin=subprocess.DEVNULL)
+        (decoy / "ok.txt").write_text("nothing\n")
+        subprocess.run([*git, "-C", str(decoy), "add", "ok.txt"], check=True, stdin=subprocess.DEVNULL)
+        subprocess.run([*git, "-C", str(self.root), "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+        subprocess.run([*git, "-C", str(self.root), "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+        (self.root / "scripts/drift.sh").write_text(DEFAULT + "1.70.0\n")
+        subprocess.run([*git, "-C", str(self.root), "add", "scripts/drift.sh"], check=True, stdin=subprocess.DEVNULL)
+        for decoys in ({"GIT_DIR": str(decoy / ".git"), "GIT_WORK_TREE": str(decoy)},
+                       {"GIT_INDEX_FILE": str(decoy / ".git" / "index")}):
+            with self.subTest(decoys=sorted(decoys)), mock.patch.dict(os.environ, decoys):
+                with self.assertRaisesRegex(ValueError, r"scripts/drift\.sh:1: toolchain 1\.70\.0 drifts"):
+                    tool_versions.check_toolchain_sites(self.root)
 
 
 class ToolchainKeelAttacks(unittest.TestCase):
