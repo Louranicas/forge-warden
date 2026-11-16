@@ -9,6 +9,16 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- A binary section must state its file mode where Git states it (ledger Q64, M7-Q64-MODE): a binary edit
+  that keeps its mode carries it on the `index` line (`index A..B 100755`), and a creation, deletion or mode
+  change carries it on its own header line with none on the `index` line. A patch that drops the mode or
+  states it in both places is refused as unverifiable (`patch_unverifiable`, detail "is a binary section
+  whose file mode is not stated as Git states it"). Git applies such a patch and keeps an executable file
+  executable, so before, a binary edit of an executable could read as one of a plain file. Git never writes
+  one: a patch made by `scripts/make_patch.sh` or `git diff` is unaffected. Still not covered without bound
+  mode: an edit stating the wrong mode (`100644` for an executable); bound mode (ADR 0012) compares the patch
+  with Git's own diff.
+
 - New rule `binary-text-is-hidden-text` in the starter policy and in this repository's `warden.toml`
   (ledger Q63): it holds a file that is normally text (125 extensions, 40 exact names including the
   Git hook names, `configure` and `allowed_signers`, and the name prefixes `LICENSE-`, `COPYING.` and
