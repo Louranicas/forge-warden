@@ -743,7 +743,8 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
         "--head",
         head.as_str(),
     ];
-    let made = write(&dir, "made.patch", &make_patch(&repo, &base, &head));
+    let made_bytes = make_patch(&repo, &base, &head);
+    let made = write(&dir, "made.patch", &made_bytes);
     let ok = authority(&policy, &made, &ranker, &bound);
     assert_eq!(ok.code, 0, "stdout={} stderr={}", ok.stdout, ok.stderr);
     assert_eq!(verdict(&ok)["verdict"], "pass");
@@ -760,8 +761,25 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
             &head,
         ],
     );
-    let other = write(&dir, "other.patch", format!("{short}\n").as_bytes());
+    let other_bytes = format!("{short}\n").into_bytes();
+    let other = write(&dir, "other.patch", &other_bytes);
     let refused = authority(&policy, &other, &ranker, &bound);
+    // The message names the first byte that differs (both start with the same `diff --git` line).
+    let first = made_bytes
+        .iter()
+        .zip(&other_bytes)
+        .position(|(a, b)| a != b)
+        .unwrap();
+    assert!(first > 0);
+    assert!(
+        refused.stderr.contains(&format!(
+            "first difference at byte {first} (patch {} bytes, diff {} bytes)",
+            other_bytes.len(),
+            made_bytes.len()
+        )),
+        "{}",
+        refused.stderr
+    );
     assert_eq!(
         refused.code, 4,
         "stdout={} stderr={}",
@@ -804,6 +822,23 @@ fn bound_mode_takes_full_ids_in_authority_mode_only() {
         "{}",
         abbreviated.stderr
     );
+    // Full ids of two lengths (40 and 64 hex digits): a usage error, not a lookup.
+    let longer = format!("{head}{}", "0".repeat(24));
+    let mixed = authority(
+        &policy,
+        &patch,
+        &ranker,
+        &[
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            longer.as_str(),
+        ],
+    );
+    assert_eq!(mixed.code, 2, "{}", mixed.stderr);
+    assert!(mixed.stderr.contains("of one length"), "{}", mixed.stderr);
     let advisory = run(
         &[
             "check",

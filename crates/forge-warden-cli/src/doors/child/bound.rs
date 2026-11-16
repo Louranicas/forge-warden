@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 /// Wall-clock budget for one whole bound run (ADR 0012 D3.6; measured worst 1.8 s on a
 /// 100k-commit repository with a 99,896-object copy, warm cache).
 const BOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-/// The largest pack the copy may move (measured worst 14 MB).
-const PACK_CAP: usize = 256 * 1024 * 1024;
-/// Object and commit lists Git prints while enumerating (one id per line).
-const LIST_CAP: usize = 64 * 1024 * 1024;
-/// Git's stderr is diagnostic only.
-const STDERR_CAP: usize = 64 * 1024;
+/// The largest pack the copy may move: 256 MiB (measured worst 14 MB).
+const PACK_CAP: usize = 268_435_456;
+/// Object and commit lists Git prints while enumerating (one id per line): 64 MiB.
+const LIST_CAP: usize = 67_108_864;
+/// Git's stderr is diagnostic only: 64 KiB.
+const STDERR_CAP: usize = 65_536;
 /// `RLIMIT_DATA` of every bound-mode Git child (measured worst peak RSS 174 MB).
 pub(in crate::doors) const DATA_CAP: u64 = 1 << 30;
 /// `RLIMIT_AS` of every bound-mode Git child: Git's pack windows and thread stacks count here, so it
@@ -256,11 +256,9 @@ impl Bound<'_> {
                 )
                 .map_err(store("rev-parse"))?,
         );
-        let mut rev_list = self.staging(&["rev-list", "--parents", base, head]);
-        if !parents.is_empty() {
-            rev_list.push("--not".to_owned());
-            rev_list.extend(parents);
-        }
+        // A root merge base has no parents: `--not` with nothing after it excludes nothing.
+        let mut rev_list = self.staging(&["rev-list", "--parents", base, head, "--not"]);
+        rev_list.extend(parents);
         let rows: Vec<Vec<String>> = lines(
             &self
                 .run

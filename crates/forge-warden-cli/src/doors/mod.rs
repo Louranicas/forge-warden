@@ -1379,7 +1379,7 @@ mod child_tests {
             assert!(
                 matches!(
                     bound(&repo, b, h).0,
-                    Err(super::child::BoundFailure::Input(_))
+                    Err(super::child::BoundFailure::Input(why)) if why.contains("full object ids of one length")
                 ),
                 "{b} {h}"
             );
@@ -1533,8 +1533,15 @@ mod child_tests {
                 .success()
         );
         refused(&odd, "control character");
-        // Not a repository at all.
+        // Not a repository at all, and half a bare repository (objects without HEAD, HEAD without
+        // objects): a bare repository needs both.
         refused(&scratch("bound-admit-empty"), "not a Git repository");
+        let objects_only = scratch("bound-admit-objects-only");
+        std::fs::create_dir(objects_only.join("objects")).unwrap();
+        refused(&objects_only, "not a Git repository");
+        let head_only = scratch("bound-admit-head-only");
+        std::fs::write(head_only.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+        refused(&head_only, "not a Git repository");
     }
 }
 
