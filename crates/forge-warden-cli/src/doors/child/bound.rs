@@ -458,7 +458,13 @@ impl Bound<'_> {
                     "the verified copy gives no single merge base for base and head ({why})"
                 ))
             }
-            other => other,
+            other @ (BoundFailure::Door(_)
+            | BoundFailure::Repository(_)
+            | BoundFailure::Ids
+            | BoundFailure::NotACommit { .. }
+            | BoundFailure::Store(_)
+            | BoundFailure::VerifiedMergeBase(_)
+            | BoundFailure::Unavailable(_)) => other,
         })?;
         if again == mb {
             Ok(())

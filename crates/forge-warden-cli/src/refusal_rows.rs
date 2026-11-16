@@ -141,7 +141,8 @@ pub(crate) const fn bound(e: &BoundFailure) -> Row {
 
 /// Rows for [`RepositoryRefusal`], why `--repo` is not admitted (ADR 0012 D2).
 pub(crate) const fn repository(e: RepositoryRefusal) -> Row {
-    const ADMIT: &str = "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository";
+    const ADMIT: &str =
+        "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository";
     match e {
         RepositoryRefusal::NotUtf8 => ("NotUtf8", ADMIT),
         RepositoryRefusal::PathCharacters => ("PathCharacters", ADMIT),

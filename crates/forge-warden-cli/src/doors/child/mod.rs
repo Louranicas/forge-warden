@@ -18,7 +18,11 @@ mod bound;
 pub(in crate::doors) use bound::{
     ADDRESS_SPACE_CAP, BoundDiff, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program, recheck_in,
 };
-pub(crate) use bound::{BoundFailure, RepositoryRefusal, admit_repository, bound_diff};
+pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
+// The admission refusals are named only in tests (the refusal map's rows and the door tests).
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+pub(crate) use bound::RepositoryRefusal;
 pub(crate) use git::{
     AdmittedGit, GitFactsFailure, PinnedGit, admit_git_advisory, admit_git_pinned, git_facts,
     git_version,

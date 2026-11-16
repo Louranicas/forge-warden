@@ -563,6 +563,12 @@ review_reason = "ADR 0012 D3.6: one Instant deadline for the whole bound run; ev
 [[expectation]]
 file = "crates/forge-warden-cli/src/doors/child/bound.rs"
 lint = "clippy::disallowed_methods"
+source_reason = "test door: recheck_in (one deadline for one recheck)"
+review_reason = "Test-only (cfg(test), not fw_fixture_cli): one Instant deadline for the contract test of ADR 0012 D3 step 4, the merge-base recheck against a given verified repository."
+
+[[expectation]]
+file = "crates/forge-warden-cli/src/doors/child/bound.rs"
+lint = "clippy::disallowed_methods"
 source_reason = "door: Runner::remaining (the time left in the bound run's one deadline)"
 review_reason = "ADR 0012 D3.6: reads the clock only to compute the remaining child timeout from the run's one deadline."
 

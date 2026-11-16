@@ -801,6 +801,21 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
         "a refusal emits no verdict: {}",
         refused.stdout
     );
+}
+
+#[test]
+fn bound_mode_refuses_a_patch_made_with_other_options() {
+    let (dir, policy, ranker) = setup("bound-shapes");
+    let (repo, base, head) = bound_repo("bound-shapes-repo");
+    let bound = [
+        "--repo",
+        text(&repo),
+        "--base",
+        base.as_str(),
+        "--head",
+        head.as_str(),
+    ];
+    let made_bytes = make_patch(&repo, &base, &head);
     // ADR 0012 acceptance item 3: the same change made with other options is a different patch, and
     // each is refused (exit 4, no verdict): no prefixes (the N3 shape), relative to a sub-tree
     // (Touchstone's Q55 shape), another context size, and the final newline dropped.
@@ -816,7 +831,10 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
             "relative",
             diff(&["--relative=docs", "--src-prefix=a/", "--dst-prefix=b/"]),
         ),
-        ("context", diff(&["-U0", "--src-prefix=a/", "--dst-prefix=b/"])),
+        (
+            "context",
+            diff(&["-U0", "--src-prefix=a/", "--dst-prefix=b/"]),
+        ),
         (
             "final-newline",
             made_bytes.strip_suffix(b"\n").unwrap().to_vec(),
@@ -826,8 +844,16 @@ fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
         assert_ne!(bytes, made_bytes, "{name}: a different patch");
         let path = write(&dir, &format!("{name}.patch"), &bytes);
         let out = authority(&policy, &path, &ranker, &bound);
-        assert_eq!(out.code, 4, "{name}: stdout={} stderr={}", out.stdout, out.stderr);
-        assert!(out.stderr.contains("is not `git diff"), "{name}: {}", out.stderr);
+        assert_eq!(
+            out.code, 4,
+            "{name}: stdout={} stderr={}",
+            out.stdout, out.stderr
+        );
+        assert!(
+            out.stderr.contains("is not `git diff"),
+            "{name}: {}",
+            out.stderr
+        );
         assert!(out.stdout.is_empty(), "{name}: {}", out.stdout);
     }
 }
