@@ -23,7 +23,7 @@ git --version
 
 **Run for v0.2.0** (2026-11-16) with `--tag v0.2.0` in place of `--rev`: from the GitLab tag into a scratch root
 with a fresh `CARGO_HOME`, then that binary in a container without network or Git allowlist, where it
-printed the README's advisory sample byte for byte. For 0.2.1 the same run is a release step after the
+printed every line of the README's advisory sample, byte for byte and in order (`…` skips lines). For 0.2.1 the same run is a release step after the
 owner's tag (`docs/RELEASE-0.2.1.md`); until it is recorded there, 0.2.1 has not been installed this way.
 
 Pin what you deploy: a release tag, or a commit you have reviewed.

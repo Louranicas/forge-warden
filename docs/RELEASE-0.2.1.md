@@ -5,7 +5,7 @@ below, each merged through the integrator gate. Each line that is done names the
 lines at the end can only be done by the repository's owner and are not ticked by anyone else.
 
 0.2.1 is a patch release: no published schema or exit code changes, and a 0.2.0 user acts only on
-two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
+one new starter rule and two globs in `ci-is-owned` ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
 
 ## Decisions recorded before the tag
 
@@ -13,8 +13,13 @@ two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
 - [x] **Policy schema.** It stays `forge-warden.policy.v0`. The starter policy gains rule
   `binary-text-is-hidden-text` and two `.claude` globs in `ci-is-owned`; a policy adopted from the 0.2.0
   starter keeps its own rules until it is edited.
-- [x] **Exit codes.** Unchanged. Two refusal details read differently (a type change; strict numstat
-  counts); the note code is the same (`patch_unverifiable`).
+- [x] **Ranker pin.** It stays deep-diff-forge 0.8.2 (`[producer]` in `warden.toml`, the README install line),
+  although the ranker's advisory GHSA-rq5r-p3g9-phff (published 2026-11-11) is fixed in 0.8.3: changing the
+  pin is the owner's decision (ledger Q22). forge-warden does not take paths or modes from the ranker: it
+  reads them from Git's own reading of the patch, and refuses a lone `diff --git` header (HEADER-OWN).
+- [x] **Exit codes.** Unchanged. Two refusal details read differently (a type change; a patch without
+  `diff --git a/PATH b/PATH` headers) and one refusal is new (a numstat count that is not 1 to 20 digits);
+  the note code is the same (`patch_unverifiable`).
 
 ## What 0.2.1 carries (merged on hub main)
 
@@ -60,15 +65,20 @@ two starter-policy rules ([Upgrading](UPGRADING.md), "0.2.0 to 0.2.1").
 ## After the tag, by a lane
 
 - [ ] [The runbook](RUNBOOK.md), steps 2 and 6 with the tagged release: install from `--tag v0.2.1` into a
-  scratch root with a fresh `CARGO_HOME`, and the README's advisory sample byte for byte in the gate image
-  without network (as was done for v0.2.0).
+  scratch root with a fresh `CARGO_HOME`, and every line of the README's advisory sample, in order, in the
+  gate image without network (as was done for v0.2.0).
 
 ## Only the owner
 
+- [ ] Before the merge: if the tag will be made on a day other than 2026-11-16, change the `[0.2.1]` date in
+  the changelog in the release commit first and gate it again. Once the tag exists the tagged tree cannot
+  change (`v0.2.0` kept the date of its release commit, 2026-11-13).
 - [ ] Merge the release commit to GitLab `main` through a merge request (GitLab, Gitea, Forgejo only; nothing
-  at GitHub).
-- [ ] Create the signed tag `v0.2.1` on that commit: `mission6/tools/fw-release-tag.sh 0.2.1 <main sha>` (it
-  signs with the release key and pushes the tag to GitLab, Gitea and Forgejo). Until the tag exists the
-  README's install line names a tag that is not there.
-- [ ] Make the changelog date (now 2026-11-16, the date of the release commit) the date of the tag.
+  at GitHub), then push that `main` to Gitea and Forgejo.
+- [ ] Create the signed tag `v0.2.1` on GitLab `main` after the merge (a merge commit, if the merge request
+  makes one). First check that `git rev-parse <main>^{tree}` equals the tree of the gated release commit.
+  The tag tool is the team's `mission6/tools/fw-release-tag.sh 0.2.1 <main sha, all 40 hex digits>`, which
+  is outside this repository; it signs with the release key and pushes the tag to GitLab, Gitea and Forgejo
+  only. The same by hand: `git tag -s v0.2.1 <sha>` with the release key, `git tag -v v0.2.1`, and the tag
+  pushed to the three remotes. Until the tag exists the README's install line names a tag that is not there.
 - [ ] crates.io: not planned for 0.2.1.

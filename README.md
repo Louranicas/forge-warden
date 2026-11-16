@@ -21,7 +21,7 @@ forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.p
 
 ```text
 forge-warden 0.2.1: FAIL (exit 7 policy_fail, next: change_input)
-  patch bbf580931c67, policy a0ac60726c9b, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
+  patch bbf580931c67, policy 55c357961fc8, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
   4 file(s), 10 rule(s): 5 pass, 0 waived, 4 hold, 1 fail
   [PASS  ] no-secrets (forbid_signal, fail)
   [PASS  ] no-hidden-text (forbid_signal, fail)
@@ -75,9 +75,9 @@ forge-warden lint warden.toml       # lists every problem at once
 ```
 
 The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
-agent's configuration (`.claude` and everything under it) for a person's review, and so it does a text
-file sent as a binary section, whose lines no signal rule can read (an executable with another name
-than the rule lists needs a path rule of your own); read `examples/starter.warden.toml`
+agent's configuration (`.claude` and everything under it) for a person's review. It also holds a text
+file sent as a binary section, whose lines no signal rule can read (an executable whose name the rule
+does not list needs a path rule of your own); read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
 Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.1 is a
@@ -91,7 +91,7 @@ its `main` predates the fixes in 0.2.0: see advisory
 [FW-2026-001](docs/advisories/FW-2026-001.md).
 
 Coming from 0.2.0 or 0.1.0? [Upgrading](docs/UPGRADING.md) lists what changed and what to do: from 0.2.0,
-two starter-policy rules to copy by hand.
+one new starter rule and two globs in `ci-is-owned` to copy by hand.
 
 forge-warden runs on Linux only: its doors read `/proc/self`, `/proc/self/fd` and `/proc`, use
 Unix file metadata, and clean up child process groups with `/usr/bin/kill`. It is built, tested and

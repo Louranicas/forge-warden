@@ -134,8 +134,8 @@ that produced one. Platforms other than x86_64 Linux: nothing is pinned or teste
 ## 0.2.0 to 0.2.1
 
 0.2.1 is a drop-in replacement for 0.2.0: the verdict, policy and Git-allowlist schemas and the exit codes are
-unchanged. Act on two things: the starter rules below, if you adopted the starter, and two refusals that now
-say more.
+unchanged. Act on two things: the starter rules below, if you adopted the starter, and three refusals that
+read differently or are new.
 
 ### Starter rules to copy by hand
 
@@ -144,17 +144,22 @@ an older starter keeps its own rules: nothing changes until you edit it. The sta
 0.2.1 (changelog, 0.2.1):
 - rule `binary-text-is-hidden-text` (hold): a file that is normally text, carried by the patch as a
   binary section. Copy the whole rule from `examples/starter.warden.toml`; its three globs are generated
-  from the lists in `crates/forge-warden-core/tests/authority.rs` (extensions; exact names, the Git hook
-  names, `configure` and `allowed_signers` among them; name prefixes `LICENSE-`, `COPYING.`,
+  from the lists in `crates/forge-warden-core/tests/authority.rs` (extensions; exact names, ten of Git's
+  hook names, `configure` and `allowed_signers` among them, while Git's other hook names such as
+  `post-commit` are not listed; name prefixes `LICENSE-`, `COPYING.`,
   `Dockerfile.`). **Not covered:** an executable with another name (a `bin/tool` with no extension) sent
-  as a binary section is not held by this rule; a shell still runs a script whose first NUL byte is past
-  its 80-byte check. Protect such paths with a `protect_paths` rule (`bin/**`, `tools/**`). A hold for
-  any binary section on an executable file needs the file mode and comes with verdict v3 (ledger Q64).
+  as a binary section is not held by this rule: bash runs a file as a script unless it finds a NUL byte in
+  its first line (within the first 80 bytes), so a file Git calls binary can still be a script. Protect such paths with a `protect_paths` rule (`bin/**`, `tools/**`). A hold for
+  any binary section on an executable file needs the file mode and is planned for verdict v3 (ledger Q64).
 - in rule `ci-is-owned`, the two `.claude` globs (any letter case, the entry itself and everything under it).
 
 ### Refusals that read differently
 - A file replaced by a symlink, or the reverse, is still refused (`patch_unverifiable`); the detail now says
   the path "changes type" instead of "git lists PATH more than once". Automation that matched the old
   text should match the note code instead.
-- Git's numstat counts are read strictly (1 to 20 decimal digits, or `-` `-` for a binary file); any other
-  count is refused as unreadable Git output. Git does not write one, so a patch Git made is unaffected.
+- A patch without `diff --git a/PATH b/PATH` headers is still refused (`patch_unverifiable`); the detail now
+  says to make the patch with `scripts/make_patch.sh <base> <head>` instead of `git diff --src-prefix=a/
+  --dst-prefix=b/`. Match the note code, not the text.
+- New: Git's numstat counts are read strictly (1 to 20 decimal digits, or `-` `-` for a binary file); any
+  other count is refused as unreadable Git output, where 0.2.0 read it as a content change. Git does not
+  write one, so a patch Git made is unaffected.
