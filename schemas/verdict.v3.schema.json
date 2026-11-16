@@ -352,10 +352,43 @@
         "why",
         "violations"
       ],
+      "allOf": [
+        {
+          "description": "A built-in rule (M7-Q64) is listed only when it holds; it is never waived. Its id starts with `builtin:` exactly when its kind is `builtin`.",
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "builtin"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "pattern": "^builtin:"
+              },
+              "severity": {
+                "const": "hold"
+              },
+              "outcome": {
+                "const": "hold"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "id": {
+                "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          "description": "A policy rule's id (kebab-case), or a built-in rule's (`builtin:` then kebab-case), which no policy id can be.",
+          "pattern": "^(builtin:)?[a-z][a-z0-9]*(-[a-z0-9]+)*$"
         },
         "kind": {
           "enum": [
@@ -363,7 +396,8 @@
             "require_companion",
             "protect_paths",
             "max_score",
-            "max_files"
+            "max_files",
+            "builtin"
           ]
         },
         "severity": {

@@ -101,7 +101,7 @@ crate::facts Mode::File,
 crate::facts Mode::Exec,
 crate::facts Mode::Symlink,
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct FileChange
-crate::facts FileChange.<6 private field(s)>
+crate::facts FileChange.<7 private field(s)>
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PatchFacts
 crate::facts PatchFacts.<1 private field(s)>
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum Unverifiable
@@ -135,6 +135,7 @@ crate::facts impl FileChange
 crate::facts FileChange::#[must_use] pub const fn path(&self) -> &RepoPath
 crate::facts FileChange::#[must_use] pub const fn kind(&self) -> ChangeKind
 crate::facts FileChange::#[must_use] pub const fn binary(&self) -> bool
+crate::facts FileChange::#[must_use] pub const fn resulting_mode(&self) -> Option<Mode>
 crate pub mod authority
 crate pub mod date
 crate pub mod defaults

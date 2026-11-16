@@ -330,7 +330,13 @@ fn judge<P>(
             disagreements,
         } => {
             extra.extend(disagreements.iter().map(disagreement_note));
-            evaluate(policy, &widened(rank, facts), seals, today).with_notes(extra)
+            let verdict = evaluate(policy, &widened(rank, facts), seals, today);
+            // The built-in rule reads Git's facts, which only this arm has (M7-Q64); the refusal
+            // arm below is held by its note whatever the files are.
+            let builtin = crate::builtin::binary_on_executable(facts, verdict.rules());
+            verdict
+                .with_builtin_rules(builtin.into_iter().collect())
+                .with_notes(extra)
         }
         // Git gave nothing to widen with, so the rules read the ranking as the producer wrote
         // it: a FAIL stays a FAIL (ADR 0005 section 2.5). `held_by` cannot be called without the

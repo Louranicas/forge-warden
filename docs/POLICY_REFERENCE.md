@@ -79,6 +79,24 @@ Violated once (no path) when more than `limit` in-scope files change. `limit = 0
 use `protect_paths` to say "nothing may change here".
 Fields: `limit` (required, at least 1), `paths`, `except`.
 
+## Built-in rule
+
+One rule is not in any policy: `builtin:binary-on-executable` (kind `builtin`, severity `hold`;
+ledger Q64, M7-Q64). It holds every file that Git reads as binary, that the change does not delete,
+and whose mode after the change is executable (`100755`) or a symlink (`120000`). A glob names a
+path, never a mode, so no policy rule can say this; and a file Git calls binary for a NUL byte in a
+later line is still a script the shell runs. The mode comes from Git's summary for a creation or a
+mode change, and from the `index` line for a binary edit that keeps its mode: Git's own in bound
+mode (`--repo`, ADR 0012), the patch author's text otherwise, so a falsely stated `100644` on an
+executable is the limit only bound mode closes.
+
+- It is listed in the verdict's `rules` only when it holds, after the policy's rules, and counted in
+  `summary`. A path a policy rule already holds or fails (with a violation no waiver covers) is not
+  held twice.
+- No policy can declare it or waive it: policy ids are kebab-case, and a waiver's `rule` must be the
+  policy's own. Acknowledge the hold as any policy hold (`scripts/hold_ack.py`), or keep executables
+  out of the patch.
+
 ## Signals
 
 deep-diff-forge 0.8.2's vocabulary (the same 21 signals as 0.7.0). Path and shape: `public_api_surface`, `new_file`,
@@ -186,7 +204,7 @@ A **refusal** prints nothing on stdout, explains on stderr, and exits without a 
 | The ranker cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
 | The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB); the policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
 | Any note above | hold (or fail, if a rule fails) | 8 (7) |
-| A rule of severity `hold` is violated | hold | 8 |
+| A rule of severity `hold` is violated, or the built-in rule `builtin:binary-on-executable` holds | hold | 8 |
 | A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |
 
 ## Known costs of failing closed

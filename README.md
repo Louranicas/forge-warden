@@ -76,8 +76,9 @@ forge-warden lint warden.toml       # lists every problem at once
 
 The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
 agent's configuration (`.claude` and everything under it) for a person's review. It also holds a text
-file sent as a binary section, whose lines no signal rule can read (an executable whose name the rule
-does not list needs a path rule of your own); read `examples/starter.warden.toml`
+file sent as a binary section, whose lines no signal rule can read; an executable or a symlink sent as a
+binary section is held by forge-warden itself, whatever the policy (the built-in rule
+`builtin:binary-on-executable`); read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
 Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.1 is a

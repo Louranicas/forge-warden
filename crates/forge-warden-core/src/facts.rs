@@ -47,6 +47,9 @@ pub struct FileChange {
     kind: ChangeKind,
     old_mode: Option<Mode>,
     new_mode: Option<Mode>,
+    /// The mode on the `index` line of a binary edit that keeps its mode (`index A..B MODE`): Git's
+    /// in bound mode, where the patch is Git's own diff (ADR 0012); the author's text otherwise.
+    kept_mode: Option<Mode>,
     binary: bool,
     content: bool,
 }
@@ -312,16 +315,19 @@ fn header_spellings(files: &BTreeMap<RepoPath, FileChange>) -> BTreeMap<Vec<u8>,
 /// What one section's header lines say about its mode.
 #[derive(Default)]
 struct SectionModes {
-    /// An `index A..B MODE` line (the mode an edit keeps).
-    index_mode: bool,
+    /// The mode of an `index A..B MODE` line (the mode an edit keeps), as written.
+    index_mode: Option<String>,
     /// A `new file mode`, `deleted file mode`, `old mode` or `new mode` line.
     mode_header: bool,
+    /// Past the section's `GIT binary patch` line: its body, which states no mode.
+    in_body: bool,
 }
 
 /// A section with neither line (also a path with no section, which [`check_header_paths`] refuses first).
 const NO_MODE_LINES: SectionModes = SectionModes {
-    index_mode: false,
+    index_mode: None,
     mode_header: false,
+    in_body: false,
 };
 
 /// Each binary section states its file mode where Git states it (M7-Q64-MODE, ledger Q64). Git writes
@@ -331,11 +337,16 @@ const NO_MODE_LINES: SectionModes = SectionModes {
 /// and `git apply` still applies it and keeps the file's own mode, so a binary edit of an executable
 /// would read as one of a plain file. Runs after [`check_header_paths`], so every column-0
 /// `diff --git ` line names exactly one reported path. Lines are read as [`check_header_modes`] reads
-/// them: hunk lines start with whitespace or `+`/`-`/`\`, and base85 lines have no whitespace.
+/// them: hunk lines start with whitespace or `+`/`-`/`\`, and base85 lines have no whitespace. A
+/// section is read up to its `GIT binary patch` line: Git writes every header line before the body,
+/// so a line after it is not one (Touchstone, M7-Q64-MODE verify).
+///
+/// Returns the mode each binary edit that keeps its mode states on its `index` line: the
+/// `kept_mode` the built-in rule `builtin:binary-on-executable` reads (M7-Q64).
 fn check_binary_modes(
     patch: &[u8],
     files: &BTreeMap<RepoPath, FileChange>,
-) -> Result<(), Unverifiable> {
+) -> Result<Vec<(RepoPath, Mode)>, Unverifiable> {
     let spellings = header_spellings(files);
     let mut sections: BTreeMap<&str, SectionModes> = BTreeMap::new();
     let mut current: Option<&str> = None;
@@ -350,18 +361,26 @@ fn check_binary_modes(
         let Some(section) = current.and_then(|path| sections.get_mut(path)) else {
             continue;
         };
+        if section.in_body {
+            continue;
+        }
+        if raw == b"GIT binary patch" {
+            section.in_body = true;
+            continue;
+        }
         let line = String::from_utf8_lossy(raw);
         if line.starts_with(|c: char| c.is_whitespace()) {
             continue;
         }
         match line.split_whitespace().collect::<Vec<_>>().as_slice() {
-            ["index", _, _] => section.index_mode = true,
+            ["index", _, stated] => section.index_mode = Some((*stated).to_owned()),
             ["new" | "deleted", "file", "mode", _] | ["old" | "new", "mode", _] => {
                 section.mode_header = true;
             }
             _ => {}
         }
     }
+    let mut kept = Vec::new();
     for change in files.values().filter(|change| change.binary) {
         let name = change.path.as_str();
         // A path with no `diff --git` section states no mode, which is what `NO_MODE_LINES` records: an
@@ -369,15 +388,18 @@ fn check_binary_modes(
         let stated = sections.get(name).or_fail_safe(&NO_MODE_LINES);
         let edit_keeping_mode = change.kind == ChangeKind::Modified && change.new_mode.is_none();
         let as_git_writes = if edit_keeping_mode {
-            stated.index_mode && !stated.mode_header
+            stated.index_mode.is_some() && !stated.mode_header
         } else {
-            !stated.index_mode
+            stated.index_mode.is_none()
         };
         if !as_git_writes {
             return Err(Unverifiable::BinaryModeUnstated(name.to_owned()));
         }
+        if let (true, Some(written)) = (edit_keeping_mode, &stated.index_mode) {
+            kept.push((change.path.clone(), mode(written)?));
+        }
     }
-    Ok(())
+    Ok(kept)
 }
 
 /// Whether a numstat count column is a decimal number as Git writes one: 1 to 20 ASCII digits
@@ -446,6 +468,7 @@ impl PatchFacts {
                 kind: ChangeKind::Modified,
                 old_mode: None,
                 new_mode: None,
+                kept_mode: None,
                 binary,
                 content: binary || added != b"0" || deleted != b"0",
             };
@@ -462,7 +485,11 @@ impl PatchFacts {
         }
         apply_summary(&mut files, summary)?;
         check_header_paths(patch, &files)?;
-        check_binary_modes(patch, &files)?;
+        for (path, stated) in check_binary_modes(patch, &files)? {
+            if let Some(change) = files.get_mut(&path) {
+                change.kept_mode = Some(stated);
+            }
+        }
         Ok(Self { files })
     }
 
@@ -553,6 +580,7 @@ pub fn derived_signals(change: &FileChange) -> BTreeSet<Signal> {
         kind,
         old_mode,
         new_mode,
+        kept_mode: _,
         binary,
         content: _,
     } = change;
@@ -593,6 +621,7 @@ fn agrees(change: &FileChange, ranked: &RankedFile) -> bool {
         kind,
         old_mode,
         new_mode: _,
+        kept_mode: _,
         binary,
         content,
     } = change;
@@ -666,6 +695,19 @@ impl FileChange {
     pub const fn binary(&self) -> bool {
         self.binary
     }
+
+    /// The file's mode after the change: the mode Git's summary gives a creation or a mode change,
+    /// or, for a binary edit that keeps its mode, the mode its `index` line states (Git's own in
+    /// bound mode; the author's text otherwise, so a falsely stated `100644` is the limit only bound
+    /// mode closes). `None` for a deletion, and for a text edit, whose mode the facts do not read.
+    #[must_use]
+    pub const fn resulting_mode(&self) -> Option<Mode> {
+        match (self.kind, self.new_mode, self.kept_mode) {
+            (ChangeKind::Deleted, _, _) => None,
+            (_, Some(mode), _) | (_, None, Some(mode)) => Some(mode),
+            (_, None, None) => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -693,6 +735,7 @@ mod tests {
                             kind,
                             old_mode,
                             new_mode,
+                            kept_mode: None,
                             binary,
                             content: true,
                         };
