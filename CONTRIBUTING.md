@@ -210,6 +210,20 @@ always-uploaded per-shard artifact contains `mutants.out` and exact-subject/tool
 runs. Review caught, missed, unviable and timeout counts separately. An interrupted run is partial
 evidence, not a completed baseline. The weekly job does not replace diff mutation on pull requests.
 
+## Releases
+
+A release is two scripts and two people. In a clean clone whose remotes `gitlab`, `gitea` and
+`forgejo` are the three services (never GitHub), `scripts/release_prepare.sh VERSION` checks that
+HEAD is GitLab's `main` and that the version is the same in `Cargo.toml`, `Cargo.lock`, the
+CHANGELOG (a dated section under an empty Unreleased), the README's install line, `EVIDENCE.md` and
+`docs/RELEASE-VERSION.md`. It writes the source archive, the release notes and `SHA256SUMS` under
+`dist/VERSION/`, creates no tag and pushes nothing, and prints the owner's command. The owner runs
+that command, `scripts/release_tag.sh VERSION COMMIT`: it signs the tag with the release key, keeps
+it only if it verifies against `.github/release-signers/allowed_signers` as committed in that
+commit, and pushes the tag alone to the three services. No signer is enrolled yet, so the script
+refuses to tag until the owner enrols the release key in a reviewed change. Tests:
+`scripts/tests/release.sh` (local remotes and throwaway keys, no network).
+
 ## Decisions
 
 Architecture decisions are in [`docs/adr/`](docs/adr). A change that contradicts one starts with

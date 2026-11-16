@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Release scripts (ledger Q42): `scripts/release_prepare.sh VERSION` checks the version everywhere a
+  release states it and that HEAD is GitLab `main`, and writes the source archive, notes and checksums
+  under `dist/`; `scripts/release_tag.sh VERSION COMMIT`, run by the owner, signs the tag, keeps it only
+  if it verifies against `.github/release-signers/allowed_signers` in that commit, and pushes it to
+  GitLab, Gitea and Forgejo only. No release signer is enrolled yet; the script refuses until one is.
 - A file replaced by a symlink, or the reverse, is refused as a type change: the
   `patch_unverifiable` detail now says the path "changes type: Git deletes it and creates it again
   as a symlink or a file" instead of "git lists PATH more than once" (ledger Q60). What holds is
