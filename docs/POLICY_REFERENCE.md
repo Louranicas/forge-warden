@@ -1,6 +1,6 @@
-# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v3`)
+# Policy and verdict reference (`forge-warden.policy.v0` and `v1`, `forge-warden.verdict.v3`)
 
-The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v0.schema.json`
+The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v1.schema.json`
 gives editors the same rules as you type, and `schemas/verdict.v3.schema.json` describes every
 verdict; tests keep both equal to the code, and keep the note and seal tables below complete.
 
@@ -12,13 +12,27 @@ known costs of failing closed.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `schema` | yes | Exactly `"forge-warden.policy.v0"`. |
+| `schema` | yes | `"forge-warden.policy.v0"`, or `"forge-warden.policy.v1"` (v0 plus `[claims]`). |
 | `[[rule]]` | yes, one or more | An empty policy is refused: it would pass every change. |
 | `[[waiver]]` | no | Dated, owned exemptions. |
 | `[producer]` | for authority mode | The rankers `check --ranker` may run (below). |
+| `[claims]` | no; v1 only | `require_verified = true`: authority runs must be bound (below). |
 
 Unknown keys anywhere are refused, not ignored: a misspelt key would otherwise silently disable
 what it meant to configure.
+
+## `[claims]`: require bound mode (policy v1)
+
+```toml
+schema = "forge-warden.policy.v1"
+[claims]
+require_verified = true
+```
+
+With `require_verified = true`, an authority run whose claims bound mode did not verify (no `--repo`, or no
+`--base`/`--head`) gets the note `claims_unverified` and is held at best: a person decides. With bound claims the key
+changes nothing. Advisory runs are unchanged (they never pass). `[claims]` under `forge-warden.policy.v0` is refused
+with a message naming v1; a forge-warden older than 0.3.0 refuses a v1 policy, which is the safe direction (ADR 0012 D8).
 
 ## `[producer]`: the ranker allowlist
 
@@ -191,6 +205,7 @@ exit 8); rules still run, so a failing rule still fails (exit 7). Notes never ma
 | `patch_unverifiable` | Git refused the patch, or its facts are outside what forge-warden verifies (reason in the detail; see the costs below). Coverage cannot be checked. | hold |
 | `rank_unverified` | Advisory mode: the ranking was supplied. | hold at best, never pass |
 | `rank_mismatch` | Authority mode: the `--rank` bytes differ from the produced ranking. | hold; the produced ranking is the one judged |
+| `claims_unverified` | Authority mode, policy v1 with `[claims] require_verified = true`: bound mode (`--repo`) did not verify the claims (no `--repo`, or no `--base`/`--head`). | hold at best, never pass |
 
 ## Refuse or hold
 

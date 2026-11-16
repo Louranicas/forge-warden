@@ -513,12 +513,12 @@ pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
         "c5f5f53f4bdc5e1f8f9fd4c24b13ed0d0293d7f495c2adb804269861d93f2f6b",
     ),
     (
-        "schemas/policy.v0.schema.json",
-        "c519ee66ea998552723607a204926166963cfafa52231fb1848654d20ad59546",
+        "schemas/policy.v1.schema.json",
+        "6b614311cd276d115fc7a34131121d95e5fe59250cfdd759d26660c57894c5a5",
     ),
     (
         "schemas/verdict.v3.schema.json",
-        "42a2db5d55cdfc83089c7729e5d3ca8bec9081f28cf49d432cfab76c863ce777",
+        "a4866a3d8e8e3cadee2d7d5d235ba79bf8905e95377a42f4cd0024c91963cfe8",
     ),
 ];
 /// The workspace's members, from `cargo metadata --no-deps`: their exact package IDs and their

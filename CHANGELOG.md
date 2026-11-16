@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- `scripts/dogfood.sh` takes `--ranker-archive FILE`: a local copy of the pinned deep-diff-forge release
+  archive, copied into the evidence directory and checked against the same pinned SHA-256 (other bytes:
+  exit 3). Only a run with `--hosted-advisory` downloads the archive; a run with neither argument is a
+  usage error (exit 2) before any effect, so a local run never reaches the network (ledger Q67). The
+  provenance file says `ranker_archive=local` or `downloaded`. The hosted job is unchanged.
 - Bound mode, first slice (ADR 0012, accepted): `check --repo DIR --base BASE --head HEAD` (authority
   mode, full commit ids) makes `git diff merge-base..head` from a copy of the repository's objects
   that Git re-hashes (a staging repository enumerates; `index-pack` copies into a repository with no
@@ -17,6 +22,10 @@ registry is always listed, because consumers parse them.
   file, a caller alternates or shallow file, a control character in the path, several merge bases:
   refused. Every bound-mode Git runs under `/usr/bin/prlimit` (1 GiB data, 4 GiB address space) and a
   60 s budget.
+- **New policy schema `forge-warden.policy.v1` (published schema change; ADR 0012 D8).** v1 is v0 plus an optional
+  `[claims]` table: `require_verified = true` holds an authority run whose claims bound mode did not verify, with the
+  new note `claims_unverified` (verdict v3's note list). v0 policies are read unchanged; `[claims]` under v0 is refused
+  naming v1; `forge-warden schema policy` prints v1 (`schemas/policy.v1.schema.json`); v0's schema stays as history.
 - **Verdict schema `forge-warden.verdict.v2` -> `forge-warden.verdict.v3` (published schema change).**
   Only `seals.claims` changed: without `--repo` it is v2's object exactly (`{base?, head?, verified:
   false}`); a bound run that matched records `{base, head, merge_base, verified: true}`. The core's

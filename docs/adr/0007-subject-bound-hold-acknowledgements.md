@@ -106,3 +106,12 @@ describes the change that introduced the helper. One reviewer is now enrolled in
 made the key and placed its public half for enrolment; the private key never left the owner's machine.
 The external controller of "Deployment and invalidation" still does not exist, so the enrolment
 makes the local path usable, not the hosted one.
+
+## Amendment (M7-RETIRE-GITHUB-GUARDS, 2026-11-16): the repository named in a receipt
+
+Owner decision D3(c): the receipt's `repository` field is now `"lukeomahoney/forge-warden"`, the GitLab
+repository, where this project's merges are admitted; it was `"Louranicas/forge-warden"`, the GitHub one. The
+schema id stays `forge-warden.hold-ack.v1` and the field keeps its place, so only its value changes: a receipt
+signed over the old value no longer verifies, and a new acknowledgement is signed over the new one. The path
+`.github/hold-reviewers/` stays (D3(d)): moving it is a wire change for no gain. The "Who" paragraph above
+names the old value; this amendment replaces it.

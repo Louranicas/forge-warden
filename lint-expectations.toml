@@ -314,13 +314,13 @@ review_reason = "C1c core authority corpus tests read committed fixtures and unw
 
 [[data_input]]
 file = "schemas/verdict.v3.schema.json"
-sha256 = "42a2db5d55cdfc83089c7729e5d3ca8bec9081f28cf49d432cfab76c863ce777"
-review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled. M7-Q64 (ruling R-a) adds the built-in rule to v3 before its release: a rule id may be `builtin:` then kebab-case, kind gains `builtin`, and an allOf clause ties kind builtin to a builtin: id, severity hold, outcome hold and violations without waived_by (every other kind keeps the kebab-case id)."
+sha256 = "a4866a3d8e8e3cadee2d7d5d235ba79bf8905e95377a42f4cd0024c91963cfe8"
+review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled. M7-Q64 (ruling R-a) adds the built-in rule to v3 before its release: a rule id may be `builtin:` then kebab-case, kind gains `builtin`, and an allOf clause ties kind builtin to a builtin: id, severity hold, outcome hold and violations without waived_by (every other kind keeps the kebab-case id). PATCH-BOUND (c) part 1 (Q73) splits the bound claims by id length (SHA-1 40, SHA-256 64)."
 
 [[data_input]]
-file = "schemas/policy.v0.schema.json"
-sha256 = "c519ee66ea998552723607a204926166963cfafa52231fb1848654d20ad59546"
-review_reason = "C1c policy JSON schema adds the producer SHA256 allowlist; reviewed as schema data, not executable Rust."
+file = "schemas/policy.v1.schema.json"
+sha256 = "6b614311cd276d115fc7a34131121d95e5fe59250cfdd759d26660c57894c5a5"
+review_reason = "PATCH-BOUND (c1, ADR 0012 D8, R2 reversal): policy v1 = v0 plus the optional [claims] table (require_verified, boolean, closed object); GitLab raw $id. v0 stays byte-exact and is no longer compiled; the reader still accepts v0 documents."
 
 [[data_input]]
 file = "examples/starter.warden.toml"
