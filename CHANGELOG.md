@@ -33,6 +33,15 @@ registry is always listed, because consumers parse them.
   under `dist/`; `scripts/release_tag.sh VERSION COMMIT`, run by the owner, signs the tag, keeps it only
   if it verifies against `.github/release-signers/allowed_signers` in that commit, and pushes it to
   GitLab, Gitea and Forgejo only. No release signer is enrolled yet; the script refuses until one is.
+- A binary section must state its file mode where Git states it (ledger Q64, M7-Q64-MODE): a binary edit
+  that keeps its mode carries it on the `index` line (`index A..B 100755`), and a creation, deletion or mode
+  change carries it on its own header line with none on the `index` line. A patch that drops the mode or
+  states it in both places is refused as unverifiable (`patch_unverifiable`, detail "is a binary section
+  whose file mode is not stated as Git states it"). Git applies such a patch and keeps an executable file
+  executable, so before, a binary edit of an executable could read as one of a plain file. Git never writes
+  one: a patch made by `scripts/make_patch.sh` or `git diff` is unaffected. Still not covered without bound
+  mode: an edit stating the wrong mode (`100644` for an executable); bound mode (ADR 0012) compares the patch
+  with Git's own diff.
 
 ## [0.2.1] - 2026-11-16
 
