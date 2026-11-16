@@ -134,12 +134,14 @@ def main():
                    "fixtures/demo.rank.json", "--today", "2026-11-05", "--json"]
         if golden in SURFACE:
             text = ""
+            # clap names the program in its usage lines after the file it was run as ("Usage: 3" from
+            # /proc/self/fd/3), so the verified descriptor is run through a link named forge-warden in
+            # this private home; the child resolves it to the same descriptor (passed below).
+            named = Path(home) / "forge-warden"
+            named.symlink_to(f"/proc/self/fd/{artifact.fileno()}")
             for argv in SURFACE[golden]:  # not `args`: that is the argparse namespace, read below
-                # The verified descriptor runs, but argv[0] is `forge-warden` as a shell gives it: clap
-                # names the program in its usage lines from argv[0] ("Usage: 3" from the descriptor).
-                out = subprocess.run(["forge-warden", *argv], executable=f"/proc/self/fd/{artifact.fileno()}",
-                                     cwd=ROOT, env=env, pass_fds=(artifact.fileno(),), input=b"",
-                                     capture_output=True, timeout=30, check=False)
+                out = subprocess.run([f"{named}", *argv], cwd=ROOT, env=env, pass_fds=(artifact.fileno(),),
+                                     input=b"", capture_output=True, timeout=30, check=False)
                 text += (f"=== forge-warden {' '.join(argv)} (exit {out.returncode})\n--- stdout\n"
                          f"{out.stdout.decode()}--- stderr\n{out.stderr.decode()}")
             result = text.replace(package_version(), "<version>").encode()
