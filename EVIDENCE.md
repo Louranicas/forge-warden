@@ -12,7 +12,7 @@ re-running the commands. A section for the next release is measured on its relea
 ## 0.2.1 (2026-11-16)
 
 Measured on the release candidate `4def1c51f2c6f4682010c498cb6cae318e02dde8`, from a clean `--no-local` clone
-of the integration hub (the fast gate and the source-export run: on the commit that adds this section), in a Fedora 44 toolbox on Linux x86_64: Rust 1.99.1 (`rust-toolchain.toml`), MSRV
+of the integration hub (the fast gate and the source-export run: on the release commit, the branch tip), in a Fedora 44 toolbox on Linux x86_64: Rust 1.99.1 (`rust-toolchain.toml`), MSRV
 1.88, Git 2.56.0. The commits after the candidate change only documents (this section, the README, the
 changelog, the upgrade guide and the release checklist). The deep-diff-forge producer pin
 (`[producer]` in `warden.toml`) is the 0.2.0 one, unchanged. 0.2.1 is 0.2.0 plus the packages listed in
