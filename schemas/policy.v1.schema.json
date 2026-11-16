@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitlab.com/lukeomahoney/forge-warden/-/raw/main/schemas/policy.v1.schema.json",
+  "title": "forge-warden.policy.v1",
+  "description": "A forge-warden policy (warden.toml). TOML editors that read JSON Schema (taplo, Even Better TOML) validate as you type when the file starts with `#:schema ./schemas/policy.v1.schema.json`. `forge-warden lint` is the authority: it also checks ids are unique, waivers name real rules, and fields apply to their kind.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "rule"
+  ],
+  "properties": {
+    "schema": {
+      "const": "forge-warden.policy.v1"
+    },
+    "rule": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    },
+    "waiver": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/waiver"
+      }
+    },
+    "producer": {
+      "description": "The rankers authority mode (`check --ranker`) may run, by the SHA-256 of their bytes. Without it, only advisory mode can be used.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "claims": {
+      "description": "What the policy requires of the caller's claims about the change (ADR 0012 D8). With require_verified = true, an authority run whose claims bound mode (--repo) did not verify gets the note claims_unverified and is held at best.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "require_verified"
+      ],
+      "properties": {
+        "require_verified": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "globs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "pattern": "^(/|\\./)"
+        }
+      },
+      "description": "Globs relative to the repository root. `*` stays inside one path segment; `**` crosses segments."
+    },
+    "signal": {
+      "enum": [
+        "public_api_surface",
+        "new_file",
+        "deleted_file",
+        "binary_change",
+        "large_change",
+        "many_hunks",
+        "config_or_lockfile",
+        "test_only",
+        "generated_or_vendored",
+        "hazardous_text",
+        "symlink_change",
+        "executable_bit",
+        "unsafe_added",
+        "process_spawn",
+        "network_fetch",
+        "dynamic_eval",
+        "ci_privilege",
+        "build_hook",
+        "secret_like",
+        "check_suppressed",
+        "test_removed"
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "why",
+        "kind",
+        "severity"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "why": {
+          "type": "string",
+          "minLength": 12,
+          "description": "Explain the rule to the person it stops."
+        },
+        "kind": {
+          "enum": [
+            "forbid_signal",
+            "require_companion",
+            "protect_paths",
+            "max_score",
+            "max_files"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "fail",
+            "hold"
+          ]
+        },
+        "signals": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/signal"
+          }
+        },
+        "paths": {
+          "$ref": "#/$defs/globs"
+        },
+        "except": {
+          "$ref": "#/$defs/globs"
+        },
+        "when": {
+          "$ref": "#/$defs/globs"
+        },
+        "require": {
+          "$ref": "#/$defs/globs"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "per": {
+          "enum": [
+            "file",
+            "change"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "forbid_signal"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "signals"
+            ],
+            "properties": {
+              "when": false,
+              "require": false,
+              "limit": false,
+              "per": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "require_companion"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "when",
+              "require"
+            ],
+            "properties": {
+              "signals": false,
+              "paths": false,
+              "limit": false,
+              "per": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "protect_paths"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "paths"
+            ],
+            "properties": {
+              "signals": false,
+              "when": false,
+              "require": false,
+              "limit": false,
+              "per": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "max_score"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "limit",
+              "per"
+            ],
+            "properties": {
+              "signals": false,
+              "when": false,
+              "require": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "max_files"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "limit"
+            ],
+            "properties": {
+              "signals": false,
+              "when": false,
+              "require": false,
+              "per": false,
+              "limit": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "waiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "paths",
+        "reason",
+        "owner",
+        "expires"
+      ],
+      "properties": {
+        "rule": {
+          "type": "string"
+        },
+        "paths": {
+          "$ref": "#/$defs/globs"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 12
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      }
+    }
+  }
+}

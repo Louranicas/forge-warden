@@ -40,8 +40,8 @@ use std::path::{Path, PathBuf};
 
 /// The JSON Schema of `forge-warden.verdict.v3`, committed and checked against the code.
 const VERDICT_SCHEMA_JSON: &str = include_str!("../../../schemas/verdict.v3.schema.json");
-/// The JSON Schema of `forge-warden.policy.v0` (TOML editors can validate against it).
-const POLICY_SCHEMA_JSON: &str = include_str!("../../../schemas/policy.v0.schema.json");
+/// The JSON Schema of `forge-warden.policy.v1` (TOML editors can validate against it; v1 is v0 plus `[claims]`).
+const POLICY_SCHEMA_JSON: &str = include_str!("../../../schemas/policy.v1.schema.json");
 /// The starter policy `forge-warden init` prints.
 const STARTER_POLICY: &str = include_str!("../../../examples/starter.warden.toml");
 const LINT_SCHEMA_JSON: &str = include_str!("../../../schemas/lint.v1.schema.json");

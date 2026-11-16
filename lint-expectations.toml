@@ -308,13 +308,13 @@ review_reason = "C1c core authority corpus tests read committed fixtures and unw
 
 [[data_input]]
 file = "schemas/verdict.v3.schema.json"
-sha256 = "a41147a0c3073c31e4f104f3b6a10fe43ebbeb2f8e906848174c99110ac0f155"
+sha256 = "c33068ef37b7da18e06751b401f5e2194ac47f0304aa0c903dd36d53b75b2d92"
 review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled."
 
 [[data_input]]
-file = "schemas/policy.v0.schema.json"
-sha256 = "c519ee66ea998552723607a204926166963cfafa52231fb1848654d20ad59546"
-review_reason = "C1c policy JSON schema adds the producer SHA256 allowlist; reviewed as schema data, not executable Rust."
+file = "schemas/policy.v1.schema.json"
+sha256 = "6b614311cd276d115fc7a34131121d95e5fe59250cfdd759d26660c57894c5a5"
+review_reason = "PATCH-BOUND (c1, ADR 0012 D8, R2 reversal): policy v1 = v0 plus the optional [claims] table (require_verified, boolean, closed object); GitLab raw $id. v0 stays byte-exact and is no longer compiled; the reader still accepts v0 documents."
 
 [[data_input]]
 file = "examples/starter.warden.toml"
