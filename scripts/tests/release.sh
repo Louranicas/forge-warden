@@ -73,8 +73,20 @@ fresh doc; git -C "$W" rm -q "docs/RELEASE-$v.md"; commit_all c; prepare "$v"; r
 fresh ahead; echo x >> "$W/README.md"; g -C "$W" commit -q -am local; prepare "$v"; rc=$?; refused "HEAD is not gitlab main" "is not gitlab main"
 fresh dirty; echo x >> "$W/README.md"; prepare "$v"; rc=$?; refused "a dirty working tree" "not clean"
 fresh untracked; echo x > "$W/new.txt"; prepare "$v"; rc=$?; refused "an untracked file" "not clean"
-fresh hub; git -C "$W" remote set-url gitea "$S/hub-remotes/GitHub.git"; prepare "$v"; rc=$?; refused "a GitHub remote (any case) is refused" "is GitHub"
+fresh hub; git -C "$W" remote set-url gitea "$S/hub-remotes/GitHub.git"; prepare "$v"; rc=$?; refused "a GitHub remote (any case) is refused" "has a GitHub URL"
 fresh exist; g -C "$W" tag "v$v"; g -C "$W" push -q gitea "refs/tags/v$v"; g -C "$W" tag -d "v$v" >/dev/null; prepare "$v"; rc=$?; refused "a tag already on a remote" "already exists on gitea"
+# Every URL counts, fetch and push, first or not, insteadOf expanded (Bastion 1072). All local paths.
+fresh p2push; g -C "$W" remote set-url --add --push gitlab "$R/gitlab.git"; g -C "$W" remote set-url --add --push gitlab "$S/remotes-github.com/p.git"
+prepare "$v"; rc=$?; refused "a second push URL naming GitHub" "has a GitHub URL"
+fresh p2url; g -C "$W" remote set-url --add gitea "$S/remotes-github.com/u.git"; prepare "$v"; rc=$?; refused "a second fetch URL naming GitHub" "has a GitHub URL"
+fresh pfetch; g -C "$W" remote set-url --push gitlab "$R/gitlab.git"; g -C "$W" remote set-url gitlab "$S/remotes-github.com/f.git"
+prepare "$v"; rc=$?; refused "a fetch URL naming GitHub (push URL clean)" "has a GitHub URL"
+fresh pinstead; g -C "$W" config "url.$S/remotes-github.com/.insteadOf" "mirror:"; g -C "$W" remote set-url forgejo "mirror:z.git"
+prepare "$v"; rc=$?; refused "an insteadOf that rewrites to GitHub" "has a GitHub URL"
+fresh preadme; sed -i "s/--tag v$v /--tag v9x8x7 /" "$W/README.md"; commit_all c; prepare "$v"; rc=$?; refused "README: a dot in the version is not a wildcard" "README.md"
+fresh punread; g -C "$W" remote set-url gitea "$S/nowhere.git"; prepare "$v"; rc=$?; refused "a remote whose tags cannot be read" "cannot read the tags of gitea"
+fresh pgitdir; fresh pother; W="$S/pgitdir"; (cd "$W" && GIT_DIR="$S/pother/.git" GIT_WORK_TREE="$S/pother" bash scripts/release_prepare.sh "$v") > "$S/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$S/pgitdir/dist/$v/SHA256SUMS" ] && [ ! -e "$S/pother/dist" ] && pass "a caller's GIT_DIR does not choose the repository" || fail "GIT_DIR chose the repository: rc=$rc $(tail -1 "$S/out")"
 fresh noremote; git -C "$W" remote remove forgejo; prepare "$v"; rc=$?; refused "a missing service remote" "no remote 'forgejo'"
 
 # tag: refused while no signer is enrolled
@@ -103,8 +115,21 @@ fresh hubtag; printf 'owner namespaces="git" %s\n' "$(cut -d' ' -f1,2 "$S/key-a.
 # A local path that names GitHub: refused by name, and never a network URL, so a test with the check
 # removed (a plant) fails here instead of reaching any service.
 git -C "$W" remote set-url --push forgejo "$S/remotes-github.com/x/forge-warden.git"
-tagit "$S/key-a"; rc=$?; refused "a GitHub push URL is refused before tagging" "is GitHub"
+tagit "$S/key-a"; rc=$?; refused "a GitHub push URL is refused before tagging" "has a GitHub URL"
 git -C "$W" rev-parse -q --verify "refs/tags/v$v" >/dev/null && fail "a tag was made before the GitHub refusal" || pass "no tag made when a remote is GitHub"
+# tag: every URL counts here too
+enrol() { printf 'owner namespaces="git" %s\n' "$(cut -d' ' -f1,2 "$S/key-a.pub")" >> "$W/.github/release-signers/allowed_signers"; commit_all enrol; }
+no_tag() { git -C "$W" rev-parse -q --verify "refs/tags/v$v" >/dev/null && fail "$1: a tag was made" || pass "$1: no tag made"; }
+fresh t2push; enrol; g -C "$W" remote set-url --add --push gitlab "$R/gitlab.git"; g -C "$W" remote set-url --add --push gitlab "$S/remotes-github.com/p.git"
+tagit "$S/key-a"; rc=$?; refused "tag: a second push URL naming GitHub" "has a GitHub URL"; no_tag "tag: second push URL"
+fresh t2url; enrol; g -C "$W" remote set-url --add gitea "$S/remotes-github.com/u.git"
+tagit "$S/key-a"; rc=$?; refused "tag: a second fetch URL naming GitHub" "has a GitHub URL"; no_tag "tag: second fetch URL"
+# tag: a local branch or tag named gitlab/main cannot stand in for GitLab's main (Bastion 1072)
+for kind in branch tag; do
+  fresh "shadow$kind"; enrol; old="$(git -C "$W" rev-parse HEAD~1)"; g -C "$W" "$kind" gitlab/main "$old"
+  (cd "$W" && FW_TAG_KEY="$S/key-a" bash scripts/release_tag.sh "$v" "$old") > "$S/out" 2>&1; rc=$?
+  refused "tag: a local $kind gitlab/main does not make an old commit main" "gitlab main is"; no_tag "tag: shadow $kind"
+done
 # tag: a commit that is not gitlab main
 fresh offmain; printf 'owner namespaces="git" %s\n' "$(cut -d' ' -f1,2 "$S/key-a.pub")" >> "$W/.github/release-signers/allowed_signers"; commit_all enrol
 old="$(git -C "$W" rev-parse HEAD~1)"

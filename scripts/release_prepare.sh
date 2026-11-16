@@ -13,13 +13,18 @@ die() { echo "release_prepare: $*" >&2; exit 1; }
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
   || { echo "usage: scripts/release_prepare.sh <version>   (MAJOR.MINOR.PATCH)" >&2; exit 2; }
 tag="v$version"
-cd "$(git rev-parse --show-toplevel)"
-# Nothing about Git comes from the caller's environment.
+# Nothing about Git comes from the caller's environment, not even which repository this is.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
+cd "$(git rev-parse --show-toplevel)"
 
 for remote in gitlab gitea forgejo; do
-  url="$(git remote get-url --push "$remote" 2>/dev/null)" || die "no remote '$remote' (the release goes to GitLab, Gitea and Forgejo)"
-  case "${url,,}" in *github*) die "remote '$remote' is GitHub ($url): never" ;; esac
+  # Every URL Git may use for the remote, fetch and push, insteadOf expanded (Bastion 1072): one naming
+  # GitHub refuses the release.
+  urls="$(git remote get-url --all "$remote" 2>/dev/null)" || die "no remote '$remote' (the release goes to GitLab, Gitea and Forgejo)"
+  urls+=$'\n'"$(git remote get-url --push --all "$remote")"
+  while IFS= read -r url; do
+    case "${url,,}" in *github*) die "remote '$remote' has a GitHub URL ($url): never" ;; esac
+  done <<< "$urls"
 done
 [ -z "$(git status --porcelain --untracked-files=all)" ] || die "the working tree is not clean"
 head="$(git rev-parse HEAD)"
@@ -27,7 +32,12 @@ main="$(git ls-remote --exit-code gitlab refs/heads/main | cut -f1)" || die "can
 [ "$head" = "$main" ] || die "HEAD $head is not gitlab main $main"
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "tag $tag already exists here"
 for remote in gitlab gitea forgejo; do
-  if git ls-remote --exit-code --tags "$remote" "refs/tags/$tag" >/dev/null 2>&1; then die "tag $tag already exists on $remote"; fi
+  if git ls-remote --exit-code --tags "$remote" "refs/tags/$tag" >/dev/null 2>&1; then s=0; else s=$?; fi
+  case "$s" in
+    0) die "tag $tag already exists on $remote" ;;
+    2) ;;
+    *) die "cannot read the tags of $remote (git ls-remote exit $s)" ;;
+  esac
 done
 
 # The version, wherever a release states it.
@@ -43,7 +53,7 @@ awk -v h="## [$version] - " '
     if (substr($0, 1, length(h)) == h && rest ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) ok = 1; exit }
   u && NF { exit }
   END { exit !ok }' CHANGELOG.md || die "CHANGELOG.md: '## [$version] - YYYY-MM-DD' must follow an empty '## [Unreleased]'"
-grep -q -- "--tag $tag " README.md || die "README.md: the install line does not pin --tag $tag"
+grep -qF -- "--tag $tag " README.md || die "README.md: the install line does not pin --tag $tag"
 grep -qE "^## ${version//./\\.}( |\$)" EVIDENCE.md || die "EVIDENCE.md has no '## $version' section"
 [ -f "docs/RELEASE-$version.md" ] || die "docs/RELEASE-$version.md does not exist"
 

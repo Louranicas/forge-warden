@@ -17,20 +17,32 @@ die() { echo "release_tag: $*" >&2; exit 1; }
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] && [[ "$commit" =~ ^[0-9a-f]{40}$ ]] \
   || { echo "usage: scripts/release_tag.sh <version> <full 40-hex commit>" >&2; exit 2; }
 tag="v$version"
-cd "$(git rev-parse --show-toplevel)"
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
+cd "$(git rev-parse --show-toplevel)"
 key="${FW_TAG_KEY:-$HOME/.ssh/id_ed25519_forge_warden_release_signing}"
 [ -f "$key.pub" ] || die "no public key $key.pub (make the release key with: ssh-keygen -t ed25519 -f $key)"
 
 for remote in gitlab gitea forgejo; do
-  url="$(git remote get-url --push "$remote" 2>/dev/null)" || die "no remote '$remote'"
-  case "${url,,}" in *github*) die "remote '$remote' is GitHub ($url): never" ;; esac
+  # Every URL Git may use for the remote, fetch and push, insteadOf expanded (Bastion 1072): one naming
+  # GitHub refuses the release.
+  urls="$(git remote get-url --all "$remote" 2>/dev/null)" || die "no remote '$remote' (the release goes to GitLab, Gitea and Forgejo)"
+  urls+=$'\n'"$(git remote get-url --push --all "$remote")"
+  while IFS= read -r url; do
+    case "${url,,}" in *github*) die "remote '$remote' has a GitHub URL ($url): never" ;; esac
+  done <<< "$urls"
 done
-git fetch -q gitlab
-[ "$(git rev-parse gitlab/main)" = "$commit" ] || die "gitlab/main is $(git rev-parse gitlab/main), not $commit"
+# GitLab's main as GitLab says it, not a ref name a local branch or tag could shadow (Bastion 1072).
+main="$(git ls-remote --exit-code gitlab refs/heads/main | cut -f1)" || die "cannot read main from gitlab"
+[ "$main" = "$commit" ] || die "gitlab main is $main, not $commit"
+git cat-file -e "$commit^{commit}" 2>/dev/null || die "$commit is not in this clone (git fetch gitlab first)"
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "tag $tag already exists here"
 for remote in gitlab gitea forgejo; do
-  if git ls-remote --exit-code --tags "$remote" "refs/tags/$tag" >/dev/null 2>&1; then die "tag $tag already exists on $remote"; fi
+  if git ls-remote --exit-code --tags "$remote" "refs/tags/$tag" >/dev/null 2>&1; then s=0; else s=$?; fi
+  case "$s" in
+    0) die "tag $tag already exists on $remote" ;;
+    2) ;;
+    *) die "cannot read the tags of $remote (git ls-remote exit $s)" ;;
+  esac
 done
 signers="$(mktemp)"; trap 'rm -f -- "$signers"' EXIT
 git show "$commit:.github/release-signers/allowed_signers" > "$signers" 2>/dev/null \
@@ -39,13 +51,13 @@ grep -q -v -e '^#' -e '^[[:space:]]*$' "$signers" || die "no release signer is e
 name="$(git config user.name)" || die "set git config user.name"
 email="$(git config user.email)" || die "set git config user.email"
 
-git -c user.name="$name" -c user.email="$email" -c gpg.format=ssh -c user.signingkey="$key.pub" \
+git -c user.name="$name" -c user.email="$email" -c gpg.format=ssh -c gpg.ssh.program=ssh-keygen -c user.signingkey="$key.pub" \
   tag -s "$tag" "$commit" -m "forge-warden $version"
-if ! git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers" tag -v "$tag" >/dev/null 2>&1; then
+if ! git -c gpg.format=ssh -c gpg.ssh.program=ssh-keygen -c gpg.ssh.allowedSignersFile="$signers" tag -v "$tag" >/dev/null 2>&1; then
   git tag -d "$tag" >/dev/null
   die "$tag is not signed by a key in .github/release-signers/allowed_signers of $commit; deleted the local tag, pushed nothing"
 fi
-[ "$(git rev-parse "$tag^{commit}")" = "$commit" ] || die "$tag does not name $commit"
+[ "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit" ] || die "$tag does not name $commit"
 rc=0
 for remote in gitlab gitea forgejo; do
   if out="$(git push "$remote" "refs/tags/$tag" 2>&1)"; then s=0; else s=$?; fi
