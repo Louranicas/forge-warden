@@ -71,7 +71,14 @@ case " $* " in
   [ "${EXPECT_MODE:-authority}" = authority ] || exit 98
   # As the real judge does without an owner-enrolled Git allowlist: exit 3, no verdict.
   if [ "${ALLOWLIST:-enrolled}" != enrolled ]; then echo 'Git admission: no Git allowlist enrolled' >&2; exit 3; fi
-  [ "$RANK_EXIT" = 0 ] || exit 3 ;;
+  [ "$RANK_EXIT" = 0 ] || exit 3
+  # Bound mode with the candidate's own object store (ADR 0012), and verified claims unless a row
+  # asks for an unbound verdict.
+  repo=; head=; prev=
+  for arg in "$@"; do case "$prev" in --repo) repo="$arg" ;; --head) head="$arg" ;; esac; prev="$arg"; done
+  [[ "$repo" == /* ]] && git --git-dir="$repo" cat-file -e "$head^{commit}" 2> /dev/null || exit 95
+  if [ "${CLAIMS:-verified}" = verified ]; then printf '{"seals":{"claims":{"verified":true}}}\n'; else printf '{"seals":{"claims":{"base":"x"}}}\n'; fi
+  exit "$JUDGE_EXIT" ;;
  *' --advisory '*)
   [ "${EXPECT_MODE:-advisory}" = advisory ] || exit 98
   [[ " $* " == *' --rank '* ]] || exit 97 ;;
@@ -125,6 +132,21 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'bu
  fi
  if [ "$RANK_EXIT" -ne 0 ] || [ "$BUILD_EXIT" -ne 0 ]; then test ! -s "$out/verdict.json"; fi
  echo "PASS $name exit=$actual"
+done
+# PATCH-BOUND (c) part 2: an authority verdict without verified bound claims is refused (exit 4),
+# whatever it says; the stub then prints claims that are only asserted.
+for row in 'unbound-pass 0' 'unbound-hold 8'; do
+ read -r name JUDGE_EXIT <<< "$row"
+ export JUDGE_EXIT BUILD_EXIT=0 RANK_EXIT=0
+ out="$sandbox/evidence-$name"
+ set +e
+ CLAIMS=asserted bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ if [ "$actual" -ne 4 ] || ! grep -q 'no verified bound claims' "$sandbox/output"; then
+  cat "$sandbox/output"; echo "FAIL $name: an authority verdict without verified claims gave exit $actual"; exit 1
+ fi
+ echo "PASS $name refused: no verified bound claims"
 done
 # DOGFOOD-ATTR (C2): the candidate's own attributes do not shape the patch. A candidate that adds
 # `* -diff` at the root and `binary` in a subdirectory, with a secret-shaped added line, must still
