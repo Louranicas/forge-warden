@@ -74,9 +74,13 @@ caller's store. Two repositories inside the private 0700 directory (ADR 0010 `Is
    (every blob) of `mb` and `head`, piped into plain `git index-pack --stdin` in **verified** `<private>/verified.git`
    (same `init` flags, **no alternate**). index-pack names every object by the hash of its content, so a forged object
    lands under another name and the id the diff asks for is absent. forge-warden then writes **its own**
-   `verified.git/shallow` containing `mb` (one line), so history in verified stops at `mb`. This is not a caller's
-   shallow repository (D2.2 still refuses those); it is the cut forge-warden makes after `mb` was copied and re-hashed,
-   and `mb`'s hash covers its parent ids, so no ancestor of `mb` can be a better merge base. `--strict` is NOT used: its
+   `verified.git/shallow`: `mb` and every copied commit that has a parent outside the copy (from `rev-list --parents`
+   of the copy list), so history in verified stops at the copy's edge. `mb` alone is not enough: head can reach `mb`'s
+   ancestors along another path (a merge), and verified's merge-base then walks into an uncopied commit and fails on an
+   honest store (measured on forge-warden's own 7bd9e655..26330b93, the M7-PATCH-BOUND Q-C record, 2026-11-16). This is not a caller's shallow
+   repository (D2.2 still refuses those); it is the cut forge-warden makes after the copy was re-hashed. Every edge left
+   in verified is a re-hashed, real edge, and a cut only removes ancestry, so verified's merge base is a real common
+   ancestor, `mb` or older; step 4 still requires it to equal staging's, and an older one could only widen the patch. `--strict` is NOT used: its
    connectivity check wants all of `mb`'s ancestry and refuses every honest store with this list (Bastion, receipt
    8a6ce212, Git 2.56.1), and its fsck checks can refuse honest repositories with historic object quirks.
    Any object missing in staging enumeration, in verified's merge-base or in the diff: exit 3 (environment: "the
@@ -86,13 +90,17 @@ caller's store. Two repositories inside the private 0700 directory (ADR 0010 `Is
 5. The diff, in **verified** only, with exactly the script's options plus hardening that does not change output for an
    honest store: `git --git-dir=<verified.git> --attr-source=<E> -c core.attributesFile=/dev/null -c core.quotePath=true
    -c core.hooksPath=/dev/null -c core.fsmonitor=false diff --no-ext-diff --no-textconv --no-color --no-relative
-   --binary --no-renames --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <mb> <head>`, where
+   --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <mb>
+   <head>`. `--full-index`: without it Git abbreviates the `index` line ids to a length that depends on the repository's
+   object count, and verified holds only the copy (measured: 7 against 10 characters on a 100k-commit repository;
+   the M7-PATCH-BOUND Q-C record, 2026-11-16). Where
    `<E>` is the empty tree computed in that repository (`git hash-object -t tree /dev/null`: `4b825dc…` for SHA-1,
    `6ef19b4…` for SHA-256; never a constant; review S3). No promisor remote exists in either repository, so a missing
    object is an error, never a fetch.
 6. Bounds for every Git child of bound mode (staging enumeration, pack-objects, index-pack, merge-base, diff): stdout
-   cap `MAX_INPUT_BYTES` for the diff; a time limit `GIT_BOUND_TIMEOUT` (measured on this repository and on a
-   100k-commit fixture, cold cache, copy included, before READY; review Q-C); **and a memory ceiling**: RLIMIT_DATA
+   cap `MAX_INPUT_BYTES` for the diff; a time limit `GIT_BOUND_TIMEOUT` = 60 s for the whole bound run (measured, warm
+   cache: worst 1.8 s, a 100k-commit repository with a 99,896-object copy; the M7-PATCH-BOUND Q-C record, 2026-11-16); **and a memory ceiling**
+   RLIMIT_DATA = 1 GiB per Git child (worst measured peak RSS 174 MB): RLIMIT_DATA
    (RLIMIT_AS also counts Git's pack mmap windows, `core.packedGitWindowSize`/`packedGitLimit`, and would turn into false
    refusals on large packs; Bastion's re-read), value measured on the 100k-commit fixture; a loose object's header states
    its size and index-pack inflates every object (review S2). Overflow, timeout or the ceiling: exit 3 (environment), no verdict.
@@ -133,6 +141,8 @@ Git and forge-warden's own binary are trusted) is unchanged.
 
 ### D7. `make_patch.sh` follows
 - Refuses several merge bases (D3 step 2) with the same message.
+- Writes `--full-index`, like the door (D3.5), and so do the documented by-hand commands. A patch made by a 0.2.x
+  `make_patch.sh` then differs from the bound diff in its `index` lines: UPGRADING says to make it again.
 - Stays the one documented way to make the patch; RUNBOOK step 6 and README show `forge-warden check ... --repo
   "$(git rev-parse --git-common-dir)" --base B --head H` with the patch from the script.
 
