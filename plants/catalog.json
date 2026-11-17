@@ -2148,7 +2148,7 @@
       "id": "cli-clap-error-exits",
       "guardrail": "G-06",
       "path": "crates/forge-warden-cli/src/main.rs",
-      "diagnostic": "disallowed method `clap::Error::exit`",
+      "diagnostic": "disallowed method `clap_builder::error::Error::exit`",
       "cargo": [
         "clippy",
         "-p",
