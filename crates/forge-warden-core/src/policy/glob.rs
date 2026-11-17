@@ -12,7 +12,7 @@
 //! release build: 0.56 us for a 43-byte path, 19 us for a 4 KiB dot-dense path and 30 us for a 4 KiB
 //! pseudo-random one (globset: 0.07 us, 5 us, 5.6 us), so a 64 MiB patch of 4 KiB paths costs that rule
 //! about half a second (EFFECT-WALL step 2, Bastion's SHOULD 1; the numbers are in
-//! docs/POLICY_REFERENCE.md "Size limits").
+//! `docs/POLICY_REFERENCE.md` "Size limits").
 
 use alloc::collections::BTreeMap;
 use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
@@ -484,7 +484,7 @@ fn class_bytes(ranges: &[(char, char)]) -> Result<Bytes, String> {
 
 /// Set bit `index` of a state set.
 fn set_bit(set: &mut [u64], index: usize) {
-    let (Some(word), Ok(shift)) = (set.get_mut(index / 64), u32::try_from(index % 64)) else {
+    let (Some(word), Ok(shift)) = (set.get_mut(index / 64), u32::try_from(index & 63)) else {
         return;
     };
     *word |= 1_u64.wrapping_shl(shift);
@@ -609,43 +609,42 @@ impl Glob {
     }
 
     /// The lazy DFA: state sets numbered as they are met, 256 transitions per number (`UNKNOWN` until
-    /// computed, `DEAD` when nothing is reached). At `CACHED_SETS` numbered sets it stops numbering and
+    /// computed). At `CACHED_SETS` numbered sets it stops numbering and
     /// steps the rest of the path directly, so a path built to meet many sets costs no more memory.
     fn matches_cached(&self, bytes: &[u8]) -> bool {
-        self.matches_cached_with(bytes, CACHED_SETS)
+        self.matches_cached_with(bytes, CACHED_SETS).0
     }
 
-    /// [`Glob::matches_cached`] with a cap of `cap` numbered sets (tests use small caps).
-    fn matches_cached_with(&self, bytes: &[u8], cap: usize) -> bool {
+    /// [`Glob::matches_cached`] with a cap of `cap` numbered sets (tests use small caps), and how
+    /// many state steps it computed (the rest were table lookups).
+    fn matches_cached_with(&self, bytes: &[u8], cap: usize) -> (bool, usize) {
         let mut sets: Vec<Vec<u64>> = vec![self.start.clone()];
         let mut numbers: BTreeMap<Vec<u64>, u32> = BTreeMap::new();
         numbers.insert(self.start.clone(), 0);
         let mut table: Vec<u32> = vec![UNKNOWN; 256];
         let mut current: usize = 0;
         let mut next = vec![0_u64; self.words];
+        let mut steps: usize = 0;
         for (position, &byte) in bytes.iter().enumerate() {
             let slot = current
                 .saturating_mul(256)
                 .saturating_add(usize::from(byte));
-            match table.get(slot).copied() {
-                Some(DEAD) => return false,
-                Some(known) if known != UNKNOWN => {
-                    let Ok(known) = usize::try_from(known) else {
-                        return false;
-                    };
-                    current = known;
-                    continue;
-                }
-                _ => {}
+            if let Some(&known) = table.get(slot)
+                && known != UNKNOWN
+            {
+                let Ok(known) = usize::try_from(known) else {
+                    return (false, steps);
+                };
+                current = known;
+                continue;
             }
             let Some(set) = sets.get(current) else {
-                return false;
+                return (false, steps);
             };
+            steps = steps.saturating_add(1);
             if !self.step(set, byte, &mut next) {
-                if let Some(entry) = table.get_mut(slot) {
-                    *entry = DEAD;
-                }
-                return false;
+                // Nothing reached: no later byte can match, so the transition is not kept.
+                return (false, steps);
             }
             let number = if let Some(&known) = numbers.get(&next) {
                 known
@@ -653,9 +652,9 @@ impl Glob {
                 let (Ok(number), true) = (u32::try_from(sets.len()), sets.len() < cap) else {
                     // The cache is full: finish by stepping from this set.
                     let Some(rest) = bytes.get(position.saturating_add(1)..) else {
-                        return self.accepts(&next);
+                        return (self.accepts(&next), steps);
                     };
-                    return self.matches_from(next, rest);
+                    return (self.matches_from(next, rest), steps);
                 };
                 sets.push(next.clone());
                 numbers.insert(next.clone(), number);
@@ -666,11 +665,14 @@ impl Glob {
                 *entry = number;
             }
             let Ok(number) = usize::try_from(number) else {
-                return false;
+                return (false, steps);
             };
             current = number;
         }
-        sets.get(current).is_some_and(|set| self.accepts(set))
+        (
+            sets.get(current).is_some_and(|set| self.accepts(set)),
+            steps,
+        )
     }
 }
 
@@ -680,8 +682,6 @@ const CACHED_FROM: usize = 256;
 const CACHED_SETS: usize = 1024;
 /// A transition not computed yet.
 const UNKNOWN: u32 = u32::MAX;
-/// A transition that reaches no state.
-const DEAD: u32 = u32::MAX - 1;
 
 #[cfg(test)]
 mod tests {
@@ -775,14 +775,37 @@ mod tests {
                     glob.matches_from(glob.start.clone(), bytes),
                     "stepping"
                 );
-                prop_assert_eq!(want, glob.matches_cached_with(bytes, 1), "cap 1");
-                prop_assert_eq!(want, glob.matches_cached_with(bytes, 3), "cap 3");
+                prop_assert_eq!(want, glob.matches_cached_with(bytes, 1).0, "cap 1");
+                prop_assert_eq!(want, glob.matches_cached_with(bytes, 3).0, "cap 3");
             }
             Ok(())
         });
         if let Err(failure) = outcome {
             panic!("{failure}");
         }
+    }
+
+    /// The DFA keeps its transitions: on a long, repetitive path it computes a handful of state steps
+    /// and looks the rest up; with a cap of one numbered set it stops numbering after the first step.
+    /// (Which mode `matches` picks, by path length, changes the cost only: both modes give the same
+    /// answer, as the long-path test checks, so a mutant of that threshold is equivalent.)
+    #[test]
+    fn the_dfa_reuses_its_transitions() {
+        let glob = compile("**/*.{rs,toml}").unwrap();
+        let path = "ab/".repeat(333) + "x.rs";
+        let (matched, steps) = glob.matches_cached_with(path.as_bytes(), super::CACHED_SETS);
+        assert!(matched);
+        assert!(
+            steps < 16,
+            "{steps} steps computed for {} bytes",
+            path.len()
+        );
+        let (capped_match, capped_steps) = glob.matches_cached_with(path.as_bytes(), 1);
+        assert!(capped_match);
+        assert_eq!(
+            capped_steps, 1,
+            "a cap of one numbered set stops numbering after the first step"
+        );
     }
 
     #[test]
