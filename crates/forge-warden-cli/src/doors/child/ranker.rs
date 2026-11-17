@@ -2,10 +2,26 @@
 
 use super::{ChildFailure, ChildSpec, DoorError, Isolation, Program, pin_executable, run_child};
 use forge_warden_core::Policy;
-use forge_warden_core::authority::{Produced, Ranking};
+use forge_warden_core::authority::{MintKey, Produced, Ranking};
 use forge_warden_core::rank::parse_rank;
 use forge_warden_core::seal::sha256_hex;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether this run's one mint key was handed out (EFFECT-WALL step 1, ruling R1). The key itself
+/// is consumed by `Ranking::attest`, so one key mints one ranking; this latch makes it one key per
+/// run, so a second mint, in any spelling, gets no key. It lives here, in a door, not in the core.
+static MINT_KEY_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The run's mint key: the first call gets it, every later call `None`. The only caller of
+/// `MintKey::new` the binary has (clippy.toml denies it everywhere else).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "door: the binary's one MintKey, handed out at most once per run"
+)]
+fn take_mint_key(taken: &AtomicBool) -> Option<MintKey> {
+    (!taken.swap(true, Ordering::SeqCst)).then(MintKey::new)
+}
 
 /// A child failure in words, for a diagnostic.
 pub(super) fn describe(failure: &ChildFailure) -> String {
@@ -59,7 +75,7 @@ pub(crate) fn produce_ranking(
 /// [`produce_ranking`] with an explicit temporary base.
 #[expect(
     clippy::disallowed_methods,
-    reason = "door: produce_ranking mints Ranking<Produced> (the only place the binary may)"
+    reason = "door: produce_ranking_in checks /proc/self/fd and runs the pinned ranker; its one mint key comes from take_mint_key"
 )]
 pub(in crate::doors) fn produce_ranking_in(
     ranker: &Path,
@@ -112,5 +128,28 @@ pub(in crate::doors) fn produce_ranking_in(
             doc.input_sha256()
         )));
     }
-    Ok((Ranking::attest(doc, admitted), out.stdout))
+    let Some(key) = take_mint_key(&MINT_KEY_TAKEN) else {
+        return Err(RankerFailure::Failed(
+            "a second produced ranking in one run is refused (one mint key per run)".to_owned(),
+        ));
+    };
+    Ok((Ranking::attest(doc, admitted, key), out.stdout))
+}
+
+#[cfg(test)]
+#[cfg(not(fw_fixture_cli))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_run_hands_out_one_mint_key_and_then_none() {
+        // A latch of its own, so this test never touches the run's latch.
+        let taken = AtomicBool::new(false);
+        assert!(take_mint_key(&taken).is_some(), "the first key");
+        assert!(
+            take_mint_key(&taken).is_none(),
+            "a second key in the same run"
+        );
+        assert!(take_mint_key(&taken).is_none(), "and every later one");
+    }
 }

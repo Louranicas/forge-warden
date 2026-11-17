@@ -176,6 +176,9 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
 
 ## 0.2.1 to 0.3.0 (unreleased)
 
+- **Library users of forge-warden-core: `Ranking::attest(doc, producer, key)`** takes a `MintKey` and consumes it
+  (EFFECT-WALL step 1). Make one with `MintKey::new()`, which exists only with the core feature `mint`. The CLI
+  is unchanged for its users.
 - **To require bound mode, move the policy to `forge-warden.policy.v1`** and add the table `[claims]` with `require_verified = true`
   (POLICY_REFERENCE). A policy that stays on v0 is read unchanged. A forge-warden older than 0.3.0 refuses a v1
   policy, so upgrade the binary before the policy. Under the key, `check` without `--repo` holds (`claims_unverified`); a `claims_unverified` hold cannot be acknowledged; re-run in bound mode.

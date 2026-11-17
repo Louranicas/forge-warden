@@ -9,6 +9,10 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Core API (EFFECT-WALL step 1, ruling R1): `Ranking::attest` takes a `MintKey` it consumes; `MintKey::new` exists
+  only with the new core feature `mint`, which only the CLI enables. The binary's door hands out one key per run, and
+  `clippy.toml` denies `MintKey::new` outside it, so a second mint is refused in every spelling; the text count of
+  `attest(` in the repository invariants is gone.
 - The starter policy (`forge-warden init`, `examples/starter.warden.toml`) is `forge-warden.policy.v1`
   with `[claims] require_verified = true`, and its `#:schema` line names the GitLab raw URL of
   `policy.v1`: an authority run of a new deployment counts only in bound mode (`--repo`); without it

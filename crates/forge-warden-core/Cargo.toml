@@ -18,6 +18,10 @@ workspace = true
 # Test-only door: exposes the raw rule engine (`testing::evaluate`), which can pass with no
 # provenance. Enabled only by this workspace's [dev-dependencies]; never by a normal dependency.
 unattested-evaluate = []
+# The constructor of `authority::MintKey`, the key `Ranking::attest` consumes (EFFECT-WALL step 1, ruling R1).
+# Enabled only by the binary crate's normal dependency (its door module hands out one key per run) and by this
+# crate's own [dev-dependencies] for the engine tests; repo_invariants checks the declarations.
+mint = []
 
 [dependencies]
 globset.workspace = true
@@ -29,5 +33,5 @@ toml.workspace = true
 
 [dev-dependencies]
 # The engine tests (tests/*.rs) judge raw rankings through the unattested-evaluate door.
-forge-warden-core = { path = ".", features = ["unattested-evaluate"] }
+forge-warden-core = { path = ".", features = ["unattested-evaluate", "mint"] }
 proptest.workspace = true

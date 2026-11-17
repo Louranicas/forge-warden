@@ -25,11 +25,21 @@ use forge_warden_core::verdict::{Seals, Verdict};
 ";
 
 /// `(what, source, the rustc error code it must fail with)`.
-const REFUSED: [(&str, &str, &str); 12] = [
+const REFUSED: [(&str, &str, &str); 14] = [
     (
         "attest with a bare string instead of an admitted producer",
-        "pub fn f(doc: RankDoc) -> Ranking<Produced> { Ranking::attest(doc, String::new()) }",
+        "pub fn f(doc: RankDoc, key: MintKey) -> Ranking<Produced> { Ranking::attest(doc, String::new(), key) }",
         "E0308",
+    ),
+    (
+        "EFFECT-WALL step 1: a mint key made without the core feature `mint`",
+        "pub fn f() -> MintKey { MintKey::new() }",
+        "E0599",
+    ),
+    (
+        "EFFECT-WALL step 1: a mint key built by hand",
+        "pub fn f() -> MintKey { MintKey {} }",
+        "E0639",
     ),
     (
         "raw evaluate through the crate root",
@@ -97,9 +107,9 @@ const REFUSED: [(&str, &str, &str); 12] = [
 /// The legitimate paths: these must compile.
 const ADMITTED: [(&str, &str); 2] = [
     (
-        "admit, attest, check, judge",
-        "pub fn f(p: &Policy, doc: RankDoc, pin: &forge_warden_core::seal::Sha256Hex, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Option<Verdict> { \
-         let admitted = p.admit_producer(pin)?; let ranking = Ranking::attest(doc, admitted); \
+        "admit, attest with a key the caller was given, check, judge",
+        "pub fn f(p: &Policy, doc: RankDoc, key: MintKey, pin: &forge_warden_core::seal::Sha256Hex, x: Result<PatchFacts, Unverifiable>, s: Seals, t: Date) -> Option<Verdict> { \
+         let admitted = p.admit_producer(pin)?; let ranking = Ranking::attest(doc, admitted, key); \
          let checked = check(&ranking, x); Some(evaluate_authority(p, &checked, SuppliedCopy::Absent, s, t)) }",
     ),
     (

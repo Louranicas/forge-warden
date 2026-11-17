@@ -10,7 +10,8 @@
 mod corpus_manifest;
 
 use forge_warden_core::authority::{
-    AdvisoryOutcome, Produced, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
+    AdvisoryOutcome, MintKey, Produced, Ranking, SuppliedCopy, check, evaluate_advisory,
+    evaluate_authority,
 };
 use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::parse_policy;
@@ -68,7 +69,11 @@ fn produced_seals() -> Seals {
 /// way to obtain the token (Q-TYPES-1).
 fn produced(doc: RankDoc) -> Ranking<Produced> {
     let admitting = policy(&format!("[producer]\nsha256 = [\"{HASH}\"]\n{PERMISSIVE}"));
-    Ranking::attest(doc, admitting.admit_producer(&seal(HASH)).unwrap())
+    Ranking::attest(
+        doc,
+        admitting.admit_producer(&seal(HASH)).unwrap(),
+        MintKey::new(),
+    )
 }
 
 fn today() -> Date {

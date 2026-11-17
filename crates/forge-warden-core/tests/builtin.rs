@@ -7,7 +7,7 @@
     reason = "test helpers build fixed inputs; a panic is a failed test"
 )]
 
-use forge_warden_core::authority::{Ranking, SuppliedCopy, check, evaluate_authority};
+use forge_warden_core::authority::{MintKey, Ranking, SuppliedCopy, check, evaluate_authority};
 use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::parse_policy;
 use forge_warden_core::rank::parse_rank;
@@ -91,6 +91,7 @@ fn judge(sections: &[Section], body: &str) -> Verdict {
     let ranking = Ranking::attest(
         parse_rank(rank.as_bytes()).unwrap(),
         p.admit_producer(&seal()).unwrap(),
+        MintKey::new(),
     );
     let checked = check(&ranking, facts);
     let seals = Seals::new(seal(), seal(), seal(), "0.7.0".to_owned());

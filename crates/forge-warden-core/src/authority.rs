@@ -5,8 +5,11 @@
 //!   **supplied** (it arrived as a file). The two are different types: [`Ranking<Produced>`] is made
 //!   only by [`Ranking::attest`], which takes an [`AdmittedProducer`] that only
 //!   [`Policy::admit_producer`] makes, so every produced ranking names a ranker some policy's
-//!   allowlist admits (Q-TYPES-1). That a door actually ran it is the binary's guarantee (the
-//!   CLI's clippy.toml lets only its door modules call `attest`); the core cannot observe a process.
+//!   allowlist admits (Q-TYPES-1), and consumes a [`MintKey`], which is neither `Clone` nor `Copy`,
+//!   so one key mints at most one ranking in any spelling (EFFECT-WALL step 1, ruling R1). Who may
+//!   make a key and how many is the binary's guarantee: the constructor exists only with the feature
+//!   `mint`, the CLI's clippy.toml lets only one door function call it, and that function hands out
+//!   at most one key per run. The core keeps no process-wide state and cannot observe a process.
 //! - [`check`] compares a ranking with Git's facts about the patch and keeps a borrow of that exact
 //!   ranking: a [`Checked`] is the only thing the judges accept, so a coverage proof cannot be
 //!   paired with another ranking (Zen B1). Every disagreement or refusal becomes a note, and a note
@@ -56,12 +59,39 @@ impl Ranking<Supplied> {
     }
 }
 
+/// The key [`Ranking::attest`] consumes: one key, one produced ranking. It is neither `Clone` nor
+/// `Copy` and has no public field, so a second mint needs a second key, which only
+/// [`MintKey::new`] makes, and that exists only with the feature `mint` (EFFECT-WALL step 1,
+/// ruling R1: "once" by move semantics, no process-wide state in the core).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct MintKey {}
+
+#[cfg(feature = "mint")]
+impl MintKey {
+    /// A new key. The binary makes it in one door function, at most once per run.
+    #[must_use]
+    #[expect(
+        clippy::new_without_default,
+        reason = "a Default impl would hand a key to every caller; the key is made only here"
+    )]
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
+
 impl Ranking<Produced> {
     /// A ranking forge-warden produced by running the ranker `producer`, which a policy's
-    /// `[producer] sha256` allowlist admitted ([`Policy::admit_producer`]). The binary calls this
-    /// only from the CLI's door modules, right after the run.
+    /// `[producer] sha256` allowlist admitted ([`Policy::admit_producer`]), minted with `key`,
+    /// which it consumes. The binary calls this only from the CLI's door modules, right after the
+    /// run.
     #[must_use]
-    pub fn attest(doc: RankDoc, producer: AdmittedProducer) -> Self {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "taking the key by value is the point: the caller loses it, so one key mints once"
+    )]
+    pub fn attest(doc: RankDoc, producer: AdmittedProducer, key: MintKey) -> Self {
+        let MintKey {} = key;
         Self {
             doc,
             producer_sha256: Some(producer.into_sha256()),
