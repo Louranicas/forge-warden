@@ -168,9 +168,11 @@ impl Parser<'_> {
             }
             Some(_) => return self.push_two_stars(),
         };
+        // globset also keeps a popped `RecursiveSuffix`; that arm is left out because no token can
+        // follow one in its list: a suffix is pushed only at the end of the pattern, or just before
+        // the `,` or `}` that ends its branch, so no later `**` pops it.
         match self.pop_token()? {
             Some(Token::RecursivePrefix) => self.push_token(Token::RecursivePrefix),
-            Some(Token::RecursiveSuffix) => self.push_token(Token::RecursiveSuffix),
             _ if is_suffix => self.push_token(Token::RecursiveSuffix),
             _ => self.push_token(Token::RecursiveZeroOrMore),
         }
@@ -256,10 +258,16 @@ impl Bytes {
         }
     }
 
-    fn insert_range(&mut self, low: u8, high: u8) {
+    /// Insert `low..=high`; `false`, inserting nothing, when the range is inverted (`low > high`).
+    #[must_use]
+    fn insert_range(&mut self, low: u8, high: u8) -> bool {
+        if low > high {
+            return false;
+        }
         for byte in low..=high {
             self.insert(byte);
         }
+        true
     }
 
     fn contains(self, byte: u8) -> bool {
@@ -464,17 +472,15 @@ fn class_bytes(ranges: &[(char, char)]) -> Result<Bytes, String> {
         else {
             return Err(format!("invalid range; '{start}' > '{end}'"));
         };
-        // Unreachable, kept fail-closed: the parser already refused `start > end`, and then the first
-        // end's last byte is always below the second end's first byte (two ASCII bytes in order, or a
-        // UTF-8 continuation byte 0x80-0xBF against an ASCII byte or a lead byte of 0xC2 or more). So
-        // mutants of this comparison (`==`, `>=`) are equivalent: no input reaches it.
-        if low > high {
-            return Err(format!("invalid range; '{start}' > '{end}'"));
-        }
         for byte in before {
             set.insert(*byte);
         }
-        set.insert_range(low, high);
+        // Fail-closed, though the parser already refused `start > end` (then the first end's last byte
+        // is always at or below the second end's first byte): `insert_range` refuses an inverted range,
+        // and its own test pins that comparison.
+        if !set.insert_range(low, high) {
+            return Err(format!("invalid range; '{start}' > '{end}'"));
+        }
         for byte in after {
             set.insert(*byte);
         }
@@ -556,7 +562,7 @@ impl Glob {
     /// met is numbered, and its transitions are kept), so a long, repetitive path costs a table
     /// lookup per byte; a shorter one steps the state sets directly.
     pub(super) fn matches(&self, path: &str) -> bool {
-        if path.len() >= CACHED_FROM {
+        if uses_the_dfa(path.len()) {
             self.matches_cached(path.as_bytes())
         } else {
             self.matches_from(self.start.clone(), path.as_bytes())
@@ -584,7 +590,8 @@ impl Glob {
         let mut any = false;
         for (word_index, (word, member)) in current.iter().zip(members).enumerate() {
             let mut taking = word & member;
-            while taking != 0 {
+            // Bounded by the bits set, so no edit of the clearing step can loop forever.
+            for _ in 0..taking.count_ones() {
                 let bit = taking.trailing_zeros();
                 taking &= taking.wrapping_sub(1);
                 let Ok(bit) = usize::try_from(bit) else {
@@ -678,6 +685,11 @@ impl Glob {
 
 /// Paths of at least this many bytes are matched through the lazy DFA.
 const CACHED_FROM: usize = 256;
+
+/// Whether a path of `len` bytes is matched through the lazy DFA (`CACHED_FROM` bytes or more).
+const fn uses_the_dfa(len: usize) -> bool {
+    len >= CACHED_FROM
+}
 /// The lazy DFA numbers at most this many state sets per path.
 const CACHED_SETS: usize = 1024;
 /// A transition not computed yet.
@@ -685,7 +697,7 @@ const UNKNOWN: u32 = u32::MAX;
 
 #[cfg(test)]
 mod tests {
-    use super::compile;
+    use super::{Bytes, CACHED_FROM, compile, uses_the_dfa};
     use alloc::{string::String, string::ToString};
     use proptest::prelude::*;
 
@@ -763,7 +775,7 @@ mod tests {
             };
             for piece in &pieces {
                 let mut path = String::new();
-                while path.len() < super::CACHED_FROM.saturating_add(44) {
+                while path.len() < CACHED_FROM.saturating_add(44) {
                     path.push_str(piece);
                     path.push('a');
                 }
@@ -785,10 +797,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn paths_of_cached_from_bytes_or_more_go_through_the_dfa() {
+        assert!(!uses_the_dfa(0));
+        assert!(!uses_the_dfa(CACHED_FROM.saturating_sub(1)));
+        assert!(uses_the_dfa(CACHED_FROM));
+        assert!(uses_the_dfa(CACHED_FROM.saturating_add(1)));
+    }
+
+    #[test]
+    fn an_inverted_byte_range_is_refused_and_inserts_nothing() {
+        let mut set = Bytes::NONE;
+        assert!(set.insert_range(b'a', b'a'));
+        assert!(set.contains(b'a'));
+        assert!(set.insert_range(0x80, 0xbf));
+        assert!(set.contains(0x80) && set.contains(0xbf) && !set.contains(0xc0));
+        let mut inverted = Bytes::NONE;
+        assert!(!inverted.insert_range(b'b', b'a'));
+        assert!(!inverted.contains(b'a') && !inverted.contains(b'b'));
+    }
+
     /// The DFA keeps its transitions: on a long, repetitive path it computes a handful of state steps
     /// and looks the rest up; with a cap of one numbered set it stops numbering after the first step.
-    /// (Which mode `matches` picks, by path length, changes the cost only: both modes give the same
-    /// answer, as the long-path test checks, so a mutant of that threshold is equivalent.)
+    /// (Which mode `matches` picks changes the cost only; `uses_the_dfa`'s own test pins the
+    /// threshold, Train B12r.)
     #[test]
     fn the_dfa_reuses_its_transitions() {
         let glob = compile("**/*.{rs,toml}").unwrap();
@@ -814,13 +846,15 @@ mod tests {
         // shapes in-diff mutation testing showed random generation reaching too rarely (`/**,` outside
         // an alternate group, `**` beside commas and braces inside one, recursive forms that follow
         // each other, classes with ranges and negations over non-ASCII ends).
-        // Two mutants of parse_star stay alive and are equivalent: `&&` -> `||` in its first test
-        // differs only inside an alternate when the previous character is `,` or `{` and the branch
-        // already has tokens, which cannot happen (a comma or a brace starts an empty branch); and
-        // deleting the `RecursiveSuffix` arm matters only when `**` follows `/` while the last token
-        // is a recursive suffix, which cannot happen (a suffix is pushed only at the end, before `,`
-        // or before `}`, so no `/` comes after it).
+        // An escaped `,` or `{` inside an alternate is the one way `**` meets a previous character of
+        // `,` or `{` in a branch that already has tokens (Train B12r: the `&&` of parse_star's first
+        // test was thought equivalent; `{a\,**}` tells the two apart).
         let patterns = [
+            "{a\\,**}",
+            "{a\\{**}",
+            "{a\\,**,b}",
+            "{b,a\\,**}",
+            "a\\,**",
             "a/*/b",
             "src/*",
             "*/",
@@ -877,7 +911,7 @@ mod tests {
             "", "a", "b", "c", "d", "/", "a/", "a//b", "a/b", "a/x/b", "a/x/y,b", "a/**,b",
             "a/b/c", "b/a", "src", "src/", "src/x", "src/x/y", "x/a", "x/y/a", "\n/x", "é", "ê",
             "ë", "ÿ", "]", "-", "a,b", "{a}", "*", "**", "ab", "ba", "aa", ",", "+", "a,x",
-            "a,x/y", "axy", "a/xy", "bxy", "b/x",
+            "a,x/y", "axy", "a/xy", "bxy", "b/x", "a,", "a,/x", "a{", "a{x", "a{x/y", "a{/x",
         ];
         for pattern in patterns {
             let ours = compile(pattern);
