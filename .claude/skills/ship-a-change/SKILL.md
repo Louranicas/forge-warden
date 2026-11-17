@@ -19,7 +19,18 @@ Run each step. Record the command and its result; a step you could not run is re
    cargo mutants --no-config --in-diff target/pr.diff --workspace`.
    Every surviving mutant is a missing test: add it, or explain why the mutant is equivalent.
 5. **Judge the change with its own policy** (if `deep-diff-forge` is installed): `just judge`.
-   Fail means fix. Hold means the summary must explain each held rule to the human.
+   Fail means fix. Hold means the summary must explain each held rule to the human. `just judge` is
+   advisory: it can never pass. `warden.toml` requires verified claims (`[claims] require_verified`),
+   so only a bound authority run can pass; with the pinned deep-diff-forge release binary and an
+   owner-enrolled Git allowlist ([GIT_RUNTIME](../../../docs/GIT_RUNTIME.md)), run it beside the advisory one:
+   ```bash
+   base="$(git merge-base HEAD origin/main)" head="$(git rev-parse HEAD)"
+   scripts/make_patch.sh "$base" "$head" > target/change.patch
+   cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch \
+     --ranker "$(command -v deep-diff-forge)" \
+     --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"
+   ```
+   A `claims_unverified` hold means the run was not bound: re-run with `--repo`; it cannot be acknowledged.
 6. **Contracts**: if `schemas/`, `exit.rs`, `verdict.rs` or `vocab.rs` changed, confirm
    `CHANGELOG.md` has an entry and ask the human to run `scripts/bless.sh` if goldens moved.
 7. **Independent review**: run the `reviewer` subagent and address every blocker.

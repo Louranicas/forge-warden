@@ -173,7 +173,14 @@ class BoundAck(unittest.TestCase):
         self.write_verdict()
         out = self.run_helper("prepare", "--signer", "fixture")
         self.assertEqual(out.returncode, 8, out.stderr)
-        self.assertIn(b"cannot be acknowledged", out.stderr)
+        # P3.4: the refusal names the note and its remedy, not only "unknown evidence".
+        self.assertIn(b"claims_unverified: re-run in bound mode (--repo)", out.stderr)
+        # Beside another note it is still named first.
+        self.verdict["notes"].insert(0, {"code": "rank_mismatch", "detail": "x"})
+        self.write_verdict()
+        out = self.run_helper("prepare", "--signer", "fixture")
+        self.assertEqual(out.returncode, 8, out.stderr)
+        self.assertIn(b"claims_unverified: re-run in bound mode (--repo)", out.stderr)
 
     def test_new_base_invalidates(self):
         self.base = "d" * 40

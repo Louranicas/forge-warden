@@ -320,3 +320,29 @@ D8 says a run under `require_verified` without bound claims "can at best HOLD". 
 design: `scripts/hold_ack.py` refuses every verdict with a note, and acknowledging an unverified claim would undo the
 requirement. The only way past it is a bound run (`--repo` with full ids). A `claims_unverified` hold cannot be
 acknowledged; re-run in bound mode. Test: `scripts/tests/hold_ack.py` (`test_a_claims_unverified_hold_cannot_be_acknowledged`).
+
+## Decision, 2026-11-17T04:41:44Z: the judged patch keeps Git's default context (P3.11, seed 1)
+
+The question (NEXT-MISSION-SEEDS section 5, from the DDF session's 2026-11-14 message): build the judged patch with
+full context (`git diff -U<large>`), because a hunk that starts inside a comment or string opened above it cannot be
+read exactly by the ranker, and one that reaches line 1 of its file can.
+**Kept: default context (three lines), for 0.3.0.** Reasons, from what is built: bound mode makes the diff itself with
+`scripts/make_patch.sh`'s options (`--full-index`, default context) and refuses any other patch, so the hand-made
+shapes behind the seed (a hunk placed by its old position, a creation written as several hunks) no longer reach a
+verdict (Q55 is closed by bound mode, not by context); full context would move every hunk address in a verdict, grow
+patches toward the line and byte limits (1 000 000 lines through the ranker, 64 MiB), and needs deep-diff-forge's own
+patch builder to change in step to stay byte-equal, which is not in a released deep-diff-forge. What stays open: the
+ranker's reading of a hunk that starts inside a multi-line construct is the ranker's limit (deep-diff-forge's), stated
+here; revisit when a released deep-diff-forge reads full-context patches or documents the limit closed.
+
+## Decision, 2026-11-17T04:41:44Z: `.gitmodules` stays unprotected in the starter (P3.11, seed 6)
+
+NEXT-MISSION-SEEDS section 6 asked to revisit, with PATCH-BOUND, the 0.2.0 decision not to protect `.gitmodules`
+(Keel, `lanes/keel/SUBMODULE-PIN/GATE-b080550e.md` item 5: with `--submodule=short --ignore-submodules=none` a submodule
+change is always in the patch, so `.gitmodules` can hide nothing from a patch made as documented).
+**Kept: not protected.** Bound mode strengthens the reason: its diff runs in private repositories that read no work
+tree (D2 item 3: never `.gitmodules`, `.gitattributes`, `.mailmap`, the work tree or the caller's configuration), so a `.gitmodules` the
+change commits cannot shape the judged patch at all, and a change to `.gitmodules` itself is an ordinary text change
+that the policy's rules read like any other file. Protecting it remains a deployer's choice (a `protect_paths` rule),
+not a condition of the gate's integrity.
+
