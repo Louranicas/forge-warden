@@ -252,12 +252,10 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- run: |
-    base="$(git rev-parse "origin/${BASE_REF}")" head="$(git rev-parse HEAD)"
-    bash make_patch.sh "$base" "$head" > change.patch   # scripts/make_patch.sh, pinned like the binary
-    forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" \
-      --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head" --json > verdict.json
-  env: { BASE_REF: "${{ github.base_ref }}" }
+- run: bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > change.patch   # scripts/make_patch.sh, pinned like the binary
+  env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
+- run: forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > verdict.json
+  env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
 ```
 
 Take the policy from the **base** checkout, not from the pull request. Otherwise a pull request
