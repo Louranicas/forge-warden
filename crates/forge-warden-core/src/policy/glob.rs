@@ -550,26 +550,40 @@ mod tests {
     );
     const PATH_PIECES: &str = r"(a|b|c|d|/|é|ê|ë|ÿ|\.|\n|-|\]|\{|,|\*){0,12}";
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(8000))]
-
-        // The differential oracle (EFFECT-WALL step 2b, R4): the same patterns refused with the same
-        // words, and for every accepted pattern the same answer on every path.
-        #[test]
-        fn the_matcher_agrees_with_globset(
-            pattern in PATTERN_PIECES,
-            paths in proptest::collection::vec(PATH_PIECES, 1..8),
-        ) {
+    /// The differential oracle (EFFECT-WALL step 2b, R4): the same patterns refused with the same
+    /// words, and for every accepted pattern the same answer on every path. 8000 cases; the runner is
+    /// configured in code, not in an attribute (Q37: attributes hold literals only).
+    #[test]
+    fn the_matcher_agrees_with_globset() {
+        let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(8000));
+        let cases = (PATTERN_PIECES, proptest::collection::vec(PATH_PIECES, 1..8));
+        let outcome = runner.run(&cases, |(pattern, paths)| {
             let ours = compile(&pattern);
             match (globset(&pattern), &ours) {
                 (Err(theirs), Err(mine)) => prop_assert_eq!(&theirs, mine, "{:?}", pattern),
                 (Ok(set), Ok(glob)) => {
                     for path in &paths {
-                        prop_assert_eq!(set.is_match(path.as_str()), glob.matches(path), "{:?} on {:?}", pattern, path);
+                        prop_assert_eq!(
+                            set.is_match(path.as_str()),
+                            glob.matches(path),
+                            "{:?} on {:?}",
+                            pattern,
+                            path
+                        );
                     }
                 }
-                (theirs, mine) => prop_assert!(false, "{:?}: globset {:?}, ours {:?}", pattern, theirs.err(), mine.as_ref().err()),
+                (theirs, mine) => prop_assert!(
+                    false,
+                    "{:?}: globset {:?}, ours {:?}",
+                    pattern,
+                    theirs.err(),
+                    mine.as_ref().err()
+                ),
             }
+            Ok(())
+        });
+        if let Err(failure) = outcome {
+            panic!("{failure}");
         }
     }
 
