@@ -11,7 +11,8 @@ following it is the fastest path, not the polite one.
   cannot name `std` at all, and `crates/forge-warden-core/clippy.toml` refuses hash-ordered collections
   (ADR 0001).
 - `crates/forge-warden-cli`: the `forge-warden` binary. Every effect (file, stdin, stdout,
-  stderr, clock, environment and child process execution) goes through one function in the door modules under `src/doors/` (ADR 0001).
+  stderr, clock, environment and child process execution) goes through one function in the door
+  crate `crates/forge-warden-doors` (ADR 0001); `main.rs` forbids the effect lints.
 - Input: `deep-diff-forge.rank.v0` from deep-diff-forge, read tolerantly (additive fields are
   ignored) and validated strictly (everything forge-warden relies on is checked).
 - Output: `forge-warden.verdict.v3`, sealed and deterministic. Schemas live in `schemas/` and
@@ -41,7 +42,7 @@ A change is done when all of these hold, and not before:
 | silence a lint | `#[expect(lint, reason = "why the lint is wrong here")]`; a stale one fails the build |
 | `unwrap()` / `expect()` / index / `as` | return a `Result`, use `.get()`, `try_from`, checked or saturating arithmetic |
 | print something | return a `String`; the CLI emits through `doors::emit` / `doors::diagnose` |
-| read a file, the clock, or the environment | add an effect door in a door module (`src/doors/`): those files are owned, so ask the human |
+| read a file, the clock, or the environment | add an effect door in the door crate (`crates/forge-warden-doors/src/`): those files are owned, so ask the human |
 | use `HashMap` / `HashSet` | `BTreeMap` / `BTreeSet`: output order must not depend on a hash seed |
 | add a dependency | say why in your summary; `deny.toml` bans I/O-heavy crates from the tree |
 | relax a lint, a policy rule, CI, a hook or `repo_invariants.rs` | stop and ask. The PreToolUse hook refuses edits to those files and shell commands that could change them (it errs towards refusing), the owner merges into `main`, and `warden.toml` would hold the change once the trusted dogfood runs in the gate |

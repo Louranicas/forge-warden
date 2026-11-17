@@ -2,8 +2,9 @@
 //! test that observes it. The core's rows are in `crates/forge-warden-core/src/refusal_rows.rs`;
 //! both files are parsed and rendered together by `crates/forge-warden-cli/tests/refusal_map.rs`.
 //!
-//! Each function is an exhaustive `match` with no `_` arm, inside the crate that defines the enums
-//! (they are `pub(crate)`), so a new variant does not compile until it has a row. Each arm returns
+//! Each function is an exhaustive `match` with no `_` arm over the door crate's refusal enums, none
+//! of which is `#[non_exhaustive]` (EFFECT-WALL step 3 moved them into `forge-warden-doors`), so a new
+//! variant does not compile here until it has a row. Each arm returns
 //! its own variant's name (checked against the pattern by the map test) and the observing test as
 //! `path::function`. Every CLI row has its observing test.
 
@@ -20,35 +21,35 @@ pub(crate) const fn door(e: DoorErrorKind) -> Row {
     match e {
         DoorErrorKind::Io => (
             "Io",
-            "crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused",
+            "crates/forge-warden-doors/src/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused",
         ),
         DoorErrorKind::Environment => (
             "Environment",
-            "crates/forge-warden-cli/src/doors/mod.rs::the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling",
+            "crates/forge-warden-doors/src/lib.rs::the_private_base_is_admitted_only_if_safe_for_cwd_home_and_ceiling",
         ),
         DoorErrorKind::OverBudget => (
             "OverBudget",
-            "crates/forge-warden-cli/src/doors/file.rs::the_budget_is_inclusive_and_one_byte_more_is_refused",
+            "crates/forge-warden-doors/src/file.rs::the_budget_is_inclusive_and_one_byte_more_is_refused",
         ),
         DoorErrorKind::Refused => (
             "Refused",
-            "crates/forge-warden-cli/src/doors/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused",
+            "crates/forge-warden-doors/src/file.rs::a_missing_file_is_an_io_failure_and_a_directory_is_refused",
         ),
     }
 }
 
 /// Rows for [`ChildFailure`], how a child process ends or is refused.
 pub(crate) const fn child(e: &ChildFailure) -> Row {
-    const OUTPUT: &str = "crates/forge-warden-cli/src/doors/mod.rs::output_over_either_cap_is_a_failure_not_a_truncation";
-    const ENDED: &str = "crates/forge-warden-cli/src/doors/mod.rs::a_nonzero_exit_or_a_signal_fails_even_with_valid_looking_output";
+    const OUTPUT: &str = "crates/forge-warden-doors/src/lib.rs::output_over_either_cap_is_a_failure_not_a_truncation";
+    const ENDED: &str = "crates/forge-warden-doors/src/lib.rs::a_nonzero_exit_or_a_signal_fails_even_with_valid_looking_output";
     match e {
         ChildFailure::Spawn(..) => (
             "Spawn",
-            "crates/forge-warden-cli/src/doors/mod.rs::a_relative_program_is_refused",
+            "crates/forge-warden-doors/src/lib.rs::a_relative_program_is_refused",
         ),
         ChildFailure::Timeout => (
             "Timeout",
-            "crates/forge-warden-cli/src/doors/mod.rs::a_timeout_kills_the_whole_group",
+            "crates/forge-warden-doors/src/lib.rs::a_timeout_kills_the_whole_group",
         ),
         ChildFailure::StdoutOverflow => ("StdoutOverflow", OUTPUT),
         ChildFailure::StderrOverflow => ("StderrOverflow", OUTPUT),
@@ -56,7 +57,7 @@ pub(crate) const fn child(e: &ChildFailure) -> Row {
         ChildFailure::Exit { .. } => ("Exit", ENDED),
         ChildFailure::Io(..) => (
             "Io",
-            "crates/forge-warden-cli/src/doors/mod.rs::a_group_kill_that_cannot_run_or_fails_is_reported",
+            "crates/forge-warden-doors/src/lib.rs::a_group_kill_that_cannot_run_or_fails_is_reported",
         ),
     }
 }
@@ -84,15 +85,15 @@ pub(crate) const fn git(e: &GitFactsFailure) -> Row {
     match e {
         GitFactsFailure::Door(..) => (
             "Door",
-            "crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git",
+            "crates/forge-warden-doors/src/lib.rs::git_facts_name_a_door_failure_and_an_unavailable_git",
         ),
         GitFactsFailure::Refused(..) => (
             "Refused",
-            "crates/forge-warden-cli/src/doors/mod.rs::git_facts_reproduces_the_coverage_corpus_captures_byte_for_byte",
+            "crates/forge-warden-doors/src/lib.rs::git_facts_reproduces_the_coverage_corpus_captures_byte_for_byte",
         ),
         GitFactsFailure::Unavailable(..) => (
             "Unavailable",
-            "crates/forge-warden-cli/src/doors/mod.rs::git_facts_name_a_door_failure_and_an_unavailable_git",
+            "crates/forge-warden-doors/src/lib.rs::git_facts_name_a_door_failure_and_an_unavailable_git",
         ),
     }
 }
@@ -102,39 +103,39 @@ pub(crate) const fn bound(e: &BoundFailure) -> Row {
     match e {
         BoundFailure::Door(..) => (
             "Door",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_names_a_setup_failure_as_a_door_failure",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_names_a_setup_failure_as_a_door_failure",
         ),
         BoundFailure::Repository(..) => (
             "Repository",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_admits_only_a_plain_repository",
         ),
         BoundFailure::Ids => (
             "Ids",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_takes_only_full_commit_ids",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_takes_only_full_commit_ids",
         ),
         BoundFailure::NotACommit { .. } => (
             "NotACommit",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_takes_only_full_commit_ids",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_takes_only_full_commit_ids",
         ),
         BoundFailure::NoCommonHistory => (
             "NoCommonHistory",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_several_merge_bases_and_no_common_history",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_refuses_several_merge_bases_and_no_common_history",
         ),
         BoundFailure::SeveralMergeBases(..) => (
             "SeveralMergeBases",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_several_merge_bases_and_no_common_history",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_refuses_several_merge_bases_and_no_common_history",
         ),
         BoundFailure::Store(..) => (
             "Store",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name",
         ),
         BoundFailure::VerifiedMergeBase(..) => (
             "VerifiedMergeBase",
-            "crates/forge-warden-cli/src/doors/mod.rs::the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give",
+            "crates/forge-warden-doors/src/lib.rs::the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give",
         ),
         BoundFailure::Unavailable(..) => (
             "Unavailable",
-            "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_stops_at_its_deadline_and_leaves_nothing",
+            "crates/forge-warden-doors/src/lib.rs::bound_mode_stops_at_its_deadline_and_leaves_nothing",
         ),
     }
 }
@@ -142,7 +143,7 @@ pub(crate) const fn bound(e: &BoundFailure) -> Row {
 /// Rows for [`RepositoryRefusal`], why `--repo` is not admitted (ADR 0012 D2).
 pub(crate) const fn repository(e: RepositoryRefusal) -> Row {
     const ADMIT: &str =
-        "crates/forge-warden-cli/src/doors/mod.rs::bound_mode_admits_only_a_plain_repository";
+        "crates/forge-warden-doors/src/lib.rs::bound_mode_admits_only_a_plain_repository";
     match e {
         RepositoryRefusal::NotUtf8 => ("NotUtf8", ADMIT),
         RepositoryRefusal::PathCharacters => ("PathCharacters", ADMIT),

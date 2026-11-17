@@ -126,7 +126,7 @@ class Guardrails(unittest.TestCase):
             checks.check_expectations(self.root, [p.relative_to(self.root).as_posix() for p in (self.root / "crates").rglob("*.rs")])
 
     def test_removed_expectation_refuses(self):
-        self.change("crates/forge-warden-cli/src/doors/file.rs",
+        self.change("crates/forge-warden-doors/src/file.rs",
                     '#[expect(clippy::disallowed_methods, reason = "door: read_stdin")]', '')
         with self.assertRaisesRegex(ValueError, "stale="):
             checks.check_expectations(self.root, [p.relative_to(self.root).as_posix() for p in (self.root / "crates").rglob("*.rs")])
@@ -342,7 +342,7 @@ class AgreementFixtures(unittest.TestCase):
     def test_extra_workspace_member_agrees(self):
         manifest = self.root / "Cargo.toml"
         text = manifest.read_text()
-        marker = 'members = ["crates/forge-warden-core", "crates/forge-warden-cli"]'
+        marker = 'members = ["crates/forge-warden-core", "crates/forge-warden-doors", "crates/forge-warden-cli"]'
         self.assertIn(marker, text)
         manifest.write_text(text.replace(marker, marker[:-1] + ', "crates/boundary-extra"]', 1))
         member = self.root / "crates/boundary-extra"

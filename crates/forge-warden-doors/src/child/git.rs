@@ -7,14 +7,14 @@ use super::{
 use forge_warden_core::seal::{Sha256Hex, sha256_hex};
 use std::path::Path;
 
-#[cfg(not(test))]
+#[cfg(not(any(test, all(fw_fixture_cli, debug_assertions))))]
 pub(super) const GIT_ALLOWLIST: &str = "/etc/forge-warden/git-allowlist.toml";
 pub(super) const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;
 
 /// One open executable and one admission snapshot. No path-based Git execution is exposed.
 /// An open descriptor pins the inode, not immutable bytes: the owner must not modify it.
 #[derive(Debug)]
-pub(crate) struct AdmittedGit {
+pub struct AdmittedGit {
     executable: PinnedExecutable,
     path: std::path::PathBuf,
     allowlist_sha256: Option<Sha256Hex>,
@@ -34,14 +34,15 @@ impl AdmittedGit {
     /// The verdict's record of this Git: built only here, from this admission and the version
     /// its own descriptor printed (Q-TYPES-2, B2). The constructors are disallowed everywhere else
     /// in the binary (clippy.toml; Q-TYPES-2.1), so this door is the only record of a Git.
+    ///
+    /// # Errors
+    ///
+    /// A [`DoorError`] if the version Git printed cannot be recorded.
     #[expect(
         clippy::disallowed_methods,
         reason = "door: AdmittedGit::oracle records the admitted Git (the only place the binary may)"
     )]
-    pub(crate) fn oracle(
-        &self,
-        path: String,
-    ) -> Result<forge_warden_core::verdict::GitOracle, DoorError> {
+    pub fn oracle(&self, path: String) -> Result<forge_warden_core::verdict::GitOracle, DoorError> {
         use forge_warden_core::verdict::GitOracle;
         let version = git_version(self)?;
         let sha256 = self.executable.sha256.clone();
@@ -61,12 +62,14 @@ impl AdmittedGit {
 
 /// Authority proof: only pinned admission constructs this private-field token.
 #[derive(Debug)]
-pub(crate) struct PinnedGit {
+pub struct PinnedGit {
     admitted: AdmittedGit,
 }
 
 impl PinnedGit {
-    pub(crate) fn admitted(&self) -> &AdmittedGit {
+    /// The admitted Git this proof was issued for.
+    #[must_use]
+    pub fn admitted(&self) -> &AdmittedGit {
         &self.admitted
     }
 }
@@ -88,7 +91,7 @@ pub(super) fn git_refusal(why: impl std::fmt::Display) -> DoorError {
 }
 
 /// A closed policy document. TOML rejects duplicate keys; the digest set rejects duplicates.
-pub(in crate::doors) fn parse_git_allowlist(
+pub(crate) fn parse_git_allowlist(
     bytes: &[u8],
 ) -> Result<std::collections::BTreeSet<Sha256Hex>, DoorError> {
     let text = std::str::from_utf8(bytes).map_err(git_refusal)?;
@@ -250,14 +253,14 @@ pub(super) fn admit_git_with(
 
 /// The production admission boundary. Its policy path, owner, and trust root are fixed.
 pub(super) fn admit_git(path: &Path, admission: GitAdmission) -> Result<AdmittedGit, DoorError> {
-    #[cfg(test)]
+    #[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
     {
         match fixture_git_from_environment(path, admission) {
             Some(result) => result,
             None => Err(git_refusal("test fixture policy root is required")),
         }
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, all(fw_fixture_cli, debug_assertions))))]
     {
         let trust = GitTrust {
             root: Path::new("/"),
@@ -268,16 +271,26 @@ pub(super) fn admit_git(path: &Path, admission: GitAdmission) -> Result<Admitted
 }
 
 /// Authority has no absent-policy path and receives an unforgeable proof token.
-pub(crate) fn admit_git_pinned(path: &Path) -> Result<PinnedGit, DoorError> {
+///
+/// # Errors
+///
+/// A [`DoorError`] if no allowlist is enrolled, the executable or allowlist is not safely owned, the executable
+/// is not an executable ELF file, or its digest is not enrolled.
+pub fn admit_git_pinned(path: &Path) -> Result<PinnedGit, DoorError> {
     admit_git(path, GitAdmission::Pinned).map(|admitted| PinnedGit { admitted })
 }
 
 /// Advisory may record an absent policy, but cannot mint authority proof.
-pub(crate) fn admit_git_advisory(path: &Path) -> Result<AdmittedGit, DoorError> {
+///
+/// # Errors
+///
+/// A [`DoorError`] if the executable is refused by the admission checks `admit_git_pinned` makes; an absent
+/// allowlist alone is not a refusal here.
+pub fn admit_git_advisory(path: &Path) -> Result<AdmittedGit, DoorError> {
     admit_git(path, GitAdmission::Advisory)
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
 #[expect(
     clippy::disallowed_methods,
     reason = "test door: fixture Git policy context"
@@ -303,9 +316,9 @@ pub(super) fn fixture_git_from_environment(
     )
 }
 
-/// Only test compilations can supply a policy boundary. No production caller has this seam.
-#[cfg(test)]
-pub(in crate::doors) fn fixture_git(
+/// Only test and fixture compilations can supply a policy boundary. No production caller has this seam.
+#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
+pub(crate) fn fixture_git(
     path: &Path,
     policy: &Path,
     root: &Path,
@@ -392,7 +405,7 @@ fn git_paths_refuse_parent_traversal_before_metadata_walk() {
 
 /// Why Git's facts could not be read.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum GitFactsFailure {
+pub enum GitFactsFailure {
     /// A setup door failed; preserve its kind for the CLI action hint.
     Door(DoorError),
     /// Git ran and refused the patch (a fact about the patch: HOLD).
@@ -404,20 +417,21 @@ pub(crate) enum GitFactsFailure {
 /// `git apply --numstat -z` and `git apply --summary` on the same patch bytes, isolated per
 /// ADR 0010: an absolute Git, argv only, a cleared environment with exactly the contract's
 /// controls (no `PATH`), a private empty cwd and `HOME`, and the candidate-free config overrides.
+///
+/// # Errors
+///
+/// A [`GitFactsFailure`]: `Patch` if Git ran and refused the patch, `Door` if Git could not be run within its bounds.
 #[expect(
     clippy::disallowed_methods,
     reason = "door: git_facts (the system temp dir)"
 )]
-pub(crate) fn git_facts(
-    git: &AdmittedGit,
-    patch: &[u8],
-) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
+pub fn git_facts(git: &AdmittedGit, patch: &[u8]) -> Result<(Vec<u8>, Vec<u8>), GitFactsFailure> {
     git_facts_in(git, patch, &std::env::temp_dir())
 }
 
 /// [`git_facts`] with an explicit temporary base (tests use this; `git_facts` passes the
 /// system temp dir).
-pub(in crate::doors) fn git_facts_in(
+pub(crate) fn git_facts_in(
     git: &AdmittedGit,
     patch: &[u8],
     base: &Path,
@@ -474,11 +488,15 @@ pub(in crate::doors) fn git_facts_in(
 
 /// `git --version`, run isolated like every Git call and trimmed. The verdict records it for an
 /// auditor; forge-warden does not attest it (ADR 0005 §2.4).
+///
+/// # Errors
+///
+/// A [`DoorError`] (I/O) if Git cannot be run within its bounds, exits nonzero, or prints non-UTF-8.
 #[expect(
     clippy::disallowed_methods,
     reason = "door: git_version (the system temp dir)"
 )]
-pub(crate) fn git_version(git: &AdmittedGit) -> Result<String, DoorError> {
+pub fn git_version(git: &AdmittedGit) -> Result<String, DoorError> {
     let isolation = Isolation::create_in(&std::env::temp_dir())?;
     let env = isolation.env();
     let refuse = |why: String| DoorError {
@@ -503,4 +521,4 @@ pub(crate) fn git_version(git: &AdmittedGit) -> Result<String, DoorError> {
 /// Wall-clock limit for one Git call.
 pub(super) const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Git's stderr is diagnostic only.
-pub(in crate::doors) const GIT_STDERR_CAP: usize = 64 * 1024;
+pub(crate) const GIT_STDERR_CAP: usize = 64 * 1024;

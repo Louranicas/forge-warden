@@ -8,6 +8,11 @@
       "G-15 authenticates exact producer binary, not version string.",
       "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "G-05/G-07 (2026-11-17, EFFECT-WALL step 2, Train B12 RED): forge-warden-core is no_std, so an effect or a HashMap in the core is refused by the compiler before clippy reads the core denylist; core-read and hash-order now expect E0433 (`std` cannot be named), the stronger guard. oversized-function and z3-clean-copy-forced-hold re-anchored to core::hint / alloc::string::String.",
+      "G-06 door-clap-attribute-effect (2026-11-17, EFFECT-WALL step 3): clap's derive is gone (the CLI builds its command line in code, under the normal lint wall), so the recipe no longer plants into a clap attribute; it plants a build-time file read, #[doc = include_str!(..)], on fn cli: it compiles, so only the Q37 attribute scan can refuse it. Also (Touchstone, 1848): the core clippy.toml's std entries are now a second layer the compiler reaches first in the no_std core; they stay as defence in depth.",
+      "G-06 cli-forbid-lowered, cli-forbid-removed (2026-11-17, EFFECT-WALL step 3): the doors are the crate forge-warden-doors and main.rs carries #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]; the first plant shows the compiler refusing a local exemption (E0453), the second that deleting the forbid fails the repository invariants. 24 recipes that run door unit tests moved from -p forge-warden-cli --bin forge-warden to -p forge-warden-doors --lib (the tests moved with the doors; unchanged names and diagnostics).",
+      "G-15 fixture-seam-without-debug (2026-11-17, EFFECT-WALL step 3, Bastion B1): after the doors became a crate the fixture seams are gated cfg(any(test, all(fw_fixture_cli, debug_assertions))), so a --release build with the cfg still reads the Git allowlist from /etc; door_lints pins the spelling and this plant drops debug_assertions from the allowlist seam.",
+      "G-06 cli-clap-*, cli-process-exit, cli-forbid-lowered-* (2026-11-17, EFFECT-WALL step 3, Touchstone's attack on 87d2e073): clap's own effects (get_matches, get_matches_mut, try_get_matches, print_help, print_long_help, Error::exit, Error::print) and std::process::exit are in clippy.toml, so main.rs's forbid refuses them; print_stdout, print_stderr, dbg_macro and exit are forbidden there too, so no local expect lowers them (E0453). One plant per refused call family and per newly forbidden lint.",
+      "G-06 cli-clap-matches-from-exits, cli-process-abort, cli-clap-parser-trait (2026-11-17, EFFECT-WALL step 3, Touchstone's re-attack on ddc66b1): get_matches_from (prints and exits on a parse error), clap::Parser::parse/try_parse/parse_from/update_from (usable without the derive through a hand-written impl) and std::process::abort are in clippy.toml; the parser plant's pattern requires all four Parser refusals in one run. try_get_matches_from, try_parse_from and try_update_from stay allowed (they take their arguments and return errors).",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
       "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
@@ -755,7 +760,7 @@
     {
       "id": "unadmitted-producer",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
+      "path": "crates/forge-warden-doors/src/child/ranker.rs",
       "diagnostic": "a_ranker_the_policy_does_not_list_is_refused_without_a_verdict.*FAILED",
       "old": "let Some(admitted) = policy.admit_producer(&pinned.sha256) else {",
       "new": "let Some(admitted) = policy.producers().first().and_then(|listed| policy.admit_producer(listed)) else {",
@@ -936,14 +941,13 @@
     {
       "id": "git-owner",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_metadata_requires_the_exact_owner_and_unwritable_ancestors.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_metadata_requires_the_exact_owner_and_unwritable_ancestors",
         "--locked",
         "--offline",
@@ -964,14 +968,13 @@
     {
       "id": "git-write-mode",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
         "--locked",
         "--offline",
@@ -992,14 +995,13 @@
     {
       "id": "git-symlink",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
         "--locked",
         "--offline",
@@ -1020,14 +1022,13 @@
     {
       "id": "git-regular-file",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/file.rs",
+      "path": "crates/forge-warden-doors/src/file.rs",
       "diagnostic": "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_refuses_fifo_parent_links_writable_executable_and_oversize",
         "--locked",
         "--offline",
@@ -1048,14 +1049,13 @@
     {
       "id": "git-byte-budget",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_file_budget_accepts_exact_size_and_refuses_one_more_before_reading",
         "--locked",
         "--offline",
@@ -1076,14 +1076,13 @@
     {
       "id": "git-missing-policy",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
         "--locked",
         "--offline",
@@ -1104,14 +1103,13 @@
     {
       "id": "git-unlisted-digest",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_binds_descriptor_and_exact_policy_bytes",
         "--locked",
         "--offline",
@@ -1132,14 +1130,13 @@
     {
       "id": "git-policy-snapshot",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_binds_descriptor_and_exact_policy_bytes",
         "--locked",
         "--offline",
@@ -1160,14 +1157,13 @@
     {
       "id": "git-descriptor-version",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_binds_descriptor_and_exact_policy_bytes.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_binds_descriptor_and_exact_policy_bytes",
         "--locked",
         "--offline",
@@ -1188,14 +1184,13 @@
     {
       "id": "git-script",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_admission_refuses_unsafe_inputs_and_authority_never_falls_back",
         "--locked",
         "--offline",
@@ -1252,14 +1247,13 @@
     {
       "id": "git-policy-exact-limit",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_policy_budget_is_exactly_64_kib.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_policy_budget_is_exactly_64_kib",
         "--locked",
         "--offline",
@@ -1280,14 +1274,13 @@
     {
       "id": "git-parent-traversal",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_paths_refuse_parent_traversal_before_metadata_walk.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_paths_refuse_parent_traversal_before_metadata_walk",
         "--locked",
         "--offline",
@@ -1388,14 +1381,13 @@
     {
       "id": "git-parent-error-class",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_parent_absence_is_distinct_from_metadata_failure.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "git_parent_absence_is_distinct_from_metadata_failure",
         "--locked",
         "--offline",
@@ -1439,14 +1431,13 @@
     {
       "id": "git-test-scratch-identity",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/mod.rs",
+      "path": "crates/forge-warden-doors/src/lib.rs",
       "diagnostic": "scratch_calls_never_replace_a_live_directory.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
-        "--bin",
-        "forge-warden",
+        "forge-warden-doors",
+        "--lib",
         "scratch_calls_never_replace_a_live_directory",
         "--locked",
         "--offline",
@@ -1466,7 +1457,7 @@
     {
       "id": "git-test-scratch-exclusive",
       "guardrail": "G-15",
-      "path": "crates/forge-warden-cli/src/doors/mod.rs",
+      "path": "crates/forge-warden-doors/src/lib.rs",
       "diagnostic": "scratch_helpers_require_per_call_identity_and_exclusive_creation.*FAILED",
       "cargo": [
         "test",
@@ -1857,7 +1848,7 @@
         "--",
         "door_files_are_exactly_the_listed_modules"
       ],
-      "old": "pub(crate) const DOOR_FILES: [&str; 10] = [\n    \"crates/forge-warden-cli/src/doors/child/bound.rs\",\n",
+      "old": "pub(crate) const DOOR_FILES: [&str; 10] = [\n    \"crates/forge-warden-doors/src/child/bound.rs\",\n",
       "new": "pub(crate) const DOOR_FILES: [&str; 9] = [\n",
       "required_tools": [
         "cargo",
@@ -1883,7 +1874,7 @@
         "--",
         "door_files_are_exactly_the_listed_modules"
       ],
-      "old": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-cli/src/doors\";",
+      "old": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-doors/src\";",
       "new": "pub(crate) const DOOR_DIR: &str = \"crates/forge-warden-cli/src\";",
       "required_tools": [
         "cargo",
@@ -1896,7 +1887,7 @@
     {
       "id": "door-second-mint",
       "guardrail": "G-06",
-      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
+      "path": "crates/forge-warden-doors/src/child/ranker.rs",
       "diagnostic": "a second produced ranking in one run is refused",
       "cargo": [
         "test",
@@ -1920,16 +1911,15 @@
     {
       "id": "mint-latch-removed",
       "guardrail": "G-06",
-      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
+      "path": "crates/forge-warden-doors/src/child/ranker.rs",
       "diagnostic": "a second key in the same run",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "a_run_hands_out_one_mint_key_and_then_none"
       ],
@@ -1974,7 +1964,7 @@
     {
       "id": "door-unlisted-module",
       "guardrail": "G-06",
-      "path": "crates/forge-warden-cli/src/doors/extra.rs",
+      "path": "crates/forge-warden-doors/src/extra.rs",
       "create": "//! An unlisted module under doors/: it must gain no door rights.\n",
       "diagnostic": "door_files_are_exactly_the_listed_modules.*FAILED",
       "cargo": [
@@ -2012,10 +2002,397 @@
         "--",
         "shipped_code_writes_no_expression_in_an_attribute"
       ],
-      "old": "#[derive(Parser)]\n",
-      "new": "#[derive(Parser)]\n#[command(after_help = std::env::var(\"FW_PLANT\").is_ok().to_string())]\n",
+      "old": "fn cli() -> clap::Command {\n",
+      "new": "#[doc = include_str!(\"../../../Cargo.toml\")]\nfn cli() -> clap::Command {\n",
       "required_tools": [
         "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "error\\[E0453\\]",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::disallowed_methods, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-removed",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "must forbid the effect lints, once, at the top",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "repo_invariants",
+        "--",
+        "only_doors_rs_opens_doors_in_production_code"
+      ],
+      "old": "#![forbid(\n    clippy::disallowed_methods,\n    clippy::disallowed_types,\n    clippy::print_stdout,\n    clippy::print_stderr,\n    clippy::dbg_macro,\n    clippy::exit\n)]\n",
+      "new": "",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "fixture-seam-without-debug",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
+      "diagnostic": "fw_fixture_cli alone must not open a seam",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "every_fixture_seam_in_the_doors_needs_a_debug_build"
+      ],
+      "old": "#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]\n#[expect(\n    clippy::disallowed_methods,\n    reason = \"test door: fixture Git policy context\"\n)]",
+      "new": "#[cfg(any(test, fw_fixture_cli))]\n#[expect(\n    clippy::disallowed_methods,\n    reason = \"test door: fixture Git policy context\"\n)]",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-reads-args",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Command::try_get_matches`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let matches = match cli().try_get_matches_from(arguments) {\n",
+      "new": "    let matches = match cli().try_get_matches() {\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-prints-help",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Command::print_help`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    let _help = cli().print_help();\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-error-exits",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap_builder::error::Error::exit`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "            let text = error.render().to_string();\n",
+      "new": "            if error.kind() == clap::error::ErrorKind::DisplayVersion {\n                error.exit();\n            }\n            let text = error.render().to_string();\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-process-exit",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `std::process::exit`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    if arguments.len() > 4096 {\n        std::process::exit(2);\n    }\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-print-stdout",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::print_stdout\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::print_stdout, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-print-stderr",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::print_stderr\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::print_stderr, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-dbg-macro",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::dbg_macro\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::dbg_macro, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-exit",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::exit\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::exit, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-matches-from-exits",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Command::get_matches_from`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    let _matches = cli().get_matches_from(doors::arguments());\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-process-abort",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `std::process::abort`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    if arguments.len() > 4096 {\n        std::process::abort();\n    }\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-parser-trait",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "(?s)(?=.*disallowed method `clap::Parser::parse`)(?=.*disallowed method `clap::Parser::try_parse`)(?=.*disallowed method `clap::Parser::parse_from`)(?=.*disallowed method `clap::Parser::update_from`)",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "append": "\nstruct ParserProbe;\n\nimpl clap::FromArgMatches for ParserProbe {\n    fn from_arg_matches(_matches: &ArgMatches) -> Result<Self, clap::Error> {\n        Ok(Self)\n    }\n    fn update_from_arg_matches(&mut self, _matches: &ArgMatches) -> Result<(), clap::Error> {\n        Ok(())\n    }\n}\n\nimpl clap::CommandFactory for ParserProbe {\n    fn command() -> clap::Command {\n        cli()\n    }\n    fn command_for_update() -> clap::Command {\n        cli()\n    }\n}\n\nimpl clap::Parser for ParserProbe {}\n\nfn parser_probe() {\n    let mut probe = <ParserProbe as clap::Parser>::parse();\n    let _tried = <ParserProbe as clap::Parser>::try_parse();\n    let _from = <ParserProbe as clap::Parser>::parse_from([\"forge-warden\"]);\n    <ParserProbe as clap::Parser>::update_from(&mut probe, [\"forge-warden\"]);\n}\n",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2140,16 +2517,15 @@
     {
       "id": "refusal-map-cli-variant-swap",
       "guardrail": "G-53",
-      "path": "crates/forge-warden-cli/src/doors/child/git.rs",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
       "diagnostic": "git_facts_name_a_door_failure_and_an_unavailable_git.*FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "git_facts_name_a_door_failure_and_an_unavailable_git"
       ],
@@ -2249,16 +2625,15 @@
     {
       "id": "bound-diff-reads-staging",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "bound_mode_refuses_a_store_whose_objects_are_not_what_their_ids_name \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "bound_mode_refuses_a_store_whose_objects"
       ],
@@ -2275,16 +2650,15 @@
     {
       "id": "bound-shallow-not-written",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "the_cut_writes_exactly_the_boundary_as_shallow \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "the_cut_writes_exactly_the_boundary_as_shallow"
       ],
@@ -2301,16 +2675,15 @@
     {
       "id": "bound-path-control-unchecked",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "bound_mode_admits_only_a_plain_repository \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "bound_mode_admits_only_a_plain_repository"
       ],
@@ -2327,16 +2700,15 @@
     {
       "id": "bound-memory-ceiling-removed",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "every_bound_mode_git_child_runs_under_the_memory_caps \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "every_bound_mode_git_child_runs_under_the_memory_caps"
       ],
@@ -2353,16 +2725,15 @@
     {
       "id": "bound-full-index-removed",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "bound_mode_makes_the_patch_make_patch_makes \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "bound_mode_makes_the_patch_make_patch_makes"
       ],
@@ -2379,16 +2750,15 @@
     {
       "id": "bound-recheck-skipped",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "the_recheck_refuses_a_merge_base_the_verified_objects_do_not_give \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "the_recheck_refuses"
       ],
@@ -2431,16 +2801,15 @@
     {
       "id": "bound-template-copied",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "init_flags_are_pinned \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "init_flags_are_pinned"
       ],
@@ -2457,16 +2826,15 @@
     {
       "id": "bound-merge-base-not-all",
       "guardrail": "G-54",
-      "path": "crates/forge-warden-cli/src/doors/child/bound.rs",
+      "path": "crates/forge-warden-doors/src/child/bound.rs",
       "diagnostic": "bound_mode_refuses_several_merge_bases_and_no_common_history \\.\\.\\. FAILED",
       "cargo": [
         "test",
         "-p",
-        "forge-warden-cli",
+        "forge-warden-doors",
         "--locked",
         "--offline",
-        "--bin",
-        "forge-warden",
+        "--lib",
         "--",
         "bound_mode_refuses_several_merge_bases"
       ],

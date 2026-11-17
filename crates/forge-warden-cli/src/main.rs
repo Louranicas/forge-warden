@@ -11,8 +11,20 @@
 //!
 //! Results go to stdout, diagnostics to stderr, and on error stdout is empty. Every exit code is
 //! in the registry (`forge-warden schema exit-codes`), with the next action to take.
+//!
+//! Every effect goes through `forge_warden_doors` (ADR 0001); this crate forbids the effect lints, so no
+//! `allow`, `expect`, `cfg_attr`, macro output, `#[path]` or `include!` can lower them here (EFFECT-WALL
+//! step 3, DESIGN.md 3.2).
+#![forbid(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::dbg_macro,
+    clippy::exit
+)]
 
-mod doors;
+use forge_warden_doors as doors;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
 mod refusal_rows;
@@ -21,7 +33,7 @@ mod refusal_rows;
 #[cfg(not(fw_fixture_cli))]
 mod docs_contract;
 
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{Arg, ArgAction, ArgGroup, ArgMatches, value_parser};
 use doors::DoorErrorKind;
 use doors::child::{GitFactsFailure, RankerFailure};
 use forge_warden_core::authority::{
@@ -49,93 +61,240 @@ const ERROR_SCHEMA_JSON: &str = include_str!("../../../schemas/error.v1.schema.j
 const EXIT_ENTRY_SCHEMA_JSON: &str = include_str!("../../../schemas/exit-entry.v1.schema.json");
 const EXIT_CODES_SCHEMA_JSON: &str = include_str!("../../../schemas/exit-codes.v1.schema.json");
 
-#[derive(Parser)]
-#[command(
-    name = "forge-warden",
-    version,
-    about = "Change policy as code for deep-diff-forge reviews: a sealed, deterministic gate.",
-    long_about = None,
-    after_help = "Exit codes: forge-warden schema exit-codes · forge-warden explain <code>"
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
+/// What the command line asks for: built by [`command`] from what [`cli`] parsed. Flags that
+/// only shape parsing or diagnostics (`--advisory`; `--json` on explain and schema, read before
+/// parsing by `machine_requested`) are not carried.
+enum Command {
+    /// `check`: judge a patch against a policy.
+    Check {
+        policy: PathBuf,
+        patch: PathBuf,
+        ranker: Option<PathBuf>,
+        rank: Option<PathBuf>,
+        git: PathBuf,
+        base: Option<String>,
+        head: Option<String>,
+        repo: Option<PathBuf>,
+        today: Option<String>,
+        json: bool,
+    },
+    /// `lint`: validate a policy.
+    Lint { policy: PathBuf, json: bool },
+    /// `explain`: explain an exit code.
+    Explain { code: String },
+    /// `schema`: print a JSON Schema or the exit-code registry.
+    Schema { what: String },
+    /// `init`: print a starter policy.
+    Init,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is
-    /// the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold.
-    #[command(group(ArgGroup::new("mode").required(true).args(["ranker", "advisory"])))]
-    Check {
-        /// The policy file.
-        #[arg(long, value_name = "FILE")]
-        policy: PathBuf,
-        /// The patch to judge (`git diff --binary --no-renames`). Read once; the ranker and Git
-        /// both read that one buffer. `--patch -` is refused: stdin is reserved for `--rank -`.
-        #[arg(long, value_name = "FILE")]
-        patch: PathBuf,
-        /// Authority mode: the deep-diff-forge binary to run. Its SHA-256 must be listed in the
-        /// policy's `[producer] sha256`.
-        #[arg(long, value_name = "FILE")]
-        ranker: Option<PathBuf>,
-        /// Advisory mode: judge the ranking given with `--rank`. The verdict is hold or fail,
-        /// never pass.
-        #[arg(long, requires = "rank")]
-        advisory: bool,
-        /// A ranking document (`-` reads stdin). Advisory mode judges it; authority mode compares
-        /// it with the produced ranking and holds (`rank_mismatch`) if they differ.
-        #[arg(long, value_name = "FILE")]
-        rank: Option<PathBuf>,
-        /// The Git that reads the patch's facts (absolute; recorded in the verdict).
-        #[arg(long, value_name = "FILE", default_value = "/usr/bin/git")]
-        git: PathBuf,
-        /// A claimed base commit (hex), recorded unverified in the verdict.
-        #[arg(long, value_name = "REV")]
-        base: Option<String>,
-        /// A claimed head commit (hex), recorded unverified in the verdict.
-        #[arg(long, value_name = "REV")]
-        head: Option<String>,
-        /// Bound mode (ADR 0012, authority mode only): the repository whose objects hold --base
-        /// and --head (full ids). forge-warden makes `git diff merge-base..head` itself, from a
-        /// verified copy of those objects, and refuses a --patch that is not byte-equal to it.
-        /// For a linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`.
-        #[arg(long, value_name = "DIR", requires_all = ["ranker", "base", "head"], conflicts_with = "advisory")]
-        repo: Option<PathBuf>,
-        /// Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC).
-        #[arg(long, value_name = "DATE")]
-        today: Option<String>,
-        /// Print the forge-warden.verdict.v3 document instead of the human summary.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Validate a policy without judging anything; lists every issue at once.
-    Lint {
-        /// The policy file.
-        policy: PathBuf,
-        /// Print the forge-warden.lint.v1 document; failures are one JSON line on stderr.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Explain an exit code (by number or name) and the action it asks for.
-    Explain {
-        /// A code such as `7`, or a name such as `policy_hold`.
-        code: String,
-        /// Keep the JSON result; also format failures as one JSON line on stderr.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Print a JSON Schema or the exit-code registry.
-    Schema {
-        /// What to print.
-        #[arg(value_parser = ["verdict", "policy", "exit-codes", "lint", "error", "exit-entry", "exit-codes-schema"])]
-        what: String,
-        /// Keep the JSON result; also format failures as one JSON line on stderr.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Print a starter policy: `forge-warden init > warden.toml`.
-    Init,
+/// The help of `--json` on explain and schema.
+const JSON_RESULT: &str = "Keep the JSON result; also format failures as one JSON line on stderr";
+
+/// A `--json` flag with this help.
+fn json_flag(help: &'static str) -> Arg {
+    Arg::new("json")
+        .long("json")
+        .action(ArgAction::SetTrue)
+        .help(help)
+}
+
+/// A `--ID <FILE>` option read as a path.
+fn file_option(id: &'static str, help: &'static str) -> Arg {
+    Arg::new(id)
+        .long(id)
+        .value_name("FILE")
+        .value_parser(value_parser!(PathBuf))
+        .help(help)
+}
+
+/// A `--ID <VALUE_NAME>` option read as text.
+fn text_option(id: &'static str, value_name: &'static str, help: &'static str) -> Arg {
+    Arg::new(id)
+        .long(id)
+        .value_name(value_name)
+        .value_parser(value_parser!(String))
+        .help(help)
+}
+
+/// A required positional argument named `VALUE_NAME` in usage.
+fn positional(id: &'static str, value_name: &'static str, help: &'static str) -> Arg {
+    Arg::new(id)
+        .required(true)
+        .value_name(value_name)
+        .help(help)
+}
+
+/// The command line, with clap's builder (EFFECT-WALL step 3): clap's derive emits
+/// `allow(clippy::style)`, which a crate forbidding the effect lints refuses (R2,
+/// lanes/keel/EFFECT-WALL-STEP3/R2-MEASURE.md). Its help, usage errors and exit codes are those the
+/// derive gave, byte for byte: `tests/cli.rs` pins them (fixtures/cli-surface).
+fn cli() -> clap::Command {
+    clap::Command::new("forge-warden")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("Change policy as code for deep-diff-forge reviews: a sealed, deterministic gate.")
+        .after_help("Exit codes: forge-warden schema exit-codes · forge-warden explain <code>")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(check_command())
+        .subcommand(
+            clap::Command::new("lint")
+                .about("Validate a policy without judging anything; lists every issue at once")
+                .arg(
+                    positional("policy", "POLICY", "The policy file")
+                        .value_parser(value_parser!(PathBuf)),
+                )
+                .arg(json_flag(
+                    "Print the forge-warden.lint.v1 document; failures are one JSON line on stderr",
+                )),
+        )
+        .subcommand(
+            clap::Command::new("explain")
+                .about("Explain an exit code (by number or name) and the action it asks for")
+                .arg(
+                    positional(
+                        "code",
+                        "CODE",
+                        "A code such as `7`, or a name such as `policy_hold`",
+                    )
+                    .value_parser(value_parser!(String)),
+                )
+                .arg(json_flag(JSON_RESULT)),
+        )
+        .subcommand(
+            clap::Command::new("schema")
+                .about("Print a JSON Schema or the exit-code registry")
+                .arg(positional("what", "WHAT", "What to print").value_parser([
+                    "verdict",
+                    "policy",
+                    "exit-codes",
+                    "lint",
+                    "error",
+                    "exit-entry",
+                    "exit-codes-schema",
+                ]))
+                .arg(json_flag(JSON_RESULT)),
+        )
+        .subcommand(
+            clap::Command::new("init")
+                .about("Print a starter policy: `forge-warden init > warden.toml`"),
+        )
+}
+
+/// The `check` subcommand.
+fn check_command() -> clap::Command {
+    clap::Command::new("check")
+        .about(
+            "Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is \
+             the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold",
+        )
+        .arg(file_option("policy", "The policy file").required(true))
+        .arg(
+            file_option(
+                "patch",
+                "The patch to judge (`git diff --binary --no-renames`). Read once; the ranker and Git \
+                 both read that one buffer. `--patch -` is refused: stdin is reserved for `--rank -`",
+            )
+            .required(true),
+        )
+        .arg(file_option(
+            "ranker",
+            "Authority mode: the deep-diff-forge binary to run. Its SHA-256 must be listed in the \
+             policy's `[producer] sha256`",
+        ))
+        .arg(
+            Arg::new("advisory")
+                .long("advisory")
+                .action(ArgAction::SetTrue)
+                .requires("rank")
+                .help(
+                    "Advisory mode: judge the ranking given with `--rank`. The verdict is hold or fail, \
+                     never pass",
+                ),
+        )
+        .arg(file_option(
+            "rank",
+            "A ranking document (`-` reads stdin). Advisory mode judges it; authority mode compares \
+             it with the produced ranking and holds (`rank_mismatch`) if they differ",
+        ))
+        .arg(
+            file_option(
+                "git",
+                "The Git that reads the patch's facts (absolute; recorded in the verdict)",
+            )
+            .default_value("/usr/bin/git"),
+        )
+        .arg(text_option(
+            "base",
+            "REV",
+            "A claimed base commit (hex), recorded unverified in the verdict",
+        ))
+        .arg(text_option(
+            "head",
+            "REV",
+            "A claimed head commit (hex), recorded unverified in the verdict",
+        ))
+        .arg(
+            Arg::new("repo")
+                .long("repo")
+                .value_name("DIR")
+                .value_parser(value_parser!(PathBuf))
+                .requires_all(["ranker", "base", "head"])
+                .conflicts_with("advisory")
+                .help(
+                    "Bound mode (ADR 0012, authority mode only): the repository whose objects hold \
+                     --base and --head (full ids). forge-warden makes `git diff merge-base..head` \
+                     itself, from a verified copy of those objects, and refuses a --patch that is not \
+                     byte-equal to it. For a linked worktree pass `--repo \"$(git rev-parse \
+                     --git-common-dir)\"`",
+                ),
+        )
+        .arg(text_option(
+            "today",
+            "DATE",
+            "Judge waivers as of this date (YYYY-MM-DD) instead of today (UTC)",
+        ))
+        .arg(json_flag(
+            "Print the forge-warden.verdict.v3 document instead of the human summary",
+        ))
+        .group(
+            ArgGroup::new("mode")
+                .required(true)
+                .args(["ranker", "advisory"]),
+        )
+}
+
+/// The [`Command`] that `matches` (from [`cli`]) asks for; `None` only if the parser let through
+/// something it was built to refuse.
+fn command(matches: &ArgMatches) -> Option<Command> {
+    let path = |m: &ArgMatches, id: &str| m.get_one::<PathBuf>(id).cloned();
+    let text = |m: &ArgMatches, id: &str| m.get_one::<String>(id).cloned();
+    Some(match matches.subcommand()? {
+        ("check", m) => Command::Check {
+            policy: path(m, "policy")?,
+            patch: path(m, "patch")?,
+            ranker: path(m, "ranker"),
+            rank: path(m, "rank"),
+            git: path(m, "git")?,
+            base: text(m, "base"),
+            head: text(m, "head"),
+            repo: path(m, "repo"),
+            today: text(m, "today"),
+            json: m.get_flag("json"),
+        },
+        ("lint", m) => Command::Lint {
+            policy: path(m, "policy")?,
+            json: m.get_flag("json"),
+        },
+        ("explain", m) => Command::Explain {
+            code: text(m, "code")?,
+        },
+        ("schema", m) => Command::Schema {
+            what: text(m, "what")?,
+        },
+        ("init", _) => Command::Init,
+        _ => return None,
+    })
 }
 
 /// A failure with the registry exit it ends the process with.
@@ -157,7 +316,7 @@ impl Failure {
     /// The one mapping from a door's kind to the registry (Q2-05). Exhaustive: a new kind is a
     /// compile error here until someone decides its exit.
     fn from_door(error: doors::DoorError) -> Self {
-        let (exit, next) = match error.kind {
+        let (exit, next) = match error.kind() {
             DoorErrorKind::Io => (Exit::Io, "check_input_output"),
             DoorErrorKind::Environment => (Exit::Io, "check_environment"),
             DoorErrorKind::OverBudget => (Exit::InvalidInput, "reduce_input_size"),
@@ -165,14 +324,17 @@ impl Failure {
         };
         Self {
             exit,
-            message: error.message,
+            message: error.into_message(),
             next,
         }
     }
 }
 
 fn main() -> doors::Status {
-    #[cfg(test)]
+    // The fixture CLI (tests/common) is a debug build with `--cfg test --cfg fw_fixture_cli`, and with the
+    // latter in RUSTFLAGS so the doors crate has its test seams too (only with debug_assertions, Bastion
+    // B1); a plain unit-test build never runs main.
+    #[cfg(all(test, fw_fixture_cli, debug_assertions))]
     if !doors::fixture_cli_requested() {
         return doors::Status(finish(
             Err(Failure::new(
@@ -189,8 +351,8 @@ fn run_cli() -> Exit {
     let arguments = doors::arguments();
     let json = machine_requested(&arguments);
     let own_breaks = line_breaks_are_the_parsers_own(&arguments);
-    let cli = match Cli::try_parse_from(arguments) {
-        Ok(cli) => cli,
+    let matches = match cli().try_get_matches_from(arguments) {
+        Ok(matches) => matches,
         Err(error) => {
             let text = error.render().to_string();
             return if error.use_stderr() {
@@ -212,7 +374,16 @@ fn run_cli() -> Exit {
             };
         }
     };
-    finish(run(cli.command), json)
+    match command(&matches) {
+        Some(command) => finish(run(command), json),
+        None => finish(
+            Err(Failure::new(
+                Exit::Usage,
+                "the command line names no command this forge-warden knows",
+            )),
+            json,
+        ),
+    }
 }
 
 /// Whether every line break in the argument parser's message is one the parser wrote. The message
@@ -271,7 +442,6 @@ fn run(command: Command) -> Result<Exit, Failure> {
             policy,
             patch,
             ranker,
-            advisory: _,
             rank,
             git,
             base,
@@ -292,8 +462,8 @@ fn run(command: Command) -> Result<Exit, Failure> {
             json,
         }),
         Command::Lint { policy, json } => lint(&policy, json),
-        Command::Explain { code, json: _ } => explain(&code),
-        Command::Schema { what, json: _ } => schema(&what),
+        Command::Explain { code } => explain(&code),
+        Command::Schema { what } => schema(&what),
         Command::Init => emit(STARTER_POLICY),
     }
 }

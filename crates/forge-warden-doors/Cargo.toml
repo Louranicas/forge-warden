@@ -1,0 +1,24 @@
+[package]
+name = "forge-warden-doors"
+description = "The effect doors of forge-warden: the only code in the binary that reads files, the clock or the environment, writes output or runs a child."
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `mint`: the constructor of the MintKey the ranker door hands out once per run (EFFECT-WALL ruling R1: only the
+# doors crate enables it; repo_invariants checks the declarations).
+forge-warden-core = { workspace = true, features = ["mint"] }
+# The workspace declares it without `std` (the core is no_std, EFFECT-WALL step 2c); the doors use std.
+serde_json = { workspace = true, features = ["std"] }
+# The Git allowlist (/etc/forge-warden/git-allowlist.toml) is TOML.
+toml = { workspace = true, features = ["std"] }

@@ -138,10 +138,10 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
 const ATTRIBUTE_EXPRESSION: &str = "an expression in an attribute";
 
 /// Attributes that may carry an expression, each written exactly so (whitespace aside). Reviewed:
-/// the first builds a clap `ArgGroup` from literals; the second formats a count and a list of the
-/// variant's own field; the last two name the crate's own size constant. None reaches an effect.
-const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 4] = [
-    r#"command(group(ArgGroup::new("mode").required(true).args(["ranker","advisory"])))"#,
+/// the first formats a count and a list of the variant's own field; the last two name the crate's
+/// own size constant. None reaches an effect. (The clap `ArgGroup` entry went with clap's derive,
+/// EFFECT-WALL step 3: the group is built in code now.)
+const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 3] = [
     r#"error("policy refused with {} issue(s):\n{}",.0.len(),IssueList(.0))"#,
     r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_POLICY_BYTES)"#,
     r#"error("ranking is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
@@ -546,8 +546,8 @@ fn the_parser_finds_every_attribute_expression_form() {
             "#[doc = concat!(\"a\", \"b\")]\nstruct Cli;",
         ),
         (
-            "the admitted group expression with one word changed",
-            "#[command(group(ArgGroup::new(\"mode\").required(false).args([\"ranker\", \"advisory\"])))]\nstruct Cli;",
+            "an admitted expression with one word changed",
+            "#[error(\"policy is {0} bytes, over the {max} byte budget\", max = crate::MAX_INPUT_BYTES)]\nstruct Cli;",
         ),
     ];
     for (name, source) in forms {
@@ -581,8 +581,8 @@ fn the_parser_admits_names_literals_and_lists_of_literals() {
             "/// text\n#[arg(long, default_value_t = -1)]\nstruct Cli;",
         ),
         (
-            "the admitted group expression, spaced differently",
-            "#[command(group(ArgGroup::new(\"mode\").required(true).args([\"ranker\",\n    \"advisory\"])))]\nstruct Cli;",
+            "an admitted expression, spaced differently",
+            "#[error(\"policy is {0} bytes, over the {max} byte budget\",\n    max = crate::MAX_POLICY_BYTES)]\nstruct Cli;",
         ),
     ];
     for (name, source) in plain {
@@ -1034,13 +1034,13 @@ fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
 }
 
 /// Q-DOOR-SPLIT: door rights are granted by exact listing, never by location. Every file under the
-/// door directory, of any kind, must be a listed door module. A file added under `src/doors/`
+/// door directory, of any kind, must be a listed door module. A file added under `crates/forge-warden-doors/src/`
 /// therefore fails here until the protected list names it. The comparison is equality, so a listed
 /// module that is missing would fail too; but deleting a listed module is a compile error first (its
 /// `mod` line), and for that direction the compiler is the guard (ledger Q30).
 ///
 /// The door directory itself, and each directory above it, must be a real directory: a linked
-/// `src/doors` would be walked through the link and fail only as a mismatch or a panic in
+/// `crates/forge-warden-doors/src` would be walked through the link and fail only as a mismatch or a panic in
 /// `common::relative`, not for its reason (ledger Q35). Nothing under the door directory may be a
 /// symlink. The listing below compares canonical paths,
 /// so a link `doors/alias.rs -> file.rs` would collapse onto the listed `file.rs` and pass as if it
@@ -1214,8 +1214,73 @@ fn door_path_offences(door: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
+/// Bastion B1 (EFFECT-WALL step 3): a door seam the fixture CLI uses is compiled only in a test build
+/// or a debug build carrying `fw_fixture_cli`, never by that cfg alone, so a `--release` build keeps the
+/// production seams (the Git allowlist from /etc) whatever flags a deployer passes. Every mention of
+/// the cfg outside comments is one of the two admitted spellings; `fixture_cfg_offences` is checked
+/// on its own rows below.
+fn fixture_cfg_offences(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (number, line) in source.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        let squeezed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        let rest = squeezed
+            .replace("not(fw_fixture_cli)", "")
+            .replace("all(fw_fixture_cli,debug_assertions)", "");
+        if rest.contains("fw_fixture_cli") {
+            found.push(format!(
+                "line {}: {}",
+                number.saturating_add(1),
+                line.trim()
+            ));
+        }
+    }
+    found
+}
+
+#[test]
+fn every_fixture_seam_in_the_doors_needs_a_debug_build() {
+    for door in common::DOOR_FILES {
+        let source = std::fs::read_to_string(root().join(door)).unwrap();
+        assert_eq!(
+            fixture_cfg_offences(&source),
+            Vec::<String>::new(),
+            "{door}: fw_fixture_cli alone must not open a seam (Bastion B1)"
+        );
+    }
+    for (row, offends) in [
+        ("#[cfg(any(test, fw_fixture_cli))]\nfn seam() {}", true),
+        ("#[cfg(fw_fixture_cli)]\nfn seam() {}", true),
+        ("#[cfg(any(test, all(fw_fixture_cli)))]\nfn seam() {}", true),
+        (
+            "#[cfg(all(debug_assertions, fw_fixture_cli))]\nfn seam() {}",
+            true,
+        ),
+        (
+            "#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]\nfn seam() {}",
+            false,
+        ),
+        (
+            "#[cfg(not(any(test, all(fw_fixture_cli, debug_assertions))))]\nconst X: u8 = 0;",
+            false,
+        ),
+        (
+            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\nmod tests {}",
+            false,
+        ),
+        (
+            "/// a comment naming fw_fixture_cli alone\nfn f() {}",
+            false,
+        ),
+    ] {
+        assert_eq!(!fixture_cfg_offences(row).is_empty(), offends, "{row}");
+    }
+}
+
 /// Q-DOOR-PATH on the tree: no door module names another file by `#[path]`, except test support
-/// into a test-only module (today: `doors/mod.rs`'s `test_environment`).
+/// into a test-only module (today: the doors crate's `lib.rs`, `test_environment`).
 #[test]
 fn a_door_module_names_only_test_support_by_path() {
     for door in common::DOOR_FILES {
@@ -1230,19 +1295,19 @@ fn a_door_module_names_only_test_support_by_path() {
 
 #[test]
 fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
-    let door = "crates/forge-warden-cli/src/doors/mod.rs";
+    let door = "crates/forge-warden-doors/src/lib.rs";
     for (name, source) in [
         (
             "cfg(test)",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
-            "cfg(test) plus another cfg, as in doors/mod.rs",
-            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "cfg(test) plus another cfg, as in the doors crate's lib.rs",
+            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "cfg(all(test, unix)) and a ./ segment",
-            "#[cfg(all(test, unix))]\n#[path = \"./../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(all(test, unix))]\n#[path = \"./../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         ("no path attribute at all", "mod child;"),
     ] {
@@ -1255,15 +1320,15 @@ fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
     for (name, source) in [
         (
             "no cfg(test)",
-            "#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "cfg(not(test))",
-            "#[cfg(not(test))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(not(test))]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "cfg(any(test, unix))",
-            "#[cfg(any(test, unix))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(any(test, unix))]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "a door file, not test support",
@@ -1283,27 +1348,27 @@ fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
         ),
         (
             "not a Rust file",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.txt\"]\nmod env;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.txt\"]\nmod env;",
         ),
         (
             "a tests/ directory itself",
-            "#[cfg(test)]\n#[path = \"../../tests\"]\nmod env;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests\"]\nmod env;",
         ),
         (
             "an inline module",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env {}",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env {}",
         ),
         (
             "nested in an inline test module",
-            "#[cfg(test)]\nmod t {\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+            "#[cfg(test)]\nmod t {\n    #[path = \"../../forge-warden-cli/tests/support/env.rs\"]\n    mod env;\n}",
         ),
         (
             "through cfg_attr",
-            "#[cfg_attr(test, path = \"../../tests/support/env.rs\")]\nmod env;",
+            "#[cfg_attr(test, path = \"../../forge-warden-cli/tests/support/env.rs\")]\nmod env;",
         ),
         (
             "inside a macro invocation",
-            "some_macro! {\n    #[cfg(test)]\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+            "some_macro! {\n    #[cfg(test)]\n    #[path = \"../../forge-warden-cli/tests/support/env.rs\"]\n    mod env;\n}",
         ),
         (
             "not a string literal",
@@ -1311,11 +1376,11 @@ fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
         ),
         (
             "on a function",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nfn env() {}",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nfn env() {}",
         ),
         (
             "a second, unadmitted path beside an admitted one",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;\n#[path = \"file.rs\"]\nmod again;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;\n#[path = \"file.rs\"]\nmod again;",
         ),
         ("unparseable", "fn f( {"),
     ] {

@@ -24,7 +24,7 @@ fresh() {
   cp "$root/scripts/release_prepare.sh" "$root/scripts/release_tag.sh" "$W/scripts/"
   cp "$root/.github/release-signers/allowed_signers" "$W/.github/release-signers/"
   printf '[workspace]\nmembers = []\n\n[workspace.package]\nversion = "%s"\nedition = "2024"\n' "$v" > "$W/Cargo.toml"
-  printf '[[package]]\nname = "forge-warden-cli"\nversion = "%s"\n\n[[package]]\nname = "forge-warden-core"\nversion = "%s"\n' "$v" "$v" > "$W/Cargo.lock"
+  printf '[[package]]\nname = "forge-warden-cli"\nversion = "%s"\n\n[[package]]\nname = "forge-warden-core"\nversion = "%s"\n\n[[package]]\nname = "forge-warden-doors"\nversion = "%s"\n' "$v" "$v" "$v" > "$W/Cargo.lock"
   printf '# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-11-16\n\n- one change\n\n## [0.0.1] - 2026-01-01\n\n- old\n' "$v" > "$W/CHANGELOG.md"
   printf 'cargo install --git https://gitlab.com/x/forge-warden --tag v%s forge-warden-cli --locked\n' "$v" > "$W/README.md"
   printf '# Evidence\n\n## %s (2026-11-16)\n\nmeasured\n' "$v" > "$W/EVIDENCE.md"

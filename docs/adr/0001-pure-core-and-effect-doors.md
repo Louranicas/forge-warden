@@ -48,3 +48,19 @@ globset has no `no_std` mode; its other dependencies (serde, serde_json, sha2, t
 (`the_core_is_no_std_unconditionally`): the one unconditional `#![no_std]` line, no `extern crate std`, and no core
 feature that enables anything. The core's `clippy.toml` still refuses hash-ordered collections, which `alloc` has.
 
+
+## Amendment (2026-11-17, EFFECT-WALL step 3): the doors are a crate, and the binary forbids the effect lints
+
+The door modules moved, unchanged, from `crates/forge-warden-cli/src/doors/` to the crate `forge-warden-doors`
+(`crates/forge-warden-doors/src/`; `mod.rs` became `lib.rs`). The binary depends on it and its `main.rs` carries
+`#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]`: no `allow`, `expect`, `cfg_attr`, macro output,
+`#[path]` or `include!` can lower those lints in the binary, so a door can only exist in the doors crate. It forbids
+`print_stdout`, `print_stderr`, `dbg_macro` and `exit` as well, and `clippy.toml` names clap's own effects (reading the
+process arguments, printing help, `Error::exit`) and `std::process::exit`, so the binary cannot reach an effect through
+clap either. The
+binary builds its command line with clap's builder, because clap's derive emits `allow(clippy::style)`, which the
+forbid refuses (measured, R2). The core feature `mint` is enabled by the doors crate alone (ruling R1). Ownership
+moved with the code to `crates/forge-warden-doors/src/**`; its `Cargo.toml` is covered by `crates/*/Cargo.toml`.
+Test seams the fixture CLI needs are compiled under `cfg(any(test, all(fw_fixture_cli, debug_assertions)))`:
+`fw_fixture_cli` is refused in every operational build surface exactly as `--cfg test` is, and a `--release` build
+keeps the production seams (the Git allowlist from /etc) even with it (`door_lints` pins the spelling).

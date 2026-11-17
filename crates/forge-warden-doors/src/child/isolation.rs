@@ -18,7 +18,7 @@ impl PrivateDir {
         clippy::disallowed_methods,
         reason = "door: create_in (the child door's one private directory)"
     )]
-    pub(in crate::doors) fn create_in(base: &Path) -> Result<Self, DoorError> {
+    pub(crate) fn create_in(base: &Path) -> Result<Self, DoorError> {
         use std::os::unix::fs::DirBuilderExt as _;
         for _attempt in 0..64_u32 {
             let suffix = private_suffix()?;
@@ -57,7 +57,7 @@ impl Drop for PrivateDir {
 /// `:`. Anything else is refused: a relative or `:`-split ceiling is ignored by Git, which would
 /// then discover and read the candidate's repository.
 #[expect(clippy::disallowed_methods, reason = "door: admit_base (canonicalize)")]
-pub(in crate::doors) fn admit_base(raw: &Path) -> Result<String, DoorError> {
+pub(crate) fn admit_base(raw: &Path) -> Result<String, DoorError> {
     let refuse =
         |why: &str| DoorError::environment(format!("temporary directory {}: {why}", raw.display()));
     if !raw.is_absolute() {
@@ -74,15 +74,15 @@ pub(in crate::doors) fn admit_base(raw: &Path) -> Result<String, DoorError> {
 
 /// A private directory under an admitted base, and the ADR 0010 environment that points at
 /// it. Every child (Git and the ranker) runs with exactly this environment and that cwd.
-pub(in crate::doors) struct Isolation {
-    pub(in crate::doors) dir: PrivateDir,
+pub(crate) struct Isolation {
+    pub(crate) dir: PrivateDir,
     home: String,
     ceiling: String,
 }
 
 impl Isolation {
     /// Admit `base` ([`admit_base`]) and create the private directory under it.
-    pub(in crate::doors) fn create_in(base: &Path) -> Result<Self, DoorError> {
+    pub(crate) fn create_in(base: &Path) -> Result<Self, DoorError> {
         let ceiling = admit_base(base)?;
         let dir = PrivateDir::create_in(Path::new(&ceiling))?;
         // The private dir is `<admitted base>/<ASCII name>`, so its path is UTF-8 without `:`
@@ -98,7 +98,7 @@ impl Isolation {
     }
 
     /// The whole child environment: nothing else is inherited (no `PATH`, no `LD_*`).
-    pub(in crate::doors) fn env(&self) -> [(&str, &str); 7] {
+    pub(crate) fn env(&self) -> [(&str, &str); 7] {
         [
             ("LC_ALL", "C"),
             ("HOME", self.home.as_str()),

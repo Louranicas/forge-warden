@@ -93,6 +93,19 @@ fn suppressions_are_expectations_with_reasons() {
     }
 }
 
+/// The binary's lint wall over the effect lints (EFFECT-WALL step 3, DESIGN.md 3.2): `main.rs`
+/// forbids them, so nothing in the binary can lower them (the printing, `dbg!` and exit lints too,
+/// Touchstone's attack on 87d2e073). It is the one mention of the door lints a non-door production
+/// file may hold, written exactly so (rustfmt's layout) and exactly once.
+const BINARY_FORBIDS_EFFECTS: &str = "#![forbid(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::dbg_macro,
+    clippy::exit
+)]";
+
 #[test]
 fn only_doors_rs_opens_doors_in_production_code() {
     for (path, text) in rust_sources() {
@@ -100,8 +113,19 @@ fn only_doors_rs_opens_doors_in_production_code() {
         if is_test || common::is_door_file(&path) {
             continue;
         }
+        let rest = if path == "crates/forge-warden-cli/src/main.rs" {
+            assert_eq!(
+                text.matches(&format!("\n{BINARY_FORBIDS_EFFECTS}\n"))
+                    .count(),
+                1,
+                "{path}: must forbid the effect lints, once, at the top (EFFECT-WALL step 3)"
+            );
+            text.replacen(BINARY_FORBIDS_EFFECTS, "", 1)
+        } else {
+            text
+        };
         assert!(
-            !text.contains("disallowed_methods") && !text.contains("disallowed_types"),
+            !rest.contains("disallowed_methods") && !rest.contains("disallowed_types"),
             "{path}: effects go through the door modules (common::DOOR_FILES, ADR 0001), not a local exemption"
         );
     }
@@ -765,10 +789,11 @@ fn no_normal_dependency_opens_the_unattested_evaluate_door() {
 }
 
 #[test]
-fn only_the_binary_enables_the_mint_feature() {
-    // EFFECT-WALL step 1 (ruling R1): `MintKey::new` exists only with the core feature `mint`. Only
-    // forge-warden-cli's normal dependency may enable it (its door hands out one key per run) besides
-    // [dev-dependencies] (the core's engine tests); no other dependency, kind or [features] entry.
+fn only_the_doors_crate_enables_the_mint_feature() {
+    // EFFECT-WALL ruling R1: `MintKey::new` exists only with the core feature `mint`. Only
+    // forge-warden-doors' normal dependency may enable it (its ranker door hands out one key per run;
+    // step 3 moved it there from the binary) besides [dev-dependencies] (the core's engine tests); no
+    // other dependency, kind or [features] entry.
     let meta = common::command(env!("CARGO"))
         .args([
             "metadata",
@@ -810,7 +835,7 @@ fn only_the_binary_enables_the_mint_feature() {
     }
     assert_eq!(
         enabled_by,
-        ["forge-warden-cli null target=null rename=null"],
+        ["forge-warden-doors null target=null rename=null"],
         "the mint feature is enabled by something other than the binary's one normal dependency"
     );
 }

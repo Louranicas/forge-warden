@@ -5,8 +5,12 @@ use forge_warden_core::Exit;
 use std::io::Write as _;
 
 /// Write `text` to stdout. A closed pipe (`forge-warden … | head`) is not an error.
+///
+/// # Errors
+///
+/// A [`DoorError`] if stdout cannot be written for any reason other than a closed pipe.
 #[expect(clippy::disallowed_methods, reason = "door: emit")]
-pub(crate) fn emit(text: &str) -> Result<(), DoorError> {
+pub fn emit(text: &str) -> Result<(), DoorError> {
     write_tolerating_closed_pipe(std::io::stdout().lock(), text)
 }
 
@@ -25,7 +29,7 @@ pub(super) fn write_tolerating_closed_pipe(
 /// Write a diagnostic line to stderr. Failure to write a diagnostic is ignored: there is nowhere
 /// left to report it.
 #[expect(clippy::disallowed_methods, reason = "door: diagnose")]
-pub(crate) fn diagnose(text: &str) {
+pub fn diagnose(text: &str) {
     let mut err = std::io::stderr().lock();
     let _ignored = writeln!(err, "{}", forge_warden_core::render::terminal_safe(text));
 }
@@ -33,7 +37,7 @@ pub(crate) fn diagnose(text: &str) {
 /// Write exactly one JSON error envelope. Fields are terminal-safe before encoding, so JSON
 /// escapes are not double-escaped by the human diagnostic door. Stderr write failure is final.
 #[expect(clippy::disallowed_methods, reason = "door: diagnose_json")]
-pub(crate) fn diagnose_json(exit: Exit, message: &str, next: &str) {
+pub fn diagnose_json(exit: Exit, message: &str, next: &str) {
     let entry = exit.entry();
     let value = serde_json::json!({
         "exit": entry.code,

@@ -31,20 +31,20 @@ mod process_env;
 /// `door_files_are_exactly_the_listed_modules` refuses any other Rust file under [`DOOR_DIR`], so no
 /// file gains door rights just by where it lives.
 pub(crate) const DOOR_FILES: [&str; 10] = [
-    "crates/forge-warden-cli/src/doors/child/bound.rs",
-    "crates/forge-warden-cli/src/doors/child/entropy.rs",
-    "crates/forge-warden-cli/src/doors/child/git.rs",
-    "crates/forge-warden-cli/src/doors/child/isolation.rs",
-    "crates/forge-warden-cli/src/doors/child/mod.rs",
-    "crates/forge-warden-cli/src/doors/child/process.rs",
-    "crates/forge-warden-cli/src/doors/child/ranker.rs",
-    "crates/forge-warden-cli/src/doors/diagnose.rs",
-    "crates/forge-warden-cli/src/doors/file.rs",
-    "crates/forge-warden-cli/src/doors/mod.rs",
+    "crates/forge-warden-doors/src/child/bound.rs",
+    "crates/forge-warden-doors/src/child/entropy.rs",
+    "crates/forge-warden-doors/src/child/git.rs",
+    "crates/forge-warden-doors/src/child/isolation.rs",
+    "crates/forge-warden-doors/src/child/mod.rs",
+    "crates/forge-warden-doors/src/child/process.rs",
+    "crates/forge-warden-doors/src/child/ranker.rs",
+    "crates/forge-warden-doors/src/diagnose.rs",
+    "crates/forge-warden-doors/src/file.rs",
+    "crates/forge-warden-doors/src/lib.rs",
 ];
 
 /// The directory that holds the door modules and nothing else.
-pub(crate) const DOOR_DIR: &str = "crates/forge-warden-cli/src/doors";
+pub(crate) const DOOR_DIR: &str = "crates/forge-warden-doors/src";
 
 /// Whether `path` (repository-relative) is one of the door modules, by exact match.
 pub(crate) fn is_door_file(path: &str) -> bool {
@@ -239,8 +239,13 @@ pub(crate) fn fixture_cli() -> &'static FixtureCli {
             .parent()
             .unwrap()
             .join("git-fixture-target");
+        // `-- --cfg …` reaches only the binary; the doors crate has its fixture seams under
+        // cfg(any(test, fw_fixture_cli)), so the cfg also goes to every crate of this private build
+        // (its own --target-dir) through RUSTFLAGS (EFFECT-WALL step 3b, DESIGN-3b.md).
         let output = command(env!("CARGO"))
             .current_dir(root())
+            .env("RUSTFLAGS", "--cfg fw_fixture_cli")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
             .args([
                 "rustc",
                 "-p",

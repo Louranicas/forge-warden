@@ -2,10 +2,10 @@ use super::{DoorError, DoorErrorKind, Symlinks, open_regular, read_within};
 use std::path::Path;
 
 mod process;
-pub(in crate::doors) use process::MAX_EXECUTABLE_BYTES;
+pub(crate) use process::MAX_EXECUTABLE_BYTES;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use process::{
+pub(crate) use process::{
     O_NOFOLLOW, has_exited, pin_within, run_child_killing_with, stderr_excerpt,
 };
 pub(crate) use process::{PinnedExecutable, pin_executable, run_child};
@@ -15,26 +15,22 @@ mod git;
 mod bound;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use bound::{
-    ADDRESS_SPACE_CAP, BoundDiff, CAPS, Caps, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program,
-    cut_in, recheck_in,
+pub(crate) use bound::{
+    ADDRESS_SPACE_CAP, CAPS, Caps, DATA_CAP, INIT_FLAGS, bound_diff_in, bound_program, cut_in,
+    recheck_in,
 };
-pub(crate) use bound::{BoundFailure, admit_repository, bound_diff};
-// The admission refusals are named only in tests (the refusal map's rows and the door tests).
-#[cfg(test)]
-#[cfg(not(fw_fixture_cli))]
-pub(crate) use bound::RepositoryRefusal;
-pub(crate) use git::{
+pub use bound::{BoundDiff, BoundFailure, RepositoryRefusal, admit_repository, bound_diff};
+pub use git::{
     AdmittedGit, GitFactsFailure, PinnedGit, admit_git_advisory, admit_git_pinned, git_facts,
     git_version,
 };
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use git::{GIT_STDERR_CAP, fixture_git, git_facts_in, parse_git_allowlist};
+pub(crate) use git::{GIT_STDERR_CAP, fixture_git, git_facts_in, parse_git_allowlist};
 
 /// How a child ended, or why it was refused.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ChildFailure {
+pub enum ChildFailure {
     /// The program could not be started.
     Spawn(String),
     /// It did not finish within the wall-clock limit (stdin write and both drains included).
@@ -47,6 +43,7 @@ pub(crate) enum ChildFailure {
     Signal(i32),
     /// It exited with a nonzero status.
     Exit {
+        /// Its exit status.
         code: i32,
         /// Raw text whose escaped rendering fits 512 bytes. Escaped exactly once at the
         /// diagnostic/output boundary, not here (which would double-escape backslashes).
@@ -101,17 +98,17 @@ mod entropy;
 use entropy::private_suffix;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use entropy::uuid_suffix;
+pub(crate) use entropy::uuid_suffix;
 
 mod isolation;
-pub(in crate::doors) use isolation::Isolation;
+pub(crate) use isolation::Isolation;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use isolation::{PrivateDir, admit_base};
+pub(crate) use isolation::{PrivateDir, admit_base};
 
 mod ranker;
 use ranker::describe;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) use ranker::{RANKER_ARGS, RANKER_STDERR_CAP};
-pub(crate) use ranker::{RankerFailure, produce_ranking};
+pub(crate) use ranker::{RANKER_ARGS, RANKER_STDERR_CAP};
+pub use ranker::{RankerFailure, produce_ranking};
