@@ -318,8 +318,8 @@ review_reason = "PATCH-BOUND (c1, ADR 0012 D8, R2 reversal): policy v1 = v0 plus
 
 [[data_input]]
 file = "examples/starter.warden.toml"
-sha256 = "55c357961fc8a0a46039b60c9c9a9ad9531f31a37f23d5448c54a714a1ba22e0"
-review_reason = "Embedded starter policy is TOML data, reviewed as TOML rather than Rust source. M7-PROTECT-CLAUDE (2026-11-15) added .claude (the entry, everything under it, any letter case, root or nested) to ci-is-owned, with a comment. M7-BINARY-TEXT-HOLD (2026-11-16) added rule binary-text-is-hidden-text. Ruling 1068 added hook names, configure, allowed_signers, 14 extensions and 3 name prefixes. M7-PREP-0.2.1 (2026-11-16): the binary-text comment says ten of Git's hook names are listed, not all (reviewer finding 1); comment only."
+sha256 = "f97f2e2e08edb81a4edc936ea1176fef2ef414eb660818e4f8f422db4ac6fc71"
+review_reason = "Embedded starter policy is TOML data, reviewed as TOML rather than Rust source. M7-PROTECT-CLAUDE (2026-11-15) added .claude (the entry, everything under it, any letter case, root or nested) to ci-is-owned, with a comment. M7-BINARY-TEXT-HOLD (2026-11-16) added rule binary-text-is-hidden-text. Ruling 1068 added hook names, configure, allowed_signers, 14 extensions and 3 name prefixes. M7-PREP-0.2.1 (2026-11-16): the binary-text comment says ten of Git's hook names are listed, not all (reviewer finding 1); comment only. PATCH-BOUND (c) part 2 (ruling 1663, 2026-11-16): schema forge-warden.policy.v1, [claims] require_verified = true with a comment, and the #:schema line names the GitLab raw URL of policy.v1."
 
 [[expectation]]
 file = "crates/forge-warden-core/tests/laws.rs"

@@ -9,6 +9,14 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- The starter policy (`forge-warden init`, `examples/starter.warden.toml`) is `forge-warden.policy.v1`
+  with `[claims] require_verified = true`, and its `#:schema` line names the GitLab raw URL of
+  `policy.v1`: an authority run of a new deployment counts only in bound mode (`--repo`); without it
+  the verdict holds with `claims_unverified` (ruling 1663). Existing policies are untouched. This
+  repository's own `warden.toml` does the same, and `scripts/dogfood.sh` judges with `--repo` and
+  refuses (exit 4) an authority verdict whose claims are not verified.
+- `scripts/make_patch.sh` reports Git's error, with the remedy, when `merge-base` fails (a shallow or
+  partial clone lacking the commits between base and head); "no common history" now means only that.
 - `scripts/dogfood.sh` takes `--ranker-archive FILE`: a local copy of the pinned deep-diff-forge release
   archive, copied into the evidence directory and checked against the same pinned SHA-256 (other bytes:
   exit 3). Only a run with `--hosted-advisory` downloads the archive; a run with neither argument is a

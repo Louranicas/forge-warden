@@ -5,8 +5,10 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 *does this change meet the standards this repository wrote down?*
 
 ```bash
-bash make_patch.sh origin/main HEAD > change.patch   # scripts/make_patch.sh from the revision you installed
-forge-warden check --policy warden.toml --patch change.patch --ranker "$(command -v deep-diff-forge)"
+base="$(git rev-parse origin/main)" head="$(git rev-parse HEAD)"
+bash make_patch.sh "$base" "$head" > change.patch   # scripts/make_patch.sh from the revision you installed
+forge-warden check --policy warden.toml --patch change.patch --ranker "$(command -v deep-diff-forge)" \
+  --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"
 ```
 
 In this **authority mode**, forge-warden runs the deep-diff-forge binary itself on the patch. The
@@ -21,7 +23,7 @@ forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.p
 
 ```text
 forge-warden 0.2.1: FAIL (exit 7 policy_fail, next: change_input)
-  patch bbf580931c67, policy 55c357961fc8, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
+  patch bbf580931c67, policy f97f2e2e08ed, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
   4 file(s), 10 rule(s): 5 pass, 0 waived, 4 hold, 1 fail
   [PASS  ] no-secrets (forbid_signal, fail)
   [PASS  ] no-hidden-text (forbid_signal, fail)
@@ -166,6 +168,13 @@ editors that read JSON Schema (taplo, Even Better TOML) flag most of these as yo
   A ranker whose digest is not listed is refused (exit 4) before it runs. A `--rank` given in
   authority mode is compared with the produced ranking, and any difference holds the verdict
   (`rank_mismatch`).
+
+  With `--repo DIR --base B --head H` (bound mode, [ADR 0012](docs/adr/0012-bound-mode.md)),
+  forge-warden makes `git diff merge-base..head` itself from a verified copy of the repository's
+  objects and refuses a patch that is not byte-equal to it, so the verdict's claims are verified. The
+  starter policy (`forge-warden init`) sets `[claims] require_verified = true`
+  (`forge-warden.policy.v1`): an authority run without `--repo` then holds with `claims_unverified`,
+  which no acknowledgement accepts; re-run in bound mode.
 - **Advisory** (`--advisory --rank FILE`, where `-` reads stdin): judges a supplied ranking. It
   cannot prove who produced it, so the verdict is at best `hold` (`rank_unverified`).
 
@@ -182,8 +191,9 @@ the script runs,
 `git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level, with Git 2.40 or later: the first two options take attributes from the empty
 tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
-repository root: forge-warden does not check that the patch is the whole change between two
-commits, so whoever makes the patch is part of the trust boundary. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
+repository root. Outside bound mode forge-warden does not check that the patch is the whole change
+between two commits, so whoever makes the patch is part of the trust boundary; in bound mode
+(`--repo`) it makes that diff itself and refuses any other patch. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
 ## Verdicts
 
@@ -242,9 +252,12 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- run: bash make_patch.sh "origin/${BASE_REF}" HEAD > change.patch   # scripts/make_patch.sh, pinned like the binary
+- run: |
+    base="$(git rev-parse "origin/${BASE_REF}")" head="$(git rev-parse HEAD)"
+    bash make_patch.sh "$base" "$head" > change.patch   # scripts/make_patch.sh, pinned like the binary
+    forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" \
+      --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head" --json > verdict.json
   env: { BASE_REF: "${{ github.base_ref }}" }
-- run: forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --json > verdict.json
 ```
 
 Take the policy from the **base** checkout, not from the pull request. Otherwise a pull request

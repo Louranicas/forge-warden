@@ -1,7 +1,13 @@
-#:schema https://raw.githubusercontent.com/Louranicas/forge-warden/main/schemas/policy.v0.schema.json
+#:schema https://gitlab.com/lukeomahoney/forge-warden/-/raw/main/schemas/policy.v1.schema.json
 # forge-warden starter policy. Every rule says *why*: the person it stops reads that line.
 # Check it with `forge-warden lint warden.toml`; it lists every problem at once.
-schema = "forge-warden.policy.v0"
+schema = "forge-warden.policy.v1"
+
+# An authority verdict counts only when forge-warden made the diff itself: `check --repo` with the
+# full --base and --head (make the patch with scripts/make_patch.sh). Otherwise it holds with the
+# note claims_unverified, which no acknowledgement accepts. Advisory mode is not affected.
+[claims]
+require_verified = true
 
 [[rule]]
 id = "no-secrets"

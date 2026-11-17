@@ -11,8 +11,8 @@
 
 mod common;
 use common::{
-    Run, fixture_ranker, fixture_ranker_sha256, policy_admitting, read_bytes, run, run_with_env,
-    scratch, text, write,
+    Run, fixture_ranker, fixture_ranker_sha256, git_in, make_patch, policy_admitting, read_bytes,
+    run, run_with_env, scratch, text, write,
 };
 use forge_warden_core::seal::sha256_hex;
 use serde_json::Value;
@@ -669,34 +669,6 @@ fn authority_requires_git_policy_before_producing_a_verdict() {
 
 // ---- Bound mode (ADR 0012; M7-PATCH-BOUND step a): --repo makes the diff and compares ----
 
-/// `git ARGS` in `dir` with no user or system configuration; its trimmed stdout.
-fn git_in(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("/usr/bin/git")
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .current_dir(dir)
-        .env_clear()
-        .env("HOME", dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
-
 /// A real repository in which `docs/notes.md` changes from base to head: (repo, base, head).
 fn bound_repo(name: &str) -> (common::Scratch, String, String) {
     let repo = scratch(name);
@@ -709,26 +681,6 @@ fn bound_repo(name: &str) -> (common::Scratch, String, String) {
     git_in(&repo, &["commit", "-q", "-am", "head"]);
     let head = git_in(&repo, &["rev-parse", "HEAD"]);
     (repo, base, head)
-}
-
-/// `scripts/make_patch.sh base head repo`.
-fn make_patch(repo: &Path, base: &str, head: &str) -> Vec<u8> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/make_patch.sh");
-    let out = std::process::Command::new("/usr/bin/bash")
-        .arg(script)
-        .args([base, head])
-        .arg(repo)
-        .env_clear()
-        .env("HOME", repo)
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "make_patch: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    out.stdout
 }
 
 #[test]

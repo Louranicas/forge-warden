@@ -34,6 +34,9 @@ With `require_verified = true`, an authority run whose claims bound mode did not
 changes nothing. Advisory runs are unchanged (they never pass). `[claims]` under `forge-warden.policy.v0` is refused
 with a message naming v1; a forge-warden older than 0.3.0 refuses a v1 policy, which is the safe direction (ADR 0012 D8).
 
+The starter policy (`forge-warden init`) and this repository's own `warden.toml` set the key (ruling 1663): a new
+deployment's authority runs count only in bound mode. An existing policy keeps its behaviour until it adopts v1 and the key.
+
 ## `[producer]`: the ranker allowlist
 
 ```toml

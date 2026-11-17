@@ -757,11 +757,13 @@ fn the_binary_text_globs_are_the_text_list() {
 
 #[test]
 fn a_text_file_sent_as_a_binary_section_is_held_by_the_starter() {
+    use forge_warden_core::verdict::{BoundClaims, BoundIds, Claims};
     // M7-BINARY-TEXT-HOLD (ledger Q63, W1): real Git output (Git 2.56.1, `*.rs binary` in a
     // `.gitattributes` the change commits) and the real deep-diff-forge 0.8.2 ranking of it. The
     // `unsafe` block the change adds to `build.rs` is inside a binary section, so the ranking carries
     // only `binary_change` and no unsafe rule sees it; the starter's binary-text rule holds it, the
-    // verdict has no note, so a reviewer can acknowledge it.
+    // verdict has no note, so a reviewer can acknowledge it. The starter requires verified claims
+    // (ruling 1663), so the change is judged as bound mode judges it: with bound claims.
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/hostile/binary-text");
     let read =
         |suffix: &str| std::fs::read(dir.join(format!("text-as-binary-rs.{suffix}"))).unwrap();
@@ -769,11 +771,14 @@ fn a_text_file_sent_as_a_binary_section_is_held_by_the_starter() {
     let ranking = produced(parse_rank(&read("rank.json")).unwrap());
     let facts = PatchFacts::from_git(&read("numstat"), &read("summary"), &read("patch"));
     let checked = check(&ranking, facts);
+    let patch = read("patch");
+    let ids = BoundIds::new(&"1".repeat(40), &"2".repeat(40), &"3".repeat(40)).unwrap();
+    let bound = Claims::bound(BoundClaims::from_comparison(ids, &patch, &patch).unwrap());
     let verdict = evaluate_authority(
         &starter,
         &checked,
         SuppliedCopy::Absent,
-        produced_seals(),
+        produced_seals().with_claims(bound),
         today(),
     );
     assert_eq!(verdict.outcome(), Outcome::Hold);

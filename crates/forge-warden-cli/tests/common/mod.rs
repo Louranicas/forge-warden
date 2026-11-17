@@ -494,7 +494,7 @@ pub(crate) struct Sources {
 pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
     (
         "examples/starter.warden.toml",
-        "55c357961fc8a0a46039b60c9c9a9ad9531f31a37f23d5448c54a714a1ba22e0",
+        "f97f2e2e08edb81a4edc936ea1176fef2ef414eb660818e4f8f422db4ac6fc71",
     ),
     (
         "schemas/error.v1.schema.json",
@@ -983,4 +983,52 @@ pub(crate) fn check_stderr_golden(golden: &str, corrupt: bool) -> std::process::
         ])
         .output()
         .unwrap()
+}
+
+/// `git ARGS` in `dir` with no user or system configuration; its trimmed stdout.
+pub(crate) fn git_in(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new("/usr/bin/git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env_clear()
+        .env("HOME", dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// `scripts/make_patch.sh base head repo`.
+pub(crate) fn make_patch(repo: &std::path::Path, base: &str, head: &str) -> Vec<u8> {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/make_patch.sh");
+    let out = Command::new("/usr/bin/bash")
+        .arg(script)
+        .args([base, head])
+        .arg(repo)
+        .env_clear()
+        .env("HOME", repo)
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "make_patch: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
 }
