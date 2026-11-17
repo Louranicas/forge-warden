@@ -796,8 +796,8 @@ mod tests {
         let (matched, steps) = glob.matches_cached_with(path.as_bytes(), super::CACHED_SETS);
         assert!(matched);
         assert!(
-            steps < 16,
-            "{steps} steps computed for {} bytes",
+            steps > 1 && steps < 16,
+            "{steps} steps computed for {} bytes (more than one: the DFA numbers its sets; few: it reuses them)",
             path.len()
         );
         let (capped_match, capped_steps) = glob.matches_cached_with(path.as_bytes(), 1);
