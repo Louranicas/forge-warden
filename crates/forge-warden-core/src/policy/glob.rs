@@ -535,12 +535,19 @@ mod tests {
         builder.build().map_err(|e| e.to_string())
     }
 
-    /// Patterns and paths over the characters every rule of the parser and matcher turns on.
-    const PATTERN_PIECES: &str = r"(\*|\*\*|\?|\[|\]|\{|\}|,|\\|/|!|\^|-|a|b|é|\.){1,12}";
-    const PATH_PIECES: &str = r"(a|b|/|é|\.|\n|-|\]|\{|,|\*){0,12}";
+    /// Patterns over every character the parser turns on, plus whole pieces that random characters
+    /// seldom form: ranges (also across non-ASCII ends), negations of each spelling, a leading `]`
+    /// or `-`, a trailing `-`, and `**` beside commas, braces and slashes inside alternates (the
+    /// shapes mutation testing found unexercised by single characters alone).
+    const PATTERN_PIECES: &str = concat!(
+        r"(\*|\*\*|\?|\[|\]|\{|\}|,|\\|/|!|\^|-|a|b|c|é|\.",
+        r"|\[a-c\]|\[!a-c\]|\[\^b\]|\[!é\]|\[\]a\]|\[-a\]|\[a-\]|\[é-ë\]|\[a-é\]|\[!a-é\]|\[b-a\]",
+        r"|\{a,b\}|\{,a\}|\{a,\}|\{\*\*,a\}|\{a,\*\*\}|\{a/\*\*,b\}|\{\*\*/a,b\}|\{a,\{b,c\}\}|\*\*/|/\*\*|/\*\*/){1,10}"
+    );
+    const PATH_PIECES: &str = r"(a|b|c|d|/|é|ê|ë|ÿ|\.|\n|-|\]|\{|,|\*){0,12}";
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(4096))]
+        #![proptest_config(ProptestConfig::with_cases(8000))]
 
         // The differential oracle (EFFECT-WALL step 2b, R4): the same patterns refused with the same
         // words, and for every accepted pattern the same answer on every path.
