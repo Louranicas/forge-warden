@@ -138,10 +138,10 @@ fn check_tokens(tokens: TokenStream, found: &mut Vec<String>) {
 const ATTRIBUTE_EXPRESSION: &str = "an expression in an attribute";
 
 /// Attributes that may carry an expression, each written exactly so (whitespace aside). Reviewed:
-/// the first builds a clap `ArgGroup` from literals; the second formats a count and a list of the
-/// variant's own field; the last two name the crate's own size constant. None reaches an effect.
-const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 4] = [
-    r#"command(group(ArgGroup::new("mode").required(true).args(["ranker","advisory"])))"#,
+/// the first formats a count and a list of the variant's own field; the last two name the crate's
+/// own size constant. None reaches an effect. (The clap `ArgGroup` entry went with clap's derive,
+/// EFFECT-WALL step 3: the group is built in code now.)
+const ADMITTED_ATTRIBUTE_EXPRESSIONS: [&str; 3] = [
     r#"error("policy refused with {} issue(s):\n{}",.0.len(),IssueList(.0))"#,
     r#"error("policy is {0} bytes, over the {max} byte budget",max=crate::MAX_POLICY_BYTES)"#,
     r#"error("ranking is {0} bytes, over the {max} byte budget",max=crate::MAX_INPUT_BYTES)"#,
@@ -546,8 +546,8 @@ fn the_parser_finds_every_attribute_expression_form() {
             "#[doc = concat!(\"a\", \"b\")]\nstruct Cli;",
         ),
         (
-            "the admitted group expression with one word changed",
-            "#[command(group(ArgGroup::new(\"mode\").required(false).args([\"ranker\", \"advisory\"])))]\nstruct Cli;",
+            "an admitted expression with one word changed",
+            "#[error(\"policy is {0} bytes, over the {max} byte budget\", max = crate::MAX_INPUT_BYTES)]\nstruct Cli;",
         ),
     ];
     for (name, source) in forms {
@@ -581,8 +581,8 @@ fn the_parser_admits_names_literals_and_lists_of_literals() {
             "/// text\n#[arg(long, default_value_t = -1)]\nstruct Cli;",
         ),
         (
-            "the admitted group expression, spaced differently",
-            "#[command(group(ArgGroup::new(\"mode\").required(true).args([\"ranker\",\n    \"advisory\"])))]\nstruct Cli;",
+            "an admitted expression, spaced differently",
+            "#[error(\"policy is {0} bytes, over the {max} byte budget\",\n    max = crate::MAX_POLICY_BYTES)]\nstruct Cli;",
         ),
     ];
     for (name, source) in plain {

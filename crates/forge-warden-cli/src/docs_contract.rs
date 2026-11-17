@@ -1,6 +1,5 @@
 //! Executable front-door examples are parsed by the actual clap grammar, without running them.
-use super::Cli;
-use clap::Parser as _;
+use super::cli;
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 fn document(path: &str) -> String {
@@ -222,7 +221,7 @@ fn executable_documentation_uses_the_actual_cli_grammar() {
         assert_eq!(found.len(), expected, "command inventory changed in {path}");
         for argv in found {
             assert!(
-                Cli::try_parse_from(&argv).is_ok(),
+                cli().try_get_matches_from(&argv).is_ok(),
                 "{path}: invalid documented command: {argv:?}"
             );
         }
@@ -238,7 +237,7 @@ fn command_discovery_preserves_quotes_pipes_and_continuations_and_rejects_bad_cl
     );
     assert_eq!(argv.len(), 2);
     for args in &argv {
-        assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        assert!(cli().try_get_matches_from(args).is_ok(), "{args:?}");
     }
     for text in [
         "forge-warden check --policy p --rank r",
@@ -247,7 +246,7 @@ fn command_discovery_preserves_quotes_pipes_and_continuations_and_rejects_bad_cl
     ] {
         for args in commands(&format!("```bash\n{text}\n```"), "") {
             assert!(
-                Cli::try_parse_from(&args).is_err(),
+                cli().try_get_matches_from(&args).is_err(),
                 "bad command admitted: {args:?}"
             );
         }
@@ -255,7 +254,7 @@ fn command_discovery_preserves_quotes_pipes_and_continuations_and_rejects_bad_cl
     assert!(words("forge-warden lint 'unclosed").is_err());
     let quoted = commands("```bash\nforge-warden lint '|' --invented\n```", "");
     assert_eq!(quoted.len(), 1);
-    assert!(Cli::try_parse_from(&quoted[0]).is_err());
+    assert!(cli().try_get_matches_from(&quoted[0]).is_err());
     assert_eq!(words("''").unwrap(), vec![Token::Word(String::new())]);
 }
 
@@ -266,7 +265,7 @@ fn indented_fences_tabs_and_nonstandard_languages_cannot_hide_commands() {
         let found = commands(&text, "\tforge-warden init --invented");
         assert_eq!(found.len(), 2);
         for argv in found {
-            assert!(Cli::try_parse_from(&argv).is_err());
+            assert!(cli().try_get_matches_from(&argv).is_err());
         }
     }
     let escaped = "```zsh\nforge\\-warden init --invented\n```\n";
@@ -340,24 +339,24 @@ forge-warden init --invented
             );
             let found = commands(&source, "");
             assert_eq!(found.len(), 1, "container fence skipped: {source:?}");
-            assert!(Cli::try_parse_from(&found[0]).is_err());
+            assert!(cli().try_get_matches_from(&found[0]).is_err());
             let valid = format!(
                 "{prefix}{fence}sh\n{continuation}forge-warden check --policy p \\\n{continuation}--patch p --ranker r\n{continuation}{fence}\n"
             );
             let accepted = commands(&valid, "");
             assert_eq!(accepted.len(), 1);
-            assert!(Cli::try_parse_from(&accepted[0]).is_ok());
+            assert!(cli().try_get_matches_from(&accepted[0]).is_ok());
         }
         let indented = format!(
             "{prefix}intro\n{continuation}\n{continuation}    forge-warden check --policy p \\\n{continuation}    --patch p --ranker r --invented\n"
         );
         let found = commands(&indented, "");
         assert_eq!(found.len(), 1, "{indented:?}");
-        assert!(Cli::try_parse_from(&found[0]).is_err());
+        assert!(cli().try_get_matches_from(&found[0]).is_err());
         let valid_indented = indented.replace(" --invented", "");
         let accepted_indented = commands(&valid_indented, "");
         assert_eq!(accepted_indented.len(), 1);
-        assert!(Cli::try_parse_from(&accepted_indented[0]).is_ok());
+        assert!(cli().try_get_matches_from(&accepted_indented[0]).is_ok());
     }
 }
 
@@ -404,7 +403,7 @@ fn mixed_tabs_are_indented_code_in_every_container() {
             );
             let found = commands(&source, "");
             assert_eq!(found.len(), 1, "{source:?}");
-            assert!(Cli::try_parse_from(&found[0]).is_err());
+            assert!(cli().try_get_matches_from(&found[0]).is_err());
         }
     }
 }
@@ -487,7 +486,7 @@ fn keel_original_reproducers_are_asserted_controls() {
     ] {
         let found = commands(source, "");
         assert_eq!(found.len(), 1, "{source:?}");
-        assert!(Cli::try_parse_from(&found[0]).is_err());
+        assert!(cli().try_get_matches_from(&found[0]).is_err());
     }
     for prose in [
         "forge-warden init --invented\n",

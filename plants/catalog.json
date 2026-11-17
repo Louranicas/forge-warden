@@ -8,6 +8,7 @@
       "G-15 authenticates exact producer binary, not version string.",
       "G-04 named-intent helpers and compiler-enforced raw-default ban (B7); marker-only rule superseded.",
       "G-05/G-07 (2026-11-17, EFFECT-WALL step 2, Train B12 RED): forge-warden-core is no_std, so an effect or a HashMap in the core is refused by the compiler before clippy reads the core denylist; core-read and hash-order now expect E0433 (`std` cannot be named), the stronger guard. oversized-function and z3-clean-copy-forced-hold re-anchored to core::hint / alloc::string::String.",
+      "G-06 door-clap-attribute-effect (2026-11-17, EFFECT-WALL step 3): clap's derive is gone (the CLI builds its command line in code, under the normal lint wall), so the recipe no longer plants into a clap attribute; it plants a build-time file read, #[doc = include_str!(..)], on fn cli: it compiles, so only the Q37 attribute scan can refuse it. Also (Touchstone, 1848): the core clippy.toml's std entries are now a second layer the compiler reaches first in the no_std core; they stay as defence in depth.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
       "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
@@ -2012,8 +2013,8 @@
         "--",
         "shipped_code_writes_no_expression_in_an_attribute"
       ],
-      "old": "#[derive(Parser)]\n",
-      "new": "#[derive(Parser)]\n#[command(after_help = std::env::var(\"FW_PLANT\").is_ok().to_string())]\n",
+      "old": "fn cli() -> clap::Command {\n",
+      "new": "#[doc = include_str!(\"../../../Cargo.toml\")]\nfn cli() -> clap::Command {\n",
       "required_tools": [
         "cargo",
         "git",

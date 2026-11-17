@@ -9,6 +9,10 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- The CLI builds its command line with clap's builder instead of its derive (EFFECT-WALL step 3): the derive emits
+  `allow(clippy::style)`, which a crate forbidding the effect lints cannot accept. Help, usage errors and exit codes are
+  unchanged byte for byte (pinned by `fixtures/cli-surface`). clap's `derive` feature is off, so `clap_derive` and
+  `heck` leave the dependency tree.
 - `forge-warden-core` is `#![no_std]` (with `alloc`, EFFECT-WALL step 2): an effect of any spelling is a compile
   error in the core, not only the ones `clippy.toml` lists. It matches policy globs with its own matcher, which
   reproduces globset 0.4.21 (the same patterns refused with the same words, the same answers); globset is no longer a
