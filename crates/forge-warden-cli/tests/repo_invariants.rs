@@ -319,13 +319,7 @@ fn declared_dependencies(manifest: &str) -> Result<Vec<(String, String)>, String
 /// The dependencies of a core manifest that are not on the core's allow-list. A manifest that is
 /// not valid TOML is itself a violation (fails closed).
 fn core_dependency_violations(manifest: &str) -> Vec<String> {
-    const ALLOWED: [&str; 5] = [
-        "serde",
-        "serde_json",
-        "sha2",
-        "thiserror",
-        "toml",
-    ];
+    const ALLOWED: [&str; 5] = ["serde", "serde_json", "sha2", "thiserror", "toml"];
     // `forge-warden-core` itself: the engine tests' self dev-dependency that enables the
     // `unattested-evaluate` test door (Q-TYPES-1); a normal dependency may never enable it
     // (`no_normal_dependency_opens_the_unattested_evaluate_door`).
