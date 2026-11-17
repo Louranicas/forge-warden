@@ -209,7 +209,7 @@ impl Parser<'_> {
     }
 }
 
-/// globset's range extension (its add_to_last_range): the range ends at `end`, which may not come before its start.
+/// globset's range extension: the range ends at `end`, which may not come before its start.
 fn extend_last_range(ranges: &mut [(char, char)], end: char) -> Result<(), String> {
     let Some(last) = ranges.last_mut() else {
         return Err(UNCLOSED_CLASS.to_owned());
@@ -579,6 +579,12 @@ mod tests {
         // shapes in-diff mutation testing showed random generation reaching too rarely (`/**,` outside
         // an alternate group, `**` beside commas and braces inside one, recursive forms that follow
         // each other, classes with ranges and negations over non-ASCII ends).
+        // Two mutants of parse_star stay alive and are equivalent: `&&` -> `||` in its first test
+        // differs only inside an alternate when the previous character is `,` or `{` and the branch
+        // already has tokens, which cannot happen (a comma or a brace starts an empty branch); and
+        // deleting the `RecursiveSuffix` arm matters only when `**` follows `/` while the last token
+        // is a recursive suffix, which cannot happen (a suffix is pushed only at the end, before `,`
+        // or before `}`, so no `/` comes after it).
         let patterns = [
             "a/*/b",
             "src/*",
@@ -624,11 +630,19 @@ mod tests {
             "a,b",
             "\\*",
             "\\{a}",
+            "a,**",
+            "{ab**}",
+            "{a,b**}",
+            "{ab**,c}",
+            "[+--]",
+            "[!+--]",
+            "[a-a]",
         ];
         let paths = [
             "", "a", "b", "c", "d", "/", "a/", "a//b", "a/b", "a/x/b", "a/x/y,b", "a/**,b",
             "a/b/c", "b/a", "src", "src/", "src/x", "src/x/y", "x/a", "x/y/a", "\n/x", "é", "ê",
-            "ë", "ÿ", "]", "-", "a,b", "{a}", "*", "**", "ab", "ba", "aa",
+            "ë", "ÿ", "]", "-", "a,b", "{a}", "*", "**", "ab", "ba", "aa", ",", "+", "a,x",
+            "a,x/y", "axy", "a/xy", "bxy", "b/x",
         ];
         for pattern in patterns {
             let ours = compile(pattern);
