@@ -1,5 +1,13 @@
 # Reviewed CI job budgets
 
+**Status (2026-11-16): a record of the hosted jobs as they ran until 2026-11-15.** Since then this
+repository's gate uses no hosted workflow: it is developed on GitLab and gated by `scripts/ci_local.sh`
+and the maintainers' integrator gate ([CONTRIBUTING](../CONTRIBUTING.md#where-the-gate-runs)). The budgets
+below still bind the workflow files, which `scripts/plant_tools.py` checks (`check_ci`) and which a
+deployer on GitHub inherits. The measurements are history: they were taken on GitHub's hosted runners
+and say nothing about the local gate's step times (the plant capacity derived here still bounds the
+catalogue everywhere `check_ci` runs).
+
 WP-Q-CI-BOUNDS.1 supersedes the fixed mutation budgets below. The required check remains exactly `diff mutation (cargo-mutants)` (job `mutation`), now aggregating planning and every shard. The periodic audit retains its `full workspace mutation baseline` aggregate name. Other job names and budgets are unchanged.
 
 Every job in ci.yml and mutation-baseline.yml has an explicit timeout-minutes. Only the mutation shard jobs admit the exact expression `${{ matrix.minutes }}`, produced by the reviewed planner; other budgets remain literal. The protected check_ci contract in scripts/plant_tools.py requires the exact reviewed mapping below. Missing, duplicate, zero, expression-valued or unreviewed budgets refuse. New jobs or workflow shapes require review; the checker admits our block-style workflow subset, not arbitrary YAML. Multiline quoted/flow scalars, quoted/aliased job definitions and duplicate root/job fields are unsupported rather than silently ignored. Steps retain their own existing contracts.

@@ -92,8 +92,9 @@ Without the allowlist, authority mode stops with exit 3, "no Git allowlist enrol
 advisory mode marks its evidence as unpinned. After a Git upgrade the digest changes and the
 allowlist has to be updated before authority mode works again.
 
-A hosted CI runner has no owner-enrolled allowlist. This repository's own hosted job therefore
-runs in advisory mode by decision and cannot PASS; authority mode is for a machine you control.
+A hosted CI runner has no owner-enrolled allowlist. The hosted job in this repository's example
+workflow therefore runs in advisory mode by decision and cannot PASS; authority mode is for a machine
+you control. This repository's own gate uses no hosted job (CONTRIBUTING, "Where the gate runs").
 
 ### 5. Exit codes: same numbers, wider meanings
 

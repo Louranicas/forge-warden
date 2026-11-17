@@ -1,5 +1,10 @@
 # Self-hosted CI on runner-up (WP-RUNNER-UP)
 
+**Status (2026-11-16):** a record of the routing as written in `mutation-baseline.yml`. The project
+triggers no hosted job since 2026-11-15, so it routes nothing, and the routing is retired from 1.0
+(guardrail G-52 and its route plants are retired in the catalogue: [`plants/README.md`](../plants/README.md)). The rest of this page describes the workflow as
+written.
+
 The scheduled full-workspace mutation baseline (its planning job and its shards) can run on a self-hosted pool. The pool is
 [runner-up](https://github.com/kunchenguid/runner-up) v0.1.12, label `runner-up-kinoite`: three
 fresh KVM guests (4 cores, 8 GB) on the owner's Fedora desktop. Everything else runs on GitHub's

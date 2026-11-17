@@ -23,19 +23,73 @@ cargo fetch --locked
 ```bash
 just install-hooks   # pre-commit: fast gate; commit-msg: useful subjects; pre-push: full gate
 just fast            # fmt + clippy (the full lint wall) + tests
-just ci              # everything CI runs that works offline
+just ci              # the full local gate (everything it can run offline)
 ```
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
 `scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
 (G-18). `zizmor` and `deep-diff-forge` are hosted-only (the `[local_gate]` table says why). When they
 are absent, the gate's last line names them as not run here instead of claiming that everything passed.
+This repository's gate uses no hosted workflow (see [Where the gate runs](#where-the-gate-runs)). So
+for this repository a hosted-only tool runs only where `just ci` finds it on `PATH`, and nothing else runs
+it when it is absent. The table there says what that leaves out.
 
 Scripts and their tests run in an offline gate image that has fewer commands than a developer's
 machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` (fast gate, and
 `GateImageCommands` in `scripts/tests/perimeter.py`) names every command a tracked shell or Python
 script calls that is not in its declared list; adding a command to that list means first seeing it
 in the gate image.
+
+## Where the gate runs
+
+The repository of record is GitLab, with mirrors on Gitea and a local Forgejo. Since 2026-11-15 the
+project triggers no hosted workflow and uses no result from one: it pushes nothing to GitHub, the
+repository has no GitLab pipeline file, and the project's own runners on the Gitea and Forgejo
+mirrors take only jobs labelled for them, while the workflow's jobs ask for `ubuntu-latest`. A run
+can still start without the project (the weekly schedule in `mutation-baseline.yml` on the old
+GitHub repository, or a mirror with Actions turned on); nothing here reads its result.
+
+The workflow files in `.github/workflows/` are kept for a deployer who gates their own repository on
+GitHub (see [Hosted workflows](#hosted-workflows-for-deployers-on-github)). They are not run here,
+but this repository's own gate reads them:
+
+- `scripts/tool_versions.py --check` (the `tool-versions` step of `scripts/ci_local.sh`) checks their
+  tool pins and job budgets.
+- A test compares the required checks named below with `ci.yml`'s job names.
+- The integrator gate's `hosted_parity` step replays `ci.yml`'s gate job.
+
+A change to them is a change to this repository's gate.
+
+This repository's gate has two layers:
+
+- **In the repository**, runnable by anyone: `scripts/ci_fast.sh` (`just fast`, the pre-commit hook
+  and the agent Stop hook) and `scripts/ci_local.sh` (`just ci`, the pre-push hook).
+- **The integrator gate**, which the maintainers run on every merge to `main` and on every release
+  commit: `fw-verify`, kept with the project's coordination records, not in this repository. It
+  builds the subject commit in a fresh clone and runs format, lints, tests, docs, `cargo deny`,
+  every script and hook test, the plant catalogue and the `hosted_parity` replay, plus the MSRV
+  check with `--msrv` and diff mutation with `--mutants`, each with its real exit code, and writes a
+  hashed receipt. [`EVIDENCE.md`](EVIDENCE.md) names the gate run behind each release claim; the
+  receipts themselves are kept with the coordination records. A merge into `main` on GitLab is the
+  owner's, after a green receipt.
+
+Where each check of the hosted workflows runs now:
+
+| Hosted check (`ci.yml`, `mutation-baseline.yml`) | Where it runs for this repository |
+| --- | --- |
+| `gate (fmt, clippy, test, doc)` | `scripts/ci_fast.sh` and `scripts/ci_local.sh` together (neither alone); the integrator gate runs the same steps, every script test and every catalogued plant |
+| `declared Rust 1.88 compatibility` | the integrator gate's MSRV step (`fw-verify --msrv`: `cargo +1.88.0 check --workspace --all-targets --locked --offline`) |
+| `supply chain (cargo-deny)` | `scripts/ci_local.sh` step `deny`, and the integrator gate (`cargo deny --offline check`; the receipt records the advisory database's commit date) |
+| `diff mutation (cargo-mutants)` | `scripts/ci_local.sh` step `mutation`, and the integrator gate with `--mutants --parent <previous main>` (in-diff against that parent, `--cap-lints true`) |
+| `full workspace mutation baseline` | **not scheduled and not required.** It was run by hand once, for 0.2.0 on its final commit (command and result in [`EVIDENCE.md`](EVIDENCE.md): 2 missed mutants, each explained), and not rerun for 0.2.1 |
+| `dogfood (trusted base judges candidate data)` | **not run on each change.** No gate runs the trusted driver `scripts/dogfood.sh` for this repository. `scripts/ci_local.sh` has a `dogfood` step when `deep-diff-forge` is on `PATH`, but it is not this check: it judges the change with the candidate's own `warden.toml` and a `forge-warden` built from the candidate tree, so a change can loosen the policy that judges it. It is a preview for the developer, not a trusted verdict. Authority mode, in either, needs the owner-enrolled Git allowlist ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)). A local run of `scripts/dogfood.sh` reads a copy of the pinned deep-diff-forge release archive named with `--ranker-archive FILE` and checked against the pinned SHA-256; only the hosted job downloads it. Until the trusted driver is a step of the integrator gate, a merge into `main` is judged by the steps above and by review, not by forge-warden's own policy |
+| `vocabulary tracks deep-diff-forge` | **the comparison with the pinned deep-diff-forge commit is in no gate** (the script itself is tested by `check_vocab.rs`). It can be run by hand against a local deep-diff-forge checkout, with no network: `scripts/check_vocab.sh <commit> <checkout>` (with no checkout, as `just vocab` runs it, it fetches deep-diff-forge from github.com) |
+| `workflow audit (zizmor)` | **in no gate.** `scripts/ci_local.sh` runs it (step `zizmor`) only when `zizmor` is on `PATH`, and the integrator gate has no zizmor step. The workflow files are not run here, but the integrator gate reads them and deployers copy them, so an unaudited change to them reaches both |
+| runner routing (`mutation-baseline.yml` job `route`) | not run: it routes hosted jobs to a self-hosted pool ([`docs/runner-up.md`](docs/runner-up.md)), and the project triggers no hosted job |
+
+The rows in bold are known gaps, not settled states. The dogfood and the vocabulary check are planned
+as steps of the integrator gate. Until then this file says so rather than letting a green gate imply
+them.
 
 ## First rule: a passing example and a failing control
 
@@ -116,7 +170,8 @@ replacement rules are in [ADR status](docs/ADR_STATUS.md).
 The [pull request template](.github/pull_request_template.md) is the checklist. In short: the
 gate is green, new behaviour has a test that fails without it, contract changes (schemas, exit
 codes, vocabulary) are in the CHANGELOG, and the dogfood verdict passes or every hold is
-explained.
+explained (for this repository, see [Where the gate runs](#where-the-gate-runs): no gate runs the
+trusted dogfood yet).
 
 Read [`CLAUDE.md`](CLAUDE.md) even if you are not an agent: it is the shortest statement of the
 rules, with what to do instead of each forbidden move.
@@ -185,9 +240,13 @@ editing its own policy. This new rule becomes authoritative after integration in
 base; an older base retains its existing generic fixture-ownership HOLD. Owner review and the
 existing trusted acknowledgement mechanism remain required; an unsigned rationale grants nothing.
 
-## Branch protection (for the maintainer)
+## Hosted workflows (for deployers on GitHub)
 
-Protect `main` with: require a pull request; require branches to be up to date; require these
+This section describes the hosted workflows as written, for a deployer who runs them on GitHub. It
+does not describe this repository's gate (see [Where the gate runs](#where-the-gate-runs)).
+
+To gate on the hosted workflows, protect `main` with: require a pull request; require branches to
+be up to date; require these
 checks: `gate (fmt, clippy, test, doc)`, `declared Rust 1.88 compatibility`,
 `supply chain (cargo-deny)`, `workflow audit (zizmor)`, `diff mutation (cargo-mutants)`,
 `dogfood (trusted base judges candidate data)`, `vocabulary tracks deep-diff-forge`; require
@@ -199,11 +258,33 @@ Planning and every shard must succeed. See [measured budgets](docs/CI_BOUNDS.md)
 
 A `hold` is accepted only with an OpenSSH-signed acknowledgement from a reviewer enrolled in
 `.github/hold-reviewers/allowed_signers` on the base branch (ADR 0007). A label grants nothing.
-One reviewer, the owner, is enrolled (principal `luke`). Hosted CI runs dogfood in advisory mode,
-which cannot be acknowledged, and no external trust root enforces the check yet (ADR 0006), so
-hosted CI fails closed on every hold.
+One reviewer, the owner, is enrolled (principal `luke`). The hosted workflow runs dogfood in
+advisory mode, which cannot be acknowledged, and no external trust root enforces the check yet
+(ADR 0006), so a hosted run fails closed on every hold.
+
+These files under `.github/` are kept for the same deployer. GitLab reads none of them, but this
+repository's own gate reads two of them:
+
+- `.github/CODEOWNERS`: `scripts/check_guardrails.py` requires one owner line in it per protected
+  path in `protected-paths.txt`, plus the default `*` line (ADR 0009), so it stays a checked copy of
+  the protected paths. On the repository of record a merge into `main` is the owner's in any case.
+- `.github/pull_request_template.md` is the checklist for a change. GitLab does not load it, so copy
+  it into the merge request. Two of its items read differently here: `cargo-deny` and
+  `cargo-mutants` are required by `just ci`, not optional, and no gate produces a trusted dogfood
+  verdict for this repository yet (see the table above).
+- `.github/dependabot.yml` does not run for the repository of record. Dependency updates are made by
+  hand, in a reviewed change that passes the gate like any other.
+- `.github/hold-reviewers/allowed_signers` is not GitHub-specific: `scripts/hold_ack.py` reads it
+  wherever the driver runs, and the path stays as it is. An acknowledgement receipt's `repository`
+  field names the repository of record, `lukeomahoney/forge-warden` (ADR 0007).
+- `.github/release-signers/allowed_signers` is not GitHub-specific either: `scripts/release_tag.sh`
+  verifies a release tag against it as committed in the tagged commit (see "Releases" below).
 
 ## Periodic full mutation baseline
+
+For this repository the full baseline is not scheduled. It was run by hand for 0.2.0 (the command is in
+`EVIDENCE.md`; full workspace, no diff filter, `--no-config --cap-lints true`) and not rerun for 0.2.1.
+Nothing requires it before a release. The rest of this section describes the hosted workflow.
 
 `mutation-baseline.yml` runs each Monday at 04:23 UTC and can be started with
 `workflow_dispatch`. It is deliberately not a required pull-request check. Unlike diff mutation,

@@ -253,7 +253,8 @@ can loosen the rules that judge it. This repository's example workflow
 ([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) runs [`scripts/dogfood.sh`](scripts/dogfood.sh)
 from a separate base checkout. The project does not run that workflow itself: it is kept for deployers on
 GitHub, and this project's gate of record is the local integrator gate, with merges admitted on GitLab
-(owner decision D3, 2026-11-16). The candidate is only diff data, and the driver picks authority or
+(owner decision D3, 2026-11-16; where each check runs is in
+[CONTRIBUTING](CONTRIBUTING.md#where-the-gate-runs)). The candidate is only diff data, and the driver picks authority or
 advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). On a hosted runner
 it is asked for advisory mode (`--hosted-advisory`): the runner has no owner-enrolled Git allowlist
 ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)), so that job reports evidence and cannot PASS. It
@@ -267,8 +268,8 @@ outside the pull request (see [`SECURITY.md`](SECURITY.md)).
 
 The scheduled full mutation baseline (its plan and shards), run on merged `main` only, can use a
 self-hosted runner-up pool. Like `ci.yml` it is a deployer example: this project runs no runner-up pool, and
-the runner-routing guardrail (G-52) is retired from 1.0 (D3; [`plants/README.md`](plants/README.md)). Pull requests, every ci.yml job and the baseline's aggregate check
-always run hosted. The trade-offs and the residual host-loopback exposure are set out in
+the runner-routing guardrail (G-52) is retired from 1.0 (D3; [`plants/README.md`](plants/README.md)). In that workflow, pull requests, every ci.yml job and the
+baseline's aggregate check always run hosted. The trade-offs and the residual host-loopback exposure are set out in
 [`docs/runner-up.md`](docs/runner-up.md).
 
 A `hold` is accepted only with an OpenSSH-signed acknowledgement. The receipt binds the exact
@@ -276,8 +277,8 @@ base, head, verdict digest and held rules, signed by a reviewer enrolled in the 
 `.github/hold-reviewers/allowed_signers` ([ADR 0007](docs/adr/0007-subject-bound-hold-acknowledgements.md)).
 One reviewer is enrolled, the owner (principal `luke`). An acknowledgement is checked only in an
 authority-mode run of `scripts/dogfood.sh` on a machine with an owner-enrolled Git allowlist;
-hosted CI runs it in advisory mode, which cannot be acknowledged, so hosted CI still fails closed on
-every hold. A label grants nothing. This acknowledgement belongs to this repository's own driver (`scripts/dogfood.sh`);
+a hosted runner runs it in advisory mode, which cannot be acknowledged, so a hosted run still fails
+closed on every hold. A label grants nothing. This acknowledgement belongs to this repository's own driver (`scripts/dogfood.sh`);
 the `forge-warden` binary has none, so a deployer of the binary has no acknowledgement path. A
 receipt binds the verdict's bytes, which carry the UTC date of the run (`evaluated_on`), so it
 matches only runs on the UTC day it was prepared for, whatever its `expires_at` says.
@@ -285,10 +286,13 @@ matches only runs on the UTC day it was prepared for, whatever its `expires_at` 
 ## How this repository makes bad code hard to write
 
 forge-warden is a gate, so it is built behind one. Nothing below is a guideline; each item is
-enforced by the compiler, a test, CI, or a hook, and [`CLAUDE.md`](CLAUDE.md) gives agents the same
+enforced by the compiler, a test, the gate, or a hook, and [`CLAUDE.md`](CLAUDE.md) gives agents the same
 contract. Two limits, stated where each layer is described: the effect wall is a list of the
 spellings it refuses (a form outside the list passes until it is added), and the agent hook layer
-is a convenience that catches mistakes early, not a boundary (CI and the build checks are).
+is a convenience that catches mistakes early, not a boundary (the gate and the build checks are).
+[CONTRIBUTING](CONTRIBUTING.md#where-the-gate-runs) says where each part of the gate runs for this
+repository. It also names the hosted checks that are in no gate today: the trusted dogfood on each
+change, the vocabulary check and the workflow audit.
 
 | Layer | What it stops | Where |
 | --- | --- | --- |
@@ -299,10 +303,10 @@ is a convenience that catches mistakes early, not a boundary (CI and the build c
 | **Properties** | whole classes of bugs: adding a rule never loosens a verdict; dates round-trip; rendered output is always printable ASCII | `proptest` in both crates |
 | **Real corpus** | a reader that only works on hand-written JSON | 40 rankings from a real deep-diff-forge binary in `fixtures/corpus/` |
 | **Repository invariants** | crates that skip the lint wall, unexplained suppressions, doors outside the listed door modules (`src/doors/`), untracked TODOs | [`repo_invariants.rs`](crates/forge-warden-cli/tests/repo_invariants.rs) |
-| **Mutation testing** | tests that pass whatever the code does: every surviving mutant in a PR's diff fails it | CI job `mutation` |
-| **Supply chain** | unknown registries and git sources, copyleft licences, yanked or advisory-flagged crates | [`deny.toml`](deny.toml), CI job `supply-chain` |
-| **Workflow audit** | template injection, credential persistence, unpinned actions | `zizmor` in CI; every action pinned to a commit SHA |
-| **Dogfooding** | forge-warden's own changes skipping its own policy | CI job `dogfood`, [`warden.toml`](warden.toml) |
+| **Mutation testing** | tests that pass whatever the code does: every surviving mutant in a change's diff fails it | `scripts/ci_local.sh` and the integrator gate (hosted job `mutation` for deployers) |
+| **Supply chain** | unknown registries and git sources, copyleft licences, yanked or advisory-flagged crates | [`deny.toml`](deny.toml), `scripts/ci_local.sh` and the integrator gate (hosted job `supply-chain` for deployers) |
+| **Workflow audit** | template injection, credential persistence, unpinned actions | `zizmor`: in the hosted workflow for deployers, and in `scripts/ci_local.sh` when it is installed; not in the integrator gate. Every action pinned to a commit SHA |
+| **Dogfooding** | forge-warden's own changes skipping its own policy | [`scripts/dogfood.sh`](scripts/dogfood.sh) and [`warden.toml`](warden.toml); hosted job `dogfood` for deployers. Not yet run on each change of this repository |
 | **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), `just install-hooks` |
 | **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 

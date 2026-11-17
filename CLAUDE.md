@@ -1,7 +1,7 @@
 # CLAUDE.md: the operating contract for agents in forge-warden
 
 forge-warden is a gate. Code that judges other code is held to a higher bar than the code it
-judges. This file is the contract; the hooks in `.claude/` and the checks in CI enforce it, so
+judges. This file is the contract; the hooks in `.claude/` and the checks in the gate enforce it, so
 following it is the fastest path, not the polite one.
 
 ## What this repository is
@@ -29,7 +29,7 @@ A change is done when all of these hold, and not before:
    README table still matches (a test checks), and the golden files were regenerated **by the
    human** (`scripts/bless.sh` is denied to agents; ask for it and explain the expected diff).
 4. `cargo mutants --in-diff` would find no surviving mutant on your lines. If you cannot run it,
-   say so; CI will.
+   say so; the integrator gate will (`fw-verify --mutants`).
 5. Your summary states what you **verified** (with the command) separately from what you
    **believe**. Load-bearing claims need construction, not confident assertion.
 
@@ -43,7 +43,7 @@ A change is done when all of these hold, and not before:
 | read a file, the clock, or the environment | add an effect door in a door module (`src/doors/`): those files are owned, so ask the human |
 | use `HashMap` / `HashSet` | `BTreeMap` / `BTreeSet`: output order must not depend on a hash seed |
 | add a dependency | say why in your summary; `deny.toml` bans I/O-heavy crates from the tree |
-| relax a lint, a policy rule, CI, a hook or `repo_invariants.rs` | stop and ask. The PreToolUse hook refuses edits to those files and shell commands that could change them (it errs towards refusing), CODEOWNERS requires the owner, and `warden.toml` holds the PR |
+| relax a lint, a policy rule, CI, a hook or `repo_invariants.rs` | stop and ask. The PreToolUse hook refuses edits to those files and shell commands that could change them (it errs towards refusing), the owner merges into `main`, and `warden.toml` would hold the change once the trusted dogfood runs in the gate |
 | skip hooks (`--no-verify`, `-n`), force-push | never. The hook refuses; fix what the hook reports |
 | leave a `TODO` | `TODO(#issue)`, or fix it now; a test refuses bare markers |
 
@@ -63,7 +63,7 @@ A change is done when all of these hold, and not before:
 
 ```bash
 scripts/ci_fast.sh                                   # the fast gate
-scripts/ci_local.sh                                  # the offline build/lint/test part of CI (a subset)
+scripts/ci_local.sh                                  # the full local gate (it shares most steps with the integrator gate)
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
 scripts/make_patch.sh main HEAD > target/change.patch   # committed changes only
