@@ -275,8 +275,8 @@ repository's own gate reads two of them:
 - `.github/dependabot.yml` does not run for the repository of record. Dependency updates are made by
   hand, in a reviewed change that passes the gate like any other.
 - `.github/hold-reviewers/allowed_signers` is not GitHub-specific: `scripts/hold_ack.py` reads it
-  wherever the driver runs, and the path stays as it is (an acknowledgement receipt's `repository`
-  field still names the GitHub repository; that changes in a separate change to the script).
+  wherever the driver runs, and the path stays as it is. An acknowledgement receipt's `repository`
+  field names the repository of record, `lukeomahoney/forge-warden` (ADR 0007).
 - `.github/release-signers/allowed_signers` is not GitHub-specific either: `scripts/release_tag.sh`
   verifies a release tag against it as committed in the tagged commit (see "Releases" below).
 

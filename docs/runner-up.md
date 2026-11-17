@@ -2,7 +2,7 @@
 
 **Status (2026-11-16):** a record of the routing as written in `mutation-baseline.yml`. The project
 triggers no hosted job since 2026-11-15, so it routes nothing, and the routing is retired from 1.0
-(the guardrail rows retire in their own change). The rest of this page describes the workflow as
+(guardrail G-52 and its route plants are retired in the catalogue: [`plants/README.md`](../plants/README.md)). The rest of this page describes the workflow as
 written.
 
 The scheduled full-workspace mutation baseline (its planning job and its shards) can run on a self-hosted pool. The pool is
