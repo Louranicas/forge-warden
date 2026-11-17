@@ -960,6 +960,10 @@ pub(crate) fn check_stderr_golden(golden: &str, corrupt: bool) -> std::process::
         "fixtures/quality-contract.json",
         "fixtures/demo.patch",
         "examples/starter.warden.toml",
+        // The CLI-surface goldens (EFFECT-WALL-1 step 3a): the version the producer replaces, and
+        // the ranking one usage case names.
+        "Cargo.toml",
+        "fixtures/demo.rank.json",
         golden,
     ] {
         write(&copy, name, &read_bytes(name));

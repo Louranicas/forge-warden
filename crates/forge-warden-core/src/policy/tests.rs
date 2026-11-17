@@ -368,6 +368,107 @@ fn a_toml_syntax_error_keeps_its_line_and_column() {
     ));
 }
 
+/// Whether today's matcher (the policy's `/`-aware glob compiler) matches `path` with `pattern`.
+fn glob_matches(pattern: &str, path: &str) -> bool {
+    let mut issues = issues::Issues::new();
+    paths::compile("pin", "paths", &[pattern.to_owned()], &mut issues)
+        .unwrap()
+        .matches(path)
+}
+
+#[test]
+fn glob_behaviour_is_pinned_before_the_matcher_changes() {
+    // M7-EFFECT-WALL-1 step 2a (P4.6, owner decision D5): today's glob semantics, row by row, so a
+    // replacement matcher (step 2b) must reproduce them. Each row is (pattern, path, matches).
+    let rows: &[(&str, &str, bool)] = &[
+        // `*` stays inside one segment; `**` crosses segments, including none.
+        ("src/*.rs", "src/lib.rs", true),
+        ("src/*.rs", "src/a/lib.rs", false),
+        ("src/**", "src/a/b/c.rs", true),
+        ("src/**", "src/x", true),
+        ("**/*.rs", "a.rs", true),
+        ("**/*.rs", "a/b/c.rs", true),
+        ("*", "a/b", false),
+        ("*", "a", true),
+        ("**", "a/b/c", true),
+        ("a/**/b", "a/b", true),
+        ("a/**/b", "a/x/y/b", true),
+        ("a/**/b", "a/x/y/c", false),
+        ("docs/**/*.md", "docs/a.md", true),
+        ("docs/**/*.md", "docs/x/y/a.md", true),
+        ("**/target/**", "x/target/y", true),
+        ("**/target/**", "target/y", true),
+        // `?`, classes, negated classes, alternation.
+        ("?.rs", "a.rs", true),
+        ("?.rs", "ab.rs", false),
+        ("?.rs", "/.rs", false),
+        ("[ab].rs", "a.rs", true),
+        ("[ab].rs", "c.rs", false),
+        ("[!ab].rs", "c.rs", true),
+        ("[!ab].rs", "a.rs", false),
+        ("{a,b}.rs", "b.rs", true),
+        ("{a,b}.rs", "c.rs", false),
+        ("src/{lib,main}.rs", "src/main.rs", true),
+        // Case-sensitive; backslash escapes; dotfiles are ordinary names.
+        ("SRC/*.rs", "src/lib.rs", false),
+        ("src/*.RS", "src/lib.rs", false),
+        ("\\*.rs", "*.rs", true),
+        ("\\*.rs", "a.rs", false),
+        ("*.yml", ".hidden.yml", true),
+        (".github/**", ".github/workflows/ci.yml", true),
+        ("caf\u{e9}/*", "caf\u{e9}/menu", true),
+        ("caf\u{e9}/*", "cafe/menu", false),
+        // Edges, as today's matcher answers them: `src/**` needs something below `src`; `*` matches
+        // an empty segment (so an empty or trailing segment matches `*`). Git never writes such paths,
+        // but a replacement matcher must answer them the same way or say why not.
+        ("src/**", "src", false),
+        ("**/a", "a", true),
+        ("a/*/b", "a//b", true),
+        ("src/*", "src/", true),
+        ("*/", "a/", true),
+    ];
+    let wrong: Vec<String> = rows
+        .iter()
+        .filter(|(pattern, path, want)| glob_matches(pattern, path) != *want)
+        .map(|(pattern, path, want)| format!("{pattern:?} on {path:?}: want {want}"))
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn the_worst_case_glob_set_is_pinned_too() {
+    // P4.6's worst-case row: the starter's binary-text-is-hidden-text rule, three globs with letter
+    // classes and about 168 alternatives (the design's oracle for a replacement matcher), on short,
+    // deep and 4 KiB paths.
+    let starter = parse_policy(include_bytes!("../../../../examples/starter.warden.toml")).unwrap();
+    let rule = starter
+        .rules()
+        .iter()
+        .find(|rule| rule.id == "binary-text-is-hidden-text")
+        .unwrap();
+    let Check::ForbidSignal { scope, .. } = &rule.check else {
+        panic!("forbid_signal")
+    };
+    let deep = format!("{}main.Rs", "d/".repeat(2048));
+    let deep_other = format!("{}main.png", "d/".repeat(2048));
+    for (path, want) in [
+        ("src/lib.rs", true),
+        ("SRC/LIB.RS", true),
+        ("a/b/c/Script.Sh", true),
+        ("LICENSE-MIT", true),
+        ("docs/Dockerfile.dev", true),
+        ("x/.gitattributes", true),
+        ("x/.GitAttributes", true),
+        ("assets/logo.png", false),
+        ("bin/tool", false),
+        ("lib.rs.bak", false),
+        (deep.as_str(), true),
+        (deep_other.as_str(), false),
+    ] {
+        assert_eq!(scope.contains(path), want, "a path of {} bytes", path.len());
+    }
+}
+
 /// A policy of `schema` with the good rule and then `tail` (tables after the rules).
 fn policy_text(schema: &str, tail: &str) -> String {
     format!("schema = \"{schema}\"\n[[rule]]\n{GOOD}\n{tail}")
