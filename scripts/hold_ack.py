@@ -108,7 +108,12 @@ def expected(args, signer, expires_at):
     admitted_git(verdict)
     require(verdict["verdict"] == "hold" and verdict["exit"]["code"] == 8,
             "only HOLD may be acknowledged")
-    require(verdict["notes"] == [] and verdict["expired_waivers"] == [],
+    # P3.4: the one note whose remedy is known gets its own message (ADR 0012 D8): only a bound run passes it.
+    notes = verdict["notes"]
+    require(not (isinstance(notes, list)
+                 and any(isinstance(note, dict) and note.get("code") == "claims_unverified" for note in notes)),
+            "claims_unverified: re-run in bound mode (--repo)")
+    require(notes == [] and verdict["expired_waivers"] == [],
             "unknown evidence or expired waivers cannot be acknowledged")
     # v2 (ADR 0005 and ADR 0011): only a ranking forge-warden produced itself, from an allowlisted ranker, can
     # be acknowledged; a supplied ranking (advisory mode) is never authority.

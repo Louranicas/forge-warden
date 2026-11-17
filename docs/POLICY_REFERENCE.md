@@ -261,7 +261,34 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
 | Policy file | 1 MiB (1 048 576 bytes) | exit 4, before parsing |
 | Ranking | 64 MiB | exit 4, before parsing |
 | Patch | 64 MiB | exit 4 |
-| Patch, through the pinned ranker (authority mode) | 1 000 000 lines (deep-diff-forge 0.8.2's own budget) | the ranker refuses it: exit 3, no verdict |
+| Patch, through the pinned ranker (authority mode) | 1 000 000 lines (deep-diff-forge 0.8.3's own budget; measured below) | the ranker refuses it: exit 3, no verdict |
+| Bound mode (`--repo`): the pack that copies the objects | 256 MiB (`PACK_CAP`) | exit 3, no verdict |
+| Bound mode: Git's object and commit lists while enumerating | 64 MiB (`LIST_CAP`) | exit 3, no verdict |
+| Bound mode: a Git child's stderr | 64 KiB (`STDERR_CAP`) | exit 3, no verdict |
+| Bound mode: one whole bound run | 60 s (`BOUND_TIMEOUT`) | exit 3, no verdict |
+
+The four bound-mode limits are refused by the door before any verdict, and tests drive each over a small injected
+value, so no test writes 256 MiB or waits 60 s: the pack, list and stderr caps (and the memory ceiling) in
+`bound_mode_refuses_a_git_over_each_cap_and_leaves_nothing`, the time limit under budgets of 0 to 50 ms in
+`bound_mode_stops_at_its_deadline_and_leaves_nothing`.
+How far real repositories are from them was measured (Keel, 2026-11-17, receipt `278d4ab0af249548`, PB-TAIL): a
+release build of `check --repo` end to end (bound copy, the pinned deep-diff-forge 0.8.3 from its release archive,
+judging, verdict), three runs each, warm page cache, the starter policy with a `[producer]` pin, on one idle 16-core
+x86_64 Linux machine in a Fedora 44 toolbox whose Git allowlist an agent enrolled on the owner's instruction (not the
+owner's host allowlist):
+
+| Case | Commits judged | Time | Peak memory |
+| --- | --- | --- | --- |
+| A 100 000-commit repository, merge base 99 000 commits back (the worst case; the copy holds 99 896 objects, a 14 098 551-byte pack) | 50 | 1.9 s | 169 MiB |
+| The same repository, merge base 1 000 commits back | 50 | 0.2 s | 37 MiB |
+| forge-warden, v0.2.0 to main (`8f18db34..58825a98`, a 781 806-byte patch) | 152 | 0.45 s | 15 MiB |
+| deep-diff-forge, v0.7.0 to v0.8.3 (a 593 576-byte patch) | 111 | 0.4 s | 24 MiB |
+
+So the worst measured run is 31 times inside the 60 s budget and its pack 19 times inside the 256 MiB cap. Each
+time includes the ranker run and the judgement, so the bound copy alone is less. deep-diff-forge 0.8.3's line budget,
+measured on the released binary: a 999 996-line patch is ranked (0.23 s), a 1 000 006-line one is refused ("patch
+contains at least 1000001 lines, exceeding the 1000000-line budget", its exit 4, which forge-warden reports as exit 3).
+Not measured: a cold page cache (dropping it needs root), a loaded or smaller machine.
 
 Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2, on one idle
 16-core x86_64 Linux machine (Fedora 44 toolbox), advisory mode, each command alone:
