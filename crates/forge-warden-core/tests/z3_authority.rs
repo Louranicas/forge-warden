@@ -21,7 +21,7 @@
 mod oracle;
 
 use forge_warden_core::authority::{
-    AdvisoryOutcome, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
+    AdvisoryOutcome, MintKey, Ranking, SuppliedCopy, check, evaluate_advisory, evaluate_authority,
 };
 use forge_warden_core::facts::{PatchFacts, Unverifiable};
 use forge_warden_core::policy::parse_policy;
@@ -122,7 +122,7 @@ fn judge(entry: &Value, bytes: &dyn Fn(&str) -> Option<Vec<u8>>) -> Actual {
         );
     }
     let copy = SuppliedCopy::compare(bytes("supplied.json").as_deref(), &rank_bytes);
-    let ranking = Ranking::attest(rank, token);
+    let ranking = Ranking::attest(rank, token, MintKey::new());
     let checked = check(&ranking, facts);
     let coverage = Some(checked.is_covered());
     let verdict: Verdict = evaluate_authority(&policy, &checked, copy, seals, today);

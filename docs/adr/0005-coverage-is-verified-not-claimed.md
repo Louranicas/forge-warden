@@ -366,3 +366,19 @@ amended the same day). §2 now names the door that mints a produced ranking: `do
 `#[expect(clippy::disallowed_methods)]` that admits the call to `Ranking::attest`. §2 had also said a `repo_invariants` test held this; the rule is, and was in §8, the
 `disallowed-methods` entry in the root `clippy.toml`. §8's two mentions of `doors.rs` are kept as written: they record
 the code of 2026-11-07. No behaviour, test or policy changes with this amendment (ledger Q16).
+
+## 11. Amendment (EFFECT-WALL step 1, 2026-11-17): one mint key, consumed
+
+`Ranking::attest` now also takes a `MintKey` and consumes it. `MintKey` is neither `Clone` nor `Copy` and has
+no public constructor except `MintKey::new`, which exists only with the core feature `mint` (enabled only by
+forge-warden-cli's normal dependency and the core's dev-dependencies; `repo_invariants` checks the declarations).
+The binary makes keys in one door function, `take_mint_key` in `doors/child/ranker.rs`, which hands out at most
+one per run (a std latch in the door; the core keeps no process-wide state, ruling R1), and the root `clippy.toml`
+denies `MintKey::new` everywhere else. So "the door mints at most once per run" holds in every spelling: a second
+mint, however it names `attest`, needs a second key and gets none (the measured escapes B01-B03 of the EFFECT-WALL
+design named `attest` without the text `attest(`). The text count of `attest(` in `repo_invariants` is removed;
+clippy's denylist entry moves from `Ranking::attest` to `MintKey::new`. §8's clippy row now reads `MintKey::new`.
+Measured before the change (Keel, light clippy receipt 7bcba318): outside a door, clippy flags a direct call, a fn
+pointer, a spaced call and an `identity` wrapper alike, so the denylist decides who; the key and the latch decide
+how many. Not changed: the seal check (`input_sha256` against the patch) stays in the door.
+

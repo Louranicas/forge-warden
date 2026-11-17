@@ -4,8 +4,11 @@ crate::authority #[derive(Debug)] #[non_exhaustive] pub struct Ranking<P>
 crate::authority Ranking.<3 private field(s)>
 crate::authority impl Ranking<Supplied>
 crate::authority Ranking::#[must_use] pub const fn supplied(doc: RankDoc) -> Self
+crate::authority #[derive(Debug)] #[non_exhaustive] pub struct MintKey
+crate::authority #[cfg(feature = "mint")] impl MintKey
+crate::authority MintKey::#[must_use] #[expect( clippy::new_without_default, reason = "a Default impl would hand a key to every caller; the key is made only here" )] pub const fn new() -> Self
 crate::authority impl Ranking<Produced>
-crate::authority Ranking::#[must_use] pub fn attest(doc: RankDoc, producer: AdmittedProducer) -> Self
+crate::authority Ranking::#[must_use] #[expect( clippy::needless_pass_by_value, reason = "taking the key by value is the point: the caller loses it, so one key mints once" )] pub fn attest(doc: RankDoc, producer: AdmittedProducer, key: MintKey) -> Self
 crate::authority impl<P> Ranking<P>
 crate::authority Ranking::#[must_use] pub const fn doc(&self) -> &RankDoc
 crate::authority Ranking::#[must_use] pub const fn producer_sha256(&self) -> Option<&Sha256Hex>

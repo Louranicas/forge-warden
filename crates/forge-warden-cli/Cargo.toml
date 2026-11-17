@@ -20,7 +20,8 @@ workspace = true
 
 [dependencies]
 clap.workspace = true
-forge-warden-core.workspace = true
+# `mint`: the constructor of the MintKey the ranker door hands out once per run (EFFECT-WALL step 1).
+forge-warden-core = { workspace = true, features = ["mint"] }
 serde_json.workspace = true
 toml.workspace = true
 

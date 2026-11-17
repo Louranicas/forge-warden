@@ -1,7 +1,7 @@
 //! Nothing outside the door modules (`common::DOOR_FILES`, formerly the single file doors.rs) can
 //! switch off the door lints (ADR 0005 §2.7, Bastion B-C1c-01/02).
 //!
-//! `clippy.toml` makes `Ranking::attest`, the raw-engine test door and the effect doors disallowed methods;
+//! `clippy.toml` makes `MintKey::new` (the key `Ranking::attest` consumes), the raw-engine test door and the effect doors disallowed methods;
 //! clippy resolves every way of naming them (`tests/mint_lint.rs`). What remains is a lint attribute
 //! that switches the lint off. This check reads every first-party Rust file of the CLI crate with a
 //! real parser (syn), so comments, whitespace and raw identifiers never reach it, and inspects every

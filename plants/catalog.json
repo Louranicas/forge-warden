@@ -1893,10 +1893,10 @@
       ]
     },
     {
-      "id": "door-second-attest",
+      "id": "door-second-mint",
       "guardrail": "G-06",
-      "path": "crates/forge-warden-cli/src/doors/file.rs",
-      "diagnostic": "only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw.*FAILED",
+      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
+      "diagnostic": "a second produced ranking in one run is refused",
       "cargo": [
         "test",
         "-p",
@@ -1904,14 +1904,68 @@
         "--locked",
         "--offline",
         "--test",
-        "repo_invariants",
+        "authority_mode",
         "--",
-        "only_the_door_mints_a_produced_ranking"
+        "bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other"
       ],
-      "old": "//! File admission doors: the one named-file open ([`open_regular`]) and the bounded readers.",
-      "new": "//! File admission doors: the one named-file open ([`open_regular`]) and the bounded readers.\n// Ranking::attest(doc, admitted) a second mint in another door module",
+      "old": "    let Some(key) = take_mint_key(&MINT_KEY_TAKEN) else {",
+      "new": "    let _second = take_mint_key(&MINT_KEY_TAKEN);\n    let Some(key) = take_mint_key(&MINT_KEY_TAKEN) else {",
       "required_tools": [
         "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "mint-latch-removed",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/doors/child/ranker.rs",
+      "diagnostic": "a second key in the same run",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--bin",
+        "forge-warden",
+        "--",
+        "a_run_hands_out_one_mint_key_and_then_none"
+      ],
+      "old": "    (!taken.swap(true, Ordering::SeqCst)).then(MintKey::new)",
+      "new": "    let _was = taken.swap(true, Ordering::SeqCst);\n    Some(MintKey::new())",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "mint-key-outside-door",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `forge_warden_core::authority::MintKey::new`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run(command: Command) -> Result<Exit, Failure> {",
+      "new": "fn run(command: Command) -> Result<Exit, Failure> {\n    let _key = forge_warden_core::authority::MintKey::new();",
+      "required_tools": [
+        "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",

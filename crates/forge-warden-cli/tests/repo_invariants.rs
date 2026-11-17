@@ -187,7 +187,7 @@ fn the_effect_lists_name_every_reviewed_effect() {
     ];
     // Minted only inside the CLI's door modules; the core defines them, so only the root lists them.
     const CLI_ONLY: [&str; 3] = [
-        "forge_warden_core::authority::Ranking::attest",
+        "forge_warden_core::authority::MintKey::new",
         "forge_warden_core::verdict::GitOracle::approved",
         "forge_warden_core::verdict::GitOracle::unpinned",
     ];
@@ -645,28 +645,11 @@ fn every_way_of_redirecting_the_lint_configuration_is_refused() {
 
 #[test]
 fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
-    // ADR 0005 §2.7 (rung 4): `Ranking::attest` is called only in the door modules, exactly once in
-    // all of them together, right after the pinned ranker ran; and the binary judges only through
-    // `evaluate_authority`/`evaluate_advisory`.
-    let mut door_attests = 0_usize;
-    for (path, text) in rust_sources() {
-        if !is_production(&path) || path.ends_with("crates/forge-warden-core/src/authority.rs") {
-            continue;
-        }
-        let attests = text.matches("attest(").count();
-        if common::is_door_file(&path) {
-            door_attests = door_attests.checked_add(attests).unwrap();
-        } else {
-            assert_eq!(
-                attests, 0,
-                "{path}: only a door module may call Ranking::attest"
-            );
-        }
-    }
-    assert_eq!(
-        door_attests, 1,
-        "exactly one attest call across the door modules, in produce_ranking"
-    );
+    // ADR 0005 §2.7 (rung 4): only the door mints, at most once per run, and the binary judges only
+    // through `evaluate_authority`/`evaluate_advisory`. Since EFFECT-WALL step 1 the mint part is not
+    // a count of the text `attest(` (B01-B03 spelled around it): `attest` consumes a `MintKey`, whose
+    // constructor clippy denies outside the door's take_mint_key in every spelling (tests/mint_lint.rs),
+    // and that latch hands out one key per run (doors/child/ranker.rs unit test). What stays here:
     let main = read("crates/forge-warden-cli/src/main.rs");
     for (index, line) in main.lines().enumerate() {
         let raw = line
@@ -684,7 +667,7 @@ fn only_the_door_mints_a_produced_ranking_and_the_binary_never_judges_raw() {
 fn the_clippy_config_disallows_minting_and_raw_judging() {
     let config = read("clippy.toml");
     for path in [
-        "path = \"forge_warden_core::authority::Ranking::attest\"",
+        "path = \"forge_warden_core::authority::MintKey::new\"",
         "path = \"forge_warden_core::testing::evaluate\"",
     ] {
         assert!(config.contains(path), "clippy.toml lost {path}");
@@ -783,6 +766,57 @@ fn no_normal_dependency_opens_the_unattested_evaluate_door() {
     assert!(
         declared.is_empty(),
         "unattested-evaluate is declared outside [dev-dependencies]: {declared:#?}"
+    );
+}
+
+#[test]
+fn only_the_binary_enables_the_mint_feature() {
+    // EFFECT-WALL step 1 (ruling R1): `MintKey::new` exists only with the core feature `mint`. Only
+    // forge-warden-cli's normal dependency may enable it (its door hands out one key per run) besides
+    // [dev-dependencies] (the core's engine tests); no other dependency, kind or [features] entry.
+    let meta = common::command(env!("CARGO"))
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(meta.status.success(), "cargo metadata did not run");
+    let meta: serde_json::Value = serde_json::from_slice(&meta.stdout).unwrap();
+    let mut enabled_by = Vec::new();
+    for package in meta["packages"].as_array().unwrap() {
+        let name = package["name"].as_str().unwrap();
+        for dep in package["dependencies"].as_array().unwrap() {
+            let enables = dep["name"] == "forge-warden-core"
+                && dep["kind"].as_str() != Some("dev")
+                && dep["features"]
+                    .as_array()
+                    .is_some_and(|f| f.iter().any(|v| v == "mint"));
+            if enables {
+                enabled_by.push(format!(
+                    "{name} {} target={} rename={}",
+                    dep["kind"], dep["target"], dep["rename"]
+                ));
+            }
+        }
+        for (key, values) in package["features"].as_object().unwrap() {
+            for value in values.as_array().unwrap() {
+                let text = value.as_str().unwrap();
+                if text.ends_with("/mint") || (name == "forge-warden-core" && text == "mint") {
+                    enabled_by.push(format!("{name}: feature {key} = {text}"));
+                }
+            }
+        }
+    }
+    assert_eq!(
+        enabled_by,
+        ["forge-warden-cli null target=null rename=null"],
+        "the mint feature is enabled by something other than the binary's one normal dependency"
     );
 }
 

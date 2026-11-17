@@ -9,6 +9,10 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- Core API (EFFECT-WALL step 1, ruling R1): `Ranking::attest` takes a `MintKey` it consumes; `MintKey::new` exists
+  only with the new core feature `mint`, which only the CLI enables. The binary's door hands out one key per run, and
+  `clippy.toml` denies `MintKey::new` outside it, so a second mint is refused in every spelling; the text count of
+  `attest(` in the repository invariants is gone.
 - **Ranker pin: deep-diff-forge v0.8.3** (owner decision D4: the newest release, with its stated limits), from
   v0.8.2: `warden.toml` `[producer]` lists the v0.8.3 x86_64-unknown-linux-gnu binary
   (`4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1`); `scripts/tool-versions.toml` names tag

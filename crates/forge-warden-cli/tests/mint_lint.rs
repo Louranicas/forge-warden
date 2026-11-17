@@ -1,11 +1,13 @@
 //! Bastion B-C1c-01: only the door modules (formerly `doors.rs`) may mint `Ranking<Produced>`. Since Q-TYPES-1, `attest` needs an
 //! `AdmittedProducer` that only the policy's allowlist makes, and raw `evaluate` is not nameable
 //! outside the core (`tests/api_boundary.rs` proves both for any downstream crate). Which file of the
-//! binary may mint is still the binary's rule: `clippy.toml` makes `attest` a disallowed method,
-//! clippy resolves the *path*, so every way of naming it is caught. This test runs the real clippy,
-//! with this repository's `clippy.toml`, on a scratch crate that names `attest` in every form
-//! measured for C1c v2, and requires each form to be refused and the two controls (the door's
-//! `#[expect]`, and an allowed function) not to be.
+//! binary may mint is still the binary's rule. Since EFFECT-WALL step 1 `attest` consumes a
+//! `MintKey`, and `clippy.toml` makes its constructor `MintKey::new` a disallowed method; clippy
+//! resolves the *path*, so every way of naming it is caught. This test runs the real clippy, with
+//! this repository's `clippy.toml`, on a scratch crate (core feature `mint` on) that names
+//! `MintKey::new` in every form measured for C1c v2 and EFFECT-WALL (B01, B03), and requires each
+//! form to be refused and the two controls (the door's `#[expect]`, and an allowed function) not
+//! to be. How many keys a run gets is the door's latch (doors/child/ranker.rs, its unit test).
 //!
 //! G-04 (WP-B7, B7.1): the same real clippy, run once with each crate's own `clippy.toml`, refuses
 //! every way of choosing a raw default (`unwrap_or*`, `map_or*`, `get_or_insert*`), and admits the
@@ -26,13 +28,13 @@ use std::path::Path;
 /// Each line carrying `// FORM:` must be reported as a disallowed method; `// CONTROL:` lines must not.
 const PLANTS: &str = r#"
 use forge_warden_core::Policy;
-use forge_warden_core::authority::{Produced, Ranking};
-use forge_warden_core::authority::Ranking as R;
+use forge_warden_core::authority::{MintKey, Produced, Ranking};
+use forge_warden_core::authority::MintKey as K;
 use forge_warden_core::policy::AdmittedProducer;
 use forge_warden_core::rank::RankDoc;
 
-fn apply<A, B, T>(f: impl Fn(A, B) -> T, a: A, b: B) -> T {
-    f(a, b)
+fn apply<T>(f: impl Fn() -> T) -> T {
+    f()
 }
 
 /// A token, as the door gets one: from the policy's allowlist. (Raw `evaluate` and a bare-string
@@ -43,18 +45,19 @@ fn token(policy: &Policy) -> AdmittedProducer {
 
 pub fn forms(doc: RankDoc, policy: &Policy) -> usize {
     let mut n = 0;
-    let _a = Ranking::attest(doc.clone(), token(policy)); // FORM: attest direct
-    let forge = Ranking::attest; // FORM: attest alias binding (B-C1c-01)
-    let _b = forge(doc.clone(), token(policy));
-    let _c = forge_warden_core::authority::Ranking::<Produced>::attest(doc.clone(), token(policy)); // FORM: attest qualified
-    let _d = R::attest(doc.clone(), token(policy)); // FORM: attest via use-as
-    let _e = apply(Ranking::attest, doc.clone(), token(policy)); // FORM: attest passed as a function
-    let p: fn(RankDoc, AdmittedProducer) -> Ranking<Produced> = Ranking::attest; // FORM: attest as fn pointer
-    let _f = <Ranking<Produced>>::attest(doc.clone(), token(policy)); // FORM: attest UFCS
-    let _g = Some(doc.clone()).map(|d| Ranking::attest(d, token(policy))); // FORM: attest in a closure
-    let _h = vec![Ranking::attest]; // FORM: attest inside an external macro
-    let _i = std::hint::black_box(Ranking::<Produced>::attest); // FORM: attest through black_box
-    let _y = p(doc.clone(), token(policy));
+    let _a = Ranking::attest(doc.clone(), token(policy), MintKey::new()); // FORM: MintKey::new direct
+    let make = MintKey::new; // FORM: MintKey::new alias binding (B01)
+    let _b = Ranking::attest(doc.clone(), token(policy), make());
+    let _c = forge_warden_core::authority::MintKey::new(); // FORM: MintKey::new qualified
+    let _d = K::new(); // FORM: MintKey::new via use-as
+    let _e = apply(MintKey::new); // FORM: MintKey::new passed as a function
+    let p: fn() -> MintKey = MintKey::new; // FORM: MintKey::new as fn pointer
+    let _f = <MintKey>::new(); // FORM: MintKey::new UFCS
+    let _g = Some(()).map(|()| MintKey::new()); // FORM: MintKey::new in a closure
+    let _h = vec![MintKey::new]; // FORM: MintKey::new inside an external macro
+    let _i = core::convert::identity(MintKey::new)(); // FORM: MintKey::new through identity (B03)
+    let _j = std::hint::black_box(MintKey::new); // FORM: MintKey::new through black_box
+    let _y = p();
     n += door(doc.clone(), policy);
     n += forge_warden_core::seal::sha256_hex(b"").as_str().len(); // CONTROL: an allowed function
     n
@@ -62,7 +65,8 @@ pub fn forms(doc: RankDoc, policy: &Policy) -> usize {
 
 #[expect(clippy::disallowed_methods, reason = "door: the positive control")]
 fn door(doc: RankDoc, policy: &Policy) -> usize {
-    Ranking::attest(doc, token(policy)).producer_sha256().map_or(0, |seal| seal.as_str().len()) // CONTROL: the door's expect
+    let r: Ranking<Produced> = Ranking::attest(doc, token(policy), MintKey::new()); // CONTROL: the door's expect
+    r.producer_sha256().map_or(0, |seal| seal.as_str().len())
 }
 "#;
 
@@ -238,7 +242,7 @@ fn clippy_refuses_minting_a_git_oracle_outside_the_door() {
 }
 
 #[test]
-fn clippy_refuses_every_way_of_naming_attest_or_raw_evaluate_outside_the_door() {
+fn clippy_refuses_every_way_of_naming_the_mint_key_outside_the_door() {
     check_plants("mint-lint", PLANTS, &root(), "mint-plants", &[]);
 }
 
@@ -307,7 +311,7 @@ fn check_plants(name: &str, plants: &str, config: &Path, group: &str, hostile: &
     std::fs::write(
         dir.join("Cargo.toml"),
         format!(
-            "[package]\nname = \"mint-lint-plants\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\nforge-warden-core = {{ path = {:?} }}\n\n[workspace]\n",
+            "[package]\nname = \"mint-lint-plants\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\nforge-warden-core = {{ path = {:?}, features = [\"mint\"] }}\n\n[workspace]\n",
             core.to_str().unwrap()
         ),
     )

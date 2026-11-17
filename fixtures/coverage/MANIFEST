@@ -1690,47 +1690,51 @@
       ],
       [
         "control:the door's expect",
-        "b26b796a02fb9c9e9071e077822abb9c4eb2f95294b974eb5d6b8b64159f23cf"
+        "983f15a12b5e225ac8f0caf534776bd100d58ad3c019dcadb6d4e8de52d77bf0"
       ],
       [
-        "form:attest UFCS",
-        "bba1e397a065364b23b2ac5b26362bd0c1d58a8ff3c0b4ac29c7d33e429acc9e"
+        "form:MintKey::new UFCS",
+        "3f32e4cdf0f6421b5765f2dbbf961eb1cf288bc520aba80c947f8052b462bfa9"
       ],
       [
-        "form:attest alias binding (B-C1c-01)",
-        "ac880489693c9cdda119cf7a66879c5835be5844022512c0cee033d764402710"
+        "form:MintKey::new alias binding (B01)",
+        "2b474ebae2612cf6dfa669ca192548264fa47d2c38f6386e5caa65e349ae2117"
       ],
       [
-        "form:attest as fn pointer",
-        "6fcc20914e6108f095981ff8305c4b6a7ed657b375f3680e04c3276bb0895d4f"
+        "form:MintKey::new as fn pointer",
+        "3b730de63c27f919f9e13eb8a23ce9f359fc34f54588abfaaec1e1f0362f69a2"
       ],
       [
-        "form:attest direct",
-        "210b73a8a88313114f31d47dea43052809018be48e2cc5b6636125d97f5e2a0f"
+        "form:MintKey::new direct",
+        "ffb81ab4aea75321b81056468f71aaeb15927dee9c51fbc78fe47e1dd455f771"
       ],
       [
-        "form:attest in a closure",
-        "9b8fb1b828e75bf85f86b26174b89d20176459a17a7d65fee07decc86e0b0ad2"
+        "form:MintKey::new in a closure",
+        "cd20c3c5ba966ffd30d37cf60416cf21a81d8d55b493d9fafcd7bd19322faa22"
       ],
       [
-        "form:attest inside an external macro",
-        "e038c02a044fadc84911ce245c5332beec0853c9a793212de96ebd5f66555045"
+        "form:MintKey::new inside an external macro",
+        "982d0d38aaa97f32cf7ba7a8243a25b179b452f6f7689a983d9c7bb0045b7b0b"
       ],
       [
-        "form:attest passed as a function",
-        "4ad036635dd894d108815835a2baf4d617f3e928260349cbdaf777647dcf8062"
+        "form:MintKey::new passed as a function",
+        "801895387699269faae4b0fd0466075ba3b6e31e7ee462c90c578d1d893bf766"
       ],
       [
-        "form:attest qualified",
-        "a903f61810c5219f0b856c2c6665ea3f9f24f2d993a199d25c7647fa16a239a9"
+        "form:MintKey::new qualified",
+        "8a13a290fa6c5852a54a6d3aa9ed45bad7f7625fef54417f50a57b11059e3f47"
       ],
       [
-        "form:attest through black_box",
-        "a9c4fc1c16666ef2ae0d218cb073e58a9c7a40b725cdf6f439f7268d9efe9601"
+        "form:MintKey::new through black_box",
+        "9c92c1b350deb5dd019424ae8ef876d94eba9bb4d64156be56c531145b94aa88"
       ],
       [
-        "form:attest via use-as",
-        "09149824ca79b98ebf40b5c0c6f12fa2a67354a9acbdd871a860e5f5fa22ec2b"
+        "form:MintKey::new through identity (B03)",
+        "2029b97e8c54c45e7b98331627861c7d2c2c4fca4563e56d4b580997098f0fc1"
+      ],
+      [
+        "form:MintKey::new via use-as",
+        "d6c01949721d2f3c36c5ef334abbd11545cc3d091dc1e4453c449d673385bfed"
       ]
     ]
   ],
