@@ -1214,6 +1214,71 @@ fn door_path_offences(door: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
+/// Bastion B1 (EFFECT-WALL step 3): a door seam the fixture CLI uses is compiled only in a test build
+/// or a debug build carrying `fw_fixture_cli`, never by that cfg alone, so a `--release` build keeps the
+/// production seams (the Git allowlist from /etc) whatever flags a deployer passes. Every mention of
+/// the cfg outside comments is one of the two admitted spellings; `fixture_cfg_offences` is checked
+/// on its own rows below.
+fn fixture_cfg_offences(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (number, line) in source.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        let squeezed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        let rest = squeezed
+            .replace("not(fw_fixture_cli)", "")
+            .replace("all(fw_fixture_cli,debug_assertions)", "");
+        if rest.contains("fw_fixture_cli") {
+            found.push(format!(
+                "line {}: {}",
+                number.saturating_add(1),
+                line.trim()
+            ));
+        }
+    }
+    found
+}
+
+#[test]
+fn every_fixture_seam_in_the_doors_needs_a_debug_build() {
+    for door in common::DOOR_FILES {
+        let source = std::fs::read_to_string(root().join(door)).unwrap();
+        assert_eq!(
+            fixture_cfg_offences(&source),
+            Vec::<String>::new(),
+            "{door}: fw_fixture_cli alone must not open a seam (Bastion B1)"
+        );
+    }
+    for (row, offends) in [
+        ("#[cfg(any(test, fw_fixture_cli))]\nfn seam() {}", true),
+        ("#[cfg(fw_fixture_cli)]\nfn seam() {}", true),
+        ("#[cfg(any(test, all(fw_fixture_cli)))]\nfn seam() {}", true),
+        (
+            "#[cfg(all(debug_assertions, fw_fixture_cli))]\nfn seam() {}",
+            true,
+        ),
+        (
+            "#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]\nfn seam() {}",
+            false,
+        ),
+        (
+            "#[cfg(not(any(test, all(fw_fixture_cli, debug_assertions))))]\nconst X: u8 = 0;",
+            false,
+        ),
+        (
+            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\nmod tests {}",
+            false,
+        ),
+        (
+            "/// a comment naming fw_fixture_cli alone\nfn f() {}",
+            false,
+        ),
+    ] {
+        assert_eq!(!fixture_cfg_offences(row).is_empty(), offends, "{row}");
+    }
+}
+
 /// Q-DOOR-PATH on the tree: no door module names another file by `#[path]`, except test support
 /// into a test-only module (today: the doors crate's `lib.rs`, `test_environment`).
 #[test]

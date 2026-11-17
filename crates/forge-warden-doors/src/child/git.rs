@@ -7,7 +7,7 @@ use super::{
 use forge_warden_core::seal::{Sha256Hex, sha256_hex};
 use std::path::Path;
 
-#[cfg(not(any(test, fw_fixture_cli)))]
+#[cfg(not(any(test, all(fw_fixture_cli, debug_assertions))))]
 pub(super) const GIT_ALLOWLIST: &str = "/etc/forge-warden/git-allowlist.toml";
 pub(super) const MAX_GIT_ALLOWLIST_BYTES: usize = 64 * 1024;
 
@@ -253,14 +253,14 @@ pub(super) fn admit_git_with(
 
 /// The production admission boundary. Its policy path, owner, and trust root are fixed.
 pub(super) fn admit_git(path: &Path, admission: GitAdmission) -> Result<AdmittedGit, DoorError> {
-    #[cfg(any(test, fw_fixture_cli))]
+    #[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
     {
         match fixture_git_from_environment(path, admission) {
             Some(result) => result,
             None => Err(git_refusal("test fixture policy root is required")),
         }
     }
-    #[cfg(not(any(test, fw_fixture_cli)))]
+    #[cfg(not(any(test, all(fw_fixture_cli, debug_assertions))))]
     {
         let trust = GitTrust {
             root: Path::new("/"),
@@ -290,7 +290,7 @@ pub fn admit_git_advisory(path: &Path) -> Result<AdmittedGit, DoorError> {
     admit_git(path, GitAdmission::Advisory)
 }
 
-#[cfg(any(test, fw_fixture_cli))]
+#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
 #[expect(
     clippy::disallowed_methods,
     reason = "test door: fixture Git policy context"
@@ -317,7 +317,7 @@ pub(super) fn fixture_git_from_environment(
 }
 
 /// Only test and fixture compilations can supply a policy boundary. No production caller has this seam.
-#[cfg(any(test, fw_fixture_cli))]
+#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
 pub(crate) fn fixture_git(
     path: &Path,
     policy: &Path,

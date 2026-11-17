@@ -58,5 +58,6 @@ The door modules moved, unchanged, from `crates/forge-warden-cli/src/doors/` to 
 binary builds its command line with clap's builder, because clap's derive emits `allow(clippy::style)`, which the
 forbid refuses (measured, R2). The core feature `mint` is enabled by the doors crate alone (ruling R1). Ownership
 moved with the code to `crates/forge-warden-doors/src/**`; its `Cargo.toml` is covered by `crates/*/Cargo.toml`.
-Test seams the fixture CLI needs are compiled under `cfg(any(test, fw_fixture_cli))`; `fw_fixture_cli` is refused in
-every operational build surface exactly as `--cfg test` is.
+Test seams the fixture CLI needs are compiled under `cfg(any(test, all(fw_fixture_cli, debug_assertions)))`:
+`fw_fixture_cli` is refused in every operational build surface exactly as `--cfg test` is, and a `--release` build
+keeps the production seams (the Git allowlist from /etc) even with it (`door_lints` pins the spelling).

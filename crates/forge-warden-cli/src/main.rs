@@ -324,9 +324,10 @@ impl Failure {
 }
 
 fn main() -> doors::Status {
-    // The fixture CLI (tests/common) is built with `--cfg test --cfg fw_fixture_cli`, and with the latter in
-    // RUSTFLAGS so the doors crate has its test seams too; a plain unit-test build never runs main.
-    #[cfg(all(test, fw_fixture_cli))]
+    // The fixture CLI (tests/common) is a debug build with `--cfg test --cfg fw_fixture_cli`, and with the
+    // latter in RUSTFLAGS so the doors crate has its test seams too (only with debug_assertions, Bastion
+    // B1); a plain unit-test build never runs main.
+    #[cfg(all(test, fw_fixture_cli, debug_assertions))]
     if !doors::fixture_cli_requested() {
         return doors::Status(finish(
             Err(Failure::new(

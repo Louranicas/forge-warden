@@ -10,6 +10,7 @@
       "G-05/G-07 (2026-11-17, EFFECT-WALL step 2, Train B12 RED): forge-warden-core is no_std, so an effect or a HashMap in the core is refused by the compiler before clippy reads the core denylist; core-read and hash-order now expect E0433 (`std` cannot be named), the stronger guard. oversized-function and z3-clean-copy-forced-hold re-anchored to core::hint / alloc::string::String.",
       "G-06 door-clap-attribute-effect (2026-11-17, EFFECT-WALL step 3): clap's derive is gone (the CLI builds its command line in code, under the normal lint wall), so the recipe no longer plants into a clap attribute; it plants a build-time file read, #[doc = include_str!(..)], on fn cli: it compiles, so only the Q37 attribute scan can refuse it. Also (Touchstone, 1848): the core clippy.toml's std entries are now a second layer the compiler reaches first in the no_std core; they stay as defence in depth.",
       "G-06 cli-forbid-lowered, cli-forbid-removed (2026-11-17, EFFECT-WALL step 3): the doors are the crate forge-warden-doors and main.rs carries #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]; the first plant shows the compiler refusing a local exemption (E0453), the second that deleting the forbid fails the repository invariants. 24 recipes that run door unit tests moved from -p forge-warden-cli --bin forge-warden to -p forge-warden-doors --lib (the tests moved with the doors; unchanged names and diagnostics).",
+      "G-15 fixture-seam-without-debug (2026-11-17, EFFECT-WALL step 3, Bastion B1): after the doors became a crate the fixture seams are gated cfg(any(test, all(fw_fixture_cli, debug_assertions))), so a --release build with the cfg still reads the Git allowlist from /etc; door_lints pins the spelling and this plant drops debug_assertions from the allowlist seam.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
       "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
@@ -2054,6 +2055,32 @@
       ],
       "old": "#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]\n",
       "new": "",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "fixture-seam-without-debug",
+      "guardrail": "G-15",
+      "path": "crates/forge-warden-doors/src/child/git.rs",
+      "diagnostic": "fw_fixture_cli alone must not open a seam",
+      "cargo": [
+        "test",
+        "-p",
+        "forge-warden-cli",
+        "--locked",
+        "--offline",
+        "--test",
+        "door_lints",
+        "--",
+        "every_fixture_seam_in_the_doors_needs_a_debug_build"
+      ],
+      "old": "#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]\n#[expect(\n    clippy::disallowed_methods,\n    reason = \"test door: fixture Git policy context\"\n)]",
+      "new": "#[cfg(any(test, fw_fixture_cli))]\n#[expect(\n    clippy::disallowed_methods,\n    reason = \"test door: fixture Git policy context\"\n)]",
       "required_tools": [
         "cargo",
         "git",

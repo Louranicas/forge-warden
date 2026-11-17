@@ -70,11 +70,13 @@ impl DoorError {
 /// A harness=false target runs as a no-op during ordinary cargo test discovery. Only fixture
 /// commands explicitly supply this test-build-only marker; release builds do not read it.
 ///
-/// Test and fixture builds only (`cfg(any(test, fw_fixture_cli))`): the fixture CLI reaches this crate
-/// through `RUSTFLAGS=--cfg fw_fixture_cli`, a switch `repo_invariants` refuses in every operational
-/// build surface, as it refuses `--cfg test`.
+/// Test and fixture builds only (`cfg(any(test, all(fw_fixture_cli, debug_assertions)))`): the fixture
+/// CLI reaches this crate through `RUSTFLAGS=--cfg fw_fixture_cli`, a switch `repo_invariants` refuses
+/// in every operational build surface, as it refuses `--cfg test`; and it is a debug build, so a
+/// `--release` build keeps the production seam even if a deployer's flags carry the cfg (Bastion B1).
+/// `door_lints` pins that every positive `fw_fixture_cli` gate in the doors has `debug_assertions`.
 #[must_use]
-#[cfg(any(test, fw_fixture_cli))]
+#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]
 #[expect(clippy::disallowed_methods, reason = "test door: fixture CLI dispatch")]
 pub fn fixture_cli_requested() -> bool {
     std::env::var_os("FORGE_WARDEN_TEST_POLICY_ROOT").is_some()
@@ -2254,6 +2256,16 @@ mod child_tests {
 #[cfg(not(fw_fixture_cli))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_door_error_hands_its_kind_and_message_to_the_binary() {
+        let refused = DoorError::refused("--patch", "is a directory");
+        assert_eq!(refused.kind(), DoorErrorKind::Refused);
+        assert_eq!(refused.into_message(), "--patch: is a directory");
+        let environment = DoorError::environment("no clock".to_owned());
+        assert_eq!(environment.kind(), DoorErrorKind::Environment);
+        assert_eq!(environment.into_message(), "no clock");
+    }
 
     #[test]
     fn unix_seconds_map_to_utc_dates() {
