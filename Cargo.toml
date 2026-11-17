@@ -81,11 +81,11 @@ forge-warden-core = { path = "crates/forge-warden-core", version = "0.2.1" }
 
 clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
 globset = { version = "0.4.16", default-features = false }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.140", features = ["preserve_order"] }
+serde = { version = "1.0.219", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.140", default-features = false, features = ["alloc", "preserve_order"] }
 sha2 = { version = "0.10.9", default-features = false }
-thiserror = "2.0.12"
-toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
+thiserror = { version = "2.0.12", default-features = false }
+toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 
 proptest = { version = "1.7", default-features = false, features = ["std"] }
 # Test-only CommonMark event parser for executable documentation. No renderer or CLI features.

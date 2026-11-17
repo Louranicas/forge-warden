@@ -9,8 +9,9 @@ use crate::nonempty::NonEmpty;
 use crate::path::{PathError, RepoPath};
 use crate::seal::Sha256Hex;
 use crate::vocab::{Side, Signal, Status};
+use alloc::collections::BTreeSet;
+use alloc::{borrow::ToOwned, boxed::Box, string::String, string::ToString, vec::Vec};
 use serde::Deserialize;
-use std::collections::BTreeSet;
 
 /// The only ranking schema this version reads.
 pub const RANK_SCHEMA: &str = "deep-diff-forge.rank.v0";
@@ -499,6 +500,7 @@ fn validate_file(index: usize, raw: RawFile) -> Result<RankedFile, RankError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, vec};
 
     const SEAL: &str = "9317219840467a00fbb7bc3ff905b0ae26a999582c12c8d02f49d380b398bbb3";
 
@@ -553,7 +555,7 @@ mod tests {
             let names = ["a", "b", "c/d", "e"];
             let paths: Vec<&str> = picks.iter().filter_map(|i| names.get(*i).copied()).collect();
             let doc = ranking(&paths);
-            let mut counts = std::collections::BTreeMap::new();
+            let mut counts = alloc::collections::BTreeMap::new();
             for p in &paths {
                 let n = counts.entry(*p).or_insert(0u32);
                 *n = n.saturating_add(1);

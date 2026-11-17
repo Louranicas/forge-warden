@@ -1,5 +1,7 @@
 //! A list that cannot be empty, so code that needs "at least one" never needs a default.
 
+use alloc::vec::Vec;
+
 /// One or more values, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -27,7 +29,7 @@ impl<T> NonEmpty<T> {
 
     /// Every value, in order.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
-        std::iter::once(&self.head).chain(self.tail.iter())
+        core::iter::once(&self.head).chain(self.tail.iter())
     }
 
     /// How many values (at least 1).
@@ -62,6 +64,7 @@ impl<T> NonEmpty<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn empty_is_refused_and_order_is_kept() {

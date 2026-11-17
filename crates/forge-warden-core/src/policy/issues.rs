@@ -5,6 +5,7 @@
 //! that refuses the whole policy (R-07: a rule kind without a checker used to vanish silently).
 
 use super::PolicyIssue;
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
 /// Every issue found so far, in the order found.
 pub(super) struct Issues(Vec<PolicyIssue>);

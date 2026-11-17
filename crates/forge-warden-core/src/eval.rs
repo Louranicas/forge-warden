@@ -21,7 +21,8 @@ use crate::verdict::{
     Citation, Note, NoteCode, RuleOutcome, RuleResult, Seals, Verdict, Violation, WaiverNote,
 };
 use crate::vocab::{Signal, Status};
-use std::collections::BTreeSet;
+use alloc::collections::BTreeSet;
+use alloc::{borrow::ToOwned, format, string::String, string::ToString, vec, vec::Vec};
 
 /// Evaluate `policy` over `rank`, judging waivers as of `today`. The raw rule engine: it knows
 /// nothing of provenance or coverage, so it is crate-private (Q1-01). The only public judges are

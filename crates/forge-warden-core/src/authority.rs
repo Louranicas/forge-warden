@@ -27,8 +27,9 @@ use crate::policy::{AdmittedProducer, Policy};
 use crate::rank::RankDoc;
 use crate::seal::Sha256Hex;
 use crate::verdict::{Claims, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
-use std::collections::BTreeMap;
-use std::marker::PhantomData;
+use alloc::collections::BTreeMap;
+use alloc::{borrow::ToOwned, format, string::ToString, vec, vec::Vec};
+use core::marker::PhantomData;
 
 /// Marker: forge-warden ran the pinned ranker itself.
 #[derive(Debug)]
@@ -63,6 +64,23 @@ impl Ranking<Supplied> {
 /// `Copy` and has no public field, so a second mint needs a second key, which only
 /// [`MintKey::new`] makes, and that exists only with the feature `mint` (EFFECT-WALL step 1,
 /// ruling R1: "once" by move semantics, no process-wide state in the core).
+///
+/// Pinned, so that a re-blessed public-API snapshot cannot let a copy in (Bastion, S1 verify): the
+/// key is not `Clone`,
+/// ```compile_fail,E0277
+/// fn needs_clone<T: Clone>() {}
+/// needs_clone::<forge_warden_core::authority::MintKey>();
+/// ```
+/// not `Copy`,
+/// ```compile_fail,E0277
+/// fn needs_copy<T: Copy>() {}
+/// needs_copy::<forge_warden_core::authority::MintKey>();
+/// ```
+/// and not `Default`.
+/// ```compile_fail,E0277
+/// fn needs_default<T: Default>() {}
+/// needs_default::<forge_warden_core::authority::MintKey>();
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct MintKey {}

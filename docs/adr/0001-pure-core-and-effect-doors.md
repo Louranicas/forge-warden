@@ -36,3 +36,15 @@ moved with the code to `crates/forge-warden-cli/src/doors/**`.
   holds it to that, and the core cannot reach an effect (`clippy.toml`, `repo_invariants.rs`).
 - The date is an explicit input (`--today`), which also makes waiver expiry testable.
 - Adding an effect costs a reviewed diff to one small file. That cost is the point.
+
+## Amendment (2026-11-17, EFFECT-WALL step 2): the core is `no_std`
+
+The core's purity no longer rests on a list. `forge-warden-core` is `#![no_std]` (with `alloc`): it cannot name
+`std::fs`, `std::net`, `std::process`, `std::env`, `std::thread` or `std::time` at all, so an effect of any
+spelling, listed in `clippy.toml` or not, is a compile error there. Its glob matcher is its own (`policy/glob.rs`, a
+port of globset 0.4.21 with the options the policy used, pinned and differentially tested against globset), because
+globset has no `no_std` mode; its other dependencies (serde, serde_json, sha2, thiserror, toml) are built without
+`std` for it, and the binary turns `std` back on for its own use. What remains as text is exact
+(`the_core_is_no_std_unconditionally`): the one unconditional `#![no_std]` line, no `extern crate std`, and no core
+feature that enables anything. The core's `clippy.toml` still refuses hash-ordered collections, which `alloc` has.
+

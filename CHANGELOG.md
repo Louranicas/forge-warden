@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- `forge-warden-core` is `#![no_std]` (with `alloc`, EFFECT-WALL step 2): an effect of any spelling is a compile
+  error in the core, not only the ones `clippy.toml` lists. It matches policy globs with its own matcher, which
+  reproduces globset 0.4.21 (the same patterns refused with the same words, the same answers); globset is no longer a
+  dependency of the core. Library users: the core's dependencies are built without `std` features unless another
+  crate in your build turns them on.
 - Core API (EFFECT-WALL step 1, ruling R1): `Ranking::attest` takes a `MintKey` it consumes; `MintKey::new` exists
   only with the new core feature `mint`, which only the CLI enables. The binary's door hands out one key per run, and
   `clippy.toml` denies `MintKey::new` outside it, so a second mint is refused in every spelling; the text count of

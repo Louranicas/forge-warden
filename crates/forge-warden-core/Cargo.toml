@@ -24,7 +24,6 @@ unattested-evaluate = []
 mint = []
 
 [dependencies]
-globset.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -34,4 +33,6 @@ toml.workspace = true
 [dev-dependencies]
 # The engine tests (tests/*.rs) judge raw rankings through the unattested-evaluate door.
 forge-warden-core = { path = ".", features = ["unattested-evaluate", "mint"] }
+# EFFECT-WALL step 2b: the differential oracle for the core's own glob matcher (src/policy/glob.rs tests).
+globset.workspace = true
 proptest.workspace = true

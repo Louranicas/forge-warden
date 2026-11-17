@@ -7,7 +7,8 @@
 
 use crate::defaults::NamedDefault as _;
 use crate::verdict::{Note, RuleOutcome, Verdict};
-use std::fmt::Write as _;
+use alloc::{borrow::ToOwned, format, string::String};
+use core::fmt::Write as _;
 
 /// `text` with every character outside printable ASCII (0x20..=0x7e) escaped as `\u{XXXX}`, and
 /// backslashes doubled so the escaping is unambiguous.

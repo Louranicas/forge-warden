@@ -111,6 +111,7 @@ impl Field {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn names_round_trip_and_are_distinct() {

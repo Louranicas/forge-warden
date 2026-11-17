@@ -184,6 +184,7 @@ pub fn entry_by_code(code: u8) -> Option<&'static ExitEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[test]
     fn registry_is_sorted_and_unique() {

@@ -319,18 +319,13 @@ fn declared_dependencies(manifest: &str) -> Result<Vec<(String, String)>, String
 /// The dependencies of a core manifest that are not on the core's allow-list. A manifest that is
 /// not valid TOML is itself a violation (fails closed).
 fn core_dependency_violations(manifest: &str) -> Vec<String> {
-    const ALLOWED: [&str; 6] = [
-        "globset",
-        "serde",
-        "serde_json",
-        "sha2",
-        "thiserror",
-        "toml",
-    ];
+    const ALLOWED: [&str; 5] = ["serde", "serde_json", "sha2", "thiserror", "toml"];
     // `forge-warden-core` itself: the engine tests' self dev-dependency that enables the
     // `unattested-evaluate` test door (Q-TYPES-1); a normal dependency may never enable it
     // (`no_normal_dependency_opens_the_unattested_evaluate_door`).
-    const ALLOWED_DEV: [&str; 2] = ["forge-warden-core", "proptest"];
+    // `globset`: since EFFECT-WALL step 2b the core matches globs itself (no_std); globset 0.4.21 stays
+    // only as the differential oracle of that matcher's tests (src/policy/glob.rs).
+    const ALLOWED_DEV: [&str; 3] = ["forge-warden-core", "globset", "proptest"];
     let declared = match declared_dependencies(manifest) {
         Ok(declared) => declared,
         Err(error) => return vec![format!("the manifest is not valid TOML: {error}")],
@@ -1340,4 +1335,52 @@ fn only_bound_mode_verifies_claims() {
             .contains("let made = doors::child::bound_diff(git, &objects, base, head)"),
         "made is the door's bound diff"
     );
+}
+
+#[test]
+fn the_core_is_no_std_unconditionally() {
+    // EFFECT-WALL step 2c (DESIGN 3.1, Bastion's R3): the core cannot name `std`, so no effect of
+    // any spelling compiles there. What keeps it so is exact: `#![no_std]` is the one unconditional
+    // inner attribute of lib.rs (no `cfg_attr` form anywhere: the word `no_std` appears in the core's
+    // code exactly once, on that line); no core source says `extern crate std` in any spelling; and
+    // no feature of the core enables anything (so none can switch `std` back on by unification).
+    let lib = read("crates/forge-warden-core/src/lib.rs");
+    assert_eq!(
+        lib.lines().filter(|line| *line == "#![no_std]").count(),
+        1,
+        "crates/forge-warden-core/src/lib.rs must keep the line `#![no_std]`"
+    );
+    let mut no_std_words = 0_usize;
+    for (path, text) in rust_sources() {
+        if !path.starts_with("crates/forge-warden-core/src/") {
+            continue;
+        }
+        for (line, code) in code_lines(&text) {
+            no_std_words = no_std_words
+                .checked_add(code.matches("no_std").count())
+                .unwrap();
+            let words: Vec<&str> = code.split_whitespace().collect();
+            let links_std = words.windows(3).any(
+                |w| matches!(w, ["extern", "crate", krate] if krate.trim_end_matches(';') == "std"),
+            );
+            assert!(
+                !links_std,
+                "{path}:{}: the core may not link std (`extern crate std`, in any spelling)",
+                line.saturating_add(1)
+            );
+        }
+    }
+    assert_eq!(
+        no_std_words, 1,
+        "`no_std` must appear once in the core's code: the unconditional `#![no_std]` (no cfg_attr form)"
+    );
+    let manifest: toml::Table =
+        toml::from_str(&read("crates/forge-warden-core/Cargo.toml")).unwrap();
+    for (name, enables) in manifest["features"].as_table().unwrap() {
+        assert_eq!(
+            enables.as_array().map(Vec::len),
+            Some(0),
+            "core feature `{name}` enables something; none may (it could switch std on): {enables:?}"
+        );
+    }
 }

@@ -11,7 +11,8 @@ use crate::defaults::NamedDefault as _;
 use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
 use crate::vocab::{Signal, is_known_signal, suggest_signal};
-use std::collections::BTreeSet;
+use alloc::collections::BTreeSet;
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 
 /// The policy schema without the `[claims]` table (0.1.0 to 0.2.x, still read unchanged).
 pub const POLICY_SCHEMA: &str = "forge-warden.policy.v0";
@@ -36,7 +37,7 @@ pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
     if bytes.len() > crate::MAX_POLICY_BYTES {
         return Err(PolicyError::TooLarge(bytes.len()));
     }
-    let text = std::str::from_utf8(bytes).map_err(|e| PolicyError::Malformed {
+    let text = core::str::from_utf8(bytes).map_err(|e| PolicyError::Malformed {
         message: format!("not UTF-8: {e}"),
         at: None,
     })?;

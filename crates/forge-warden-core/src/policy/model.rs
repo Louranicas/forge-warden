@@ -7,6 +7,7 @@ use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
 use crate::vocab::Signal;
+use alloc::{string::String, vec::Vec};
 
 /// A validated policy.
 #[derive(Debug, Clone)]

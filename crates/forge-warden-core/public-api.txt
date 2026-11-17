@@ -195,6 +195,10 @@ crate::policy::error impl fmt::Display for PolicyIssue
 crate::policy::error PolicyIssue::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 crate::policy::error impl fmt::Display for IssueList<'_>
 crate::policy::error IssueList::fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+crate::policy::glob impl Parser<'_>
+crate::policy::glob impl Bytes
+crate::policy::glob impl Builder
+crate::policy::glob impl Glob
 crate::policy::issues impl Issues
 crate::policy::kind #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum Kind
 crate::policy::kind Kind::ForbidSignal,
@@ -340,8 +344,8 @@ crate::seal impl Sha256Hex
 crate::seal Sha256Hex::#[must_use] pub fn of(bytes: &[u8]) -> Self
 crate::seal Sha256Hex::pub fn parse(text: &str) -> Result<Self, SealError>
 crate::seal Sha256Hex::#[must_use] pub fn as_str(&self) -> &str
-crate::seal impl std::fmt::Display for Sha256Hex
-crate::seal Sha256Hex::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::seal impl core::fmt::Display for Sha256Hex
+crate::seal Sha256Hex::fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex
 crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v3";
 crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
@@ -443,7 +447,7 @@ crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub p
 crate::verdict Violation.pub message: String,
 crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub signal: Option<String>,
 crate::verdict Violation.#[serde(skip_serializing_if = "Vec::is_empty")] pub evidence: Vec<Citation>,
-crate::verdict Violation.#[serde(skip_serializing_if = "std::ops::Not::not")] pub evidence_truncated: bool,
+crate::verdict Violation.#[serde(skip_serializing_if = "core::ops::Not::not")] pub evidence_truncated: bool,
 crate::verdict Violation.#[serde(skip_serializing_if = "Option::is_none")] pub waived_by: Option<usize>,
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)] #[non_exhaustive] pub struct Citation
 crate::verdict Citation.pub address: Sha256Hex,
@@ -510,11 +514,11 @@ crate::vocab Signal::#[must_use] pub fn parse(name: &str) -> Self
 crate::vocab Signal::#[must_use] pub fn name(&self) -> &str
 crate::vocab Signal::#[must_use] pub const fn is_known(&self) -> bool
 crate::vocab impl PartialOrd for Signal
-crate::vocab Signal::fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+crate::vocab Signal::fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering>
 crate::vocab impl Ord for Signal
-crate::vocab Signal::fn cmp(&self, other: &Self) -> std::cmp::Ordering
-crate::vocab impl std::fmt::Display for Signal
-crate::vocab Signal::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab Signal::fn cmp(&self, other: &Self) -> core::cmp::Ordering
+crate::vocab impl core::fmt::Display for Signal
+crate::vocab Signal::fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 crate::vocab impl serde::Serialize for Signal
 crate::vocab Signal::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::vocab #[derive(Debug, Clone, PartialEq, Eq)] pub enum Status
@@ -533,11 +537,11 @@ crate::vocab Status::#[must_use] pub fn parse(name: &str) -> Self
 crate::vocab Status::#[must_use] pub fn name(&self) -> &str
 crate::vocab Status::#[must_use] pub const fn is_known(&self) -> bool
 crate::vocab impl PartialOrd for Status
-crate::vocab Status::fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering>
+crate::vocab Status::fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering>
 crate::vocab impl Ord for Status
-crate::vocab Status::fn cmp(&self, other: &Self) -> std::cmp::Ordering
-crate::vocab impl std::fmt::Display for Status
-crate::vocab Status::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab Status::fn cmp(&self, other: &Self) -> core::cmp::Ordering
+crate::vocab impl core::fmt::Display for Status
+crate::vocab Status::fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 crate::vocab impl serde::Serialize for Status
 crate::vocab Status::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::vocab #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] pub enum Side
@@ -546,8 +550,8 @@ crate::vocab Side::Old,
 crate::vocab impl Side
 crate::vocab Side::#[must_use] pub fn parse(name: &str) -> Option<Self>
 crate::vocab Side::#[must_use] pub const fn name(self) -> &'static str
-crate::vocab impl std::fmt::Display for Side
-crate::vocab Side::fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+crate::vocab impl core::fmt::Display for Side
+crate::vocab Side::fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 crate::vocab impl serde::Serialize for Side
 crate::vocab Side::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::vocab #[must_use] pub fn is_known_signal(name: &str) -> bool

@@ -1,6 +1,7 @@
 //! The TOML shapes a policy is read into.
 
 use super::kind::Field;
+use alloc::{string::String, vec::Vec};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

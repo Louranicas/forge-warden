@@ -3,6 +3,7 @@
 use super::validate::is_kebab_id;
 use super::*;
 use crate::seal::Sha256Hex;
+use alloc::{borrow::ToOwned, format, string::String, string::ToString, vec, vec::Vec};
 
 fn rule(body: &str) -> String {
     format!("schema = \"forge-warden.policy.v0\"\n[[rule]]\n{body}\n")
