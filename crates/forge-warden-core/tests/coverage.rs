@@ -1,7 +1,8 @@
 //! ADR 0005 §2.2/§2.9 over a permanent corpus: reviewed real patches (Mission 3 forgeries, Keel's and
 //! Touchstone's held-out cases, renames, binaries, modes, symlinks, submodules, odd names, CRLF,
 //! `--no-prefix`), each with Git's captured `apply --numstat -z` / `--summary` output and a ranking
-//! written by the real deep-diff-forge 0.7.0 binary. `fixtures/coverage/cases.json` holds the
+//! written by the real deep-diff-forge 0.7.0 binary (the `ddf083-*` cases: deep-diff-forge 0.8.3's known
+//! findings G1/G2 with 0.8.3's own ranking, each held). `fixtures/coverage/cases.json` holds the
 //! expected classification of each and the Git version that produced the captures.
 #![expect(
     clippy::disallowed_methods,

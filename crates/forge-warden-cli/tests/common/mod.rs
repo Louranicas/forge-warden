@@ -518,7 +518,7 @@ pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
     ),
     (
         "schemas/verdict.v3.schema.json",
-        "c33068ef37b7da18e06751b401f5e2194ac47f0304aa0c903dd36d53b75b2d92",
+        "a4866a3d8e8e3cadee2d7d5d235ba79bf8905e95377a42f4cd0024c91963cfe8",
     ),
 ];
 /// The workspace's members, from `cargo metadata --no-deps`: their exact package IDs and their

@@ -200,6 +200,22 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
 - **Patches for bound mode come from `scripts/make_patch.sh` of 0.3.0** (patch-maker v2, `--full-index`).
   A patch made by 0.2.x's script has abbreviated `index` lines, so `--repo` refuses it (exit 4); make it
   again.
+- **The ranker pin is deep-diff-forge v0.8.3** (`[producer]` in `warden.toml`, `scripts/tool-versions.toml`;
+  owner decision D4: the newest release, with its stated limits). A policy that pins 0.8.2's binary keeps working
+  with 0.8.2; to move, list the v0.8.3 binary's SHA-256 from the [runbook](RUNBOOK.md), step 3. 0.8.3 refuses
+  some patches 0.8.2 ranked (malformed `index`-line modes; in authority mode: exit 3, no verdict) and ranks every
+  other measured patch identically (vocabulary, statuses, paths, scores). Stated limit: 0.8.3 has two open high
+  findings (G1 `Files … differ` after an `index` line; G2 several sections on one path); forge-warden holds both
+  shapes itself, and `fixtures/coverage` keeps one case of each as its test.
 - **Library users:** `Claims` has private fields and two forms (read it with `base()`, `head()`,
   `merge_base()`, `verified()`); `Unverified` is gone. Verified claims come only from
   `BoundClaims::from_comparison`.
+- **A new hold no policy can remove: `builtin:binary-on-executable`** (ledger Q64; the gap the 0.2.1
+  notes above call "not covered"). A binary section on a file whose mode after the change is `100755` or
+  `120000` now holds whatever the policy says, listed in `rules` with kind `builtin` (a new value in v3's
+  rule `kind`; a rule id may now start with `builtin:`). A repository that commits executable binaries (a
+  vendored tool, a prebuilt helper) gets one hold per change to them: acknowledge it like a policy hold
+  (`scripts/hold_ack.py`), or keep those files out of the patch. It cannot be waived. Measured on four
+  repositories' whole history (Q63's set), it holds no commit there. A binary edit's mode is read from its
+  `index` line, which is Git's own only in bound mode (`--repo`); without `--repo` a falsely stated
+  `100644` is not caught. 0.3.0 also reads a binary section's header lines only up to `GIT binary patch`.
