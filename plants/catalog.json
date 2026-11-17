@@ -1903,8 +1903,6 @@
         "forge-warden-cli",
         "--locked",
         "--offline",
-        "--test",
-        "authority_mode",
         "--",
         "bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other"
       ],
