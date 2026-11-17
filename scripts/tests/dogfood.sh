@@ -71,7 +71,22 @@ case " $* " in
   [ "${EXPECT_MODE:-authority}" = authority ] || exit 98
   # As the real judge does without an owner-enrolled Git allowlist: exit 3, no verdict.
   if [ "${ALLOWLIST:-enrolled}" != enrolled ]; then echo 'Git admission: no Git allowlist enrolled' >&2; exit 3; fi
-  [ "$RANK_EXIT" = 0 ] || exit 3 ;;
+  [ "$RANK_EXIT" = 0 ] || exit 3
+  # Bound mode with the candidate's own object store (ADR 0012), and verified claims unless a row
+  # asks for an unbound verdict.
+  repo=; base=; head=; prev=
+  for arg in "$@"; do case "$prev" in --repo) repo="$arg" ;; --base) base="$arg" ;; --head) head="$arg" ;; esac; prev="$arg"; done
+  [[ "$repo" == /* ]] && git --git-dir="$repo" cat-file -e "$head^{commit}" 2> /dev/null || exit 95
+  # The claims forge-warden writes (verdict.v3 seals.claims): bound, or asserted (verified false); and two
+  # forgeries the driver must refuse: `verified` as a string, and bound claims for another head.
+  case "${CLAIMS:-verified}" in
+   verified) claims="{\"base\":\"$base\",\"head\":\"$head\",\"merge_base\":\"$base\",\"verified\":true}" ;;
+   asserted) claims="{\"base\":\"$base\",\"head\":\"$head\",\"verified\":false}" ;;
+   string-true) claims="{\"base\":\"$base\",\"head\":\"$head\",\"merge_base\":\"$base\",\"verified\":\"true\"}" ;;
+   other-head) claims="{\"base\":\"$base\",\"head\":\"$base\",\"merge_base\":\"$base\",\"verified\":true}" ;;
+  esac
+  printf '{"seals":{"claims":%s}}\n' "$claims"
+  exit "$JUDGE_EXIT" ;;
  *' --advisory '*)
   [ "${EXPECT_MODE:-advisory}" = advisory ] || exit 98
   [[ " $* " == *' --rank '* ]] || exit 97 ;;
@@ -126,6 +141,23 @@ for row in 'pass 0 0 0 0' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 3' 'bu
  if [ "$RANK_EXIT" -ne 0 ] || [ "$BUILD_EXIT" -ne 0 ]; then test ! -s "$out/verdict.json"; fi
  echo "PASS $name exit=$actual"
 done
+# PATCH-BOUND (c) part 2: an authority verdict without verified bound claims for this base and head is
+# refused (exit 4), whatever it says: asserted claims (verified false), `verified` as a string, and bound
+# claims for another head (Bastion MUST 1 and LOW 2 on faf15e16).
+for row in 'unbound-pass asserted 0' 'unbound-hold asserted 8' 'string-true string-true 0' 'other-head other-head 0'; do
+ read -r name CLAIMS JUDGE_EXIT <<< "$row"
+ export JUDGE_EXIT CLAIMS BUILD_EXIT=0 RANK_EXIT=0
+ out="$sandbox/evidence-$name"
+ set +e
+ bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$out" > "$sandbox/output" 2>&1
+ actual=$?
+ set -e
+ if [ "$actual" -ne 4 ] || ! grep -q 'no verified bound claims' "$sandbox/output"; then
+  cat "$sandbox/output"; echo "FAIL $name: an authority verdict without verified claims gave exit $actual"; exit 1
+ fi
+ echo "PASS $name refused: no verified bound claims"
+done
+unset CLAIMS
 # DOGFOOD-ATTR (C2): the candidate's own attributes do not shape the patch. A candidate that adds
 # `* -diff` at the root and `binary` in a subdirectory, with a secret-shaped added line, must still
 # reach the judge as readable added text, not as `GIT binary patch` hunks.
@@ -251,6 +283,25 @@ if bash "$maker" "$(ccgit rev-parse m1)" "$(ccgit rev-parse m2)" "$cc" > "$sandb
   exit 1
 fi
 echo 'PASS make_patch refuses several merge bases with the door message'
+# Bastion LOW (1591): a failure of Git is not called "no common history". Unrelated histories are
+# (merge-base exits 1, silent); a shallow clone lacking the commits between base and head is Git's
+# error, shown with its first line and the remedy.
+ccgit checkout -q --orphan unrelated; ccgit rm -rqf .; printf 'u\n' > "$cc/u.txt"; ccgit add u.txt; ccgit commit -qm unrelated
+if bash "$maker" "$x" "$(ccgit rev-parse unrelated)" "$cc" > "$sandbox/made.patch" 2> "$sandbox/made.err" \
+  || [ -s "$sandbox/made.patch" ] || ! grep -q 'no common history' "$sandbox/made.err"; then
+  echo "FAIL make_patch: unrelated histories were not refused as such: $(cat "$sandbox/made.err")"
+  exit 1
+fi
+# Only x and y, one commit deep: their common parent is not in the clone.
+git clone -q --depth 1 --single-branch --branch x "file://$cc" "$sandbox/shallow" 2> /dev/null
+git -C "$sandbox/shallow" fetch -q --depth 1 origin y:refs/remotes/origin/y 2> /dev/null
+if bash "$maker" "$(git -C "$sandbox/shallow" rev-parse HEAD)" "$(git -C "$sandbox/shallow" rev-parse origin/y)" "$sandbox/shallow" \
+  > "$sandbox/made.patch" 2> "$sandbox/made.err" || [ -s "$sandbox/made.patch" ] \
+  || ! grep -q 'git merge-base failed' "$sandbox/made.err" || grep -q 'no common history' "$sandbox/made.err"; then
+  echo "FAIL make_patch: a shallow clone's missing history was called something else: $(cat "$sandbox/made.err")"
+  exit 1
+fi
+echo 'PASS make_patch tells unrelated histories from a Git failure (shallow clone)'
 # SUBMODULE-PIN (outside review O1): a submodule change always reaches the patch as its own
 # `diff --git` section. The candidate's work tree holds the change's own `.gitmodules` with
 # `ignore = all`; with that file alone, a `git diff` without the two submodule options leaves the

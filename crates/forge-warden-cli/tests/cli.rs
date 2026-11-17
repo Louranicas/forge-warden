@@ -7,8 +7,8 @@
 
 mod common;
 use common::{
-    fixture_ranker, fixture_ranker_sha256, policy_admitting, read, read_bytes, run, scratch, text,
-    write,
+    fixture_ranker, fixture_ranker_sha256, git_in, make_patch, policy_admitting, read, read_bytes,
+    run, scratch, text, write,
 };
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -71,10 +71,28 @@ fn golden_verdict_for_the_demo_change() {
 
 #[test]
 fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
-    // The fixture ranker replays the same recorded ranking, so authority mode must judge the demo
-    // exactly as the golden does; only who produced the ranking (and the policy that admits the
-    // producer) differ, and nothing is left unverified.
+    // The starter requires verified claims (ruling 1663), so authority mode judges the demo in
+    // bound mode: a real repository holding the demo change, the patch `make_patch.sh` makes of it
+    // (fixtures/demo.patch with full index ids), and the fixture ranker replaying the recorded
+    // ranking for that form. It must judge exactly as the golden does; only who produced the
+    // ranking, the policy that admits the producer, and the digests of the full-index patch and of
+    // the resealed ranking differ, and nothing is left unverified.
     let dir = scratch("golden-authority");
+    let (repo, base, head) = demo_repository();
+    let made = make_patch(&repo, &base, &head);
+    let demo = read(PATCH);
+    let without_index = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|line| !line.starts_with("index "))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(
+        without_index(std::str::from_utf8(&made).unwrap()),
+        without_index(&demo),
+        "make_patch's form of the demo differs from fixtures/demo.patch beyond its index lines"
+    );
+    let patch = write(&dir, "demo.full-index.patch", &made);
     let policy = policy_admitting(&dir, POLICY, &[fixture_ranker_sha256()]);
     let ranker = fixture_ranker();
     let out = run(
@@ -83,9 +101,15 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
             "--policy",
             text(&policy),
             "--patch",
-            PATCH,
+            text(&patch),
             "--ranker",
             text(&ranker),
+            "--repo",
+            text(&repo),
+            "--base",
+            base.as_str(),
+            "--head",
+            head.as_str(),
             "--today",
             TODAY,
             "--json",
@@ -102,6 +126,14 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
         fixture_ranker_sha256()
     );
     assert_eq!(produced["notes"], serde_json::json!([]));
+    assert_eq!(
+        produced["seals"]["claims"],
+        serde_json::json!({"base": base, "head": head, "merge_base": base, "verified": true})
+    );
+    assert_eq!(
+        produced["seals"]["patch_sha256"],
+        forge_warden_core::seal::sha256_hex(&made).as_str()
+    );
     assert_eq!(
         golden["notes"],
         serde_json::json!([{"code": "rank_unverified", "detail": "the ranking was supplied, not produced by forge-warden; it can inform, never approve; Git is unpinned: no owner allowlist enrolled; its recorded executable digest is not approved"}])
@@ -121,12 +153,48 @@ fn authority_mode_on_the_demo_reaches_the_golden_judgement() {
     produced["seals"]["provenance"] = "supplied".into();
     produced["seals"]["ranked_by"]["sha256"] = Value::Null;
     produced["notes"] = golden["notes"].clone();
+    // The full-index patch and the ranking resealed over it have their own digests; the advisory
+    // golden judged fixtures/demo.patch and the recorded ranking without claims.
+    produced["seals"]["patch_sha256"] = golden["seals"]["patch_sha256"].clone();
+    produced["seals"]["rank_sha256"] = golden["seals"]["rank_sha256"].clone();
+    produced["seals"].as_object_mut().unwrap().remove("claims");
     common::assert_golden_json("fixtures/demo.verdict.json", &produced);
     assert_eq!(
         golden["seals"]["rank_sha256"],
         forge_warden_core::seal::sha256_hex(&read_bytes(RANK)).as_str(),
         "the produced ranking is the recorded one"
     );
+}
+
+/// A real repository holding the demo change: (repo, base, head). Every hunk of fixtures/demo.patch
+/// covers its whole file, so base holds each file as the hunk's old side, and head is base with
+/// the patch applied (Git reproduces its blob ids, so `git diff` of the two is the patch).
+fn demo_repository() -> (common::Scratch, String, String) {
+    let repo = scratch("demo-repository");
+    git_in(&repo, &["init", "-q", "-b", "main"]);
+    let demo = read(PATCH);
+    for section in demo.split("diff --git a/").skip(1) {
+        let path = section.split(' ').next().unwrap();
+        let old_side = section
+            .lines()
+            .skip_while(|line| !line.starts_with("@@"))
+            .skip(1)
+            .filter_map(|line| line.strip_prefix(' ').or_else(|| line.strip_prefix('-')))
+            .fold(String::new(), |mut text, line| {
+                writeln!(text, "{line}").unwrap();
+                text
+            });
+        write(&repo, path, old_side.as_bytes());
+    }
+    git_in(&repo, &["add", "-A"]);
+    git_in(&repo, &["commit", "-q", "-m", "base"]);
+    let base = git_in(&repo, &["rev-parse", "HEAD"]);
+    let patch = common::root().join(PATCH);
+    git_in(&repo, &["apply", text(&patch)]);
+    git_in(&repo, &["add", "-A"]);
+    git_in(&repo, &["commit", "-q", "-m", "head"]);
+    let head = git_in(&repo, &["rev-parse", "HEAD"]);
+    (repo, base, head)
 }
 
 #[test]

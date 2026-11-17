@@ -167,6 +167,14 @@ class BoundAck(unittest.TestCase):
         self.write_verdict()
         self.assertEqual(self.run_helper("prepare", "--signer", "fixture").returncode, 8)
 
+    def test_a_claims_unverified_hold_cannot_be_acknowledged(self):
+        # ADR 0012 D8 (Lodestar's ruling on Touchstone 1563): the only way past it is a bound run.
+        self.verdict["notes"] = [{"code": "claims_unverified", "detail": "policy requires verified claims"}]
+        self.write_verdict()
+        out = self.run_helper("prepare", "--signer", "fixture")
+        self.assertEqual(out.returncode, 8, out.stderr)
+        self.assertIn(b"cannot be acknowledged", out.stderr)
+
     def test_new_base_invalidates(self):
         self.base = "d" * 40
         self.verify()

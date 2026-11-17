@@ -1,11 +1,11 @@
-#:schema ./schemas/policy.v0.schema.json
+#:schema ./schemas/policy.v1.schema.json
 # forge-warden judges its own pull requests with this policy (.github/workflows/ci.yml, job
 # `dogfood`). It is the starter policy tightened for a Rust crate whose core must stay pure, and
 # loosened in two places: no-hidden-text does not apply to fixtures/** (the hostile test inputs carry
 # that signal on purpose; any fixtures change is still held for review by golden-output-needs-review
 # and quality-config-is-owned), and tests-travel-with-code holds rather than fails (inline
 # #[cfg(test)] tests in src/ are invisible to it, so whether a change is tested is a person's call).
-schema = "forge-warden.policy.v0"
+schema = "forge-warden.policy.v1"
 
 # The ranker `check --ranker` may run (authority mode): the released deep-diff-forge v0.8.3
 # binary for x86_64-unknown-linux-gnu, pinned by its bytes. It is the `deep-diff-forge` file inside
@@ -14,6 +14,12 @@ schema = "forge-warden.policy.v0"
 # A binary built from that source elsewhere has other bytes and is not admitted.
 [producer]
 sha256 = ["4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1"]
+
+# Bound mode (ADR 0012): a verdict on this repository's changes counts only if forge-warden made the
+# diff itself (`check --repo`, as scripts/dogfood.sh runs it). Without verified claims an authority
+# verdict holds with `claims_unverified`, which no acknowledgement accepts: re-run in bound mode.
+[claims]
+require_verified = true
 
 [[rule]]
 id = "no-secrets"
@@ -71,8 +77,8 @@ signals = ["test_removed"]
 # to make Git write one. `binary_change` comes from Git's numstat, not from the ranker. The three globs name
 # files that are normally text, by extension, by exact name (ten of Git's hook names, `configure` and
 # others a shell runs) and by name prefix, in any letter case (ledger Q63). Git's other hook names
-# (`post-commit`, `post-rewrite`, ...) are not listed. An executable with another name is not covered:
-# protect `bin/**` and the like with a path rule.
+# (`post-commit`, `post-rewrite`, ...) are not listed. A binary section on an executable or a symlink, whatever
+# its name, is held by forge-warden's built-in rule builtin:binary-on-executable (M7-Q64), not by this rule.
 [[rule]]
 id = "binary-text-is-hidden-text"
 why = "A text file sent as a binary section hides its lines from every signal rule; a person reads it."

@@ -8,7 +8,9 @@
 //!    `wrong-seal` (seal another patch), `flood` (write past any stdout budget), `omit <path>` (leave
 //!    a file out), or `signal <name>` (add a signal to the file the line is in);
 //! 2. otherwise replays deep-diff-forge 0.7.0's recorded ranking when the patch is one of the
-//!    committed fixtures (`fixtures/demo.patch`, `fixtures/coverage/*.patch`), byte for byte;
+//!    committed fixtures (`fixtures/demo.patch`, `fixtures/coverage/*.patch`), byte for byte, or is
+//!    `fixtures/demo.patch` written with full object ids on its `index` lines (the form bound mode
+//!    makes): the same ranking, its `input_sha256` re-made over the input (the hunks are the same);
 //! 3. otherwise prints a synthetic ranking read from the patch headers: each file once, status
 //!    `added`, `deleted` or `modified`, with `new_file` or `deleted_file` where Git would derive it.
 //!    An unprefixed header (the same name twice) is ranked under the name without its first
@@ -153,10 +155,45 @@ fn recorded(patch: &[u8]) -> Option<Vec<u8>> {
         }
     }
     candidates.sort();
-    candidates
+    let exact = candidates
         .into_iter()
         .find(|(candidate, _)| std::fs::read(candidate).is_ok_and(|bytes| bytes == patch))
-        .and_then(|(_, ranking)| std::fs::read(ranking).ok())
+        .and_then(|(_, ranking)| std::fs::read(ranking).ok());
+    exact.or_else(|| {
+        let demo = std::fs::read(fixtures.join("demo.patch")).ok()?;
+        (patch != demo.as_slice() && abbreviated(patch) == demo).then_some(())?;
+        let ranking =
+            String::from_utf8(std::fs::read(fixtures.join("demo.rank.json")).ok()?).ok()?;
+        let recorded_seal = format!("\"input_sha256\": \"{}\"", sha256_hex(&demo));
+        (ranking.matches(&recorded_seal).count() == 1).then_some(())?;
+        let seal = format!("\"input_sha256\": \"{}\"", sha256_hex(patch));
+        Some(ranking.replacen(&recorded_seal, &seal, 1).into_bytes())
+    })
+}
+
+/// `patch` with each `index A..B[ MODE]` line's object ids cut to Git's default seven digits.
+fn abbreviated(patch: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(patch.len());
+    for line in patch.split_inclusive(|byte| *byte == b'\n') {
+        let short = std::str::from_utf8(line)
+            .ok()
+            .and_then(|text| text.strip_prefix("index "))
+            .and_then(|rest| {
+                // The ids end at the mode's space or at the line end.
+                let end = match rest.find([' ', '\n']) {
+                    Some(at) => at,
+                    None => rest.len(),
+                };
+                let (ids, tail) = rest.split_at_checked(end)?;
+                let (old, new) = ids.split_once("..")?;
+                Some(format!("index {}..{}{tail}", old.get(..7)?, new.get(..7)?))
+            });
+        match short {
+            Some(text) => out.extend_from_slice(text.as_bytes()),
+            None => out.extend_from_slice(line),
+        }
+    }
+    out
 }
 
 fn emit(bytes: &[u8], code: u8) -> ExitCode {

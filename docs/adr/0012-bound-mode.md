@@ -314,3 +314,9 @@ is the crate that mints it). D5's sentence stays as written above; this entry re
 - **Still moved, with the reason:** cleanup after a Git killed from outside needs a native stand-in Git (admission takes
   only ELF executables); the timeout path, where the door itself kills the Git, is tested. The foreign-user-Git run stays
   with H16.
+
+## D8 note, 2026-11-16T20:19:00Z: a claims_unverified hold is not acknowledgeable (Lodestar ruling on Touchstone's 1563)
+D8 says a run under `require_verified` without bound claims "can at best HOLD". That hold is not acknowledgeable, by
+design: `scripts/hold_ack.py` refuses every verdict with a note, and acknowledging an unverified claim would undo the
+requirement. The only way past it is a bound run (`--repo` with full ids). A `claims_unverified` hold cannot be
+acknowledged; re-run in bound mode. Test: `scripts/tests/hold_ack.py` (`test_a_claims_unverified_hold_cannot_be_acknowledged`).

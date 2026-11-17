@@ -122,7 +122,10 @@ if [ "$hosted_advisory" = true ]; then
   advisory_reason='--hosted-advisory: a hosted runner has no owner-enrolled Git allowlist'
 fi
 if [ "$mode" = authority ]; then
-  judge_mode=(--ranker "$out/ranker/bin/deep-diff-forge")
+  # Bound mode (ADR 0012): the judge makes the diff itself from the candidate's objects and refuses a
+  # patch that is not byte-equal to it, so the verdict's claims are verified, not asserted.
+  candidate_git="$(git -C "$candidate" rev-parse --path-format=absolute --git-common-dir)"
+  judge_mode=(--ranker "$out/ranker/bin/deep-diff-forge" --repo "$candidate_git")
 else
   echo "dogfood: explicit advisory mode ($advisory_reason); this result cannot PASS" >&2
   "$out/ranker/bin/deep-diff-forge" --stdin-patch --rank --json < "$out/change.patch" > "$out/rank.json"
@@ -142,6 +145,19 @@ set +e
   "${judge_mode[@]}" --patch "$out/change.patch" --base "$base" --head "$head" --json > "$out/verdict.json"
 code=$?
 set -e
+# A verdict judged in authority mode carries verified bound claims for this base and head, whatever its
+# outcome: `verified` is JSON true (not a string, not false) and `base`/`head` are the ids passed. One that
+# does not was not judged in bound mode on this change, and is refused here rather than trusted (exit 4).
+if [ "$mode" = authority ] && { [ "$code" -eq 0 ] || [ "$code" -eq 7 ] || [ "$code" -eq 8 ]; }; then
+  if ! python3 -I -c 'import json, sys
+claims = json.load(open(sys.argv[1], encoding="utf-8")).get("seals", {}).get("claims", {})
+bound = isinstance(claims, dict) and claims.get("verified") is True
+sys.exit(0 if bound and claims.get("base") == sys.argv[2] and claims.get("head") == sys.argv[3] else 1)' \
+      "$out/verdict.json" "$base" "$head"; then
+    echo 'dogfood: the authority verdict has no verified bound claims for this base and head (seals.claims); not judged in bound mode' >&2
+    exit 4
+  fi
+fi
 if [ "$mode" = authority ] && [ "$code" -eq 8 ] && [ "$#" -eq 6 ]; then
   # Key lookup is inside this trusted checkout; receipt data never chooses a key path.
   if python3 -I "$trusted/scripts/hold_ack.py" verify --base "$base" --head "$head" \

@@ -146,7 +146,8 @@ implemented control for each property and why a stronger claim is unavailable.
   re-hashed when copying them out of the named repository: a store that holds bytes other than its
   ids name is refused, not believed, and the verdict records the claims as verified. forge-warden does
   not attest that those commits are the ones your pull request names (that is your CI's checkout and
-  the ids it passes). Without `--repo`, whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which
+  the ids it passes). Under a policy with `[claims] require_verified`, a `claims_unverified` hold cannot be acknowledged; re-run in bound mode: acknowledging an unverified
+  claim would undo the requirement. Without `--repo`, whoever makes the patch is inside the trust boundary: `scripts/make_patch.sh`, which
   `scripts/dogfood.sh` calls and the documents tell operators to use, makes it in a repository
   of its own that reads no configuration, with every option fixed. A patch made by hand
   with other settings can still pass for less than the change it claims to be.
