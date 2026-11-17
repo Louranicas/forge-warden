@@ -453,6 +453,10 @@ fn class_bytes(ranges: &[(char, char)]) -> Result<Bytes, String> {
         else {
             return Err(format!("invalid range; '{start}' > '{end}'"));
         };
+        // Unreachable, kept fail-closed: the parser already refused `start > end`, and then the first
+        // end's last byte is always below the second end's first byte (two ASCII bytes in order, or a
+        // UTF-8 continuation byte 0x80-0xBF against an ASCII byte or a lead byte of 0xC2 or more). So
+        // mutants of this comparison (`==`, `>=`) are equivalent: no input reaches it.
         if low > high {
             return Err(format!("invalid range; '{start}' > '{end}'"));
         }
@@ -571,26 +575,76 @@ mod tests {
 
     #[test]
     fn globset_and_the_matcher_agree_on_the_pinned_edges() {
-        for (pattern, path) in [
-            ("a/*/b", "a//b"),
-            ("src/*", "src/"),
-            ("*/", "a/"),
-            ("src/**", "src"),
-            ("**/a", "a"),
-            ("**", "\n/x"),
-            ("[!a]", "/"),
-            ("[é]", "é"),
-            ("?", "é"),
-            ("{a,}", ""),
-            ("{,}", ""),
-            ("a{,{,}}", "a"),
-        ] {
-            let set = globset(pattern).unwrap();
-            assert_eq!(
-                set.is_match(path),
-                compile(pattern).unwrap().matches(path),
-                "{pattern:?} on {path:?}"
-            );
+        // Every hard pattern against every hard path, each answer taken from globset itself: the
+        // shapes in-diff mutation testing showed random generation reaching too rarely (`/**,` outside
+        // an alternate group, `**` beside commas and braces inside one, recursive forms that follow
+        // each other, classes with ranges and negations over non-ASCII ends).
+        let patterns = [
+            "a/*/b",
+            "src/*",
+            "*/",
+            "src/**",
+            "**/a",
+            "**",
+            "[!a]",
+            "[é]",
+            "?",
+            "{a,}",
+            "{,}",
+            "a{,{,}}",
+            "a/**,b",
+            "a/**}",
+            "{a/**,b}",
+            "{a,**}",
+            "{**,a}",
+            "{a,**/b}",
+            "{**/a,b}",
+            "**/**",
+            "a/**/**",
+            "a/**/**/b",
+            "**/**/a",
+            "{a/**}",
+            "{a/**/b,c}",
+            "{,**}",
+            "{**}",
+            "a**",
+            "**a",
+            "a/**b",
+            "[a-c]",
+            "[!a-c]",
+            "[^b]",
+            "[]a]",
+            "[-a]",
+            "[a-]",
+            "[é-ë]",
+            "[a-é]",
+            "[!a-é]",
+            "[!é]",
+            "*,*",
+            "a,b",
+            "\\*",
+            "\\{a}",
+        ];
+        let paths = [
+            "", "a", "b", "c", "d", "/", "a/", "a//b", "a/b", "a/x/b", "a/x/y,b", "a/**,b",
+            "a/b/c", "b/a", "src", "src/", "src/x", "src/x/y", "x/a", "x/y/a", "\n/x", "é", "ê",
+            "ë", "ÿ", "]", "-", "a,b", "{a}", "*", "**", "ab", "ba", "aa",
+        ];
+        for pattern in patterns {
+            let ours = compile(pattern);
+            match globset(pattern) {
+                Err(theirs) => assert_eq!(Err(theirs), ours.map(|_| ()), "{pattern:?}"),
+                Ok(set) => {
+                    let glob = ours.unwrap();
+                    for path in paths {
+                        assert_eq!(
+                            set.is_match(path),
+                            glob.matches(path),
+                            "{pattern:?} on {path:?}"
+                        );
+                    }
+                }
+            }
         }
     }
 }
