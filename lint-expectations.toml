@@ -1,6 +1,12 @@
 schema = "forge-warden.lint-expectations.v1"
 
 [[expectation]]
+file = "crates/forge-warden-core/tests/builtin.rs"
+lint = "clippy::unwrap_used"
+source_reason = "test helpers build fixed inputs; a panic is a failed test"
+review_reason = "M7-Q64: the built-in rule's integration tests build fixed patches, rankings and policies and unwrap their setup; a panic is a failed test. Test-only; production core is unchanged by it."
+
+[[expectation]]
 file = "crates/forge-warden-cli/src/doors/file.rs"
 lint = "clippy::disallowed_methods"
 source_reason = "door: read_stdin"
@@ -308,8 +314,8 @@ review_reason = "C1c core authority corpus tests read committed fixtures and unw
 
 [[data_input]]
 file = "schemas/verdict.v3.schema.json"
-sha256 = "c33068ef37b7da18e06751b401f5e2194ac47f0304aa0c903dd36d53b75b2d92"
-review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled."
+sha256 = "a4866a3d8e8e3cadee2d7d5d235ba79bf8905e95377a42f4cd0024c91963cfe8"
+review_reason = "PATCH-BOUND (ADR 0012, ruling R1) v3 schema: v2 with seals.claims oneOf bound (base, head, merge_base, verified true) or v2's asserted object. Historical v1 and v2 remain byte-exact and are no longer compiled. M7-Q64 (ruling R-a) adds the built-in rule to v3 before its release: a rule id may be `builtin:` then kebab-case, kind gains `builtin`, and an allOf clause ties kind builtin to a builtin: id, severity hold, outcome hold and violations without waived_by (every other kind keeps the kebab-case id). PATCH-BOUND (c) part 1 (Q73) splits the bound claims by id length (SHA-1 40, SHA-256 64)."
 
 [[data_input]]
 file = "schemas/policy.v1.schema.json"
@@ -385,8 +391,8 @@ review_reason = "Q-TYPES-1 test-only source inspection reads repository Rust and
 
 [[data_input]]
 file = "fixtures/coverage/MANIFEST"
-sha256 = "a4e259bfb71f073509b11de7ee4b5792dd7fb78f121c3ff1156b6ab847603ee6"
-review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged. WP-EFFECT-WALL.2 adds two groups, effect-plants (ten lines: eight std effects, one UFCS form, one control) and git-oracle-plants (five lines), for the new clippy controls in tests/mint_lint.rs; no existing entry changes. M7-PATCH-BOUND adds only the crates/forge-warden-cli/src/doors/child/bound.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. M7-EFFECT-WALL stop-gap adds 22 effect-plants lines (the 20 effects measured unlisted on 92a9ac99 plus UnixDatagram::unbound and lchown), one per new clippy.toml entry; no existing entry changes. M7-RANKER-PIN adds four coverage cases, deep-diff-forge 0.8.3's known findings G1 and G2 (patch, Git captures, 0.8.3 ranking), each expected to be held; coverage-cases, coverage-files and parseable-rankings follow; nothing else changes."
+sha256 = "f5b58aa86df77b04b9d87cf8d21e7a6b7d0e62336ae26c8816586dd9d50c1fce"
+review_reason = "Q-HERMETIC reviewed test-only JSON corpus identities and SHA256 pins. Q-TYPES-2 10/n re-pins only the two mint-lint positive controls for Sha256Hex; membership and negative forms are unchanged. Parsed as data, never executable Rust. WP-JEV-Z3 adds only the z3_authority.rs integration-test path to rust-sources; its member digest hashes the path string, and all other MANIFEST entries are unchanged. WP-Q-DOOR-SPLIT replaces the rust-sources member crates/forge-warden-cli/src/doors.rs with the door modules crates/forge-warden-cli/src/doors/child/entropy.rs, crates/forge-warden-cli/src/doors/child/git.rs, crates/forge-warden-cli/src/doors/child/isolation.rs, crates/forge-warden-cli/src/doors/child/mod.rs, crates/forge-warden-cli/src/doors/child/process.rs, crates/forge-warden-cli/src/doors/child/ranker.rs, crates/forge-warden-cli/src/doors/diagnose.rs, crates/forge-warden-cli/src/doors/file.rs, crates/forge-warden-cli/src/doors/mod.rs (each digest is of its path string); nothing else changes. WP-HOSTILE-INPUT adds only the crates/forge-warden-core/tests/hostile_input.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. WP-REFUSAL-MAP adds only the paths crates/forge-warden-core/src/refusal_rows.rs, crates/forge-warden-cli/src/refusal_rows.rs and crates/forge-warden-cli/tests/refusal_map.rs to rust-sources (each digest hashes the path string); all other entries are unchanged. WP-EFFECT-WALL.2 adds two groups, effect-plants (ten lines: eight std effects, one UFCS form, one control) and git-oracle-plants (five lines), for the new clippy controls in tests/mint_lint.rs; no existing entry changes. M7-PATCH-BOUND adds only the crates/forge-warden-cli/src/doors/child/bound.rs path to rust-sources (its digest hashes the path string); all other entries are unchanged. M7-EFFECT-WALL stop-gap adds 22 effect-plants lines (the 20 effects measured unlisted on 92a9ac99 plus UnixDatagram::unbound and lchown), one per new clippy.toml entry; no existing entry changes. M7-RANKER-PIN adds four coverage cases, deep-diff-forge 0.8.3's known findings G1 and G2 (patch, Git captures, 0.8.3 ranking), each expected to be held; coverage-cases, coverage-files and parseable-rankings follow; nothing else changes. M7-Q64 adds only the paths crates/forge-warden-core/src/builtin.rs and crates/forge-warden-core/tests/builtin.rs to rust-sources (each digest hashes the path string); all other entries are unchanged."
 
 [[expectation]]
 file = "crates/forge-warden-cli/tests/hermetic_runtime.rs"

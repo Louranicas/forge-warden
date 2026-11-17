@@ -63,6 +63,19 @@ registry is always listed, because consumers parse them.
   mode: an edit stating the wrong mode (`100644` for an executable); bound mode (ADR 0012) compares the patch
   with Git's own diff.
 
+- **Built-in rule `builtin:binary-on-executable` (ledger Q64, M7-Q64; verdict v3 before its release).**
+  A file that Git reads as binary, that the change does not delete, and whose mode after the change is
+  `100755` or `120000` holds whatever the policy says: Git's summary gives the mode of a creation or a mode
+  change, the `index` line that of a binary edit keeping its mode (Git's own in bound mode). It is a rule
+  outcome (`kind: "builtin"`, severity and outcome `hold`), listed after the policy's rules only when it
+  holds and counted in `summary`, also when a policy rule holds the same path. No policy
+  can declare or waive it (policy ids are kebab-case); `scripts/hold_ack.py` acknowledges it as any hold.
+  `verdict.v3.schema.json`: a rule id may start with `builtin:`, `kind` gains `builtin`, and kind
+  `builtin` requires severity and outcome `hold`. The core's `FileChange` gains `resulting_mode()`.
+  Measured: no commit in four repositories' history (Q63's set) is held by it.
+- A binary section's header lines are read only up to its `GIT binary patch` line (Touchstone, M7-Q64-MODE
+  verify): an `index` line appended after the body no longer states the section's mode.
+
 ## [0.2.1] - 2026-11-16
 
 - No change to a published schema or to the exit-code registry: `forge-warden.policy.v0`,

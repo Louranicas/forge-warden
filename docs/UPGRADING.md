@@ -199,3 +199,12 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
 - **Library users:** `Claims` has private fields and two forms (read it with `base()`, `head()`,
   `merge_base()`, `verified()`); `Unverified` is gone. Verified claims come only from
   `BoundClaims::from_comparison`.
+- **A new hold no policy can remove: `builtin:binary-on-executable`** (ledger Q64; the gap the 0.2.1
+  notes above call "not covered"). A binary section on a file whose mode after the change is `100755` or
+  `120000` now holds whatever the policy says, listed in `rules` with kind `builtin` (a new value in v3's
+  rule `kind`; a rule id may now start with `builtin:`). A repository that commits executable binaries (a
+  vendored tool, a prebuilt helper) gets one hold per change to them: acknowledge it like a policy hold
+  (`scripts/hold_ack.py`), or keep those files out of the patch. It cannot be waived. Measured on four
+  repositories' whole history (Q63's set), it holds no commit there. A binary edit's mode is read from its
+  `index` line, which is Git's own only in bound mode (`--repo`); without `--repo` a falsely stated
+  `100644` is not caught. 0.3.0 also reads a binary section's header lines only up to `GIT binary patch`.
