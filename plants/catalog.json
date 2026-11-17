@@ -12,6 +12,7 @@
       "G-06 cli-forbid-lowered, cli-forbid-removed (2026-11-17, EFFECT-WALL step 3): the doors are the crate forge-warden-doors and main.rs carries #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]; the first plant shows the compiler refusing a local exemption (E0453), the second that deleting the forbid fails the repository invariants. 24 recipes that run door unit tests moved from -p forge-warden-cli --bin forge-warden to -p forge-warden-doors --lib (the tests moved with the doors; unchanged names and diagnostics).",
       "G-15 fixture-seam-without-debug (2026-11-17, EFFECT-WALL step 3, Bastion B1): after the doors became a crate the fixture seams are gated cfg(any(test, all(fw_fixture_cli, debug_assertions))), so a --release build with the cfg still reads the Git allowlist from /etc; door_lints pins the spelling and this plant drops debug_assertions from the allowlist seam.",
       "G-06 cli-clap-*, cli-process-exit, cli-forbid-lowered-* (2026-11-17, EFFECT-WALL step 3, Touchstone's attack on 87d2e073): clap's own effects (get_matches, get_matches_mut, try_get_matches, print_help, print_long_help, Error::exit, Error::print) and std::process::exit are in clippy.toml, so main.rs's forbid refuses them; print_stdout, print_stderr, dbg_macro and exit are forbidden there too, so no local expect lowers them (E0453). One plant per refused call family and per newly forbidden lint.",
+      "G-06 cli-clap-matches-from-exits, cli-process-abort, cli-clap-parser-trait (2026-11-17, EFFECT-WALL step 3, Touchstone's re-attack on ddc66b1): get_matches_from (prints and exits on a parse error), clap::Parser::parse/try_parse/parse_from/update_from (usable without the derive through a hand-written impl) and std::process::abort are in clippy.toml; the parser plant's pattern requires all four Parser refusals in one run. try_get_matches_from, try_parse_from and try_update_from stay allowed (they take their arguments and return errors).",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
       "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
@@ -2298,6 +2299,86 @@
       ],
       "old": "fn run_cli() -> Exit {\n",
       "new": "#[expect(clippy::exit, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-matches-from-exits",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Command::get_matches_from`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    let _matches = cli().get_matches_from(doors::arguments());\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-process-abort",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `std::process::abort`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    if arguments.len() > 4096 {\n        std::process::abort();\n    }\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-parser-trait",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "(?s)(?=.*disallowed method `clap::Parser::parse`)(?=.*disallowed method `clap::Parser::try_parse`)(?=.*disallowed method `clap::Parser::parse_from`)(?=.*disallowed method `clap::Parser::update_from`)",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "append": "\nstruct ParserProbe;\n\nimpl clap::FromArgMatches for ParserProbe {\n    fn from_arg_matches(_matches: &ArgMatches) -> Result<Self, clap::Error> {\n        Ok(Self)\n    }\n    fn update_from_arg_matches(&mut self, _matches: &ArgMatches) -> Result<(), clap::Error> {\n        Ok(())\n    }\n}\n\nimpl clap::CommandFactory for ParserProbe {\n    fn command() -> clap::Command {\n        cli()\n    }\n    fn command_for_update() -> clap::Command {\n        cli()\n    }\n}\n\nimpl clap::Parser for ParserProbe {}\n\nfn parser_probe() {\n    let mut probe = <ParserProbe as clap::Parser>::parse();\n    let _tried = <ParserProbe as clap::Parser>::try_parse();\n    let _from = <ParserProbe as clap::Parser>::parse_from([\"forge-warden\"]);\n    <ParserProbe as clap::Parser>::update_from(&mut probe, [\"forge-warden\"]);\n}\n",
       "required_tools": [
         "cargo",
         "git",
