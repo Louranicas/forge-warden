@@ -246,7 +246,9 @@ def main():
               'catalog_sha256': hashlib.sha256((HERE / 'catalog.json').read_bytes()).hexdigest(),
               'execution_profile': 'exec-runner' if exec_runner else ('cargo-runner' if runner else 'native'),
               'register': catalog['register'], 'results': rows,
-              'pending_guardrails': catalog['pending_guardrails']}
+              'pending_guardrails': catalog['pending_guardrails'],
+              'retired_guardrails': [{key: row[key] for key in ('id', 'status', 'decision', 'reason')}
+                                     for row in catalog.get('retired_guardrails', [])]}
     with tempfile.TemporaryDirectory(prefix='fw-plants-') as directory:
         root = Path(directory) / 'checkout'
         clone = execute(['git', '-c', 'core.hooksPath=/dev/null', 'clone', '--no-local',

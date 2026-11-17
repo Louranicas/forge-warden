@@ -9,6 +9,22 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- **Ranker pin: deep-diff-forge v0.8.3** (owner decision D4: the newest release, with its stated limits), from
+  v0.8.2: `warden.toml` `[producer]` lists the v0.8.3 x86_64-unknown-linux-gnu binary
+  (`4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1`); `scripts/tool-versions.toml` names tag
+  commit `a74bf91f` and the archive's SHA-256 (`b7734168…`, the release's own `.sha256`); the runbook, README
+  install line and CI's `DDF_REV` follow. Measured before the move, on every fixture patch: the same signal and
+  status vocabulary, identical rows (path, status, signals, score) on 71 of 74 patches, the hostile-input rankings
+  unchanged; 0.8.3 refuses three more (padded `index`-line modes, its GHSA-rq5r-p3g9-phff fix). Stated limit: two
+  open high findings of 0.8.3 (G1 `Files … differ` after an `index` line; G2 several sections on one path);
+  forge-warden holds both itself, and four `ddf083-*` cases in `fixtures/coverage` keep that as a test. The
+  coverage corpus's other rankings stay 0.7.0's: the honest ones are byte-equal under 0.8.3 and the forged ones are
+  forgeries by design.
+- `scripts/dogfood.sh` takes `--ranker-archive FILE`: a local copy of the pinned deep-diff-forge release
+  archive, copied into the evidence directory and checked against the same pinned SHA-256 (other bytes:
+  exit 3). Only a run with `--hosted-advisory` downloads the archive; a run with neither argument is a
+  usage error (exit 2) before any effect, so a local run never reaches the network (ledger Q67). The
+  provenance file says `ranker_archive=local` or `downloaded`. The hosted job is unchanged.
 - Bound mode, first slice (ADR 0012, accepted): `check --repo DIR --base BASE --head HEAD` (authority
   mode, full commit ids) makes `git diff merge-base..head` from a copy of the repository's objects
   that Git re-hashes (a staging repository enumerates; `index-pack` copies into a repository with no
@@ -17,6 +33,10 @@ registry is always listed, because consumers parse them.
   file, a caller alternates or shallow file, a control character in the path, several merge bases:
   refused. Every bound-mode Git runs under `/usr/bin/prlimit` (1 GiB data, 4 GiB address space) and a
   60 s budget.
+- **New policy schema `forge-warden.policy.v1` (published schema change; ADR 0012 D8).** v1 is v0 plus an optional
+  `[claims]` table: `require_verified = true` holds an authority run whose claims bound mode did not verify, with the
+  new note `claims_unverified` (verdict v3's note list). v0 policies are read unchanged; `[claims]` under v0 is refused
+  naming v1; `forge-warden schema policy` prints v1 (`schemas/policy.v1.schema.json`); v0's schema stays as history.
 - **Verdict schema `forge-warden.verdict.v2` -> `forge-warden.verdict.v3` (published schema change).**
   Only `seals.claims` changed: without `--repo` it is v2's object exactly (`{base?, head?, verified:
   false}`); a bound run that matched records `{base, head, merge_base, verified: true}`. The core's
@@ -42,6 +62,19 @@ registry is always listed, because consumers parse them.
   one: a patch made by `scripts/make_patch.sh` or `git diff` is unaffected. Still not covered without bound
   mode: an edit stating the wrong mode (`100644` for an executable); bound mode (ADR 0012) compares the patch
   with Git's own diff.
+
+- **Built-in rule `builtin:binary-on-executable` (ledger Q64, M7-Q64; verdict v3 before its release).**
+  A file that Git reads as binary, that the change does not delete, and whose mode after the change is
+  `100755` or `120000` holds whatever the policy says: Git's summary gives the mode of a creation or a mode
+  change, the `index` line that of a binary edit keeping its mode (Git's own in bound mode). It is a rule
+  outcome (`kind: "builtin"`, severity and outcome `hold`), listed after the policy's rules only when it
+  holds and counted in `summary`, also when a policy rule holds the same path. No policy
+  can declare or waive it (policy ids are kebab-case); `scripts/hold_ack.py` acknowledges it as any hold.
+  `verdict.v3.schema.json`: a rule id may start with `builtin:`, `kind` gains `builtin`, and kind
+  `builtin` requires severity and outcome `hold`. The core's `FileChange` gains `resulting_mode()`.
+  Measured: no commit in four repositories' history (Q63's set) is held by it.
+- A binary section's header lines are read only up to its `GIT binary patch` line (Touchstone, M7-Q64-MODE
+  verify): an `index` line appended after the body no longer states the section's mode.
 
 ## [0.2.1] - 2026-11-16
 

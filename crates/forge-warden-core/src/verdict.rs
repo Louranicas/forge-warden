@@ -659,6 +659,8 @@ note_codes! {
     RankUnverified => "rank_unverified",
     "The ranking supplied with `--rank` differs from the one forge-warden produced."
     RankMismatch => "rank_mismatch",
+    "The policy requires verified claims (`[claims] require_verified`) and bound mode did not verify them."
+    ClaimsUnverified => "claims_unverified",
 }
 
 impl Serialize for NoteCode {
@@ -754,6 +756,35 @@ impl Verdict {
             .iter()
             .map(|_| Outcome::Hold)
             .fold(self.verdict, Outcome::max);
+        self.verdict = verdict;
+        self.exit = ExitInfo::from(verdict);
+        self
+    }
+
+    /// This verdict with built-in rule results appended (`crate::builtin`), re-derived through the
+    /// same parts: the summary is counted from the rules again, and the outcome is the strictest of
+    /// the verdict's and each added rule's. A built-in rule only holds, so it can never loosen.
+    #[must_use]
+    pub(crate) fn with_builtin_rules(mut self, extra: Vec<RuleResult>) -> Self {
+        if extra.is_empty() {
+            return self;
+        }
+        let verdict = extra
+            .iter()
+            .map(|rule| rule.outcome.overall())
+            .fold(self.verdict, Outcome::max);
+        self.rules.extend(extra);
+        let count =
+            |outcome: RuleOutcome| self.rules.iter().filter(|r| r.outcome == outcome).count();
+        let summary = Summary {
+            files: self.summary.files,
+            rules: self.rules.len(),
+            passed: count(RuleOutcome::Pass),
+            waived: count(RuleOutcome::Waived),
+            held: count(RuleOutcome::Hold),
+            failed: count(RuleOutcome::Fail),
+        };
+        self.summary = summary;
         self.verdict = verdict;
         self.exit = ExitInfo::from(verdict);
         self

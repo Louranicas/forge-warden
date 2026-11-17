@@ -11,7 +11,8 @@ ADRs 0006–0010 describe accepted contracts already used by the gate; their ear
 labels remain dated history. ADR 0012 (bound mode) is built in two of three steps on the 0.3.0 line:
 the door and `--repo` comparison (`doors/child/bound.rs`), then verdict v3 with verified claims
 (`BoundClaims::from_comparison` in `crates/forge-warden-core/src/verdict.rs`, its D5 correction entry);
-D8 (`[claims] require_verified`) is not built yet. External deployment and owner provisioning remain separate.
+D8's policy key (`[claims] require_verified`, policy v1, note `claims_unverified`) is built; its scripts and this
+repository's own policy follow (step c2). External deployment and owner provisioning remain separate.
 
 An Accepted ADR is current within its stated scope. Proposed is under discussion and is not
 binding; Deprecated is retired without a replacement. Superseded-by-NNNN retires the whole ADR

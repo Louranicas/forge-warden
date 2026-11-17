@@ -303,3 +303,14 @@ is the crate that mints it). D5's sentence stays as written above; this entry re
   input, and a plant that adds a second call must be caught by that test.
 - **Schema.** `seals.claims` in `verdict.v3.schema.json` is `oneOf` the bound object and v2's asserted object
   (unchanged), rather than one object with `if`/`then`.
+
+## Step (c) unit c3, 2026-11-16T19:48:41Z: the moved acceptance rows
+- **Delivered:** the byte caps and the memory ceiling are a `Caps` value (`bound.rs`; production `CAPS`, the same literals).
+  `bound_diff_in` takes it, so one test, `bound_mode_refuses_a_git_over_each_cap_and_leaves_nothing`, reaches each cap
+  with a small injected value: a list over its cap (merge-base's answer), a pack over its cap (pack-objects), stderr over
+  its cap (a forged store's complaint), and the memory ceiling as a behaviour (a Git that needs more memory than the cap
+  is refused, exit 3, never answered). Each leaves nothing in the temporary base. Plant `bound-memory-ceiling-removed`
+  now plants the caps passed to prlimit.
+- **Still moved, with the reason:** cleanup after a Git killed from outside needs a native stand-in Git (admission takes
+  only ELF executables); the timeout path, where the door itself kills the Git, is tested. The foreign-user-Git run stays
+  with H16.

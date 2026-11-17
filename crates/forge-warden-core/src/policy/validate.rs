@@ -13,8 +13,12 @@ use crate::seal::Sha256Hex;
 use crate::vocab::{Signal, is_known_signal, suggest_signal};
 use std::collections::BTreeSet;
 
-/// The only policy schema this version reads.
+/// The policy schema without the `[claims]` table (0.1.0 to 0.2.x, still read unchanged).
 pub const POLICY_SCHEMA: &str = "forge-warden.policy.v0";
+
+/// `forge-warden.policy.v0` plus the optional `[claims]` table (ADR 0012 D8; Lodestar's R2 reversal: an
+/// additive field takes a new id, so a strict v0 reader is never told something it would ignore).
+pub const POLICY_SCHEMA_V1: &str = "forge-warden.policy.v1";
 
 /// A rationale shorter than this is refused: "because" is not a reason.
 pub const MIN_WHY_CHARS: usize = 12;
@@ -41,12 +45,22 @@ pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
         at: e.span().map(|span| line_column(text, span.start)),
     })?;
     let mut issues = Issues::new();
-    if raw.schema != POLICY_SCHEMA {
+    if raw.schema != POLICY_SCHEMA && raw.schema != POLICY_SCHEMA_V1 {
         issues.push(
             "policy",
-            format!("schema is {:?}; expected {POLICY_SCHEMA:?}", raw.schema),
+            format!(
+                "schema is {:?}; expected {POLICY_SCHEMA:?} or {POLICY_SCHEMA_V1:?}",
+                raw.schema
+            ),
         );
     }
+    if raw.claims.is_some() && raw.schema == POLICY_SCHEMA {
+        issues.push(
+            "claims",
+            format!("the [claims] table needs schema {POLICY_SCHEMA_V1:?}"),
+        );
+    }
+    let require_verified = raw.claims.as_ref().is_some_and(|c| c.require_verified);
     if raw.rules.is_empty() {
         issues.push(
             "policy",
@@ -82,7 +96,7 @@ pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError> {
         return Err(PolicyError::Invalid(issues.into_vec()));
     };
     issues
-        .finish(Policy::new(rules, waivers, producers))
+        .finish(Policy::new(rules, waivers, producers, require_verified))
         .map_err(PolicyError::Invalid)
 }
 

@@ -69,15 +69,16 @@ people, scripts, CI and agents together.
 
 ```bash
 cargo install --git https://gitlab.com/lukeomahoney/forge-warden --tag v0.2.1 forge-warden-cli --locked
-cargo install --git https://gitlab.com/lukeomahoney/deep-diff-forge --tag v0.8.2 deep-diff-forge-cli --locked
+cargo install --git https://gitlab.com/lukeomahoney/deep-diff-forge --tag v0.8.3 deep-diff-forge-cli --locked
 forge-warden init > warden.toml     # a starter policy
 forge-warden lint warden.toml       # lists every problem at once
 ```
 
 The starter policy holds changes to CI, supply-chain configuration, the policy itself and a coding
 agent's configuration (`.claude` and everything under it) for a person's review. It also holds a text
-file sent as a binary section, whose lines no signal rule can read (an executable whose name the rule
-does not list needs a path rule of your own); read `examples/starter.warden.toml`
+file sent as a binary section, whose lines no signal rule can read; an executable or a symlink sent as a
+binary section is held by forge-warden itself, whatever the policy (the built-in rule
+`builtin:binary-on-executable`); read `examples/starter.warden.toml`
 before you adopt it, and add what your repository owns.
 
 Both lines pin a release tag; pin what you deploy (`--rev` with a commit works too). 0.2.1 is a
@@ -139,7 +140,7 @@ Every rule also needs `id` (kebab-case, unique), `why` (12+ characters), `kind` 
 no defaults for these: a rule says what it means.
 
 Globs are relative to the repository root. `*` stays within one path segment and `**` crosses
-segments. The signal vocabulary is deep-diff-forge 0.8.2's risk and code-evidence signals;
+segments. The signal vocabulary is deep-diff-forge 0.8.3's risk and code-evidence signals;
 naming one that does not exist is refused with a suggestion (`"secrets_like"`: *did you mean
 `"secret_like"`?*). The full reference is [`docs/POLICY_REFERENCE.md`](docs/POLICY_REFERENCE.md).
 
@@ -248,19 +249,25 @@ as JSON, and a test fails if this table drifts from it.
 ```
 
 Take the policy from the **base** checkout, not from the pull request. Otherwise a pull request
-can loosen the rules that judge it. This repository's own workflow
+can loosen the rules that judge it. This repository's example workflow
 ([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) runs [`scripts/dogfood.sh`](scripts/dogfood.sh)
-from a separate base checkout. The candidate is only diff data, and the driver picks authority or
+from a separate base checkout. The project does not run that workflow itself: it is kept for deployers on
+GitHub, and this project's gate of record is the local integrator gate, with merges admitted on GitLab
+(owner decision D3, 2026-11-16). The candidate is only diff data, and the driver picks authority or
 advisory mode explicitly ([ADR 0006](docs/adr/0006-trusted-dogfood-driver.md)). On a hosted runner
 it is asked for advisory mode (`--hosted-advisory`): the runner has no owner-enrolled Git allowlist
 ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)), so that job reports evidence and cannot PASS. It
-still fetches the pinned deep-diff-forge release and checks its bytes. Authority mode is claimed
+still fetches the pinned deep-diff-forge release and checks its bytes. Only that hosted job downloads:
+a local run names a copy of the pinned release archive with `--ranker-archive FILE` (the driver copies
+it and checks the copy against the same pinned SHA-256), and without either argument the driver
+refuses before it does anything. Authority mode is claimed
 only for a machine whose owner enrolled the allowlist. A workflow file in
 the repository is not an independent approval boundary, so the trust root must be enforced
 outside the pull request (see [`SECURITY.md`](SECURITY.md)).
 
 The scheduled full mutation baseline (its plan and shards), run on merged `main` only, can use a
-self-hosted runner-up pool. Pull requests, every ci.yml job and the baseline's aggregate check
+self-hosted runner-up pool. Like `ci.yml` it is a deployer example: this project runs no runner-up pool, and
+the runner-routing guardrail (G-52) is retired from 1.0 (D3; [`plants/README.md`](plants/README.md)). Pull requests, every ci.yml job and the baseline's aggregate check
 always run hosted. The trade-offs and the residual host-loopback exposure are set out in
 [`docs/runner-up.md`](docs/runner-up.md).
 
@@ -325,7 +332,7 @@ one. It hashes the patch to check the ranking's seal. An isolated Git reads the 
 forge-warden itself reads only the patch's mode-bearing header lines, with a total grammar, to
 cross-check those facts. It does not interpret hunks.
 Its vocabulary tracks
-deep-diff-forge 0.8.2 (`crates/forge-warden-core/src/vocab.rs`; unchanged since 0.7.0); a newer deep-diff-forge that
+deep-diff-forge 0.8.3 (`crates/forge-warden-core/src/vocab.rs`; unchanged since 0.7.0); a newer deep-diff-forge that
 adds a signal makes verdicts hold, not pass, until forge-warden learns it. Its exit codes reuse
 deep-diff-forge's action names.
 

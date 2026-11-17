@@ -1,6 +1,6 @@
-# Policy and verdict reference (`forge-warden.policy.v0`, `forge-warden.verdict.v3`)
+# Policy and verdict reference (`forge-warden.policy.v0` and `v1`, `forge-warden.verdict.v3`)
 
-The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v0.schema.json`
+The authority on a policy is `forge-warden lint`. The JSON Schema `schemas/policy.v1.schema.json`
 gives editors the same rules as you type, and `schemas/verdict.v3.schema.json` describes every
 verdict; tests keep both equal to the code, and keep the note and seal tables below complete.
 
@@ -12,13 +12,27 @@ known costs of failing closed.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `schema` | yes | Exactly `"forge-warden.policy.v0"`. |
+| `schema` | yes | `"forge-warden.policy.v0"`, or `"forge-warden.policy.v1"` (v0 plus `[claims]`). |
 | `[[rule]]` | yes, one or more | An empty policy is refused: it would pass every change. |
 | `[[waiver]]` | no | Dated, owned exemptions. |
 | `[producer]` | for authority mode | The rankers `check --ranker` may run (below). |
+| `[claims]` | no; v1 only | `require_verified = true`: authority runs must be bound (below). |
 
 Unknown keys anywhere are refused, not ignored: a misspelt key would otherwise silently disable
 what it meant to configure.
+
+## `[claims]`: require bound mode (policy v1)
+
+```toml
+schema = "forge-warden.policy.v1"
+[claims]
+require_verified = true
+```
+
+With `require_verified = true`, an authority run whose claims bound mode did not verify (no `--repo`, or no
+`--base`/`--head`) gets the note `claims_unverified` and is held at best: a person decides. With bound claims the key
+changes nothing. Advisory runs are unchanged (they never pass). `[claims]` under `forge-warden.policy.v0` is refused
+with a message naming v1; a forge-warden older than 0.3.0 refuses a v1 policy, which is the safe direction (ADR 0012 D8).
 
 ## `[producer]`: the ranker allowlist
 
@@ -79,9 +93,27 @@ Violated once (no path) when more than `limit` in-scope files change. `limit = 0
 use `protect_paths` to say "nothing may change here".
 Fields: `limit` (required, at least 1), `paths`, `except`.
 
+## Built-in rule
+
+One rule is not in any policy: `builtin:binary-on-executable` (kind `builtin`, severity `hold`;
+ledger Q64, M7-Q64). It holds every file that Git reads as binary, that the change does not delete,
+and whose mode after the change is executable (`100755`) or a symlink (`120000`). A glob names a
+path, never a mode, so no policy rule can say this; and a file Git calls binary for a NUL byte in a
+later line is still a script the shell runs. The mode comes from Git's summary for a creation or a
+mode change, and from the `index` line for a binary edit that keeps its mode: Git's own in bound
+mode (`--repo`, ADR 0012), the patch author's text otherwise, so a falsely stated `100644` on an
+executable is the limit only bound mode closes.
+
+- It is listed in the verdict's `rules` only when it holds, after the policy's rules, and counted in
+  `summary`. It is listed even when a policy rule holds the same path: a hold is acknowledged by naming
+  its rules, so the person who signs sees that the file is an executable sent as binary.
+- No policy can declare it or waive it: policy ids are kebab-case, and a waiver's `rule` must be the
+  policy's own. Acknowledge the hold as any policy hold (`scripts/hold_ack.py`), or keep executables
+  out of the patch.
+
 ## Signals
 
-deep-diff-forge 0.8.2's vocabulary (the same 21 signals as 0.7.0). Path and shape: `public_api_surface`, `new_file`,
+deep-diff-forge 0.8.3's vocabulary (the same 21 signals as 0.7.0 and 0.8.2). Path and shape: `public_api_surface`, `new_file`,
 `deleted_file`, `binary_change`, `large_change`, `many_hunks`, `config_or_lockfile`, `test_only`,
 `generated_or_vendored`, `hazardous_text`, `symlink_change`, `executable_bit`. Code evidence:
 `unsafe_added`, `process_spawn`, `network_fetch`, `dynamic_eval`, `ci_privilege`, `build_hook`,
@@ -173,6 +205,7 @@ exit 8); rules still run, so a failing rule still fails (exit 7). Notes never ma
 | `patch_unverifiable` | Git refused the patch, or its facts are outside what forge-warden verifies (reason in the detail; see the costs below). Coverage cannot be checked. | hold |
 | `rank_unverified` | Advisory mode: the ranking was supplied. | hold at best, never pass |
 | `rank_mismatch` | Authority mode: the `--rank` bytes differ from the produced ranking. | hold; the produced ranking is the one judged |
+| `claims_unverified` | Authority mode, policy v1 with `[claims] require_verified = true`: bound mode (`--repo`) did not verify the claims (no `--repo`, or no `--base`/`--head`). | hold at best, never pass |
 
 ## Refuse or hold
 
@@ -186,7 +219,7 @@ A **refusal** prints nothing on stdout, explains on stderr, and exits without a 
 | The ranker cannot run (e.g. a script), exits nonzero, times out (10 s), overflows its output caps, prints something that is not a ranking, or seals a different patch | refused | 3 `io` |
 | The ranker cannot be pinned (symlink, not a regular file, wrong owner, group/world-writable, over 512 MiB); the policy is invalid or over 1 MiB; a ranking is malformed or over 64 MiB; an advisory ranking is sealed to a different patch; the ranker's SHA-256 is not in `[producer]`; authority mode with no `[producer]` | refused | 4 `invalid_input` |
 | Any note above | hold (or fail, if a rule fails) | 8 (7) |
-| A rule of severity `hold` is violated | hold | 8 |
+| A rule of severity `hold` is violated, or the built-in rule `builtin:binary-on-executable` holds | hold | 8 |
 | A rule of severity `fail` is violated, or a waiver has expired | fail | 7 |
 
 ## Known costs of failing closed
@@ -214,7 +247,8 @@ forge-warden refuses what it cannot verify instead of guessing, so some honest p
 - **deep-diff-forge 0.7.0 omissions**: a binary added without `new_file` or deleted without
   `deleted_file` → `status_mismatch` until the ranker reports them (Git's kind is still applied).
 - **A stricter producer** → exit 3, no verdict. deep-diff-forge 0.8.2 refuses some patches 0.7.0 ranked
-  (for example `fixtures/coverage/keel-c1b-v4-mode-line-tab.patch`: "file header out of place"). In
+  (for example `fixtures/coverage/keel-c1b-v4-mode-line-tab.patch`: "file header out of place"), and 0.8.3
+  refuses some 0.8.2 ranked (an `index` line whose mode is padded with extra spaces). In
   authority mode a patch the pinned ranker refuses ends as a ranker failure, never as a pass.
 
 ## Size limits, and what was measured

@@ -15,6 +15,7 @@ pub struct Policy {
     rules: NonEmpty<Rule>,
     waivers: Vec<Waiver>,
     producers: Vec<Sha256Hex>,
+    require_verified: bool,
 }
 
 impl Policy {
@@ -23,12 +24,21 @@ impl Policy {
         rules: NonEmpty<Rule>,
         waivers: Vec<Waiver>,
         producers: Vec<Sha256Hex>,
+        require_verified: bool,
     ) -> Self {
         Self {
             rules,
             waivers,
             producers,
+            require_verified,
         }
+    }
+
+    /// `[claims] require_verified` (policy v1): an authority run whose claims bound mode did not
+    /// verify gets the note `claims_unverified` and is held at best. `false` without the table.
+    #[must_use]
+    pub const fn require_verified(&self) -> bool {
+        self.require_verified
     }
 
     /// Rules, in the order the file declares them (and the verdict reports them). Never empty.

@@ -909,3 +909,109 @@ fn bound_claims_come_only_from_a_byte_comparison() {
     // Both empty: equal, so bound (what an empty patch then means is the pipeline's own rule).
     assert!(BoundClaims::from_comparison(ids(), b"", b"").is_ok());
 }
+
+#[test]
+fn require_verified_holds_an_unverified_authority_run_and_changes_nothing_else() {
+    // ADR 0012 D8 (c1): with [claims] require_verified, an authority run whose claims bound mode did
+    // not verify gets claims_unverified and is held at best; with bound claims the verdict is the
+    // one without the key; advisory runs are untouched (they never pass anyway).
+    use forge_warden_core::verdict::{BoundClaims, BoundIds, Claims};
+    let name = "m3-demo-real";
+    let v1 = |tail: &str| {
+        parse_policy(
+            format!("schema = \"forge-warden.policy.v1\"\n{PERMISSIVE}\n{tail}").as_bytes(),
+        )
+        .unwrap()
+    };
+    let requiring = v1("[claims]\nrequire_verified = true\n");
+    let plain = v1("");
+    let ranking = produced(rank(name).unwrap());
+    let checked = check(&ranking, facts(name));
+    assert!(checked.is_covered());
+    let unbound = evaluate_authority(&plain, &checked, SuppliedCopy::Absent, seals(), today());
+    assert_eq!(unbound.outcome(), Outcome::Pass, "the control passes");
+    for claims in [None, Some(Claims::new(Some("abcd".to_owned()), None))] {
+        let seals = match claims.clone() {
+            Some(c) => seals().with_claims(c),
+            None => seals(),
+        };
+        let held = evaluate_authority(&requiring, &checked, SuppliedCopy::Absent, seals, today());
+        assert_eq!(held.outcome(), Outcome::Hold, "{claims:?}");
+        assert!(
+            codes(held.notes()).contains(&"claims_unverified"),
+            "{claims:?}"
+        );
+    }
+    let ids = BoundIds::new(&"1".repeat(40), &"2".repeat(40), &"3".repeat(40)).unwrap();
+    let bound = Claims::bound(BoundClaims::from_comparison(ids, b"patch", b"patch").unwrap());
+    let with = evaluate_authority(
+        &requiring,
+        &checked,
+        SuppliedCopy::Absent,
+        seals().with_claims(bound.clone()),
+        today(),
+    );
+    let without = evaluate_authority(
+        &plain,
+        &checked,
+        SuppliedCopy::Absent,
+        seals().with_claims(bound),
+        today(),
+    );
+    assert_eq!(with, without);
+    assert_eq!(with.outcome(), Outcome::Pass);
+    let supplied = Ranking::supplied(rank(name).unwrap());
+    let supplied_checked = check(&supplied, facts(name));
+    let advised = evaluate_advisory(&requiring, &supplied_checked, seals(), today());
+    assert!(!codes(advised.verdict().notes()).contains(&"claims_unverified"));
+    assert_eq!(
+        advised.verdict(),
+        evaluate_advisory(&plain, &supplied_checked, seals(), today()).verdict()
+    );
+}
+
+#[test]
+fn require_verified_never_passes_unbound_claims_anywhere_in_the_corpus() {
+    // ADR 0012 D8 as a law over every parseable case of the coverage corpus (SPEC c1 item 1-2):
+    // with [claims] require_verified and no bound claims, no authority verdict passes and each
+    // carries claims_unverified; with bound claims, each verdict is the one without the key.
+    use forge_warden_core::verdict::{BoundClaims, BoundIds, Claims};
+    let index: serde_json::Value = serde_json::from_slice(&read("cases.json")).unwrap();
+    let v1 = |tail: &str| {
+        parse_policy(
+            format!("schema = \"forge-warden.policy.v1\"\n{PERMISSIVE}\n{tail}").as_bytes(),
+        )
+        .unwrap()
+    };
+    let requiring = v1("[claims]\nrequire_verified = true\n");
+    let plain = v1("");
+    let ids = BoundIds::new(&"1".repeat(40), &"2".repeat(40), &"3".repeat(40)).unwrap();
+    let bound = Claims::bound(BoundClaims::from_comparison(ids, b"p", b"p").unwrap());
+    let mut judged = Vec::new();
+    for case in index["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let Some(doc) = rank(name) else { continue };
+        let ranking = produced(doc);
+        let checked = check(&ranking, facts(name));
+        let held = evaluate_authority(&requiring, &checked, SuppliedCopy::Absent, seals(), today());
+        assert_ne!(held.outcome(), Outcome::Pass, "{name}");
+        assert!(codes(held.notes()).contains(&"claims_unverified"), "{name}");
+        let with = evaluate_authority(
+            &requiring,
+            &checked,
+            SuppliedCopy::Absent,
+            seals().with_claims(bound.clone()),
+            today(),
+        );
+        let without = evaluate_authority(
+            &plain,
+            &checked,
+            SuppliedCopy::Absent,
+            seals().with_claims(bound.clone()),
+            today(),
+        );
+        assert_eq!(with, without, "{name}");
+        judged.push((name.to_owned(), read(&format!("{name}.rank.json"))));
+    }
+    corpus_manifest::check("parseable-rankings", judged).unwrap();
+}

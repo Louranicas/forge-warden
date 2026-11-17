@@ -23,7 +23,7 @@ use crate::facts::{Disagreement, PatchFacts, Unverifiable, compare, derived_sign
 use crate::policy::{AdmittedProducer, Policy};
 use crate::rank::RankDoc;
 use crate::seal::Sha256Hex;
-use crate::verdict::{Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
+use crate::verdict::{Claims, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
@@ -268,6 +268,18 @@ pub fn evaluate_authority(
                     .to_owned(),
         }],
     };
+    let mut extra = extra;
+    // ADR 0012 D8: a policy that requires verified claims holds a run bound mode did not verify.
+    if policy.require_verified() && !seals.claims.as_ref().is_some_and(Claims::verified) {
+        extra.push(Note {
+            code: NoteCode::ClaimsUnverified,
+            path: None,
+            detail:
+                "the policy requires verified claims ([claims] require_verified) and this run's \
+                     claims were not verified: run check with --repo DIR --base BASE --head HEAD"
+                    .to_owned(),
+        });
+    }
     let seals = provenance(seals, checked.ranking, Provenance::Produced);
     judge(policy, checked, extra, seals, today)
 }
@@ -330,7 +342,13 @@ fn judge<P>(
             disagreements,
         } => {
             extra.extend(disagreements.iter().map(disagreement_note));
-            evaluate(policy, &widened(rank, facts), seals, today).with_notes(extra)
+            let verdict = evaluate(policy, &widened(rank, facts), seals, today);
+            // The built-in rule reads Git's facts, which only this arm has (M7-Q64); the refusal
+            // arm below is held by its note whatever the files are.
+            let builtin = crate::builtin::binary_on_executable(facts);
+            verdict
+                .with_builtin_rules(builtin.into_iter().collect())
+                .with_notes(extra)
         }
         // Git gave nothing to widen with, so the rules read the ranking as the producer wrote
         // it: a FAIL stays a FAIL (ADR 0005 section 2.5). `held_by` cannot be called without the

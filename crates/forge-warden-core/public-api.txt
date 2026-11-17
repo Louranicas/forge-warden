@@ -101,7 +101,7 @@ crate::facts Mode::File,
 crate::facts Mode::Exec,
 crate::facts Mode::Symlink,
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct FileChange
-crate::facts FileChange.<6 private field(s)>
+crate::facts FileChange.<7 private field(s)>
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub struct PatchFacts
 crate::facts PatchFacts.<1 private field(s)>
 crate::facts #[derive(Debug, Clone, PartialEq, Eq)] #[non_exhaustive] pub enum Unverifiable
@@ -135,6 +135,7 @@ crate::facts impl FileChange
 crate::facts FileChange::#[must_use] pub const fn path(&self) -> &RepoPath
 crate::facts FileChange::#[must_use] pub const fn kind(&self) -> ChangeKind
 crate::facts FileChange::#[must_use] pub const fn binary(&self) -> bool
+crate::facts FileChange::#[must_use] pub const fn resulting_mode(&self) -> Option<Mode>
 crate pub mod authority
 crate pub mod date
 crate pub mod defaults
@@ -218,10 +219,11 @@ crate::policy pub use error::{PolicyError, PolicyIssue};
 crate::policy pub use kind::{Field, Kind};
 crate::policy pub use model::{AdmittedProducer, Check, Policy, Rule, ScorePer, Severity, Waiver};
 crate::policy pub use paths::{PathSet, Scope};
-crate::policy pub use validate::{MAX_ID_CHARS, MIN_WHY_CHARS, POLICY_SCHEMA, parse_policy};
+crate::policy pub use validate::{MAX_ID_CHARS, MIN_WHY_CHARS, POLICY_SCHEMA, POLICY_SCHEMA_V1, parse_policy};
 crate::policy::model #[derive(Debug, Clone)] #[non_exhaustive] pub struct Policy
-crate::policy::model Policy.<3 private field(s)>
+crate::policy::model Policy.<4 private field(s)>
 crate::policy::model impl Policy
+crate::policy::model Policy::#[must_use] pub const fn require_verified(&self) -> bool
 crate::policy::model Policy::#[must_use] pub const fn rules(&self) -> &NonEmpty<Rule>
 crate::policy::model Policy::#[must_use] pub fn waivers(&self) -> &[Waiver]
 crate::policy::model Policy::#[must_use] pub fn producers(&self) -> &[Sha256Hex]
@@ -270,6 +272,7 @@ crate::policy::paths impl Scope
 crate::policy::paths Scope::#[must_use] pub fn contains(&self, path: &str) -> bool
 crate::policy::raw impl RawRule
 crate::policy::validate pub const POLICY_SCHEMA: &str = "forge-warden.policy.v0";
+crate::policy::validate pub const POLICY_SCHEMA_V1: &str = "forge-warden.policy.v1";
 crate::policy::validate pub const MIN_WHY_CHARS: usize = 12;
 crate::policy::validate pub const MAX_ID_CHARS: usize = 64;
 crate::policy::validate pub fn parse_policy(bytes: &[u8]) -> Result<Policy, PolicyError>
@@ -453,7 +456,7 @@ crate::verdict Note.pub code: NoteCode,
 crate::verdict Note.#[serde(skip_serializing_if = "Option::is_none")] pub path: Option<String>,
 crate::verdict Note.pub detail: String,
 crate::verdict macro macro_rules! note_codes { ($($doc:literal $variant:ident => $name:literal,)*) => { /// Why a verdict holds when the policy alone cannot decide. Every note holds the verdict at /// least (ADR 0003); `docs/POLICY_REFERENCE.md` gives each code's trigger and outcome, and /// the schema's enum lists exactly these names (tests check both). #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)] #[non_exhaustive] pub enum NoteCode { $(#[doc = $doc] $variant,)* } impl NoteCode { /// Every code, in declaration order. pub const ALL: &'static [Self] = &[$(Self::$variant,)*]; /// The name the verdict writes. #[must_use] pub const fn name(self) -> &'static str { match self { $(Self::$variant => $name,)* } } } }; }
-crate::verdict macro note_codes! { "The ranking lists no file: there is nothing to judge." EmptyRanking => "empty_ranking", "A signal this forge-warden does not know." UnknownSignal => "unknown_signal", "A status this forge-warden does not know (including deep-diff-forge's `unknown`)." UnknownStatus => "unknown_status", "A rename or copy: rank.v0 does not report the source path." SourcePathUnknown => "source_path_unknown", "One path is listed more than once (deep-diff-forge does this for a type change)." DuplicatePaths => "duplicate_paths", "Git sees a file in the patch that the ranking does not list." RankIncomplete => "rank_incomplete", "The ranking lists a file the patch does not change." RankExtraneous => "rank_extraneous", "The ranking's status or change-kind signals contradict Git." StatusMismatch => "status_mismatch", "Git refused the patch, or its facts cannot be read; coverage cannot be verified." PatchUnverifiable => "patch_unverifiable", "The ranking was supplied, not produced (advisory mode)." RankUnverified => "rank_unverified", "The ranking supplied with `--rank` differs from the one forge-warden produced." RankMismatch => "rank_mismatch", }
+crate::verdict macro note_codes! { "The ranking lists no file: there is nothing to judge." EmptyRanking => "empty_ranking", "A signal this forge-warden does not know." UnknownSignal => "unknown_signal", "A status this forge-warden does not know (including deep-diff-forge's `unknown`)." UnknownStatus => "unknown_status", "A rename or copy: rank.v0 does not report the source path." SourcePathUnknown => "source_path_unknown", "One path is listed more than once (deep-diff-forge does this for a type change)." DuplicatePaths => "duplicate_paths", "Git sees a file in the patch that the ranking does not list." RankIncomplete => "rank_incomplete", "The ranking lists a file the patch does not change." RankExtraneous => "rank_extraneous", "The ranking's status or change-kind signals contradict Git." StatusMismatch => "status_mismatch", "Git refused the patch, or its facts cannot be read; coverage cannot be verified." PatchUnverifiable => "patch_unverifiable", "The ranking was supplied, not produced (advisory mode)." RankUnverified => "rank_unverified", "The ranking supplied with `--rank` differs from the one forge-warden produced." RankMismatch => "rank_mismatch", "The policy requires verified claims (`[claims] require_verified`) and bound mode did not verify them." ClaimsUnverified => "claims_unverified", }
 crate::verdict impl Serialize for NoteCode
 crate::verdict NoteCode::fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
 crate::verdict impl PartialEq<&str> for NoteCode
