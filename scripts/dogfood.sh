@@ -145,13 +145,16 @@ set +e
   "${judge_mode[@]}" --patch "$out/change.patch" --base "$base" --head "$head" --json > "$out/verdict.json"
 code=$?
 set -e
-# A verdict judged in authority mode carries verified bound claims, whatever its outcome; one that does
-# not was not judged in bound mode, and is refused here rather than trusted (exit 4).
+# A verdict judged in authority mode carries verified bound claims for this base and head, whatever its
+# outcome: `verified` is JSON true (not a string, not false) and `base`/`head` are the ids passed. One that
+# does not was not judged in bound mode on this change, and is refused here rather than trusted (exit 4).
 if [ "$mode" = authority ] && { [ "$code" -eq 0 ] || [ "$code" -eq 7 ] || [ "$code" -eq 8 ]; }; then
   if ! python3 -I -c 'import json, sys
 claims = json.load(open(sys.argv[1], encoding="utf-8")).get("seals", {}).get("claims", {})
-sys.exit(0 if isinstance(claims, dict) and claims.get("verified") is True else 1)' "$out/verdict.json"; then
-    echo 'dogfood: the authority verdict has no verified bound claims (seals.claims.verified); not judged in bound mode' >&2
+bound = isinstance(claims, dict) and claims.get("verified") is True
+sys.exit(0 if bound and claims.get("base") == sys.argv[2] and claims.get("head") == sys.argv[3] else 1)' \
+      "$out/verdict.json" "$base" "$head"; then
+    echo 'dogfood: the authority verdict has no verified bound claims for this base and head (seals.claims); not judged in bound mode' >&2
     exit 4
   fi
 fi
