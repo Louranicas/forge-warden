@@ -7,8 +7,12 @@
 //! class can take `/`. EFFECT-WALL-1's pins (`policy/tests.rs`) are the oracle.
 //!
 //! Matching runs a Thompson automaton over the path's bytes, as sets of states: linear in the path's
-//! length times the pattern's size, with no backtracking. Per byte it costs one pass over the state
-//! set's words and the closures of the states that take that byte (measured in the module's tests).
+//! length times the pattern's size, with no backtracking; a path of 256 bytes or more goes through a
+//! lazily built DFA. Measured on the starter's binary-text rule (three globs, about 168 alternatives),
+//! release build: 0.56 us for a 43-byte path, 19 us for a 4 KiB dot-dense path and 30 us for a 4 KiB
+//! pseudo-random one (globset: 0.07 us, 5 us, 5.6 us), so a 64 MiB patch of 4 KiB paths costs that rule
+//! about half a second (EFFECT-WALL step 2, Bastion's SHOULD 1; the numbers are in
+//! docs/POLICY_REFERENCE.md "Size limits").
 
 use alloc::collections::BTreeMap;
 use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};

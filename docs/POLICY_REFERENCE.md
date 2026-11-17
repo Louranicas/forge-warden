@@ -279,9 +279,17 @@ Measured on 2026-11-11 with a release build and the pinned deep-diff-forge 0.8.2
 
 Not measured here: the time and memory of authority mode (it has been run once end to end, in a
 container with an allowlist an agent installed on the owner's instruction: see [RUNBOOK.md](RUNBOOK.md) step 6), a loaded or smaller
-machine, the worst case of the glob matcher, and the child timeouts (10 s each for the ranker
-and for Git). Before the policy limit existed, `lint` on a 64 MiB policy of 506 626 rules took
-6.5 s and 4 GiB; that is why the policy has its own limit.
+machine, and the child timeouts (10 s each for the ranker and for Git). Before the policy limit
+existed, `lint` on a 64 MiB policy of 506 626 rules took 6.5 s and 4 GiB; that is why the policy has
+its own limit.
+
+The glob matcher (the core's own since 0.3.0, EFFECT-WALL step 2) was measured on 2026-11-17 (Keel,
+light receipt `e30f5879f94c1572`, release build, one path at a time, the starter's
+`binary-text-is-hidden-text` rule: three globs, about 168 alternatives): 0.56 µs for a 43-byte path,
+19 µs for a 4 KiB dot-dense path, 30 µs for a 4 KiB pseudo-random one (globset 0.4.21, the matcher it
+replaced: 0.07 µs, 5 µs, 5.6 µs). Matching is linear in path length times pattern size; a path of 256
+bytes or more goes through a lazily built DFA. So a 64 MiB patch made of 4 KiB paths (16 384 of them)
+costs that rule about half a second.
 
 Canonical terminology and the distinction between a document and its level are in the
 [glossary](GLOSSARY.md).
