@@ -10,6 +10,7 @@
 //! length times the pattern's size, with no backtracking. Per byte it costs one pass over the state
 //! set's words and the closures of the states that take that byte (measured in the module's tests).
 
+use alloc::collections::BTreeMap;
 use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
 
 /// One parsed element of a glob, as globset tokenizes it.
@@ -546,45 +547,137 @@ impl Glob {
         }
     }
 
-    /// Whether the whole of `path` matches: linear in the path's length times the pattern's size,
-    /// with per byte one pass over the state words and the closures of the states that take it.
+    /// Whether the whole of `path` matches: linear in the path's length times the pattern's size.
+    /// A path of `CACHED_FROM` bytes or more is matched through a lazily built DFA (each state set
+    /// met is numbered, and its transitions are kept), so a long, repetitive path costs a table
+    /// lookup per byte; a shorter one steps the state sets directly.
     pub(super) fn matches(&self, path: &str) -> bool {
-        let mut current = self.start.clone();
+        if path.len() >= CACHED_FROM {
+            self.matches_cached(path.as_bytes())
+        } else {
+            self.matches_from(self.start.clone(), path.as_bytes())
+        }
+    }
+
+    /// Step the state set `current` over `bytes`, then whether it accepts.
+    fn matches_from(&self, mut current: Vec<u64>, bytes: &[u8]) -> bool {
         let mut next = vec![0_u64; self.words];
-        for &byte in path.as_bytes() {
-            next.fill(0);
-            let Some(members) = self.takes.get(usize::from(byte)) else {
-                return false;
-            };
-            let mut any = false;
-            for (word_index, (word, member)) in current.iter().zip(members).enumerate() {
-                let mut taking = word & member;
-                while taking != 0 {
-                    let bit = taking.trailing_zeros();
-                    taking &= taking.wrapping_sub(1);
-                    let Ok(bit) = usize::try_from(bit) else {
-                        continue;
-                    };
-                    let state = word_index.saturating_mul(64).saturating_add(bit);
-                    if let Some(reached) = self.after.get(state) {
-                        for &target in reached {
-                            set_bit(&mut next, target);
-                            any = true;
-                        }
-                    }
-                }
-            }
-            if !any {
+        for &byte in bytes {
+            if !self.step(&current, byte, &mut next) {
                 return false;
             }
             core::mem::swap(&mut current, &mut next);
         }
-        current
-            .iter()
+        self.accepts(&current)
+    }
+
+    /// The states reached from `current` by `byte`, into `next`; whether there are any.
+    fn step(&self, current: &[u64], byte: u8, next: &mut [u64]) -> bool {
+        next.fill(0);
+        let Some(members) = self.takes.get(usize::from(byte)) else {
+            return false;
+        };
+        let mut any = false;
+        for (word_index, (word, member)) in current.iter().zip(members).enumerate() {
+            let mut taking = word & member;
+            while taking != 0 {
+                let bit = taking.trailing_zeros();
+                taking &= taking.wrapping_sub(1);
+                let Ok(bit) = usize::try_from(bit) else {
+                    continue;
+                };
+                let state = word_index.saturating_mul(64).saturating_add(bit);
+                if let Some(reached) = self.after.get(state) {
+                    for &target in reached {
+                        set_bit(next, target);
+                        any = true;
+                    }
+                }
+            }
+        }
+        any
+    }
+
+    fn accepts(&self, set: &[u64]) -> bool {
+        set.iter()
             .zip(&self.accepting)
             .any(|(word, accepting)| word & accepting != 0)
     }
+
+    /// The lazy DFA: state sets numbered as they are met, 256 transitions per number (`UNKNOWN` until
+    /// computed, `DEAD` when nothing is reached). At `CACHED_SETS` numbered sets it stops numbering and
+    /// steps the rest of the path directly, so a path built to meet many sets costs no more memory.
+    fn matches_cached(&self, bytes: &[u8]) -> bool {
+        self.matches_cached_with(bytes, CACHED_SETS)
+    }
+
+    /// [`Glob::matches_cached`] with a cap of `cap` numbered sets (tests use small caps).
+    fn matches_cached_with(&self, bytes: &[u8], cap: usize) -> bool {
+        let mut sets: Vec<Vec<u64>> = vec![self.start.clone()];
+        let mut numbers: BTreeMap<Vec<u64>, u32> = BTreeMap::new();
+        numbers.insert(self.start.clone(), 0);
+        let mut table: Vec<u32> = vec![UNKNOWN; 256];
+        let mut current: usize = 0;
+        let mut next = vec![0_u64; self.words];
+        for (position, &byte) in bytes.iter().enumerate() {
+            let slot = current
+                .saturating_mul(256)
+                .saturating_add(usize::from(byte));
+            match table.get(slot).copied() {
+                Some(DEAD) => return false,
+                Some(known) if known != UNKNOWN => {
+                    let Ok(known) = usize::try_from(known) else {
+                        return false;
+                    };
+                    current = known;
+                    continue;
+                }
+                _ => {}
+            }
+            let Some(set) = sets.get(current) else {
+                return false;
+            };
+            if !self.step(set, byte, &mut next) {
+                if let Some(entry) = table.get_mut(slot) {
+                    *entry = DEAD;
+                }
+                return false;
+            }
+            let number = if let Some(&known) = numbers.get(&next) {
+                known
+            } else {
+                let (Ok(number), true) = (u32::try_from(sets.len()), sets.len() < cap) else {
+                    // The cache is full: finish by stepping from this set.
+                    let Some(rest) = bytes.get(position.saturating_add(1)..) else {
+                        return self.accepts(&next);
+                    };
+                    return self.matches_from(next, rest);
+                };
+                sets.push(next.clone());
+                numbers.insert(next.clone(), number);
+                table.extend(core::iter::repeat_n(UNKNOWN, 256));
+                number
+            };
+            if let Some(entry) = table.get_mut(slot) {
+                *entry = number;
+            }
+            let Ok(number) = usize::try_from(number) else {
+                return false;
+            };
+            current = number;
+        }
+        sets.get(current).is_some_and(|set| self.accepts(set))
+    }
 }
+
+/// Paths of at least this many bytes are matched through the lazy DFA.
+const CACHED_FROM: usize = 256;
+/// The lazy DFA numbers at most this many state sets per path.
+const CACHED_SETS: usize = 1024;
+/// A transition not computed yet.
+const UNKNOWN: u32 = u32::MAX;
+/// A transition that reaches no state.
+const DEAD: u32 = u32::MAX - 1;
 
 #[cfg(test)]
 mod tests {
@@ -645,6 +738,41 @@ mod tests {
                     theirs.err(),
                     mine.as_ref().err()
                 ),
+            }
+            Ok(())
+        });
+        if let Err(failure) = outcome {
+            panic!("{failure}");
+        }
+    }
+
+    /// The lazy DFA (paths of `CACHED_FROM` bytes or more) against globset, and against plain
+    /// stepping and the DFA with tiny caps (so the cache-full fallback runs), on long paths made by
+    /// repeating generated pieces.
+    #[test]
+    fn the_cached_matcher_agrees_on_long_paths() {
+        let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(2000));
+        let cases = (PATTERN_PIECES, proptest::collection::vec(PATH_PIECES, 1..4));
+        let outcome = runner.run(&cases, |(pattern, pieces)| {
+            let (Ok(set), Ok(glob)) = (globset(&pattern), compile(&pattern)) else {
+                return Ok(());
+            };
+            for piece in &pieces {
+                let mut path = String::new();
+                while path.len() < super::CACHED_FROM.saturating_add(44) {
+                    path.push_str(piece);
+                    path.push('a');
+                }
+                let want = set.is_match(path.as_str());
+                let bytes = path.as_bytes();
+                prop_assert_eq!(want, glob.matches(&path), "{:?} on {:?}", pattern, path);
+                prop_assert_eq!(
+                    want,
+                    glob.matches_from(glob.start.clone(), bytes),
+                    "stepping"
+                );
+                prop_assert_eq!(want, glob.matches_cached_with(bytes, 1), "cap 1");
+                prop_assert_eq!(want, glob.matches_cached_with(bytes, 3), "cap 3");
             }
             Ok(())
         });
