@@ -7,6 +7,7 @@
 //! no other way to obtain one: the field is private and the only constructors are [`Sha256Hex::of`]
 //! and [`Sha256Hex::parse`].
 
+use alloc::{borrow::ToOwned, format, string::String};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -64,8 +65,8 @@ impl Sha256Hex {
     }
 }
 
-impl std::fmt::Display for Sha256Hex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Sha256Hex {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(&self.0)
     }
 }
@@ -79,6 +80,7 @@ pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use proptest::prelude::*;
 
     #[test]

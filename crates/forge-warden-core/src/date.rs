@@ -3,7 +3,7 @@
 //! The core never reads a clock: the CLI reads one through a door (or takes `--today`) and passes
 //! a [`Date`] in. Dates are proleptic Gregorian and compare in calendar order.
 
-use std::fmt;
+use core::fmt;
 
 /// Why text or numbers are not a [`Date`] (Q-TYPES-2, Q1-12: a caller learns the reason instead of
 /// inventing one for a bare `None`).
@@ -57,7 +57,7 @@ impl Date {
         if bytes.len() != 10 || bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
             return Err(DateError::BadShape);
         }
-        let field = |range: std::ops::Range<usize>| -> Option<u16> {
+        let field = |range: core::ops::Range<usize>| -> Option<u16> {
             let part = text.get(range)?;
             if !part.bytes().all(|b| b.is_ascii_digit()) {
                 return None;
@@ -178,6 +178,7 @@ const fn days_in_month(year: u16, month: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn a_refused_date_names_its_reason() {

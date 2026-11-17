@@ -5,7 +5,8 @@
 //! [`RepoPath`] can only be built by [`RepoPath::parse`], which refuses every such spelling instead of repairing it.
 //! Other bytes (spaces, tabs, backslashes, quotes, non-ASCII) are kept exactly: they are legal in Git paths.
 
-use std::fmt;
+use alloc::{borrow::ToOwned, string::String};
+use core::fmt;
 
 /// A canonical, root-relative repository path: `/`-separated, no empty, `.` or `..` segment.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,6 +71,7 @@ impl fmt::Display for RepoPath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use proptest::prelude::*;
 
     #[test]

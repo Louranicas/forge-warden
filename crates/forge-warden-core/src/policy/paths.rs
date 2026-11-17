@@ -2,6 +2,7 @@
 
 use super::glob::{self, Glob};
 use super::issues::{Issues, Rejected};
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 
 /// A compiled set of globs, keeping the patterns for reporting.
 #[derive(Debug, Clone)]

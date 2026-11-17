@@ -10,8 +10,9 @@
 //!
 //! ## Guarantees (each one is a test, not a promise)
 //!
-//! - **Pure.** No I/O, no clock, no environment, no threads (`clippy.toml` in this crate makes
-//!   them compile errors). Bytes and a date go in; a [`Verdict`] comes out.
+//! - **Pure.** `#![no_std]`: the crate cannot name `std` at all, so no file, network, process,
+//!   environment, thread or clock, in any spelling, compiles here (EFFECT-WALL step 2c); only `core`
+//!   and `alloc`. Bytes and a date go in; a [`Verdict`] comes out.
 //! - **Deterministic.** The same policy bytes, ranking bytes and date give byte-identical output.
 //!   No hash-ordered collection is reachable from this crate.
 //! - **Unknown is never pass.** A signal or status the policy vocabulary does not know, an empty
@@ -21,6 +22,9 @@
 //!   with a location for each.
 //!
 //! [deep-diff-forge]: https://github.com/Louranicas/deep-diff-forge
+#![no_std]
+
+extern crate alloc;
 
 pub mod authority;
 mod builtin;

@@ -1,6 +1,7 @@
 //! Why a policy was refused: every issue, each with a location.
 
-use std::fmt;
+use alloc::{string::String, vec::Vec};
+use core::fmt;
 
 /// A policy that could not be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

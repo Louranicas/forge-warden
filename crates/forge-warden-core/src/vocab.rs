@@ -12,6 +12,7 @@
 //! wrote into `fixtures/corpus/` to equal it.
 
 use crate::defaults::NamedDefault as _;
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
 /// Every risk signal deep-diff-forge 0.7.0 can put in a `rank.v0` file entry: path signals first,
 /// then code-evidence signals.
@@ -182,19 +183,19 @@ impl Signal {
 
 // Ordered and compared by wire name, so sorted output is the same as when this was a string.
 impl PartialOrd for Signal {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Signal {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.name().cmp(other.name())
     }
 }
 
-impl std::fmt::Display for Signal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Signal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
 }
@@ -281,19 +282,19 @@ impl Status {
 
 // Ordered and compared by wire name, so sorted output is the same as when this was a string.
 impl PartialOrd for Status {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Status {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.name().cmp(other.name())
     }
 }
 
-impl std::fmt::Display for Status {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Status {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
 }
@@ -335,8 +336,8 @@ impl Side {
     }
 }
 
-impl std::fmt::Display for Side {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Side {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
 }
@@ -400,7 +401,8 @@ fn levenshtein(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
+    use alloc::collections::BTreeSet;
+    use alloc::string::ToString;
 
     #[test]
     fn vocabularies_have_no_duplicates() {
@@ -494,7 +496,7 @@ mod tests {
         assert_eq!(Side::New.to_string(), "new");
         assert_eq!(Side::Old.to_string(), "old");
         let (added, deleted) = (Status::parse("added"), Status::parse("deleted"));
-        assert_eq!(added.partial_cmp(&deleted), Some(std::cmp::Ordering::Less));
+        assert_eq!(added.partial_cmp(&deleted), Some(core::cmp::Ordering::Less));
         assert!(added < deleted);
     }
 

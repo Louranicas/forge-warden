@@ -9,6 +9,8 @@
 //! Matching runs a Thompson automaton over the path's bytes: linear in the path's length times the
 //! pattern's size, with no backtracking, so a hostile path cannot make it slow.
 
+use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
+
 /// One parsed element of a glob, as globset tokenizes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Token {
@@ -207,7 +209,7 @@ impl Parser<'_> {
     }
 }
 
-/// globset's `add_to_last_range`: the range ends at `end`, which may not come before its start.
+/// globset's range extension (its add_to_last_range): the range ends at `end`, which may not come before its start.
 fn extend_last_range(ranges: &mut [(char, char)], end: char) -> Result<(), String> {
     let Some(last) = ranges.last_mut() else {
         return Err(UNCLOSED_CLASS.to_owned());
@@ -517,6 +519,7 @@ impl Glob {
 #[cfg(test)]
 mod tests {
     use super::compile;
+    use alloc::{string::String, string::ToString};
     use proptest::prelude::*;
 
     /// globset 0.4.21 as the policy built it until EFFECT-WALL step 2b: the parse error's words, or

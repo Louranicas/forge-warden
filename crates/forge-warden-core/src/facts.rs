@@ -10,8 +10,9 @@ use crate::defaults::NamedDefault;
 use crate::path::RepoPath;
 use crate::rank::{RankDoc, RankedFile};
 use crate::vocab::{Signal, Status};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
+use core::fmt;
 
 /// What happened to a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -409,7 +410,7 @@ fn decimal(column: &[u8]) -> bool {
 }
 
 fn utf8(bytes: &[u8]) -> Result<&str, Unverifiable> {
-    std::str::from_utf8(bytes).map_err(|_| Unverifiable::NonUtf8Path)
+    core::str::from_utf8(bytes).map_err(|_| Unverifiable::NonUtf8Path)
 }
 
 impl PatchFacts {
@@ -507,7 +508,7 @@ fn summary_type_change(summary: &[u8], path: &str) -> bool {
     let mut deleted: Option<Mode> = None;
     let mut created: Option<Mode> = None;
     for raw in summary.split(|b| *b == b'\n') {
-        let Ok(line) = std::str::from_utf8(raw) else {
+        let Ok(line) = core::str::from_utf8(raw) else {
             continue;
         };
         let (slot, rest) = if let Some(rest) = line.strip_prefix(" delete mode ") {
@@ -713,6 +714,7 @@ impl FileChange {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn every_derived_signal_is_a_non_empty_constant() {

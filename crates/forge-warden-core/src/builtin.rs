@@ -14,6 +14,7 @@
 
 use crate::facts::{Mode, PatchFacts};
 use crate::verdict::{RuleOutcome, RuleResult, Violation};
+use alloc::{borrow::ToOwned, format, vec::Vec};
 
 /// The id of the built-in rule (a `:` no policy id may contain).
 pub(crate) const BINARY_ON_EXECUTABLE: &str = "builtin:binary-on-executable";

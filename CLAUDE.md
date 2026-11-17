@@ -7,8 +7,9 @@ following it is the fastest path, not the polite one.
 ## What this repository is
 
 - `crates/forge-warden-core`: the pure engine. Bytes and a `Date` in, a `Verdict` out. **No I/O,
-  no clock, no environment, no threads, no hash-ordered collections**: `crates/forge-warden-core/clippy.toml`
-  makes each of them a compile error (ADR 0001).
+  no clock, no environment, no threads, no hash-ordered collections**: the crate is `#![no_std]`, so it
+  cannot name `std` at all, and `crates/forge-warden-core/clippy.toml` refuses hash-ordered collections
+  (ADR 0001).
 - `crates/forge-warden-cli`: the `forge-warden` binary. Every effect (file, stdin, stdout,
   stderr, clock, environment and child process execution) goes through one function in the door modules under `src/doors/` (ADR 0001).
 - Input: `deep-diff-forge.rank.v0` from deep-diff-forge, read tolerantly (additive fields are

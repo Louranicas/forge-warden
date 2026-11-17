@@ -14,6 +14,7 @@ use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
+use alloc::{borrow::ToOwned, format, string::String, string::ToString, vec::Vec};
 use serde::Serialize;
 
 /// The schema name every verdict carries.
@@ -562,7 +563,7 @@ pub struct Violation {
     pub evidence: Vec<Citation>,
     /// deep-diff-forge found more evidence for this file than it listed (it lists at most 32), so
     /// `evidence` is incomplete. Present only when true.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "core::ops::Not::not")]
     pub evidence_truncated: bool,
     /// The index of the `[[waiver]]` that covers it, if one does.
     #[serde(skip_serializing_if = "Option::is_none")]

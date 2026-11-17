@@ -27,8 +27,9 @@ use crate::policy::{AdmittedProducer, Policy};
 use crate::rank::RankDoc;
 use crate::seal::Sha256Hex;
 use crate::verdict::{Claims, Note, NoteCode, Provenance, RankedBy, Seals, Verdict};
-use std::collections::BTreeMap;
-use std::marker::PhantomData;
+use alloc::collections::BTreeMap;
+use alloc::{borrow::ToOwned, format, string::ToString, vec, vec::Vec};
+use core::marker::PhantomData;
 
 /// Marker: forge-warden ran the pinned ranker itself.
 #[derive(Debug)]

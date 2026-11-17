@@ -2320,6 +2320,10 @@
         "a83aa0795bf5fea6738bcee7b35cfe57ccf5f3e0b177a99dc6de06e8b62b4260"
       ],
       [
+        "crates/forge-warden-core/src/policy/glob.rs",
+        "1cdf56b1d7ff6e0050436d1d61be110c3210fdd389e6a58cf78666f55849d70f"
+      ],
+      [
         "crates/forge-warden-core/src/policy/issues.rs",
         "956654195add24e429017768030c2824e80f94552bce1aa35e105edc3a9bb8eb"
       ],
