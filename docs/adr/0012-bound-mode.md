@@ -346,3 +346,14 @@ change commits cannot shape the judged patch at all, and a change to `.gitmodule
 that the policy's rules read like any other file. Protecting it remains a deployer's choice (a `protect_paths` rule),
 not a condition of the gate's integrity.
 
+## Decision, 2026-11-17T05:10:52Z: the starter and this repository's policy require verified claims (ruling 1663)
+
+Lodestar's ruling 1663 (2026-11-16T22:58Z), built in PATCH-BOUND (c) part 2 (MAIN in Train B9, 67c77ae6): the starter
+policy (`forge-warden init`, `examples/starter.warden.toml`) and this repository's `warden.toml` are
+`forge-warden.policy.v1` with `[claims] require_verified = true`. **Why:** PATCH-BOUND exists to close Q55 (a wrong
+authority PASS on a protected path when the patch is not bound to the commits); a new deployment that runs `init` gets
+that fix on, rather than a line in UPGRADING telling it to opt in. The cost is a HOLD (fail closed), never a wrong
+PASS, and the hold names its remedy: re-run with `--repo` (`claims_unverified`, which no acknowledgement accepts: the
+D8 note above). **Existing policies are untouched:** a v0 policy is read unchanged, and a v1 policy without the table
+behaves as before; UPGRADING (0.3.0) gives the two lines to add. Advisory runs are unaffected (they never pass).
+
