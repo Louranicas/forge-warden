@@ -94,10 +94,17 @@ fn suppressions_are_expectations_with_reasons() {
 }
 
 /// The binary's lint wall over the effect lints (EFFECT-WALL step 3, DESIGN.md 3.2): `main.rs`
-/// forbids both, so nothing in the binary can lower them. It is the one mention of either lint a
-/// non-door production file may hold, written exactly so and exactly once.
-const BINARY_FORBIDS_EFFECTS: &str =
-    "#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]";
+/// forbids them, so nothing in the binary can lower them (the printing, `dbg!` and exit lints too,
+/// Touchstone's attack on 87d2e073). It is the one mention of the door lints a non-door production
+/// file may hold, written exactly so (rustfmt's layout) and exactly once.
+const BINARY_FORBIDS_EFFECTS: &str = "#![forbid(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::dbg_macro,
+    clippy::exit
+)]";
 
 #[test]
 fn only_doors_rs_opens_doors_in_production_code() {
@@ -108,8 +115,7 @@ fn only_doors_rs_opens_doors_in_production_code() {
         }
         let rest = if path == "crates/forge-warden-cli/src/main.rs" {
             assert_eq!(
-                text.lines()
-                    .filter(|line| *line == BINARY_FORBIDS_EFFECTS)
+                text.matches(&format!("\n{BINARY_FORBIDS_EFFECTS}\n"))
                     .count(),
                 1,
                 "{path}: must forbid the effect lints, once, at the top (EFFECT-WALL step 3)"

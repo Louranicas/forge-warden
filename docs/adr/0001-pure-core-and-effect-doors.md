@@ -54,7 +54,10 @@ feature that enables anything. The core's `clippy.toml` still refuses hash-order
 The door modules moved, unchanged, from `crates/forge-warden-cli/src/doors/` to the crate `forge-warden-doors`
 (`crates/forge-warden-doors/src/`; `mod.rs` became `lib.rs`). The binary depends on it and its `main.rs` carries
 `#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]`: no `allow`, `expect`, `cfg_attr`, macro output,
-`#[path]` or `include!` can lower those lints in the binary, so a door can only exist in the doors crate. The
+`#[path]` or `include!` can lower those lints in the binary, so a door can only exist in the doors crate. It forbids
+`print_stdout`, `print_stderr`, `dbg_macro` and `exit` as well, and `clippy.toml` names clap's own effects (reading the
+process arguments, printing help, `Error::exit`) and `std::process::exit`, so the binary cannot reach an effect through
+clap either. The
 binary builds its command line with clap's builder, because clap's derive emits `allow(clippy::style)`, which the
 forbid refuses (measured, R2). The core feature `mint` is enabled by the doors crate alone (ruling R1). Ownership
 moved with the code to `crates/forge-warden-doors/src/**`; its `Cargo.toml` is covered by `crates/*/Cargo.toml`.

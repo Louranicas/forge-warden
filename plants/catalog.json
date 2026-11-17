@@ -11,6 +11,7 @@
       "G-06 door-clap-attribute-effect (2026-11-17, EFFECT-WALL step 3): clap's derive is gone (the CLI builds its command line in code, under the normal lint wall), so the recipe no longer plants into a clap attribute; it plants a build-time file read, #[doc = include_str!(..)], on fn cli: it compiles, so only the Q37 attribute scan can refuse it. Also (Touchstone, 1848): the core clippy.toml's std entries are now a second layer the compiler reaches first in the no_std core; they stay as defence in depth.",
       "G-06 cli-forbid-lowered, cli-forbid-removed (2026-11-17, EFFECT-WALL step 3): the doors are the crate forge-warden-doors and main.rs carries #![forbid(clippy::disallowed_methods, clippy::disallowed_types)]; the first plant shows the compiler refusing a local exemption (E0453), the second that deleting the forbid fails the repository invariants. 24 recipes that run door unit tests moved from -p forge-warden-cli --bin forge-warden to -p forge-warden-doors --lib (the tests moved with the doors; unchanged names and diagnostics).",
       "G-15 fixture-seam-without-debug (2026-11-17, EFFECT-WALL step 3, Bastion B1): after the doors became a crate the fixture seams are gated cfg(any(test, all(fw_fixture_cli, debug_assertions))), so a --release build with the cfg still reads the Git allowlist from /etc; door_lints pins the spelling and this plant drops debug_assertions from the allowlist seam.",
+      "G-06 cli-clap-*, cli-process-exit, cli-forbid-lowered-* (2026-11-17, EFFECT-WALL step 3, Touchstone's attack on 87d2e073): clap's own effects (get_matches, get_matches_mut, try_get_matches, print_help, print_long_help, Error::exit, Error::print) and std::process::exit are in clippy.toml, so main.rs's forbid refuses them; print_stdout, print_stderr, dbg_macro and exit are forbidden there too, so no local expect lowers them (E0453). One plant per refused call family and per newly forbidden lint.",
       "All mutation runs require --cap-lints true and unset CARGO_TARGET_DIR.",
       "WP-GIT-PIN extends G-15 executable authentication to Git and G-36 acknowledgements to the current owner-policy snapshot; twelve named runtime/controller plants.",
       "G-52 self-hosted runner routing: row added 2026-11-10 by the register owner (PLANTS-FENCES ruling R1); its Current is measured at RUNNER-UP v8 b3f3498a.",
@@ -2053,7 +2054,7 @@
         "--",
         "only_doors_rs_opens_doors_in_production_code"
       ],
-      "old": "#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]\n",
+      "old": "#![forbid(\n    clippy::disallowed_methods,\n    clippy::disallowed_types,\n    clippy::print_stdout,\n    clippy::print_stderr,\n    clippy::dbg_macro,\n    clippy::exit\n)]\n",
       "new": "",
       "required_tools": [
         "cargo",
@@ -2081,6 +2082,222 @@
       ],
       "old": "#[cfg(any(test, all(fw_fixture_cli, debug_assertions)))]\n#[expect(\n    clippy::disallowed_methods,\n    reason = \"test door: fixture Git policy context\"\n)]",
       "new": "#[cfg(any(test, fw_fixture_cli))]\n#[expect(\n    clippy::disallowed_methods,\n    reason = \"test door: fixture Git policy context\"\n)]",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-reads-args",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Command::try_get_matches`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let matches = match cli().try_get_matches_from(arguments) {\n",
+      "new": "    let matches = match cli().try_get_matches() {\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-prints-help",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Command::print_help`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    let _help = cli().print_help();\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-clap-error-exits",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `clap::Error::exit`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "            let text = error.render().to_string();\n",
+      "new": "            if error.kind() == clap::error::ErrorKind::DisplayVersion {\n                error.exit();\n            }\n            let text = error.render().to_string();\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-process-exit",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "disallowed method `std::process::exit`",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "    let arguments = doors::arguments();\n",
+      "new": "    let arguments = doors::arguments();\n    if arguments.len() > 4096 {\n        std::process::exit(2);\n    }\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-print-stdout",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::print_stdout\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::print_stdout, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-print-stderr",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::print_stderr\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::print_stderr, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-dbg-macro",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::dbg_macro\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::dbg_macro, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
+      "required_tools": [
+        "cargo",
+        "git",
+        "python3",
+        "rustc",
+        "rustup"
+      ]
+    },
+    {
+      "id": "cli-forbid-lowered-exit",
+      "guardrail": "G-06",
+      "path": "crates/forge-warden-cli/src/main.rs",
+      "diagnostic": "E0453[^\\n]*clippy::exit\\b",
+      "cargo": [
+        "clippy",
+        "-p",
+        "forge-warden-cli",
+        "--bin",
+        "forge-warden",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "old": "fn run_cli() -> Exit {\n",
+      "new": "#[expect(clippy::exit, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
       "required_tools": [
         "cargo",
         "git",

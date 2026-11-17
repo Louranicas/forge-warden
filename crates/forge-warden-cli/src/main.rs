@@ -15,7 +15,14 @@
 //! Every effect goes through `forge_warden_doors` (ADR 0001); this crate forbids the effect lints, so no
 //! `allow`, `expect`, `cfg_attr`, macro output, `#[path]` or `include!` can lower them here (EFFECT-WALL
 //! step 3, DESIGN.md 3.2).
-#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]
+#![forbid(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::dbg_macro,
+    clippy::exit
+)]
 
 use forge_warden_doors as doors;
 #[cfg(test)]
