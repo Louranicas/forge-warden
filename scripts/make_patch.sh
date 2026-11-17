@@ -45,10 +45,20 @@ printf '%s\n' "$objects" > "$scratch/diff.git/objects/info/alternates"
 # staging does the same, ADR 0012 D3.1), and several merge bases are refused as bound mode refuses
 # them (D7): `git diff A...B` would pick one with only a warning.
 nograph=(-c core.commitGraph=false -c core.multiPackIndex=false)
-bases="$(git --git-dir="$scratch/diff.git" "${nograph[@]}" merge-base --all "$base" "$head")" || {
+# `merge-base` exits 1 and says nothing when the two have no common history; any other failure is
+# Git's (most often a shallow or partial clone missing commits between them: this private repository
+# borrows the object store, not the clone's shallow list), and its first line is shown, not renamed.
+status=0
+bases="$(git --git-dir="$scratch/diff.git" "${nograph[@]}" merge-base --all "$base" "$head" 2> "$scratch/merge-base.err")" \
+  || status=$?
+if [ "$status" -eq 1 ] && [ ! -s "$scratch/merge-base.err" ]; then
   echo "make_patch: base and head have no common history" >&2
   exit 2
-}
+elif [ "$status" -ne 0 ]; then
+  echo "make_patch: git merge-base failed (exit $status): $(head -n 1 "$scratch/merge-base.err")" >&2
+  echo "make_patch: a shallow or partial clone lacks commits between base and head; fetch them (git fetch --unshallow)" >&2
+  exit 2
+fi
 count="$(printf '%s\n' "$bases" | grep -c .)"
 if [ "$count" -ne 1 ]; then
   echo "make_patch: base and head have $count merge bases; name the merge base as --base" >&2

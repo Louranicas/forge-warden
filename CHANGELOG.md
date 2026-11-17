@@ -13,6 +13,14 @@ registry is always listed, because consumers parse them.
   only with the new core feature `mint`, which only the CLI enables. The binary's door hands out one key per run, and
   `clippy.toml` denies `MintKey::new` outside it, so a second mint is refused in every spelling; the text count of
   `attest(` in the repository invariants is gone.
+- The starter policy (`forge-warden init`, `examples/starter.warden.toml`) is `forge-warden.policy.v1`
+  with `[claims] require_verified = true`, and its `#:schema` line names the GitLab raw URL of
+  `policy.v1`: an authority run of a new deployment counts only in bound mode (`--repo`); without it
+  the verdict holds with `claims_unverified` (ruling 1663). Existing policies are untouched. This
+  repository's own `warden.toml` does the same, and `scripts/dogfood.sh` judges with `--repo` and
+  refuses (exit 4) an authority verdict whose claims are not verified.
+- `scripts/make_patch.sh` reports Git's error, with the remedy, when `merge-base` fails (a shallow or
+  partial clone lacking the commits between base and head); "no common history" now means only that.
 - **Ranker pin: deep-diff-forge v0.8.3** (owner decision D4: the newest release, with its stated limits), from
   v0.8.2: `warden.toml` `[producer]` lists the v0.8.3 x86_64-unknown-linux-gnu binary
   (`4cafd0ad0f44417eb0e5b8feb591109a3e055428928f2a045316046c434f0ef1`); `scripts/tool-versions.toml` names tag
