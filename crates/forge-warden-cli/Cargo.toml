@@ -20,8 +20,9 @@ workspace = true
 
 [dependencies]
 clap.workspace = true
-# `mint`: the constructor of the MintKey the ranker door hands out once per run (EFFECT-WALL step 1).
-forge-warden-core = { workspace = true, features = ["mint"] }
+forge-warden-core.workspace = true
+# Every effect of the binary (EFFECT-WALL step 3, DESIGN.md 3.2): main.rs forbids the effect lints.
+forge-warden-doors.workspace = true
 # The workspace declares these without `std` (the core is no_std, EFFECT-WALL step 2c); the binary uses std.
 serde_json = { workspace = true, features = ["std"] }
 toml = { workspace = true, features = ["std"] }

@@ -1034,13 +1034,13 @@ fn only_open_regular_opens_a_named_file_and_no_door_joins_without_a_deadline() {
 }
 
 /// Q-DOOR-SPLIT: door rights are granted by exact listing, never by location. Every file under the
-/// door directory, of any kind, must be a listed door module. A file added under `src/doors/`
+/// door directory, of any kind, must be a listed door module. A file added under `crates/forge-warden-doors/src/`
 /// therefore fails here until the protected list names it. The comparison is equality, so a listed
 /// module that is missing would fail too; but deleting a listed module is a compile error first (its
 /// `mod` line), and for that direction the compiler is the guard (ledger Q30).
 ///
 /// The door directory itself, and each directory above it, must be a real directory: a linked
-/// `src/doors` would be walked through the link and fail only as a mismatch or a panic in
+/// `crates/forge-warden-doors/src` would be walked through the link and fail only as a mismatch or a panic in
 /// `common::relative`, not for its reason (ledger Q35). Nothing under the door directory may be a
 /// symlink. The listing below compares canonical paths,
 /// so a link `doors/alias.rs -> file.rs` would collapse onto the listed `file.rs` and pass as if it
@@ -1215,7 +1215,7 @@ fn door_path_offences(door: &str, source: &str) -> Vec<String> {
 }
 
 /// Q-DOOR-PATH on the tree: no door module names another file by `#[path]`, except test support
-/// into a test-only module (today: `doors/mod.rs`'s `test_environment`).
+/// into a test-only module (today: the doors crate's `lib.rs`, `test_environment`).
 #[test]
 fn a_door_module_names_only_test_support_by_path() {
     for door in common::DOOR_FILES {
@@ -1230,19 +1230,19 @@ fn a_door_module_names_only_test_support_by_path() {
 
 #[test]
 fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
-    let door = "crates/forge-warden-cli/src/doors/mod.rs";
+    let door = "crates/forge-warden-doors/src/lib.rs";
     for (name, source) in [
         (
             "cfg(test)",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
-            "cfg(test) plus another cfg, as in doors/mod.rs",
-            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "cfg(test) plus another cfg, as in the doors crate's lib.rs",
+            "#[cfg(test)]\n#[cfg(not(fw_fixture_cli))]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "cfg(all(test, unix)) and a ./ segment",
-            "#[cfg(all(test, unix))]\n#[path = \"./../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(all(test, unix))]\n#[path = \"./../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         ("no path attribute at all", "mod child;"),
     ] {
@@ -1255,15 +1255,15 @@ fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
     for (name, source) in [
         (
             "no cfg(test)",
-            "#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "cfg(not(test))",
-            "#[cfg(not(test))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(not(test))]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "cfg(any(test, unix))",
-            "#[cfg(any(test, unix))]\n#[path = \"../../tests/support/env.rs\"]\nmod env;",
+            "#[cfg(any(test, unix))]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;",
         ),
         (
             "a door file, not test support",
@@ -1283,27 +1283,27 @@ fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
         ),
         (
             "not a Rust file",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.txt\"]\nmod env;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.txt\"]\nmod env;",
         ),
         (
             "a tests/ directory itself",
-            "#[cfg(test)]\n#[path = \"../../tests\"]\nmod env;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests\"]\nmod env;",
         ),
         (
             "an inline module",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env {}",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env {}",
         ),
         (
             "nested in an inline test module",
-            "#[cfg(test)]\nmod t {\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+            "#[cfg(test)]\nmod t {\n    #[path = \"../../forge-warden-cli/tests/support/env.rs\"]\n    mod env;\n}",
         ),
         (
             "through cfg_attr",
-            "#[cfg_attr(test, path = \"../../tests/support/env.rs\")]\nmod env;",
+            "#[cfg_attr(test, path = \"../../forge-warden-cli/tests/support/env.rs\")]\nmod env;",
         ),
         (
             "inside a macro invocation",
-            "some_macro! {\n    #[cfg(test)]\n    #[path = \"../../tests/support/env.rs\"]\n    mod env;\n}",
+            "some_macro! {\n    #[cfg(test)]\n    #[path = \"../../forge-warden-cli/tests/support/env.rs\"]\n    mod env;\n}",
         ),
         (
             "not a string literal",
@@ -1311,11 +1311,11 @@ fn the_door_path_rule_admits_only_a_test_only_mod_naming_test_support() {
         ),
         (
             "on a function",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nfn env() {}",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nfn env() {}",
         ),
         (
             "a second, unadmitted path beside an admitted one",
-            "#[cfg(test)]\n#[path = \"../../tests/support/env.rs\"]\nmod env;\n#[path = \"file.rs\"]\nmod again;",
+            "#[cfg(test)]\n#[path = \"../../forge-warden-cli/tests/support/env.rs\"]\nmod env;\n#[path = \"file.rs\"]\nmod again;",
         ),
         ("unparseable", "fn f( {"),
     ] {

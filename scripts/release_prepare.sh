@@ -44,7 +44,7 @@ done
 # The version, wherever a release states it.
 workspace="$(awk '/^\[workspace\.package\]/{p=1;next} /^\[/{p=0} p && /^version = /{gsub(/"/,"",$3); print $3}' Cargo.toml)"
 [ "$workspace" = "$version" ] || die "Cargo.toml workspace version is '$workspace', not $version"
-for crate in forge-warden-core forge-warden-cli; do
+for crate in forge-warden-core forge-warden-doors forge-warden-cli; do
   locked="$(awk -v n="$crate" '$0=="name = \""n"\"" {getline; gsub(/"/,"",$3); print $3}' Cargo.lock)"
   [ "$locked" = "$version" ] || die "Cargo.lock has $crate '$locked', not $version"
 done

@@ -38,7 +38,7 @@ pub(super) fn describe(failure: &ChildFailure) -> String {
 
 /// Why authority mode produced no ranking. Neither case gives a verdict.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RankerFailure {
+pub enum RankerFailure {
     /// The policy does not admit this ranker (exit 4: change the policy or the ranker).
     NotAdmitted(String),
     /// A door refused or failed before the ranker ran (pinning it, isolating it); its kind
@@ -49,22 +49,26 @@ pub(crate) enum RankerFailure {
 }
 
 /// The arguments the ranker gets: deep-diff-forge reading the patch from stdin.
-pub(in crate::doors) const RANKER_ARGS: [&str; 3] = ["--stdin-patch", "--rank", "--json"];
+pub(crate) const RANKER_ARGS: [&str; 3] = ["--stdin-patch", "--rank", "--json"];
 /// Wall-clock limit for the ranker (ADR 0005 §2.5).
 pub(super) const RANKER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// The ranker's stderr is diagnostic only.
-pub(in crate::doors) const RANKER_STDERR_CAP: usize = 64 * 1024;
+pub(crate) const RANKER_STDERR_CAP: usize = 64 * 1024;
 
 /// Authority mode's ranking (ADR 0005 §2.1-§2.5): pin `ranker` by descriptor, require the
 /// policy's `[producer] sha256` to list the pinned bytes, run exactly those bytes isolated on
 /// `patch` (the one buffer), and admit the output only if it is a ranking sealed to that patch.
 /// This is the only place the binary mints a [`Ranking<Produced>`]. Returns the ranking and its
 /// exact bytes.
+///
+/// # Errors
+///
+/// A [`RankerFailure`] if the ranker cannot be pinned, the policy does not list its digest, it does not run to a zero exit within its bounds, or its output is not a ranking sealed to `patch`.
 #[expect(
     clippy::disallowed_methods,
     reason = "door: produce_ranking (the system temp dir)"
 )]
-pub(crate) fn produce_ranking(
+pub fn produce_ranking(
     ranker: &Path,
     policy: &Policy,
     patch: &[u8],
@@ -77,7 +81,7 @@ pub(crate) fn produce_ranking(
     clippy::disallowed_methods,
     reason = "door: produce_ranking_in checks /proc/self/fd and runs the pinned ranker; its one mint key comes from take_mint_key"
 )]
-pub(in crate::doors) fn produce_ranking_in(
+pub(crate) fn produce_ranking_in(
     ranker: &Path,
     policy: &Policy,
     patch: &[u8],

@@ -1,6 +1,6 @@
 # Effect doors (ADR 0001). Outside the pure core, a method below may be called only inside a
 # function that carries `#[expect(clippy::disallowed_methods, reason = "door: <name>")]`, and the
-# doors live in the door modules (`crates/forge-warden-cli/src/doors/`, an exact list in the CLI's
+# doors live in the door modules (`crates/forge-warden-doors/src/`, an exact list in the CLI's
 # tests/common `DOOR_FILES`). A new effect is therefore a reviewed diff to those files, never a line anywhere. `repo_invariants.rs` checks that no other
 # file names a door.
 avoid-breaking-exported-api = false

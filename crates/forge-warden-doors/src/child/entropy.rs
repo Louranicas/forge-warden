@@ -18,7 +18,7 @@ pub(super) fn private_suffix() -> Result<String, DoorError> {
     uuid_suffix(&bytes)
 }
 
-pub(in crate::doors) fn uuid_suffix(bytes: &[u8]) -> Result<String, DoorError> {
+pub(crate) fn uuid_suffix(bytes: &[u8]) -> Result<String, DoorError> {
     let refuse = || {
         DoorError::environment(
             "private directory randomness: kernel UUID is not canonical v4".to_owned(),

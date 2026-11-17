@@ -13,10 +13,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `O_NOFOLLOW` on Linux (`x86_64`, `aarch64`): open refuses a symlink in the final path component.
 #[cfg(all(target_os = "linux", test, not(fw_fixture_cli)))]
-pub(in crate::doors) const O_NOFOLLOW: i32 = 0o400_000;
+pub(crate) const O_NOFOLLOW: i32 = 0o400_000;
 
 /// The largest executable forge-warden will pin (hash) before running it.
-pub(in crate::doors) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
+pub(crate) const MAX_EXECUTABLE_BYTES: usize = 512 * 1024 * 1024;
 
 /// How often the parent checks a running child for exit, overflow or timeout.
 pub(super) const POLL: std::time::Duration = std::time::Duration::from_millis(5);
@@ -52,10 +52,7 @@ pub(crate) fn pin_executable(path: &Path) -> Result<PinnedExecutable, DoorError>
 /// [`pin_executable`] with an explicit byte budget.
 #[cfg(target_os = "linux")]
 #[expect(clippy::disallowed_methods, reason = "door: pin_executable")]
-pub(in crate::doors) fn pin_within(
-    path: &Path,
-    budget: usize,
-) -> Result<PinnedExecutable, DoorError> {
+pub(crate) fn pin_within(path: &Path, budget: usize) -> Result<PinnedExecutable, DoorError> {
     use std::os::unix::fs::MetadataExt as _;
     let what = format!("pinning {}", path.display());
     let (mut file, meta) = open_regular(path, Symlinks::Refuse, &what)?;
@@ -129,7 +126,7 @@ pub(super) const KILL: &str = "/usr/bin/kill";
 
 /// [`run_child`] with an explicit group-kill program (a test seam for a missing or failing kill).
 #[expect(clippy::disallowed_methods, reason = "door: run_child")]
-pub(in crate::doors) fn run_child_killing_with(
+pub(crate) fn run_child_killing_with(
     spec: &ChildSpec<'_>,
     kill: &Path,
 ) -> Result<ChildOutput, ChildFailure> {
@@ -297,7 +294,7 @@ fn read_exited(stat_path: &str) -> Result<bool, ChildFailure> {
 
 /// Whether a `/proc/<pid>/stat` line shows an exited, unreaped process (state `Z` or `X`). The
 /// state follows the last `)`, because the command name in parentheses may hold anything.
-pub(in crate::doors) fn has_exited(stat: &[u8]) -> Option<bool> {
+pub(crate) fn has_exited(stat: &[u8]) -> Option<bool> {
     let close = stat.iter().rposition(|&b| b == b')')?;
     let rest = stat.get(close.checked_add(1)?..)?;
     let state = rest.iter().find(|b| !b.is_ascii_whitespace())?;
@@ -323,7 +320,7 @@ pub(super) fn exited_cleanly(status: ExitStatus, stderr: &[u8]) -> Result<(), Ch
 /// First whole characters whose escaped display fits the 512-printable-byte diagnostic
 /// budget. Collection remains capped separately at 64 KiB. Lossy decoding is only for
 /// diagnostics; it never feeds a verdict parser or a filesystem authority decision.
-pub(in crate::doors) fn stderr_excerpt(bytes: &[u8]) -> String {
+pub(crate) fn stderr_excerpt(bytes: &[u8]) -> String {
     let mut excerpt = String::new();
     let mut used = 0_usize;
     for ch in String::from_utf8_lossy(bytes).chars() {
@@ -393,7 +390,7 @@ pub(super) fn kill_group(kill: &Path, group: u32) -> Result<(), String> {
 #[cfg(not(fw_fixture_cli))]
 mod tests {
     use super::{Clock, POLL, wait_bounded};
-    use crate::doors::child::ChildFailure;
+    use crate::child::ChildFailure;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;

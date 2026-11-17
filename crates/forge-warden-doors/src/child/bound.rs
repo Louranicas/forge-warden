@@ -19,7 +19,7 @@ const BOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// How both private repositories are made (ADR 0012 D3.1). `--template=`: no template is copied
 /// (no hook samples, no `info/exclude`). In a cleared environment Git's default template has no
 /// effect on the bytes, so a test pins this list rather than a behaviour (`init_flags_are_pinned`).
-pub(in crate::doors) const INIT_FLAGS: &[&str] = &["init", "--quiet", "--bare", "--template="];
+pub(crate) const INIT_FLAGS: &[&str] = &["init", "--quiet", "--bare", "--template="];
 /// The largest pack the copy may move: 256 MiB (measured worst 14 MB).
 const PACK_CAP: usize = 268_435_456;
 /// Object and commit lists Git prints while enumerating (one id per line): 64 MiB.
@@ -27,25 +27,25 @@ const LIST_CAP: usize = 67_108_864;
 /// Git's stderr is diagnostic only: 64 KiB.
 const STDERR_CAP: usize = 65_536;
 /// `RLIMIT_DATA` of every bound-mode Git child (measured worst peak RSS 174 MB).
-pub(in crate::doors) const DATA_CAP: u64 = 1 << 30;
+pub(crate) const DATA_CAP: u64 = 1 << 30;
 /// `RLIMIT_AS` of every bound-mode Git child: Git's pack windows and thread stacks count here, so it
 /// is wider than the data cap (measured: the worst case passes at 1 GiB and fails at 512 MiB with
 /// "unable to create thread").
-pub(in crate::doors) const ADDRESS_SPACE_CAP: u64 = 4 << 30;
+pub(crate) const ADDRESS_SPACE_CAP: u64 = 4 << 30;
 
 /// The bounds of one bound run's Git children (ADR 0012 D3.6). Production uses [`CAPS`]; tests
 /// pass smaller ones to reach each refusal without writing hundreds of megabytes (step c3, H1.8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::doors) struct Caps {
-    pub(in crate::doors) pack: usize,
-    pub(in crate::doors) list: usize,
-    pub(in crate::doors) stderr: usize,
-    pub(in crate::doors) data: u64,
-    pub(in crate::doors) address_space: u64,
+pub(crate) struct Caps {
+    pub(crate) pack: usize,
+    pub(crate) list: usize,
+    pub(crate) stderr: usize,
+    pub(crate) data: u64,
+    pub(crate) address_space: u64,
 }
 
 /// The production caps.
-pub(in crate::doors) const CAPS: Caps = Caps {
+pub(crate) const CAPS: Caps = Caps {
     pack: PACK_CAP,
     list: LIST_CAP,
     stderr: STDERR_CAP,
@@ -55,16 +55,18 @@ pub(in crate::doors) const CAPS: Caps = Caps {
 
 /// The diff bound mode made, and the merge base it used.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct BoundDiff {
-    pub(crate) patch: Vec<u8>,
-    pub(crate) merge_base: String,
+pub struct BoundDiff {
+    /// The patch, `git diff merge-base..head` made from the verified copy.
+    pub patch: Vec<u8>,
+    /// The merge base the diff starts from (a full id).
+    pub merge_base: String,
 }
 
 /// Why bound mode could not make the diff. Each refusal is its own variant with a row in
 /// `docs/REFUSAL_MAP.md` (ADR 0012; ruling P1.5). How each reaches the user (`main.rs`, `bind`): the
 /// repository and the store give no verdict (exit 3), the ids are a wrong input (exit 4).
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum BoundFailure {
+pub enum BoundFailure {
     /// A setup door failed (the private directory, a file it writes): an environment problem.
     Door(DoorError),
     /// `--repo` is not a repository bound mode reads (ADR 0012 D2).
@@ -92,7 +94,7 @@ pub(crate) enum BoundFailure {
 
 /// Why `--repo` is not admitted (ADR 0012 D2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RepositoryRefusal {
+pub enum RepositoryRefusal {
     /// The canonical path is not UTF-8.
     NotUtf8,
     /// The canonical path holds `:` or a control character (the alternates file is line-based).
@@ -159,11 +161,15 @@ impl std::fmt::Display for BoundFailure {
 /// alternates file is line-based). It is a work tree with a `.git` directory, or a bare repository.
 /// Refused: a `.git` file (a linked worktree or submodule pointer), a symlinked `.git` or objects
 /// directory, a caller alternates file, and a caller shallow file.
+///
+/// # Errors
+///
+/// A [`BoundFailure`] (`Repository`) for each refusal listed above, or if `dir` cannot be read.
 #[expect(
     clippy::disallowed_methods,
     reason = "door: admit_repository (canonicalize and no-follow metadata of the repository the caller names)"
 )]
-pub(crate) fn admit_repository(dir: &Path) -> Result<PathBuf, BoundFailure> {
+pub fn admit_repository(dir: &Path) -> Result<PathBuf, BoundFailure> {
     use RepositoryRefusal as R;
     let refuse = BoundFailure::Repository;
     let real = std::fs::canonicalize(dir).map_err(|e| {
@@ -204,11 +210,15 @@ pub(crate) fn admit_repository(dir: &Path) -> Result<PathBuf, BoundFailure> {
 
 /// `git diff merge-base..head` of `base` and `head`, made in a verified copy of the objects
 /// `objects` holds (ADR 0012 D3), with every option `scripts/make_patch.sh` passes.
+///
+/// # Errors
+///
+/// A [`BoundFailure`] if the ids are not full commit ids in those objects, the verified copy cannot be made, or Git fails within its bounds.
 #[expect(
     clippy::disallowed_methods,
     reason = "door: bound_diff (the system temp dir)"
 )]
-pub(crate) fn bound_diff(
+pub fn bound_diff(
     git: &AdmittedGit,
     objects: &Path,
     base: &str,
@@ -231,7 +241,7 @@ pub(crate) fn bound_diff(
     clippy::disallowed_methods,
     reason = "door: bound_diff_in (its one deadline for the whole bound run)"
 )]
-pub(in crate::doors) fn bound_diff_in(
+pub(crate) fn bound_diff_in(
     git: &AdmittedGit,
     objects: &Path,
     base: &str,
@@ -285,7 +295,7 @@ pub(in crate::doors) fn bound_diff_in(
     clippy::disallowed_methods,
     reason = "test door: recheck_in (one deadline for one recheck)"
 )]
-pub(in crate::doors) fn recheck_in(
+pub(crate) fn recheck_in(
     git: &AdmittedGit,
     verified_git_dir: &Path,
     mb: &str,
@@ -317,7 +327,7 @@ pub(in crate::doors) fn recheck_in(
 /// stops there). Tests only.
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) fn cut_in(boundary: &[String], verified: &Path) -> Result<(), BoundFailure> {
+pub(crate) fn cut_in(boundary: &[String], verified: &Path) -> Result<(), BoundFailure> {
     Bound::cut(boundary, verified)
 }
 
@@ -642,7 +652,7 @@ fn store(step: &'static str) -> impl Fn(ChildFailure) -> BoundFailure {
 /// and address-space caps (Lodestar's ruling on review S2).
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-pub(in crate::doors) fn bound_program(git: &AdmittedGit) -> Program<'_> {
+pub(crate) fn bound_program(git: &AdmittedGit) -> Program<'_> {
     bound_program_with(git, CAPS)
 }
 

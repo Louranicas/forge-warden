@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/forge-warden-core", "crates/forge-warden-cli"]
+members = ["crates/forge-warden-core", "crates/forge-warden-doors", "crates/forge-warden-cli"]
 resolver = "3"
 
 [workspace.package]
@@ -78,6 +78,7 @@ module_name_repetitions = "allow"
 
 [workspace.dependencies]
 forge-warden-core = { path = "crates/forge-warden-core", version = "0.2.1" }
+forge-warden-doors = { path = "crates/forge-warden-doors", version = "0.2.1" }
 
 clap = { version = "4.5", default-features = false, features = ["std", "help", "usage", "error-context"] }
 globset = { version = "0.4.16", default-features = false }

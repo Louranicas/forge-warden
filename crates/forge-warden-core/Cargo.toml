@@ -19,7 +19,7 @@ workspace = true
 # provenance. Enabled only by this workspace's [dev-dependencies]; never by a normal dependency.
 unattested-evaluate = []
 # The constructor of `authority::MintKey`, the key `Ranking::attest` consumes (EFFECT-WALL step 1, ruling R1).
-# Enabled only by the binary crate's normal dependency (its door module hands out one key per run) and by this
+# Enabled only by forge-warden-doors' normal dependency (its ranker door hands out one key per run) and by this
 # crate's own [dev-dependencies] for the engine tests; repo_invariants checks the declarations.
 mint = []
 

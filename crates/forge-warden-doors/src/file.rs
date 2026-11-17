@@ -94,15 +94,23 @@ pub(super) fn open_regular(
 }
 
 /// Read a whole regular file (symbolic links followed), within the byte budget.
-pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, DoorError> {
+///
+/// # Errors
+///
+/// A [`DoorError`] if the path cannot be opened or read, is not a regular file, or is over the byte budget.
+pub fn read_file(path: &Path) -> Result<Vec<u8>, DoorError> {
     let what = format!("reading {}", path.display());
     let (file, _) = open_regular(path, Symlinks::Follow, &what)?;
     read_bounded(file, &what)
 }
 
 /// Read all of stdin, within the byte budget.
+///
+/// # Errors
+///
+/// A [`DoorError`] if stdin cannot be read or holds more than the byte budget.
 #[expect(clippy::disallowed_methods, reason = "door: read_stdin")]
-pub(crate) fn read_stdin() -> Result<Vec<u8>, DoorError> {
+pub fn read_stdin() -> Result<Vec<u8>, DoorError> {
     read_bounded(std::io::stdin().lock(), "reading stdin")
 }
 

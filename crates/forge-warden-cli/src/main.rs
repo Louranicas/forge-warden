@@ -11,8 +11,13 @@
 //!
 //! Results go to stdout, diagnostics to stderr, and on error stdout is empty. Every exit code is
 //! in the registry (`forge-warden schema exit-codes`), with the next action to take.
+//!
+//! Every effect goes through `forge_warden_doors` (ADR 0001); this crate forbids the effect lints, so no
+//! `allow`, `expect`, `cfg_attr`, macro output, `#[path]` or `include!` can lower them here (EFFECT-WALL
+//! step 3, DESIGN.md 3.2).
+#![forbid(clippy::disallowed_methods, clippy::disallowed_types)]
 
-mod doors;
+use forge_warden_doors as doors;
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
 mod refusal_rows;
@@ -304,7 +309,7 @@ impl Failure {
     /// The one mapping from a door's kind to the registry (Q2-05). Exhaustive: a new kind is a
     /// compile error here until someone decides its exit.
     fn from_door(error: doors::DoorError) -> Self {
-        let (exit, next) = match error.kind {
+        let (exit, next) = match error.kind() {
             DoorErrorKind::Io => (Exit::Io, "check_input_output"),
             DoorErrorKind::Environment => (Exit::Io, "check_environment"),
             DoorErrorKind::OverBudget => (Exit::InvalidInput, "reduce_input_size"),
@@ -312,14 +317,16 @@ impl Failure {
         };
         Self {
             exit,
-            message: error.message,
+            message: error.into_message(),
             next,
         }
     }
 }
 
 fn main() -> doors::Status {
-    #[cfg(test)]
+    // The fixture CLI (tests/common) is built with `--cfg test --cfg fw_fixture_cli`, and with the latter in
+    // RUSTFLAGS so the doors crate has its test seams too; a plain unit-test build never runs main.
+    #[cfg(all(test, fw_fixture_cli))]
     if !doors::fixture_cli_requested() {
         return doors::Status(finish(
             Err(Failure::new(

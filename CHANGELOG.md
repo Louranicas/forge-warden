@@ -9,6 +9,11 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- The effect doors are their own crate, `forge-warden-doors` (EFFECT-WALL step 3): the ten door modules moved
+  unchanged from `crates/forge-warden-cli/src/doors/` to `crates/forge-warden-doors/src/`, and the binary's `main.rs`
+  forbids `clippy::disallowed_methods` and `clippy::disallowed_types`, so no attribute, macro or included file in the
+  binary can lower them. The core feature `mint` is enabled by the doors crate alone. Policy, CODEOWNERS and the agent
+  hooks protect the new path; `scripts/release_prepare.sh` checks the new crate's locked version too.
 - The CLI builds its command line with clap's builder instead of its derive (EFFECT-WALL step 3): the derive emits
   `allow(clippy::style)`, which a crate forbidding the effect lints cannot accept. Help, usage errors and exit codes are
   unchanged byte for byte (pinned by `fixtures/cli-surface`). clap's `derive` feature is off, so `clap_derive` and

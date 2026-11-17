@@ -152,6 +152,7 @@ version = "0.2.1"
 dependencies = [
  "clap",
  "forge-warden-core",
+ "forge-warden-doors",
  "proc-macro2",
  "proptest",
  "pulldown-cmark",
@@ -171,6 +172,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "forge-warden-doors"
+version = "0.2.1"
+dependencies = [
+ "forge-warden-core",
+ "serde_json",
  "toml",
 ]
 

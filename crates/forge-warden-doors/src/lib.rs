@@ -10,7 +10,7 @@ use forge_warden_core::{Date, Exit};
 /// Why a door could not be passed. It decides the registry exit, in one exhaustive `match`
 /// (`Failure::from_door` in main.rs), so a new kind cannot ship unmapped (Q2-05).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DoorErrorKind {
+pub enum DoorErrorKind {
     /// Reading or writing failed (exit 3, `check_input_output`).
     Io,
     /// The host is not set up as the door requires: an unsafe temporary directory, an unusable
@@ -25,7 +25,7 @@ pub(crate) enum DoorErrorKind {
 
 /// A door that could not be passed.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct DoorError {
+pub struct DoorError {
     /// What failed, for stderr.
     pub(crate) message: String,
     /// Why, which decides the exit.
@@ -33,6 +33,18 @@ pub(crate) struct DoorError {
 }
 
 impl DoorError {
+    /// Why the door refused, which decides the exit (`Failure::from_door` in main.rs).
+    #[must_use]
+    pub const fn kind(&self) -> DoorErrorKind {
+        self.kind
+    }
+
+    /// What failed, for stderr. Only a door constructs a `DoorError`; callers read it.
+    #[must_use]
+    pub fn into_message(self) -> String {
+        self.message
+    }
+
     fn io(what: &str, error: &std::io::Error) -> Self {
         Self {
             message: format!("{what}: {error}"),
@@ -57,9 +69,14 @@ impl DoorError {
 
 /// A harness=false target runs as a no-op during ordinary cargo test discovery. Only fixture
 /// commands explicitly supply this test-build-only marker; release builds do not read it.
-#[cfg(test)]
+///
+/// Test and fixture builds only (`cfg(any(test, fw_fixture_cli))`): the fixture CLI reaches this crate
+/// through `RUSTFLAGS=--cfg fw_fixture_cli`, a switch `repo_invariants` refuses in every operational
+/// build surface, as it refuses `--cfg test`.
+#[must_use]
+#[cfg(any(test, fw_fixture_cli))]
 #[expect(clippy::disallowed_methods, reason = "test door: fixture CLI dispatch")]
-pub(crate) fn fixture_cli_requested() -> bool {
+pub fn fixture_cli_requested() -> bool {
     std::env::var_os("FORGE_WARDEN_TEST_POLICY_ROOT").is_some()
 }
 
@@ -68,11 +85,15 @@ mod file;
 #[cfg(not(fw_fixture_cli))]
 use file::{ELOOP, FOLLOW_FLAGS, PIN_FLAGS};
 use file::{Symlinks, open_regular, read_within};
-pub(crate) use file::{read_file, read_stdin};
+pub use file::{read_file, read_stdin};
 
 /// Today's date in UTC, from the system clock.
+///
+/// # Errors
+///
+/// A [`DoorError`] (environment) if the system clock is outside 1970..=9999.
 #[expect(clippy::disallowed_methods, reason = "door: today")]
-pub(crate) fn today() -> Result<Date, DoorError> {
+pub fn today() -> Result<Date, DoorError> {
     let since_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| DoorError::environment(format!("system clock is before 1970: {e}")))?;
@@ -86,11 +107,11 @@ fn date_of_unix_seconds(seconds: u64) -> Result<Date, DoorError> {
 }
 
 mod diagnose;
-pub(crate) use diagnose::{diagnose, diagnose_json, emit};
+pub use diagnose::{diagnose, diagnose_json, emit};
 
 /// The process status for a registry [`Exit`]: the only place a status is made (R-20). `main`
 /// returns a `Status`, so every way the binary ends goes through the exit-code registry.
-pub(crate) struct Status(pub(crate) Exit);
+pub struct Status(pub Exit);
 
 impl std::process::Termination for Status {
     fn report(self) -> std::process::ExitCode {
@@ -99,17 +120,18 @@ impl std::process::Termination for Status {
 }
 
 /// Capture OS arguments once; parsing and machine-output selection remain pure in main.rs.
+#[must_use]
 #[expect(clippy::disallowed_methods, reason = "door: arguments")]
-pub(crate) fn arguments() -> Vec<std::ffi::OsString> {
+pub fn arguments() -> Vec<std::ffi::OsString> {
     std::env::args_os().collect()
 }
 
 /// Child processes (ADR 0005 §2.4, §2.5): the ranker and Git run through these doors only.
-pub(crate) mod child;
+pub mod child;
 
 #[cfg(test)]
 #[cfg(not(fw_fixture_cli))]
-#[path = "../../tests/support/process_env.rs"]
+#[path = "../../forge-warden-cli/tests/support/process_env.rs"]
 mod test_environment;
 
 #[cfg(test)]
