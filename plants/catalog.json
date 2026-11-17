@@ -2033,6 +2033,7 @@
       "new": "#[expect(clippy::disallowed_methods, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2112,6 +2113,7 @@
       "new": "    let matches = match cli().try_get_matches() {\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2139,6 +2141,7 @@
       "new": "    let arguments = doors::arguments();\n    let _help = cli().print_help();\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2166,6 +2169,7 @@
       "new": "            if error.kind() == clap::error::ErrorKind::DisplayVersion {\n                error.exit();\n            }\n            let text = error.render().to_string();\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2193,6 +2197,7 @@
       "new": "    let arguments = doors::arguments();\n    if arguments.len() > 4096 {\n        std::process::exit(2);\n    }\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2220,6 +2225,7 @@
       "new": "#[expect(clippy::print_stdout, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2247,6 +2253,7 @@
       "new": "#[expect(clippy::print_stderr, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2274,6 +2281,7 @@
       "new": "#[expect(clippy::dbg_macro, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2301,6 +2309,7 @@
       "new": "#[expect(clippy::exit, reason = \"plant: a local exemption in the binary\")]\nfn run_cli() -> Exit {\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2328,6 +2337,7 @@
       "new": "    let arguments = doors::arguments();\n    let _matches = cli().get_matches_from(doors::arguments());\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2355,6 +2365,7 @@
       "new": "    let arguments = doors::arguments();\n    if arguments.len() > 4096 {\n        std::process::abort();\n    }\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
@@ -2381,6 +2392,7 @@
       "append": "\nstruct ParserProbe;\n\nimpl clap::FromArgMatches for ParserProbe {\n    fn from_arg_matches(_matches: &ArgMatches) -> Result<Self, clap::Error> {\n        Ok(Self)\n    }\n    fn update_from_arg_matches(&mut self, _matches: &ArgMatches) -> Result<(), clap::Error> {\n        Ok(())\n    }\n}\n\nimpl clap::CommandFactory for ParserProbe {\n    fn command() -> clap::Command {\n        cli()\n    }\n    fn command_for_update() -> clap::Command {\n        cli()\n    }\n}\n\nimpl clap::Parser for ParserProbe {}\n\nfn parser_probe() {\n    let mut probe = <ParserProbe as clap::Parser>::parse();\n    let _tried = <ParserProbe as clap::Parser>::try_parse();\n    let _from = <ParserProbe as clap::Parser>::parse_from([\"forge-warden\"]);\n    <ParserProbe as clap::Parser>::update_from(&mut probe, [\"forge-warden\"]);\n}\n",
       "required_tools": [
         "cargo",
+        "cargo-clippy",
         "git",
         "python3",
         "rustc",
