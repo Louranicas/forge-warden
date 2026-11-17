@@ -6,8 +6,9 @@
 //! ends), byte by byte: `?` and `*` take bytes other than `/`, a class is a set of bytes, a negated
 //! class can take `/`. EFFECT-WALL-1's pins (`policy/tests.rs`) are the oracle.
 //!
-//! Matching runs a Thompson automaton over the path's bytes: linear in the path's length times the
-//! pattern's size, with no backtracking, so a hostile path cannot make it slow.
+//! Matching runs a Thompson automaton over the path's bytes, as sets of states: linear in the path's
+//! length times the pattern's size, with no backtracking. Per byte it costs one pass over the state
+//! set's words and the closures of the states that take that byte (measured in the module's tests).
 
 use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
 
@@ -292,11 +293,19 @@ enum State {
     Match,
 }
 
-/// A compiled glob: its automaton, entered at `start`.
+/// A compiled glob: its automaton as sets of states (bitsets of `words` words), precomputed so that
+/// one byte costs a few word operations plus the closures of the states that take it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Glob {
-    states: Vec<State>,
-    start: usize,
+    words: usize,
+    /// The states reached before any byte.
+    start: Vec<u64>,
+    /// For each byte value, the states that take it.
+    takes: Vec<Vec<u64>>,
+    /// For each state that takes a byte, the states reached right after it (its successor's closure).
+    after: Vec<Vec<usize>>,
+    /// The accepting states.
+    accepting: Vec<u64>,
 }
 
 /// Parse `pattern` and build its automaton, or say why the pattern is refused.
@@ -325,10 +334,7 @@ pub(super) fn compile(pattern: &str) -> Result<Glob, String> {
     } else {
         builder.sequence(&tokens, 0)?
     };
-    Ok(Glob {
-        states: builder.states,
-        start,
-    })
+    Ok(Glob::new(&builder.states, start))
 }
 
 /// Builds an automaton back to front: each piece is compiled with the state that follows it.
@@ -471,52 +477,112 @@ fn class_bytes(ranges: &[(char, char)]) -> Result<Bytes, String> {
     Ok(set)
 }
 
-impl Glob {
-    /// Whether the whole of `path` matches.
-    pub(super) fn matches(&self, path: &str) -> bool {
-        let mut current = Vec::new();
-        let mut seen = vec![false; self.states.len()];
-        self.close(self.start, &mut current, &mut seen);
-        for &byte in path.as_bytes() {
-            if current.is_empty() {
-                return false;
+/// Set bit `index` of a state set.
+fn set_bit(set: &mut [u64], index: usize) {
+    let (Some(word), Ok(shift)) = (set.get_mut(index / 64), u32::try_from(index % 64)) else {
+        return;
+    };
+    *word |= 1_u64.wrapping_shl(shift);
+}
+
+/// `from` and every state reachable from it without taking a byte, keeping the states that take a
+/// byte or accept (a Split only passes on).
+fn closure(states: &[State], from: usize) -> Vec<usize> {
+    let mut seen = vec![false; states.len()];
+    let mut out = Vec::new();
+    let mut stack = vec![from];
+    while let Some(index) = stack.pop() {
+        let Some(mark) = seen.get_mut(index) else {
+            continue;
+        };
+        if *mark {
+            continue;
+        }
+        *mark = true;
+        match states.get(index) {
+            Some(State::Split(a, b)) => {
+                stack.push(*b);
+                stack.push(*a);
             }
-            let mut next = Vec::new();
-            seen.fill(false);
-            for &index in &current {
-                if let Some(State::Byte(set, after)) = self.states.get(index)
-                    && set.contains(byte)
-                {
-                    self.close(*after, &mut next, &mut seen);
+            Some(State::Byte(..) | State::Match) => out.push(index),
+            None => {}
+        }
+    }
+    out
+}
+
+impl Glob {
+    fn new(states: &[State], start: usize) -> Self {
+        let words = states.len().div_ceil(64);
+        let mut start_set = vec![0; words];
+        for index in closure(states, start) {
+            set_bit(&mut start_set, index);
+        }
+        let mut takes = vec![vec![0; words]; 256];
+        let mut after = vec![Vec::new(); states.len()];
+        let mut accepting = vec![0; words];
+        for (index, state) in states.iter().enumerate() {
+            match state {
+                State::Byte(set, next) => {
+                    for (byte, members) in (0..=u8::MAX).zip(takes.iter_mut()) {
+                        if set.contains(byte) {
+                            set_bit(members, index);
+                        }
+                    }
+                    if let Some(slot) = after.get_mut(index) {
+                        *slot = closure(states, *next);
+                    }
+                }
+                State::Match => set_bit(&mut accepting, index),
+                State::Split(..) => {}
+            }
+        }
+        Self {
+            words,
+            start: start_set,
+            takes,
+            after,
+            accepting,
+        }
+    }
+
+    /// Whether the whole of `path` matches: linear in the path's length times the pattern's size,
+    /// with per byte one pass over the state words and the closures of the states that take it.
+    pub(super) fn matches(&self, path: &str) -> bool {
+        let mut current = self.start.clone();
+        let mut next = vec![0_u64; self.words];
+        for &byte in path.as_bytes() {
+            next.fill(0);
+            let Some(members) = self.takes.get(usize::from(byte)) else {
+                return false;
+            };
+            let mut any = false;
+            for (word_index, (word, member)) in current.iter().zip(members).enumerate() {
+                let mut taking = word & member;
+                while taking != 0 {
+                    let bit = taking.trailing_zeros();
+                    taking &= taking.wrapping_sub(1);
+                    let Ok(bit) = usize::try_from(bit) else {
+                        continue;
+                    };
+                    let state = word_index.saturating_mul(64).saturating_add(bit);
+                    if let Some(reached) = self.after.get(state) {
+                        for &target in reached {
+                            set_bit(&mut next, target);
+                            any = true;
+                        }
+                    }
                 }
             }
-            current = next;
+            if !any {
+                return false;
+            }
+            core::mem::swap(&mut current, &mut next);
         }
         current
             .iter()
-            .any(|&index| matches!(self.states.get(index), Some(State::Match)))
-    }
-
-    /// Add `from` and every state reachable from it without taking a byte.
-    fn close(&self, from: usize, out: &mut Vec<usize>, seen: &mut [bool]) {
-        let mut stack = vec![from];
-        while let Some(index) = stack.pop() {
-            let Some(mark) = seen.get_mut(index) else {
-                continue;
-            };
-            if *mark {
-                continue;
-            }
-            *mark = true;
-            match self.states.get(index) {
-                Some(State::Split(a, b)) => {
-                    stack.push(*b);
-                    stack.push(*a);
-                }
-                Some(State::Byte(..) | State::Match) => out.push(index),
-                None => {}
-            }
-        }
+            .zip(&self.accepting)
+            .any(|(word, accepting)| word & accepting != 0)
     }
 }
 
