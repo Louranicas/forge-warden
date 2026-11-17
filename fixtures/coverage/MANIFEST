@@ -1713,6 +1713,14 @@
         "cd20c3c5ba966ffd30d37cf60416cf21a81d8d55b493d9fafcd7bd19322faa22"
       ],
       [
+        "form:MintKey::new in a const item",
+        "e6a2021b6160cfe05883429efea40d57845cfca3d08faad62cb022529e022cfe"
+      ],
+      [
+        "form:MintKey::new in an associated const",
+        "36a6a0e4637d4faef9e553901ca84677d72cddac04a72a3b89efe8736991cbdc"
+      ],
+      [
         "form:MintKey::new inside an external macro",
         "982d0d38aaa97f32cf7ba7a8243a25b179b452f6f7689a983d9c7bb0045b7b0b"
       ],

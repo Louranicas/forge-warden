@@ -37,6 +37,13 @@ fn apply<T>(f: impl Fn() -> T) -> T {
     f()
 }
 
+const MAKE: fn() -> MintKey = MintKey::new; // FORM: MintKey::new in a const item
+
+struct Holder;
+impl Holder {
+    const MAKE: fn() -> MintKey = MintKey::new; // FORM: MintKey::new in an associated const
+}
+
 /// A token, as the door gets one: from the policy's allowlist. (Raw `evaluate` and a bare-string
 /// `attest` no longer compile downstream at all; tests/api_boundary.rs measures that, Q-TYPES-1.)
 fn token(policy: &Policy) -> AdmittedProducer {
@@ -58,6 +65,8 @@ pub fn forms(doc: RankDoc, policy: &Policy) -> usize {
     let _i = core::convert::identity(MintKey::new)(); // FORM: MintKey::new through identity (B03)
     let _j = std::hint::black_box(MintKey::new); // FORM: MintKey::new through black_box
     let _y = p();
+    let _k = MAKE();
+    let _l = Holder::MAKE();
     n += door(doc.clone(), policy);
     n += forge_warden_core::seal::sha256_hex(b"").as_str().len(); // CONTROL: an allowed function
     n
