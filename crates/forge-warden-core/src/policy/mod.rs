@@ -23,6 +23,7 @@
 //! whole policy, so a declared rule cannot vanish.
 
 mod error;
+mod glob;
 mod issues;
 mod kind;
 mod model;

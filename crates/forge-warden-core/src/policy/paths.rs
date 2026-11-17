@@ -1,21 +1,21 @@
 //! Path globs: compiled, `/`-aware, and validated when the policy loads.
 
+use super::glob::{self, Glob};
 use super::issues::{Issues, Rejected};
-use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// A compiled set of globs, keeping the patterns for reporting.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PathSet {
     patterns: Vec<String>,
-    set: GlobSet,
+    globs: Vec<Glob>,
 }
 
 impl PathSet {
     /// Whether `path` matches any pattern.
     #[must_use]
     pub fn matches(&self, path: &str) -> bool {
-        self.set.is_match(path)
+        self.globs.iter().any(|glob| glob.matches(path))
     }
 
     /// The patterns as written.
@@ -52,12 +52,10 @@ pub(super) fn compile(
         return Err(issues.reject(location, format!("`{field}` must not be empty")));
     }
     let start = issues.mark();
-    let mut builder = GlobSetBuilder::new();
+    let mut compiled = Vec::with_capacity(globs.len());
     for pattern in globs {
         match build_glob(pattern) {
-            Ok(glob) => {
-                builder.add(glob);
-            }
+            Ok(glob) => compiled.push(glob),
             Err(message) => {
                 issues.push(
                     location,
@@ -67,13 +65,10 @@ pub(super) fn compile(
         }
     }
     issues.since(start)?;
-    match builder.build() {
-        Ok(set) => Ok(PathSet {
-            patterns: globs.to_vec(),
-            set,
-        }),
-        Err(e) => Err(issues.reject(location, format!("`{field}`: {e}"))),
-    }
+    Ok(PathSet {
+        patterns: globs.to_vec(),
+        globs: compiled,
+    })
 }
 
 fn build_glob(pattern: &str) -> Result<Glob, String> {
@@ -85,9 +80,5 @@ fn build_glob(pattern: &str) -> Result<Glob, String> {
             "patterns are relative to the repository root; drop the leading `/` or `./`".to_owned(),
         );
     }
-    GlobBuilder::new(pattern)
-        .literal_separator(true)
-        .backslash_escape(true)
-        .build()
-        .map_err(|e| e.kind().to_string())
+    glob::compile(pattern)
 }
