@@ -349,7 +349,7 @@ crate::seal Sha256Hex::fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::
 crate::seal #[must_use] pub fn sha256_hex(bytes: &[u8]) -> Sha256Hex
 crate::verdict pub const VERDICT_SCHEMA: &str = "forge-warden.verdict.v3";
 crate::verdict #[derive(Debug, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Verdict
-crate::verdict Verdict.<11 private field(s)>
+crate::verdict Verdict.<12 private field(s)>
 crate::verdict #[derive(Debug, Clone, PartialEq, Eq, Serialize)] #[non_exhaustive] pub struct Tool
 crate::verdict Tool.pub name: &'static str,
 crate::verdict Tool.pub version: &'static str,
