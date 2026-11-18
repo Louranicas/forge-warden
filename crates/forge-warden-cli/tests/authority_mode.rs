@@ -887,9 +887,9 @@ fn a_policy_requiring_verified_claims_passes_a_bound_run_and_holds_the_same_chan
         "stdout={} stderr={}",
         unbound.stdout, unbound.stderr
     );
-    let held = verdict(&unbound);
-    assert_eq!(held["verdict"], "hold");
-    let codes: Vec<&str> = held["notes"]
+    let verdict_unbound = verdict(&unbound);
+    assert_eq!(verdict_unbound["verdict"], "hold");
+    let codes: Vec<&str> = verdict_unbound["notes"]
         .as_array()
         .unwrap()
         .iter()
