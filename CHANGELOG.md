@@ -9,6 +9,12 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
+- The local gate (`scripts/ci_local.sh`) judges in bound mode (ledger Q79): its authority step passes `--repo`
+  (the Git common directory), `--base` (the merge base it computes) and `--head` (HEAD), so under this repository's
+  `warden.toml` (`[claims] require_verified = true`) it can pass; before, it could only hold with `claims_unverified`.
+- The text report names a superseded waiver (ledger Q80): a live waiver whose paths matched only violations an
+  earlier waiver of the same rule already covered reads `matched only what an earlier waiver already covers`
+  instead of `matched nothing in this change`. The verdict document is unchanged: it is still in `unused_waivers`.
 - The effect doors are their own crate, `forge-warden-doors` (EFFECT-WALL step 3): the ten door modules moved
   unchanged from `crates/forge-warden-cli/src/doors/` to `crates/forge-warden-doors/src/`, and the binary's `main.rs`
   forbids `clippy::disallowed_methods` and `clippy::disallowed_types`, so no attribute, macro or included file in the

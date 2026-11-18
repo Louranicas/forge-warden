@@ -14,6 +14,7 @@ use crate::defaults::NamedDefault as _;
 use crate::exit::Outcome;
 use crate::nonempty::NonEmpty;
 use crate::seal::Sha256Hex;
+use alloc::collections::BTreeSet;
 use alloc::{borrow::ToOwned, format, string::String, string::ToString, vec::Vec};
 use serde::Serialize;
 
@@ -45,6 +46,10 @@ pub struct Verdict {
     expired_waivers: Vec<WaiverNote>,
     unused_waivers: Vec<WaiverNote>,
     notes: Vec<Note>,
+    /// Ledger Q80: the unused waivers that matched what an earlier waiver already covered. Only the
+    /// text report says so; the verdict document is unchanged (they are in `unused_waivers`).
+    #[serde(skip)]
+    superseded_waivers: BTreeSet<usize>,
 }
 
 /// Tool identity.
@@ -741,7 +746,20 @@ impl Verdict {
             expired_waivers,
             unused_waivers,
             notes,
+            superseded_waivers: BTreeSet::new(),
         }
+    }
+
+    /// This verdict knowing which unused waivers were superseded by an earlier one (Q80).
+    #[must_use]
+    pub(crate) fn with_superseded_waivers(mut self, indices: BTreeSet<usize>) -> Self {
+        self.superseded_waivers = indices;
+        self
+    }
+
+    /// Whether the waiver at `index` matched only what an earlier waiver already covered (Q80).
+    pub(crate) fn waiver_was_superseded(&self, index: usize) -> bool {
+        self.superseded_waivers.contains(&index)
     }
 
     /// This verdict with `extra` notes appended, re-derived through the same fold: a note can only

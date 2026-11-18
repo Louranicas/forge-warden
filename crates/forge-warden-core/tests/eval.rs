@@ -514,6 +514,64 @@ expires = \"2099-01-01\"
 }
 
 #[test]
+fn a_waiver_an_earlier_one_superseded_is_not_reported_as_matching_nothing() {
+    // Ledger Q80 (outside review, reproduced here first): two live waivers of one rule cover the same
+    // path. The first covers the violation; the second matched it too, so "matched nothing in this
+    // change" would be false. It is still unused (the JSON is unchanged: index 1 in unused_waivers),
+    // and the text says it was superseded. A waiver that matched no path keeps the old words.
+    let text = format!(
+        "{NO_UNSAFE}
+[[waiver]]
+rule = \"no-unsafe\"
+paths = [\"src/simd/**\"]
+reason = \"Audited SIMD kernel; see docs/adr/0007.\"
+owner = \"@louranicas\"
+expires = \"2099-01-01\"
+
+[[waiver]]
+rule = \"no-unsafe\"
+paths = [\"src/**\"]
+reason = \"A wider waiver written later for the same kernel.\"
+owner = \"@louranicas\"
+expires = \"2099-01-01\"
+
+[[waiver]]
+rule = \"no-unsafe\"
+paths = [\"vendor/**\"]
+reason = \"Covers a directory this change does not touch.\"
+owner = \"@louranicas\"
+expires = \"2099-01-01\"
+"
+    );
+    let r = rank(vec![file(
+        "src/simd/k.rs",
+        "modified",
+        9,
+        &["unsafe_added"],
+    )]);
+    let verdict = evaluate(&policy(&text), &r, seals(), today());
+    assert_eq!(verdict.rules()[0].outcome, RuleOutcome::Waived);
+    assert_eq!(verdict.rules()[0].violations[0].waived_by, Some(0));
+    let unused: Vec<usize> = verdict.unused_waivers().iter().map(|w| w.index).collect();
+    assert_eq!(unused, [1, 2]);
+    let shown = forge_warden_core::render::render_text(&verdict);
+    assert!(
+        shown.contains(
+            "[UNUSED] waiver[1] for no-unsafe matched only what an earlier waiver already covers"
+        ),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("waiver[1] for no-unsafe matched nothing"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("[UNUSED] waiver[2] for no-unsafe matched nothing in this change"),
+        "{shown}"
+    );
+}
+
+#[test]
 fn waivers_cover_matching_paths_until_they_expire() {
     let waived = format!(
         "{NO_UNSAFE}

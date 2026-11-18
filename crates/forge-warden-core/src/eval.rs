@@ -31,9 +31,17 @@ use alloc::{borrow::ToOwned, format, string::String, string::ToString, vec, vec:
 #[must_use]
 pub(crate) fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Date) -> Verdict {
     let mut used_waivers = BTreeSet::new();
-    let judged: NonEmpty<RuleResult> = policy
-        .rules()
-        .map(|rule| judge_rule(rule, rank, policy.waivers(), today, &mut used_waivers));
+    let mut matched_waivers = BTreeSet::new();
+    let judged: NonEmpty<RuleResult> = policy.rules().map(|rule| {
+        judge_rule(
+            rule,
+            rank,
+            policy.waivers(),
+            today,
+            &mut used_waivers,
+            &mut matched_waivers,
+        )
+    });
 
     let (expired, unused) = classify_waivers(policy.waivers(), today, &used_waivers);
     let notes = notes_for(rank);
@@ -48,6 +56,8 @@ pub(crate) fn evaluate(policy: &Policy, rank: &RankDoc, seals: Seals, today: Dat
         unused,
         notes,
     )
+    // Ledger Q80: a live waiver that matched a violation an earlier waiver covered.
+    .with_superseded_waivers(matched_waivers.difference(&used_waivers).copied().collect())
 }
 
 fn judge_rule(
@@ -56,20 +66,24 @@ fn judge_rule(
     waivers: &[Waiver],
     today: Date,
     used: &mut BTreeSet<usize>,
+    matched: &mut BTreeSet<usize>,
 ) -> RuleResult {
     let mut violations = find_violations(&rule.check, rank.files());
     for violation in &mut violations {
         let Some(path) = violation.path.as_deref() else {
             continue;
         };
-        let cover = waivers
+        let mut covering = waivers
             .iter()
             .enumerate()
-            .find(|(_, w)| w.rule == rule.id && w.expires >= today && w.paths.matches(path));
-        if let Some((index, _)) = cover {
+            .filter(|(_, w)| w.rule == rule.id && w.expires >= today && w.paths.matches(path))
+            .map(|(index, _)| index);
+        // The first live waiver covers it; any later one matched too, and is superseded (Q80).
+        if let Some(index) = covering.next() {
             violation.waived_by = Some(index);
             used.insert(index);
         }
+        matched.extend(covering);
     }
     let outcome = if violations.is_empty() {
         RuleOutcome::Pass

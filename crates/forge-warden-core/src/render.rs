@@ -114,9 +114,14 @@ pub fn render_text(verdict: &Verdict) -> String {
         );
     }
     for w in verdict.unused_waivers() {
+        let what = if verdict.waiver_was_superseded(w.index) {
+            "matched only what an earlier waiver already covers"
+        } else {
+            "matched nothing in this change"
+        };
         let _ = writeln!(
             out,
-            "  [UNUSED] waiver[{}] for {} matched nothing in this change",
+            "  [UNUSED] waiver[{}] for {} {what}",
             w.index,
             terminal_safe(&w.rule)
         );
