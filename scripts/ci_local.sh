@@ -42,9 +42,15 @@ if command -v deep-diff-forge >/dev/null; then
     mode="$(python3 -I scripts/judge_mode.py warden.toml)"
     if [ "$mode" = authority ]; then
       ranker="$(command -v deep-diff-forge)"
+      # Bound mode (ADR 0012; ledger Q79): warden.toml requires verified claims, so an authority run
+      # without --repo can only HOLD. The judge makes `git diff` of this repository from base to HEAD
+      # itself and compares it with the patch, with full commit ids.
+      head="$(git rev-parse HEAD)"
+      repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"
       # The judge checks the binary's hash against the existing policy; never auto-enroll it.
       cargo run --quiet --bin forge-warden -- check --policy warden.toml \
-        --ranker "$ranker" --patch target/change.patch
+        --ranker "$ranker" --patch target/change.patch \
+        --repo "$repo_git" --base "$base" --head "$head"
     else
       echo 'ci_local: explicit advisory mode (no producer pin); this result cannot PASS' >&2
       deep-diff-forge --stdin-patch --rank --json < target/change.patch > target/rank.json

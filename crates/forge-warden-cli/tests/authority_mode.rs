@@ -860,6 +860,45 @@ fn bound_mode_verifies_the_claims_only_through_the_comparison() {
 }
 
 #[test]
+fn a_policy_requiring_verified_claims_passes_a_bound_run_and_holds_the_same_change_unbound() {
+    // M7-CI-LOCAL-BOUND (ledger Q79): what the local gate's authority step meets under a policy with
+    // `[claims] require_verified = true`, as this repository's warden.toml has. Bound (--repo) the
+    // change can pass; the same patch and ids without --repo hold with `claims_unverified` and nothing
+    // else, so a gate that leaves out --repo can never pass.
+    let (dir, admitting, ranker) = setup("bound-required");
+    let v0 = std::fs::read_to_string(&admitting).unwrap();
+    assert_eq!(v0.matches("forge-warden.policy.v0").count(), 1);
+    let v1 = format!(
+        "{}[claims]\nrequire_verified = true\n",
+        v0.replace("forge-warden.policy.v0", "forge-warden.policy.v1")
+    );
+    let policy = write(&dir, "policy-v1.toml", v1.as_bytes());
+    let (repo, base, head) = bound_repo("bound-required-repo");
+    let made = write(&dir, "made.patch", &make_patch(&repo, &base, &head));
+    let ids = ["--base", base.as_str(), "--head", head.as_str()];
+    let bound = [&["--repo", text(&repo)][..], &ids[..]].concat();
+    let ok = authority(&policy, &made, &ranker, &bound);
+    assert_eq!(ok.code, 0, "stdout={} stderr={}", ok.stdout, ok.stderr);
+    assert_eq!(verdict(&ok)["verdict"], "pass");
+    assert_eq!(verdict(&ok)["seals"]["claims"]["verified"], true);
+    let unbound = authority(&policy, &made, &ranker, &ids);
+    assert_eq!(
+        unbound.code, 8,
+        "stdout={} stderr={}",
+        unbound.stdout, unbound.stderr
+    );
+    let held = verdict(&unbound);
+    assert_eq!(held["verdict"], "hold");
+    let codes: Vec<&str> = held["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["claims_unverified"]);
+}
+
+#[test]
 fn bound_mode_refuses_a_patch_made_with_other_options() {
     let (dir, policy, ranker) = setup("bound-shapes");
     let (repo, base, head) = bound_repo("bound-shapes-repo");

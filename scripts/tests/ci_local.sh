@@ -17,12 +17,16 @@ printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/perimeter.py"
 printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/runner_routing.py"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"
+# Full commit ids, distinct, so the authority judge's bound arguments can be checked exactly (Q79).
+export BASE_ID=1111111111111111111111111111111111111111 HEAD_ID=2222222222222222222222222222222222222222
 cat > "$sandbox/bin/git" <<'STUB'
 #!/usr/bin/env bash
-case "$1" in
- rev-parse) echo "$TEST_ROOT" ;;
- merge-base) echo base ;;
- diff) if [[ "$*" == *--binary* ]]; then printf 'fixture patch\n'; else printf 'source fixture\n'; fi ;;
+case "$1 ${2:-} ${3:-}" in
+ 'rev-parse HEAD '*) echo "$HEAD_ID" ;;
+ 'rev-parse --path-format=absolute --git-common-dir') echo "$TEST_ROOT/.git" ;;
+ rev-parse*) echo "$TEST_ROOT" ;;
+ merge-base*) echo "$BASE_ID" ;;
+ diff*) if [[ "$*" == *--binary* ]]; then printf 'fixture patch\n'; else printf 'source fixture\n'; fi ;;
  *) exit 90 ;;
 esac
 STUB
@@ -33,6 +37,9 @@ printf '%s\n' "$*" >> "$TEST_ROOT/cargo-calls"
 if [ "$1" = run ]; then
  if [ "${EXPECTED_MODE:-advisory}" = authority ]; then
   [[ " $* " == *' --ranker '* && " $* " != *' --advisory '* && " $* " != *' --rank '* ]] || exit 97
+  # Bound mode (ledger Q79): warden.toml requires verified claims, so the authority judge must make
+  # its own diff of this repository from the merge base to HEAD, with full ids.
+  [[ " $* " == *" --repo $TEST_ROOT/.git --base $BASE_ID --head $HEAD_ID "* ]] || { echo "ci_local test: the authority judge is not bound: $*" >&2; exit 96; }
  else
   [[ " $* " == *' --advisory '* && " $* " == *' --rank '* ]] || exit 97
  fi
