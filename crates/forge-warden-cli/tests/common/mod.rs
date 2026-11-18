@@ -499,7 +499,7 @@ pub(crate) struct Sources {
 pub(crate) const PRODUCTION_DATA: [(&str, &str); 7] = [
     (
         "examples/starter.warden.toml",
-        "aef395eedbe677976df399a6ac7c0724e3458a7c06ff8a2fb892a12a5c95c071",
+        "56cd8685d1742a3d429d97cbf4de87eb5c1b20e2d6fa21e752d1c989687a07c1",
     ),
     (
         "schemas/error.v1.schema.json",

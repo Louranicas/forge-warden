@@ -23,7 +23,7 @@ forge-warden check --policy examples/starter.warden.toml --patch fixtures/demo.p
 
 ```text
 forge-warden 0.2.1: FAIL (exit 7 policy_fail, next: change_input)
-  patch bbf580931c67, policy aef395eedbe6, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
+  patch bbf580931c67, policy 56cd8685d174, ranked by deep-diff-forge 0.7.0 (supplied, unverified), on 2026-11-05
   4 file(s), 10 rule(s): 5 pass, 0 waived, 4 hold, 1 fail
   [PASS  ] no-secrets (forbid_signal, fail)
   [PASS  ] no-hidden-text (forbid_signal, fail)
