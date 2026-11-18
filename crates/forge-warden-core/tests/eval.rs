@@ -288,6 +288,109 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
     }
 }
 
+/// The outcome of `policy` on one changed file at `path` with `signals`, and the outcome of rule `id`
+/// with the paths it names.
+fn one_rule(
+    policy: &forge_warden_core::Policy,
+    id: &str,
+    path: &str,
+    signals: &[&str],
+) -> (Outcome, RuleOutcome, Vec<String>) {
+    let verdict = evaluate(
+        policy,
+        &rank(vec![file(path, "modified", 1, signals)]),
+        seals(),
+        today(),
+    );
+    let rule = verdict
+        .rules()
+        .iter()
+        .find(|rule| rule.id == id)
+        .unwrap()
+        .clone();
+    let paths = rule
+        .violations
+        .iter()
+        .filter_map(|v| v.path.clone())
+        .collect();
+    (verdict.outcome(), rule.outcome, paths)
+}
+
+/// CI that runs on GitLab, Gitea or Forgejo is owned like `.github` (ledger Q85): the starter holds
+/// `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the entry and everything under it, root or
+/// nested, in any letter case) with `ci-is-owned`, and this repository's own policy holds them with
+/// `quality-config-is-owned`.
+#[test]
+fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
+    let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
+    let ours = parse_policy(include_bytes!("../../../warden.toml")).unwrap();
+    for path in [
+        ".gitlab-ci.yml",
+        "services/api/.gitlab-ci.yml",
+        ".GitLab-CI.yml",
+        ".gitlab",
+        ".gitlab/CODEOWNERS",
+        ".gitlab/ci/release.yml",
+        ".GITLAB/ci/release.yml",
+        ".gitea",
+        ".gitea/workflows/ci.yml",
+        ".Gitea/workflows/ci.yaml",
+        ".forgejo",
+        ".forgejo/workflows/ci.yml",
+        "tools/.FORGEJO/workflows/ci.yml",
+    ] {
+        assert_eq!(
+            one_rule(&starter, "ci-is-owned", path, &[]),
+            (Outcome::Hold, RuleOutcome::Hold, vec![path.to_owned()]),
+            "starter: {path}"
+        );
+    }
+    for path in [
+        ".gitlab-ci.yml",
+        ".gitlab/CODEOWNERS",
+        ".gitea/workflows/ci.yml",
+        ".forgejo/workflows/ci.yml",
+    ] {
+        assert_eq!(
+            one_rule(&ours, "quality-config-is-owned", path, &[]).1,
+            RuleOutcome::Hold,
+            "warden.toml: {path}"
+        );
+    }
+    for path in [
+        ".gitlab-ci.yml.bak",
+        ".gitlab-ci",
+        "docs/gitea.md",
+        ".forgejox/workflows/ci.yml",
+        "docs/gitlab/notes.md",
+    ] {
+        assert_eq!(
+            one_rule(&starter, "ci-is-owned", path, &[]),
+            (Outcome::Pass, RuleOutcome::Pass, Vec::new()),
+            "starter: {path} is not CI configuration"
+        );
+    }
+}
+
+/// deep-diff-forge's `ci_privilege` label misses a quoted grant (`contents: 'write'`, ledger Q84), so
+/// the starter's `no-ci-privilege` rule cannot fail it. The path still holds: a workflow change with
+/// no label is held by `ci-is-owned`, never passed; with the label it fails as before.
+#[test]
+fn a_workflow_change_the_ranker_does_not_label_is_still_held() {
+    let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
+    let workflow = ".github/workflows/release.yml";
+    assert_eq!(
+        one_rule(&starter, "ci-is-owned", workflow, &[]),
+        (Outcome::Hold, RuleOutcome::Hold, vec![workflow.to_owned()])
+    );
+    assert_eq!(
+        one_rule(&starter, "no-ci-privilege", workflow, &[]).1,
+        RuleOutcome::Pass
+    );
+    let labelled = one_rule(&starter, "no-ci-privilege", workflow, &["ci_privilege"]);
+    assert_eq!((labelled.0, labelled.1), (Outcome::Fail, RuleOutcome::Fail));
+}
+
 /// The starter holds a binary section on a path that is normally text, in any letter case, and only
 /// there (M7-BINARY-TEXT-HOLD, ledger Q63).
 #[test]

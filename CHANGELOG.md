@@ -12,6 +12,12 @@ registry is always listed, because consumers parse them.
 - The local gate (`scripts/ci_local.sh`) judges in bound mode (ledger Q79): its authority step passes `--repo`
   (the Git common directory), `--base` (the merge base it computes) and `--head` (HEAD), so under this repository's
   `warden.toml` (`[claims] require_verified = true`) it can pass; before, it could only hold with `claims_unverified`.
+- CI on GitLab, Gitea and Forgejo is owned like `.github` (ledger Q85): the starter policy's `ci-is-owned` holds
+  `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the entry and everything under it, root or nested, any letter
+  case), and this repository's `warden.toml` (`quality-config-is-owned`), `protected-paths.txt`, CODEOWNERS and the
+  agent hooks protect `.gitlab-ci.yml`, `.gitlab/**`, `.gitea/**` and `.forgejo/**`. A test pins that a workflow change
+  deep-diff-forge does not label `ci_privilege` (a quoted grant such as `contents: 'write'`, ledger Q84) is still held
+  by its path.
 - The text report names a superseded waiver (ledger Q80): a live waiver whose paths matched only violations an
   earlier waiver of the same rule already covered reads `matched only what an earlier waiver already covers`
   instead of `matched nothing in this change`. The verdict document is unchanged: it is still in `unused_waivers`.

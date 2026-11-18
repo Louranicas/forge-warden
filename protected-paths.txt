@@ -1,8 +1,12 @@
 # Canonical root-relative protected paths; supported globs: whole-segment * and trailing **.
 .cargo/**
 .claude/**
+.forgejo/**
+.gitea/**
 .githooks/**
 .github/**
+.gitlab-ci.yml
+.gitlab/**
 Cargo.lock
 Cargo.toml
 agents/**

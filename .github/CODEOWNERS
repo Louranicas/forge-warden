@@ -2,8 +2,12 @@
 * @Louranicas
 /.cargo/** @Louranicas
 /.claude/** @Louranicas
+/.forgejo/** @Louranicas
+/.gitea/** @Louranicas
 /.githooks/** @Louranicas
 /.github/** @Louranicas
+/.gitlab-ci.yml @Louranicas
+/.gitlab/** @Louranicas
 /Cargo.lock @Louranicas
 /Cargo.toml @Louranicas
 /agents/** @Louranicas
