@@ -318,12 +318,11 @@ fn one_rule(
 
 /// CI that runs on GitLab, Gitea or Forgejo is owned like `.github` (ledger Q85): the starter holds
 /// `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the entry and everything under it, root or
-/// nested, in any letter case) with `ci-is-owned`, and this repository's own policy holds them with
-/// `quality-config-is-owned`.
+/// nested, in any letter case) with `ci-is-owned`. This repository's own policy is checked in
+/// `repo_invariants.rs` (read at run time: `warden.toml` is not a reviewed compiler input).
 #[test]
 fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
-    let ours = parse_policy(include_bytes!("../../../warden.toml")).unwrap();
     for path in [
         ".gitlab-ci.yml",
         "services/api/.gitlab-ci.yml",
@@ -343,18 +342,6 @@ fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
             one_rule(&starter, "ci-is-owned", path, &[]),
             (Outcome::Hold, RuleOutcome::Hold, vec![path.to_owned()]),
             "starter: {path}"
-        );
-    }
-    for path in [
-        ".gitlab-ci.yml",
-        ".gitlab/CODEOWNERS",
-        ".gitea/workflows/ci.yml",
-        ".forgejo/workflows/ci.yml",
-    ] {
-        assert_eq!(
-            one_rule(&ours, "quality-config-is-owned", path, &[]).1,
-            RuleOutcome::Hold,
-            "warden.toml: {path}"
         );
     }
     for path in [

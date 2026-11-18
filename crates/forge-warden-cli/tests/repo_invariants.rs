@@ -1409,3 +1409,37 @@ fn the_core_is_no_std_unconditionally() {
         );
     }
 }
+
+#[test]
+fn this_repository_owns_its_ci_on_every_forge() {
+    // Ledger Q85: the project's CI runs on GitLab, Gitea and Forgejo, so their CI configuration is owned
+    // like `.github/**`: quality-config-is-owned in warden.toml and protected-paths.txt (which
+    // check_guardrails keeps equal to CODEOWNERS and the agent's deny lists) list all four.
+    const CI: [&str; 4] = [".forgejo/**", ".gitea/**", ".gitlab-ci.yml", ".gitlab/**"];
+    let policy: toml::Table = toml::from_str(&read("warden.toml")).unwrap();
+    let rule = policy["rule"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["id"].as_str() == Some("quality-config-is-owned"))
+        .unwrap();
+    assert_eq!(rule["severity"].as_str(), Some("hold"));
+    let paths: Vec<&str> = rule["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect();
+    let protected = read("protected-paths.txt");
+    let listed: Vec<&str> = protected
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    for path in CI {
+        assert!(
+            paths.contains(&path),
+            "warden.toml quality-config-is-owned lacks {path}"
+        );
+        assert!(listed.contains(&path), "protected-paths.txt lacks {path}");
+    }
+}
