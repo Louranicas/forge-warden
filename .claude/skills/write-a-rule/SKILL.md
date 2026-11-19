@@ -7,7 +7,7 @@ when_to_use: The user asks for a new kind of check (e.g. "require a CHANGELOG en
 # Adding a rule kind
 
 A rule kind touches seven places. Missing one is caught by a test, but it is faster to do them
-in order. Work in this order and run `just fast` after each numbered step.
+in order. Work in this order and run the [fast gate](../../../CONTRIBUTING.md#local-gate-commands) after each numbered step.
 
 1. **Decide the semantics first, in writing.** One sentence: "violated when …". Then answer:
    - Is a violation tied to a path (waivable) or to the whole change (never waivable)?

@@ -22,7 +22,7 @@ following it is the fastest path, not the polite one.
 
 A change is done when all of these hold, and not before:
 
-1. `just fast` is green (fmt, clippy with the full lint wall, all tests). The Stop hook
+1. The [fast gate](CONTRIBUTING.md#local-gate-commands) is green (fmt, clippy with the full lint wall, all tests). The Stop hook
    will not let a session end while it is red.
 2. New behaviour has a test that **fails without the change**. Say which test in your summary.
    Prefer a property (`proptest`) when the behaviour is a law ("adding a rule never loosens a
@@ -63,9 +63,9 @@ A change is done when all of these hold, and not before:
 
 ## Useful commands
 
+Run the [fast and full local gate commands](CONTRIBUTING.md#local-gate-commands) from the checkout root.
+
 ```bash
-just fast                                            # the fast gate
-just ci                                              # the full local gate (it shares most steps with the integrator gate)
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
 scripts/make_patch.sh main HEAD > target/change.patch   # committed changes only

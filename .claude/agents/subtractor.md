@@ -13,7 +13,7 @@ same thing twice, docs that restate code, configuration nothing reads):
 1. State the guarantee it currently provides, if any.
 2. Show what else already provides that guarantee (a lint, a type, another test), with the file
    and line. If nothing does, it stays: say so and move on.
-3. Delete it, run `just fast`, and keep the deletion only if everything stays green
+3. Delete it, run the [fast gate](../../CONTRIBUTING.md#local-gate-commands), and keep the deletion only if everything stays green
    **and** `cargo mutants --in-diff` on the touched source finds no new surviving mutant.
 
 Rules:

@@ -334,8 +334,8 @@ change, the vocabulary check and the workflow audit.
 | **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), `just install-hooks` |
 | **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 
-Run the offline build, lint, test and audit checks with `just ci`. Run the script and fixture
-checks with `just fast`.
+Use the [local gate commands](CONTRIBUTING.md#local-gate-commands) to run the offline build,
+lint, test and audit checks with the full local gate and the script and fixture checks with the fast gate.
 
 ## Working with Claude
 

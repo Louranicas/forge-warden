@@ -2,6 +2,7 @@
 """Hook protocol and known M3 bypass regressions; never executes proposed commands."""
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -279,34 +280,37 @@ class Guard(unittest.TestCase):
         hooks = self.root / ".githooks"
         hooks.mkdir()
         shutil.copyfile(repo / "justfile", self.root / "justfile")
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "JUST_"))}
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
-        def run(*args):
-            return subprocess.run(args, cwd=self.root, env=env, capture_output=True)
+        def run(*args, **overrides):
+            return subprocess.run(args, cwd=self.root, env={**env, **overrides}, capture_output=True)
 
         run("git", "init", "-q", "--template=").check_returncode()
         ran = self.root / ".git/ran"
         recorder = self.root / ".git/record"
         recorder.write_text("#!/bin/sh\ntouch .git/ran\n")
         recorder.chmod(0o755)
-        just = shutil.which("just")
+        allowed = json.loads((repo / ".claude/settings.json").read_bytes())["permissions"]["allow"]
         for hook, recipe, gate in (("pre-commit", "fast", "ci_fast.sh"), ("pre-push", "ci", "ci_local.sh")):
             shutil.copy2(repo / ".githooks" / hook, hooks / hook)
-            launchers = [["git", "-c", "core.hooksPath=.githooks", "hook", "run", hook]]
-            if just:
-                launchers.append([just, recipe])
-            for command in launchers:
+            launchers = [(["git", "-c", "core.hooksPath=.githooks", "hook", "run", hook], {})]
+            if shutil.which("just"):
+                launcher = ["bash", "-c", 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && '
+                            f'exec just --justfile ./justfile {recipe}']
+                self.assertIn(f"Bash({shlex.join(launcher)})", allowed)
+                launchers.append((launcher, {"JUST_DRY_RUN": "true", "JUST_JUSTFILE": str(self.root / "other")}))
+            for command, overrides in launchers:
                 with self.subTest(command=command):
                     script = scripts / gate
                     shutil.copy2(recorder, script)
-                    run(*command).check_returncode()
+                    run(*command, **overrides).check_returncode()
                     self.assertTrue(ran.exists())
                     ran.unlink()
                     saved = self.root / ".git/scripts"
                     scripts.rename(saved)
                     scripts.symlink_to(saved)
-                    result = run(*command)
+                    result = run(*command, **overrides)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(gate.encode(), result.stderr)
                     self.assertFalse(ran.exists())
@@ -314,7 +318,7 @@ class Guard(unittest.TestCase):
                     saved.rename(scripts)
                     script.unlink()
                     script.symlink_to(recorder)
-                    result = run(*command)
+                    result = run(*command, **overrides)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(gate.encode(), result.stderr)
                     self.assertFalse(ran.exists())
@@ -322,7 +326,12 @@ class Guard(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
     def test_just_defers_vocabulary_lookup(self):
-        just = shutil.which("just")
+        command = [shutil.which("just"), "--justfile", self.root / "justfile"]
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JUST_")}
+
+        def run(*args):
+            return subprocess.run([*command, *args], cwd=self.root, env=env, capture_output=True)
+
         repo = GUARD.parents[2]
         scripts = self.root / "scripts"
         scripts.mkdir()
@@ -339,23 +348,23 @@ class Guard(unittest.TestCase):
             script = scripts / gate
             script.write_text("#!/bin/sh\nexit 0\n")
             script.chmod(0o755)
-            subprocess.run([just, recipe], cwd=self.root, capture_output=True, check=True)
+            run(recipe).check_returncode()
             self.assertFalse(receipt.exists())
         revision = self.root / "revision"
         for state in ("symlink", "missing"):
             with self.subTest(lookup=state):
                 if state == "missing":
                     lookup.unlink()
-                result = subprocess.run([just, "vocab"], cwd=self.root, capture_output=True)
+                result = run("vocab")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b"scripts/tool_versions.py", result.stderr)
                 self.assertFalse(revision.exists())
-                subprocess.run([just, "vocab", "explicit revision"], cwd=self.root, capture_output=True, check=True)
+                run("vocab", "explicit revision").check_returncode()
                 self.assertEqual(revision.read_text(), "explicit revision")
                 self.assertFalse(receipt.exists())
                 revision.unlink()
         target.rename(lookup)
-        subprocess.run([just, "vocab"], cwd=self.root, capture_output=True, check=True)
+        run("vocab").check_returncode()
         self.assertEqual(revision.read_text(), "pinned")
         self.assertTrue(receipt.exists())
 

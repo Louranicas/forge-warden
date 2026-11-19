@@ -9,7 +9,7 @@ Use Linux with `/proc` mounted (including `/proc/self/fd`), Git, Bash, coreutils
 Python 3.11 or newer with PyYAML available to `python3 -I`, Rustup and `just` available.
 The checkout pins Rust 1.99.1 plus rustfmt/clippy in `rust-toolchain.toml`; Rustup may need
 network access to install that toolchain. Provision the dependency cache once with network
-access, and provision the separate Rust 1.88.0 MSRV compiler for `just ci`. The pinned
+access, and provision the separate Rust 1.88.0 MSRV compiler for the full local gate. The pinned
 1.99.1 toolchain supplies rustfmt and Clippy. Then the walkthrough and test gates run offline:
 
 ```bash
@@ -20,10 +20,18 @@ cargo fetch --locked
 ```
 
 
+Install the hooks with `just install-hooks`.
+
+## Local gate commands
+
+Run these commands from the root of the checkout being validated. Each clears inherited
+Just options and selects that checkout’s justfile.
+
 ```bash
-just install-hooks   # pre-commit: fast gate; commit-msg: useful subjects; pre-push: full gate
-just fast            # fmt + clippy (the full lint wall) + tests
-just ci              # the full local gate (everything it can run offline)
+# Fast gate
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile fast'
+# Full local gate
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile ci'
 ```
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
@@ -64,8 +72,8 @@ A change to them is a change to this repository's gate.
 
 This repository's gate has two layers:
 
-- **In the repository**, run `just fast` for the gate used by the pre-commit and agent Stop
-  hooks. Run `just ci` for the full local gate used by the pre-push hook.
+- **In the repository**, use the [local gate commands](#local-gate-commands). The pre-commit and
+  agent Stop hooks use the fast gate. The pre-push hook uses the full local gate.
 - **The integrator gate**, which the maintainers run on every merge to `main` and on every release
   commit: `fw-verify`, kept with the project's coordination records, not in this repository. It
   builds the subject commit in a fresh clone and runs format, lints, tests, docs, `cargo deny`,
@@ -161,7 +169,7 @@ The documentation test runs this exact exercise offline in a fresh source copy, 
 rule outcomes, advisory notes and verdict levels. E3d parses all four CLI invocations using
 the real grammar. Production authority requires an independently admitted real ranker, the
 base policy, and [owner-enrolled Git](docs/GIT_RUNTIME.md). Keep policy and tests together in
-a pull request and run `just ci`.
+a pull request and run the [full local gate](#local-gate-commands).
 
 
 Terms are defined once in the [glossary](docs/GLOSSARY.md). Current design status and whole-ADR
@@ -272,7 +280,7 @@ repository's own gate reads two of them:
   the protected paths. On the repository of record a merge into `main` is the owner's in any case.
 - `.github/pull_request_template.md` is the checklist for a change. GitLab does not load it, so copy
   it into the merge request. Two of its items read differently here: `cargo-deny` and
-  `cargo-mutants` are required by `just ci`, not optional, and no gate produces a trusted dogfood
+  `cargo-mutants` are required by the full local gate, not optional, and no gate produces a trusted dogfood
   verdict for this repository yet (see the table above).
 - `.github/dependabot.yml` does not run for the repository of record. Dependency updates are made by
   hand, in a reviewed change that passes the gate like any other.

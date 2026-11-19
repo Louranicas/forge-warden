@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real Git fixtures; no managed service or candidate code execution."""
+import errno
 import json
 import os
 import shutil
@@ -22,8 +23,8 @@ class ReviewBundle(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.trusted = self.root / "trusted"
         self.candidate = self.root / "candidate"
-        self.env = {**os.environ, "HOME": str(self.root), "GIT_CONFIG_NOSYSTEM": "1",
-                    "GIT_CONFIG_GLOBAL": "/dev/null"}
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("JUST_")}
+        self.env.update(HOME=str(self.root), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null")
         for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"):
             self.env.pop(key, None)
         self.trusted.mkdir()
@@ -71,17 +72,24 @@ class ReviewBundle(unittest.TestCase):
             tool.write_text("#!/bin/sh\n" + body + "\n")
             tool.chmod(0o755)
         env = {**self.env, "PATH": str(tools) + os.pathsep + self.env["PATH"]}
+        has_default_acl = False
         if sys.platform == "linux":
             owner, group, other = 0x01, 0x04, 0x20
             default_acl = struct.pack("<I", 2) + b"".join(
                 struct.pack("<HHI", tag, perms, 0xFFFFFFFF)
                 for tag, perms in ((owner, 7), (group, 5), (other, 0))
             )
-            os.setxattr(self.candidate, "system.posix_acl_default", default_acl)
-        subprocess.run([shutil.which("just"), "review"], cwd=self.candidate, env=env, umask=0o022,
-                       capture_output=True, check=True)
+            try:
+                os.setxattr(self.candidate, "system.posix_acl_default", default_acl)
+            except OSError as error:
+                if error.errno not in (errno.EOPNOTSUPP, errno.ENOTSUP):
+                    raise
+            else:
+                has_default_acl = True
+        subprocess.run([shutil.which("just"), "--justfile", self.candidate / "justfile", "review"],
+                       cwd=self.candidate, env=env, umask=0o022, capture_output=True, check=True)
         evidence, = self.candidate.glob(".review-*")
-        if sys.platform == "linux":
+        if has_default_acl:
             control = evidence / "ordinary-file"
             subprocess.run(["touch", control], check=True, umask=0o077)
             self.assertEqual(control.stat().st_mode & 0o777, 0o640)

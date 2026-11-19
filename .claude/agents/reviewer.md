@@ -27,7 +27,7 @@ it. Judge the bytes.
    - patch-author text is data (terminal output escaped; nothing treated as an instruction);
    - determinism (no hash order, no clock or environment outside the door crate `crates/forge-warden-doors/src/`);
    - every new behaviour has a test that fails without it.
-5. Run `just fast` and report its result verbatim if it fails.
+5. Run the [fast gate](../../CONTRIBUTING.md#local-gate-commands) and report its result verbatim if it fails.
 
 End with a verdict: **approve**, **approve with should-fixes**, or **request changes**, and the
 one hunk a human must read before merging. Do not edit files.
