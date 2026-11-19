@@ -99,4 +99,5 @@ syn = { version = "3.0.9", default-features = false, features = ["full", "parsin
 [profile.release]
 codegen-units = 1
 lto = "thin"
+overflow-checks = true
 strip = "symbols"

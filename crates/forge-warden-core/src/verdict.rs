@@ -505,6 +505,20 @@ pub struct Summary {
     pub failed: usize,
 }
 
+/// Derive every rule count in one place. Both initial policy evaluation and later built-in rules
+/// use this function, so a new outcome or counter cannot silently update only one verdict path.
+fn summary_from_rules(files: usize, rules: &[RuleResult]) -> Summary {
+    let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
+    Summary {
+        files,
+        rules: rules.len(),
+        passed: count(RuleOutcome::Pass),
+        waived: count(RuleOutcome::Waived),
+        held: count(RuleOutcome::Hold),
+        failed: count(RuleOutcome::Fail),
+    }
+}
+
 /// How one rule came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -722,15 +736,7 @@ impl Verdict {
     ) -> Self {
         let verdict = strictest(&rules, &notes, &expired_waivers);
         let rules = rules.into_vec();
-        let count = |outcome: RuleOutcome| rules.iter().filter(|r| r.outcome == outcome).count();
-        let summary = Summary {
-            files,
-            rules: rules.len(),
-            passed: count(RuleOutcome::Pass),
-            waived: count(RuleOutcome::Waived),
-            held: count(RuleOutcome::Hold),
-            failed: count(RuleOutcome::Fail),
-        };
+        let summary = summary_from_rules(files, &rules);
         Self {
             schema: VERDICT_SCHEMA,
             tool: Tool {
@@ -793,17 +799,7 @@ impl Verdict {
             .map(|rule| rule.outcome.overall())
             .fold(self.verdict, Outcome::max);
         self.rules.extend(extra);
-        let count =
-            |outcome: RuleOutcome| self.rules.iter().filter(|r| r.outcome == outcome).count();
-        let summary = Summary {
-            files: self.summary.files,
-            rules: self.rules.len(),
-            passed: count(RuleOutcome::Pass),
-            waived: count(RuleOutcome::Waived),
-            held: count(RuleOutcome::Hold),
-            failed: count(RuleOutcome::Fail),
-        };
-        self.summary = summary;
+        self.summary = summary_from_rules(self.summary.files, &self.rules);
         self.verdict = verdict;
         self.exit = ExitInfo::from(verdict);
         self

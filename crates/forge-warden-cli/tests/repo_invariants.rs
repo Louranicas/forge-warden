@@ -75,6 +75,24 @@ fn every_crate_inherits_the_workspace_lints() {
     }
 }
 
+#[test]
+fn release_builds_keep_overflow_checks() {
+    // The lint wall requires explicit checked/saturating arithmetic, but release-mode overflow
+    // checks remain a second boundary if a future dependency or reviewed exception gets it wrong.
+    let manifest: toml::Table = toml::from_str(&read("Cargo.toml")).unwrap();
+    assert_eq!(
+        manifest
+            .get("profile")
+            .and_then(toml::Value::as_table)
+            .and_then(|profiles| profiles.get("release"))
+            .and_then(toml::Value::as_table)
+            .and_then(|release| release.get("overflow-checks"))
+            .and_then(toml::Value::as_bool),
+        Some(true),
+        "[profile.release] overflow-checks must stay true"
+    );
+}
+
 /// Code lines only: a line comment (`//`, `///`, `//!`) is prose, not an attribute.
 fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     text.lines()
