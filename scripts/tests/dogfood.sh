@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Isolated real Git subjects with stubbed compiler/producer: no builds or network.
 set -euo pipefail
+command -v just >/dev/null || { echo 'Just is required for the judge-bound fixture' >&2; exit 1; }
 source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
@@ -385,11 +386,16 @@ if grep -q '^+fn beside_the_bump() {}$' "$sandbox/made.patch"; then
 fi
 git -C "$sub" checkout --quiet --detach "$sub_head"
 git -C "$sub" branch -f main "$base"
+git -C "$sub" tag main "$sub_base"
 printf 'fn only_at_head() {}\n' >> "$sub/build.rs"
 git -C "$sub" add -- build.rs
 fixture_commit later
 named_patch="$sandbox/main-to-head.patch"
-bash "$maker" main HEAD "$sub" > "$named_patch"
+named_head="$(git -C "$sub" rev-parse HEAD)"
+bash "$maker" "$base" "$named_head" "$sub" > "$named_patch"
+runbook_base="$(sed -nE 's@^bash make_patch\.sh ([[:alnum:]/_-]+) HEAD > .*@\1@p' "$source_root/docs/RUNBOOK.md")"
+bash "$maker" "$runbook_base" HEAD "$sub" > "$sandbox/made.patch"
+same_bytes "$named_patch" "$sandbox/made.patch"
 git -C "$sub" replace "$sub_base^{tree}" "$sub_head^{tree}"
 git -C "$sub" replace "$base^{tree}" 'HEAD^{tree}'
 mkdir -p "$sub/.git/info"
@@ -403,7 +409,6 @@ import subprocess
 import sys
 
 source, document, repo, base, head = sys.argv[1:]
-revision_range = base + '...' + head if document == 'README.md' else 'main...HEAD'
 tree_option = '--attr-source="$(git hash-object -t tree /dev/null)"'
 plain = r"[-a-zA-Z0-9./=]+"
 word = rf"""(?:{re.escape(tree_option)}|{plain}|'{plain}'|"{plain}")"""
@@ -414,11 +419,11 @@ read_only = {
     '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '--ignore-submodules=none',
 }
 offline_option = r'(?:GIT_ALLOW_PROTOCOL=|GIT_NO_LAZY_FETCH=[01])'
-spans = re.findall(rf'`(?:export ({offline_option}(?: {offline_option})*) && )?'
-                   r'(GIT_ATTR_NOSYSTEM=[01](?:[ \t]+GIT_GRAFT_FILE=)?)[ \t]+git[ \t]+([^`]+)`',
+spans = re.findall(rf'`\(unset "\$\{{!GIT_@\}}" && export ({offline_option}(?: {offline_option})*) && '
+                   r'(GIT_ATTR_NOSYSTEM=[01](?:[ \t]+GIT_GRAFT_FILE=)?)[ \t]+git[ \t]+([^`]+)\)`',
                    (Path(source) / document).read_text())
 (exports, prefix, arguments), = [(exports, value, span) for exports, value, span in spans if '...' in span]
-arguments = arguments.replace('<base>', base).replace('<head>', head)
+arguments = arguments.replace('"${base:?}...${head:?}"', base + '...' + head)
 if arguments.count(tree_option) != 1 or not re.fullmatch(rf"{word}(?:[ \t]+{word})*", arguments):
     sys.exit(f'{document}: unsupported syntax in documented Git diff')
 assignments = dict(word.split('=', 1) for word in shlex.split(prefix))
@@ -428,7 +433,8 @@ env = {**os.environ, **dict(item.split('=', 1) for item in shlex.split(exports))
 empty_tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, env=env, text=True).strip()
 attr_option = '--attr-source=' + empty_tree
 argv = shlex.split(arguments.replace(tree_option, attr_option))
-if set(argv) - (read_only | {revision_range, attr_option}):
+if (not re.fullmatch(r'[a-zA-Z0-9][\w./-]*\.\.\.[a-zA-Z0-9][\w./-]*', argv[-1])
+        or set(argv[:-1]) - (read_only | {attr_option})):
     sys.exit(f'{document}: unsupported argument in documented Git diff')
 sys.exit(subprocess.run(['git', *argv], cwd=repo, env={**env, **assignments}).returncode)
 PYDOC
@@ -699,10 +705,11 @@ git clone -q --no-hardlinks "$trusted" "$partial"
  cd "$partial"
  src=crates/fixture/src/lib.rs
  mkdir -p crates/fixture/src
+ cp -- scripts/make_patch.sh make_patch.sh
  cp -- "$source_root/justfile" .
  cp -- "$source_root/scripts/worktree_diff.py" scripts/
  printf 'old\n' > "$src"
- git add -- "$src" justfile scripts/worktree_diff.py
+ git add -- "$src" justfile scripts/worktree_diff.py make_patch.sh
  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm before
  before="$(git rev-parse HEAD)"
  old_blob="$(git rev-parse "HEAD:$src")"
@@ -731,6 +738,41 @@ exit 1
 SH
  chmod +x "$sandbox/minimum-git/git" "$sandbox/bin/git-remote-probe"
  export TRANSPORT_LOG="$sandbox/transport.log" GIT_ALLOW_PROTOCOL=ssh:probe
+ python3 -I - "$source_root/README.md" "$sandbox/quickstart.sh" <<'PYQUICK'
+import hashlib
+from pathlib import Path
+import re
+import sys
+
+block = re.search(rb'^```bash\n(.*?)^```$', Path(sys.argv[1]).read_bytes(), re.M | re.S)[1]
+if hashlib.sha256(block).hexdigest() != "d0e97e9b9405e0895e86330c7e76bbf8c3c6527c60e11e78bd3ee25eca44f9bd":
+    sys.exit("review the changed README quickstart before executing it")
+Path(sys.argv[2]).write_bytes(block)
+PYQUICK
+ cat > "$sandbox/bin/forge-warden" <<'SH'
+#!/usr/bin/env bash
+[[ "${GIT_ALLOW_PROTOCOL-unset}" = "" && "$GIT_NO_LAZY_FETCH" = 1 ]] || exit 93
+printf '%s\n' "$@" > "$QUICKSTART_RECEIPT"
+exit 8
+SH
+ chmod +x "$sandbox/bin/forge-warden"
+ cp -- "$sandbox/archive/$ddf_name/deep-diff-forge" "$sandbox/bin/deep-diff-forge"
+ export QUICKSTART_RECEIPT="$sandbox/quickstart-args" GIT_NO_LAZY_FETCH=0 TMPDIR="$sandbox"
+ quickstart() {
+  local status=0
+  source "$sandbox/quickstart.sh" || status=$?
+  if [[ "${GIT_ALLOW_PROTOCOL-unset}" != ssh:probe || "${GIT_NO_LAZY_FETCH-unset}" != 0 ]]; then
+   echo 'FAIL README quickstart changed parent Git settings' >&2
+   exit 1
+  fi
+  return "$status"
+ }
+ actual=0
+ quickstart || actual=$?
+ [[ "$actual" = 8 ]]
+ grep -Fxq "$before" "$QUICKSTART_RECEIPT"
+ grep -Fxq "$tip" "$QUICKSTART_RECEIPT"
+ rm -- "$QUICKSTART_RECEIPT"
  snapshot() { find . -type f -print0 | sort -z | xargs -0 sha256sum; }
  offline_refusal() {
   local oid="$1" object
@@ -761,11 +803,11 @@ SH
   offline_refusal "$tip" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$tip" "$partial" "$sandbox/offline-evidence"
   offline_refusal "$before" bash "$maker" "$before" "$tip" "$partial"
   offline_refusal "$tip" bash "$maker" "$before" "$tip" "$partial"
-  if command -v just >/dev/null; then
-   for oid in "$before" "$tip"; do
-    offline_refusal "$oid" python3 -I "$source_root/scripts/checkout_just.py" judge-bound
-   done
-  fi
+  for oid in "$before" "$tip"; do
+   offline_refusal "$oid" python3 -I "$source_root/scripts/checkout_just.py" judge-bound
+   offline_refusal "$oid" quickstart
+   test ! -e "$QUICKSTART_RECEIPT"
+  done
   for document in README.md docs/RUNBOOK.md; do
    offline_refusal "$old_blob" python3 -I "$sandbox/document_diff.py" "$source_root" "$document" "$partial" "$before" "$tip"
   done

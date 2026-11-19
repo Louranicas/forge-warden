@@ -7,14 +7,16 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 This bound-mode example requires a build of the unreleased 0.3.0 code.
 
 ```bash
-unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
-bash make_patch.sh --check-worktree || exit 2
-base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')" || exit 1
-head="$(git rev-parse --verify 'HEAD^{commit}')" || exit 1
-evidence="$(mktemp -d)" || exit 1
-bash make_patch.sh "$base" "$head" > "$evidence/change.patch" || exit 1   # scripts/make_patch.sh from the revision you installed
-forge-warden check --policy warden.toml --patch "$evidence/change.patch" --ranker "$(command -v deep-diff-forge)" \
-  --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"
+(
+  unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
+  bash make_patch.sh --check-worktree || exit 2
+  base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')" || exit 1
+  head="$(git rev-parse --verify 'HEAD^{commit}')" || exit 1
+  evidence="$(mktemp -d)" || exit 1
+  bash make_patch.sh "$base" "$head" > "$evidence/change.patch" || exit 1   # scripts/make_patch.sh from the revision you installed
+  forge-warden check --policy warden.toml --patch "$evidence/change.patch" --ranker "$(command -v deep-diff-forge)" \
+    --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"
+)
 ```
 
 In this **authority mode**, forge-warden runs the deep-diff-forge binary itself on the patch. The
@@ -194,8 +196,8 @@ patch is refused), `diff.relative` in a subdirectory leaves out every change out
 `ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change, and a
 `.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
 cannot read; no check of the patch can see any of these. To make the patch directly in Bash,
-run `unset "${!GIT_@}"` and then
-`export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+set `base` and `head` to the full commit IDs and run
+`(unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none "${base:?}...${head:?}")`,
 from the top level, with Git 2.41 or later: the first two options take attributes from the empty
 tree. Git still reads `info/attributes` in the common Git directory (normally
 `.git/info/attributes`), which can turn a changed Rust file into a binary diff. Use the isolated `scripts/make_patch.sh` for canonical patch bytes.
@@ -205,9 +207,18 @@ between two commits, so whoever makes the patch is part of the trust boundary; i
 (`--repo`) it makes that diff itself and refuses any other patch. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
 The unreleased 0.3.0 command `forge-warden empty --repo DIR --base BASE --head HEAD`
-verifies an empty comparison using full commit IDs. At the checkout root, run `unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1` and
-`bash make_patch.sh --check-worktree || exit 2` in Bash before taking the directory from
-`git rev-parse --git-common-dir`. The command uses the enrolled `/usr/bin/git` to compare the
+verifies an empty comparison using full commit IDs. Set `base` and `head` to those IDs and run this at the checkout root.
+
+```bash
+(
+  unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
+  bash make_patch.sh --check-worktree || exit 2
+  repo="$(git rev-parse --path-format=absolute --git-common-dir)" || exit 1
+  forge-warden empty --repo "$repo" --base "${base:?}" --head "${head:?}"
+)
+```
+
+The command uses the enrolled `/usr/bin/git` to compare the
 merge base to the supplied head commit from verified objects. It exits silently with 0 for an
 empty diff or exits with 4 if the comparison contains changes. Its machine interface uses the
 exit status alone, so `empty` has no `--json` option. It needs no policy or ranker.
@@ -339,7 +350,7 @@ change, the vocabulary check and the workflow audit.
 | **Workflow audit** | template injection, credential persistence, unpinned actions | `zizmor`: in the hosted workflow for deployers, and in `scripts/ci_local.sh` when it is installed; not in the integrator gate. Every action pinned to a commit SHA |
 | **Dogfooding** | forge-warden's own changes skipping its own policy | [`scripts/dogfood.sh`](scripts/dogfood.sh) and [`warden.toml`](warden.toml); hosted job `dogfood` for deployers. Not yet run on each change of this repository |
 | **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), [hook installation](CONTRIBUTING.md#install-the-hooks) |
-| **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
+| **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or missing repeated fast-gate failures | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 
 Use the [local gate commands](CONTRIBUTING.md#local-gate-commands) to run the offline build,
 lint, test and audit checks with the full local gate and the script and fixture checks with the fast gate.
@@ -348,7 +359,9 @@ lint, test and audit checks with the full local gate and the script and fixture 
 
 - **Claude Code** reads [`CLAUDE.md`](CLAUDE.md) and [`.claude/settings.json`](.claude/settings.json):
   hooks block edits that loosen the quality configuration, format every Rust file it writes, and
-  refuse to let a session end while the fast gate is red. Three subagents ship in
+  block the first three consecutive Stop attempts when the fast gate fails. On the fourth, the hook
+  reports the failure and permits termination. A session ending never proves the gate passed.
+  Three subagents ship in
   [`.claude/agents/`](.claude/agents): `falsifier`, `reviewer` and `subtractor`, plus two skills
   for writing policy and shipping a change.
 - **Claude Managed Agents**: [`agents/managed/`](agents/managed) holds a reviewer agent definition

@@ -23,7 +23,8 @@ following it is the fastest path, not the polite one.
 A change is done when all of these hold, and not before:
 
 1. The [fast gate](CONTRIBUTING.md#local-gate-commands) is green (fmt, clippy with the full lint wall, all tests). The Stop hook
-   will not let a session end while it is red.
+   blocks three consecutive failing attempts. On the fourth it reports the failure and permits termination.
+   A session ending never proves the gate passed.
 2. New behaviour has a test that **fails without the change**. Say which test in your summary.
    Prefer a property (`proptest`) when the behaviour is a law ("adding a rule never loosens a
    verdict") rather than an example.
@@ -68,7 +69,7 @@ Run the [fast and full local gate commands](CONTRIBUTING.md#local-gate-commands)
 ```bash
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
-scripts/make_patch.sh main HEAD > target/change.patch   # committed changes only
+scripts/make_patch.sh refs/heads/main HEAD > target/change.patch   # committed changes only
 deep-diff-forge --stdin-patch --rank --json < target/change.patch \
   | cargo run -q --bin forge-warden -- check --policy warden.toml \
       --patch target/change.patch --advisory --rank -   # advice; never approves

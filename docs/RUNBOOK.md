@@ -118,7 +118,7 @@ For either mode, first create a private evidence directory and write the patch.
 
 ```bash
 evidence="$(mktemp -d)" || exit 1
-bash make_patch.sh main HEAD > "$evidence/change.patch" || exit 1
+bash make_patch.sh refs/heads/main HEAD > "$evidence/change.patch" || exit 1
 ```
 
 For authority mode, run the following in the same Bash session.
@@ -129,7 +129,7 @@ forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
 echo "exit $?"
 ```
 
-`make_patch.sh` writes the change from the merge base of `main` and `HEAD` to `HEAD`, committed
+`make_patch.sh` writes the change from the merge base of `refs/heads/main` and `HEAD` to `HEAD`, committed
 changes only, and the same bytes whatever your Git configuration, environment and current
 directory are. A plain `git diff` is not safe here: with `diff.noprefix` it drops the `a/` `b/`
 every path starts with (forge-warden refuses such a patch as unverifiable, exit 8, because Git
@@ -139,8 +139,8 @@ same goes for a submodule change when `.gitmodules` (which the change itself can
 `ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. And a
 `.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
 binary sections the ranker cannot read. To run Git directly, start at the top level in Bash
-with Git 2.41 or later, run `unset "${!GIT_@}"`, then run
-`export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
+with Git 2.41 or later, run
+`(unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none refs/heads/main...HEAD)`
 from the checkout root. Git still reads `info/attributes` in the common Git directory
 (normally `.git/info/attributes`). A local
 `*.rs -diff` rule can hide the changed Rust lines. Use the isolated `make_patch.sh` from step 2
@@ -154,9 +154,22 @@ trust boundary, so make it with `make_patch.sh` or with `scripts/dogfood.sh`, no
 For bound mode in unreleased 0.3.0 (ADR 0012), add `--repo DIR --base BASE --head HEAD` (full commit ids) to
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
-(exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). At the
-checkout root, run `unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1` and `bash make_patch.sh --check-worktree || exit 2` in Bash
-before passing `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
+(exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). With the patch from the shared setup, run the bound check at the checkout root.
+
+```bash
+(
+  unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
+  bash make_patch.sh --check-worktree || exit 2
+  base="$(git rev-parse --verify 'refs/heads/main^{commit}')" || exit 1
+  head="$(git rev-parse --verify 'HEAD^{commit}')" || exit 1
+  repo="$(git rev-parse --path-format=absolute --git-common-dir)" || exit 1
+  forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
+    --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --repo "$repo" \
+    --base "$base" --head "$head" --json > "${evidence:?}/verdict.json"
+)
+```
+
+It needs `/usr/bin/prlimit`
 (util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. A match records the
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.
 
