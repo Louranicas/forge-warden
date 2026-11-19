@@ -50,13 +50,6 @@ judge:
     scripts/make_patch.sh refs/remotes/origin/main HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
 
-stash-source:
-    python3 -I scripts/source_stash.py
-
-[positional-arguments]
-restore-source object:
-    python3 -I scripts/restore_source.py "$1"
-
 judge-bound:
     #!/usr/bin/env bash
     set -euo pipefail

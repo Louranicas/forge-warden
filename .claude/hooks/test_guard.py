@@ -68,12 +68,33 @@ class Guard(unittest.TestCase):
                 subprocess.run(["git", *args], cwd=self.root, check=True)
 
             git("init", "-q", "--template=")
+            template = self.root / "crates/core/src/template.txt"
+            template.parent.mkdir()
+            template.write_bytes(b"embedded\n")
             git("add", ".")
             git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                 "commit", "-qm", "base")
             git("config", "status.showUntrackedFiles", "no")
             self.run_guard(event, mode="stop", expected=0)
             self.assertFalse(ran.exists())
+            attributes = self.root / ".git/info/attributes"
+            attributes.parent.mkdir(exist_ok=True)
+            for eol, edited in (("lf", b"embedded\r\n"), ("crlf", b"embedded\n")):
+                with self.subTest(eol=eol):
+                    attributes.write_text(f"*.txt text eol={eol}\n")
+                    template.write_bytes(edited)
+                    git("add", "--", "crates/core/src/template.txt")
+                    status = subprocess.check_output(["git", "--no-optional-locks", "status", "--porcelain"],
+                                                     cwd=self.root)
+                    self.assertEqual(status, b"")
+                    index = self.root / ".git/index"
+                    original_index = index.read_bytes()
+                    self.run_guard(event, mode="stop", expected=0)
+                    self.assertTrue(ran.exists())
+                    self.assertEqual(template.read_bytes(), edited)
+                    self.assertEqual(index.read_bytes(), original_index)
+                    ran.unlink()
+            attributes.unlink()
             restricted = self.root / "restricted"
             restricted.mkdir()
             (restricted / "new.rs").touch()

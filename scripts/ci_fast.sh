@@ -6,7 +6,7 @@ while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 cd "$(git rev-parse --show-toplevel)"
 python3 -I scripts/tests/mutation_budget.py
 bash scripts/tests/ci_local.sh
-bash scripts/tests/source_stash.sh
+bash scripts/tests/worktree_diff.sh
 python3 -I scripts/tests/mutation_env.py
 python3 -I scripts/tests/local_tools.py
 bash scripts/tests/dogfood.sh

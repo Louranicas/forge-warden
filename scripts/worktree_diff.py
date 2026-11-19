@@ -23,23 +23,35 @@ def git(*args, env, data=None):
     return run_git(*args, env=env, input=data, stdout=subprocess.PIPE, check=True).stdout
 
 
-def scan_worktree(*args, env):
-    result = run_git("-c", "core.untrackedCache=false", *args, env=env, capture_output=True)
+def clean_worktree(env):
+    result = run_git("-c", "core.untrackedCache=false", "status", "--porcelain=v1", "-z",
+                     "--untracked-files=normal", "--ignore-submodules=none", env=env, capture_output=True)
     if result.returncode or result.stderr:
         sys.stderr.buffer.write(result.stderr)
         sys.exit("Working-tree scan unverified.")
-    return result.stdout
+    if result.stdout:
+        return False
+
+    autocrlf = git("config", "--default", "false", "--get", "core.autocrlf", env=env).strip().lower()
+    if autocrlf not in (b"false", b"no", b"off", b"0"):
+        return False
+    paths = []
+    for entry in git("ls-files", "--stage", "-z", env=env).split(b"\0"):
+        if entry.startswith(b"160000 "):
+            return False
+        if entry.startswith((b"100644 ", b"100755 ")):
+            paths.append(entry.split(b"\t", 1)[1] + b"\0")
+    attrs = git("check-attr", "-z", "--stdin", "--all", env=env, data=b"".join(paths)).split(b"\0")
+    conversion = {b"text", b"crlf", b"eol", b"filter", b"ident", b"working-tree-encoding"}
+    return all(name not in conversion or (name == b"text" and value == b"unset")
+               for name, value in zip(attrs[1::3], attrs[2::3]))
 
 
-def check_index_flags(env, scope, affected=None):
-    if affected is not None:
-        related = affected.union(parent for path in affected for parent in path.parents)
+def check_index_flags(env, scope):
     for row in git("ls-files", "-v", "-z", "--", scope, env=env).split(b"\0"):
         tag = row[:1]
         if tag.islower() or tag == b"S":
             path = Path(os.fsdecode(row[2:]))
-            if affected is not None and path not in related and affected.isdisjoint(path.parents):
-                continue
             flag = "assume-unchanged" if tag.islower() else "skip-worktree"
             sys.exit(f"Working-tree comparison unverified. Git marks {str(path)!r} {flag}.")
 
@@ -74,8 +86,7 @@ def mutation_diff(base):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--clean"]:
         with checked_snapshot(":(top,glob)**") as env:
-            sys.exit(bool(scan_worktree("status", "--porcelain=v1", "-z", "--untracked-files=normal",
-                                        "--ignore-submodules=none", env=env)))
+            sys.exit(0 if clean_worktree(env) else 1)
     if len(sys.argv) != 2 or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sys.argv[1]):
         sys.exit("expected a full mutation base object ID")
     mutation_diff(sys.argv[1])

@@ -12,24 +12,18 @@ could not run as **not verified**.
 
 1. **Fast gate**: `scripts/ci_fast.sh`. Must be green.
 2. **Docs build**: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`.
-3. **New behaviour has a failing-first test.** For each behaviour change, name the test and
-   confirm it fails without the change. For implementation changes under `crates/*/src/**`,
-   save the source with `just stash-source`. Both save and restore require exclusive write access
-   to those working files. Pause editor autosave, formatters, and other writers before saving
-   and keep them paused through the test and restoration, including retries. If you cannot
-   ensure exclusive access, leave the files in place and mark the check **not verified**.
-   If save records no crate source stash, mark the check
-   **not verified**. If it lists untracked files, stage the listed source before retrying.
-   Ignored Rust source also needs to be included. If a file or symlink replaces a directory, or a
-   directory replaces either, the save refuses and leaves the changes in place. It also refuses when
-   source edits are staged but the working source matches HEAD. Save refuses if Git marks any
-   crate source path assume-unchanged or skip-worktree. Restore checks those flags only on paths
-   affected by the saved working or staged changes. Save also refuses an incomplete source scan
-   or a working file whose exact bytes Git cannot reproduce on checkout. Mark the failing-first check
-   **not verified** until the save succeeds. Record any printed stash object ID, including on a failed save.
-   After a successful save, run the test and record the failure. Run `just restore-source OBJECT_ID`
-   with the recorded ID to recover the working and staged source changes. The stash retains those
-   changes for recovery. Unrelated staged edits stay in the live index.
+3. **New behaviour has a failing-first test.** Identify the full commit ID of the intended
+   pre-change baseline. Create a fresh disposable worktree at that commit with
+   `git -c core.hooksPath=/dev/null --no-replace-objects worktree add --detach "$isolated" "$baseline"`.
+   Use an authorized scratch location. In that worktree, bring over only the named regression
+   test and its required test fixtures. For an inline test, apply only the test hunks.
+   Verify the checkout and test inputs represent that baseline plus the test, including the
+   bytes of any embedded files. Run the named test there with separate build output and
+   confirm it fails at the expected assertion. Confirm the same test passes with the change.
+   Record the baseline ID, test command, and both outcomes. Remove the disposable worktree
+   and its test artifacts after use. If the baseline, isolation, or expected failure and pass
+   cannot be established, mark the check **not verified**. Keep the developer’s working files
+   and index untouched throughout.
 4. **Mutation** (if `cargo-mutants` is installed): run `just mutants`.
    Every surviving mutant is a missing test: add it, or explain why the mutant is equivalent.
 5. **Judge the change with its own policy** (if `deep-diff-forge` is installed): `just judge`.
