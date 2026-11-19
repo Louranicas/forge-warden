@@ -604,15 +604,20 @@ fi
 grep -q 'invalid checkout .git entry' "$sandbox/output"
 test ! -e "$sandbox/redirected-out"
 ln -s "$trusted" "$sandbox/trusted-link"
-for row in "same-path $trusted" "same-through-link $sandbox/trusted-link"; do
- read -r name given <<< "$row"
+git -C "$trusted" worktree add -q --detach "$candidate/nested-base" "$base"
+git -C "$candidate" worktree add -q --detach "$trusted/nested-candidate" "$head"
+for row in "same-path $trusted $trusted" "same-through-link $trusted $sandbox/trusted-link" \
+           "trusted-inside $candidate/nested-base $candidate" "candidate-inside $trusted $trusted/nested-candidate"; do
+ read -r name judge given <<< "$row"
  set +e
- bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$given" "$sandbox/s3-$name" > "$sandbox/output" 2>&1
+ bash "$judge/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$given" "$sandbox/s3-$name" > "$sandbox/output" 2>&1
  actual=$?
  set -e
  [ "$actual" = 2 ] && grep -q 'judge checkout must be the distinct trusted base' "$sandbox/output" && test ! -e "$sandbox/s3-$name" || { cat "$sandbox/output"; echo "FAIL trusted as candidate $name: got $actual"; exit 1; }
- echo "PASS trusted checkout as the candidate ($name) refused before effects"
+ echo "PASS overlapping checkouts ($name) refused before effects"
 done
+git -C "$candidate" worktree remove "$trusted/nested-candidate"
+git -C "$trusted" worktree remove "$candidate/nested-base"
 printf 'ignored.txt\n' >> "$trusted/.git/info/exclude"
 printf 'ignored\n' > "$trusted/ignored.txt"
 test -z "$(git -C "$trusted" status --porcelain --untracked-files=all)"
@@ -628,9 +633,8 @@ echo 'PASS an ignored file in the trusted checkout refused before effects'
 # undo the base's own new commit.
 git clone -q --no-local "$trusted" "$sandbox/moved-trusted"
 moved="$sandbox/moved-trusted"
-printf 'a later trusted commit\n' > "$moved/later.txt"
-git -C "$moved" add -- later.txt
-git -C "$moved" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm later -- later.txt
+git -C "$moved" -c protocol.file.allow=always submodule add -q "$trusted" "modulé"
+git -C "$moved" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm later -- .gitmodules "modulé"
 moved_base="$(git -C "$moved" rev-parse HEAD)"
 git -C "$attr" fetch -q "$moved" HEAD
 export EXPECTED_TRUSTED="$moved"
@@ -644,6 +648,21 @@ if ! same_bytes "$clean_patch" "$out/change.patch"; then
  exit 1
 fi
 echo 'PASS diverged history: the patch is the change from the merge base to head'
+for root in "$moved" "$moved/modulé"; do
+ mkdir "$root/.cargo"
+ touch "$root/.cargo/config.toml"
+ chmod 0111 "$root/.cargo"
+ if [[ ! -r "$root/.cargo" ]]; then
+  actual=0
+  EXPECTED_TRUSTED="$moved" bash "$moved/scripts/dogfood.sh" "${LOCAL[@]}" "$moved_base" "$attr_head" "$attr" "$sandbox/incomplete" > "$sandbox/output" 2>&1 || actual=$?
+  chmod 0700 "$root/.cargo"
+  [[ "$actual" = 2 && ! -e "$sandbox/incomplete" ]] && grep -Fq '.cargo' "$sandbox/output" || { cat "$sandbox/output"; exit 1; }
+  echo "PASS incomplete trusted inventory under $root refused before effects"
+ else
+  chmod 0700 "$root/.cargo"
+ fi
+ rm -r -- "$root/.cargo"
+done
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
 export HELPER_RECEIPT="$sandbox/helper-ran"
 printf '%s\n' 'echo ran >> "$HELPER_RECEIPT"' 'exit 0' > "$trusted/scripts/make_patch.sh"

@@ -67,7 +67,7 @@ if [[ -L "$trusted/scripts" || -L "$trusted/scripts/make_patch.sh" || ! -f "$tru
   echo "dogfood: invalid trusted patch-maker" >&2
   exit 2
 fi
-if [[ "$trusted" = "$candidate" ]]; then
+if [[ "${trusted%/}/" == "${candidate%/}/"* || "${candidate%/}/" == "${trusted%/}/"* ]]; then
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2
   exit 2
 fi
@@ -82,8 +82,13 @@ from pathlib import Path
 
 
 def git(root, *args):
-    return subprocess.check_output(["git", "-C", root, "-c", "core.fsmonitor=false",
-                                    "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null", *args])
+    result = subprocess.run(["git", "-C", root, "-c", "core.fsmonitor=false",
+                             "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null", *args],
+                            capture_output=True)
+    if result.stderr:
+        raise ValueError(os.fsdecode(result.stderr).rstrip())
+    result.check_returncode()
+    return result.stdout
 
 
 def check_base(root, commit):
@@ -111,12 +116,19 @@ def check_base(root, commit):
             or git(root, "rev-parse", "--verify", "HEAD") != commit + b"\n"):
         raise ValueError("judge checkout must be the distinct trusted base")
     dirty = "trusted checkout must be clean, including ignored files"
-    tree = git(root, "ls-tree", "-rz", "--format=%(objectmode) %(objectname) 0%x09%(path)", commit)
-    if git(root, "ls-files", "--stage", "--others", "-z") != tree:
+    if git(root, "ls-files", "--others", "-z"):
         raise ValueError(dirty)
-    for row in tree.split(b"\0")[:-1]:
-        metadata, name = row.split(b"\t", 1)
-        mode, oid, _ = metadata.split()
+    tree = git(root, "ls-tree", "-rz", commit).split(b"\0")[:-1]
+    index = git(root, "ls-files", "--stage", "-z").split(b"\0")[:-1]
+    if len(tree) != len(index):
+        raise ValueError(dirty)
+    for tree_row, index_row in zip(tree, index):
+        tree_meta, name = tree_row.split(b"\t", 1)
+        mode, _, oid = tree_meta.split()
+        index_meta, index_name = index_row.split(b"\t", 1)
+        index_mode, index_oid, stage = index_meta.split()
+        if (index_mode, index_oid, stage, index_name) != (mode, oid, b"0", name):
+            raise ValueError(dirty)
         path = root / os.fsdecode(name)
         if mode == b"160000":
             if path.is_symlink():
@@ -148,9 +160,7 @@ trap 'rm -f -- "$helper"' EXIT
 git -C "$trusted" cat-file blob "$base:scripts/make_patch.sh" > "$helper"
 expected="$(git -C "$trusted" rev-parse --verify "$base:scripts/make_patch.sh")"
 [[ "$(git -C "$trusted" hash-object --no-filters "$helper")" = "$expected" ]] || exit 2
-for checkout in "$trusted" "$candidate"; do
-  (cd -- "$checkout" && bash "$helper" --check-worktree)
-done
+(cd -- "$candidate" && bash "$helper" --check-worktree)
 for commit in "$base" "$head"; do
   test "$(git -C "$candidate" rev-parse --verify "$commit^{commit}")" = "$commit"
 done
