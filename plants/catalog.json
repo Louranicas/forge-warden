@@ -549,7 +549,7 @@
       ],
       "old": "cd \"$trusted\"",
       "new": "cd \"$candidate\"",
-      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+      "required_tools": ["bash", "cargo", "coreutils", "git", "just", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "candidate-attributes-honoured",
@@ -562,7 +562,7 @@
       ],
       "old": "git --git-dir=\"$scratch/diff.git\" \"${nograph[@]}\" --attr-source=\"$empty_tree\" -c core.attributesFile=/dev/null \\",
       "new": "git -C \"$repository\" -c core.attributesFile=/dev/null \\",
-      "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
+      "required_tools": ["bash", "cargo", "coreutils", "git", "just", "python3", "rustc", "rustup", "sh"]
     },
     {
       "id": "ack-head-replay",

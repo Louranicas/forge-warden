@@ -158,9 +158,9 @@ MSRV/dependency prerequisites still run before the catalog. Keep helper dependen
 catalog when changing a recipe: the direct-argv check is not general static analysis of Python,
 shell or Rust subprocesses.
 
-The gate installs cargo-mutants at the canonical `scripts/tool-versions.toml` version, using the
+The gate installs cargo-mutants and Just at their pinned `scripts/tool-versions.toml` versions, using the
 same canonical install-action SHA as the mutation job. `scripts/tool_versions.py --check` and
-`scripts/tests/perimeter.py` check both pins and that required capabilities are available in the
+`scripts/tests/perimeter.py` check the pins and that required capabilities are available in the
 gate job before the plants step. Basic shell/Git/Python/OpenSSH/coreutils capabilities come from
 the reviewed ubuntu-latest image contract and are probed at runtime; Rust/clippy are explicitly
 installed. A different runner image or workflow shape requires reviewing this provisioning

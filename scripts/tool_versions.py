@@ -24,7 +24,7 @@ def versions(root):
         raise ValueError("invalid pinned DDF release tag")
     if not re.fullmatch(r"[0-9a-f]{64}", values["ddf_archive_sha256"]):
         raise ValueError("invalid DDF release archive sha256")
-    for name in ("rust", "zizmor", "cargo_mutants", "cargo_deny", "rustup"):
+    for name in ("rust", "zizmor", "cargo_mutants", "cargo_deny", "just", "rustup"):
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values[name]):
             raise ValueError("invalid exact tool version: " + name)
     if not re.fullmatch(r"[0-9a-f]{64}", values["rustup_sha256"]):
@@ -35,8 +35,8 @@ def versions(root):
 def check(root):
     values = versions(root)
     workflow = (root / ".github/workflows/ci.yml").read_text()
-    pins = re.findall(r"tool: (zizmor|cargo-mutants|cargo-deny)@([^\s]+)", workflow)
-    expected = {(name.replace("_", "-"), values[name]) for name in ("zizmor", "cargo_mutants", "cargo_deny")}
+    pins = re.findall(r"tool: (zizmor|cargo-mutants|cargo-deny|just)@([^\s]+)", workflow)
+    expected = {(name.replace("_", "-"), values[name]) for name in ("zizmor", "cargo_mutants", "cargo_deny", "just")}
     if collections.Counter(pins) != collections.Counter([*expected, *[('cargo-mutants', values['cargo_mutants'])] * 2]):
         raise ValueError("CI tool pins drift from scripts/tool-versions.toml")
     if not re.fullmatch(r"[0-9a-f]{40}", values['install_action']):

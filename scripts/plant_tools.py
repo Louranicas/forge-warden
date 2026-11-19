@@ -13,6 +13,7 @@ PROBES = {
     'cargo-mutants': ['cargo', 'mutants', '--version'],
     'coreutils': ['env', '--version'],
     'git': ['git', '--version'],
+    'just': ['just', '--version'],
     'python3': ['python3', '--version'],
     'rustc': ['rustc', '--version'],
     'rustup': ['rustup', '--version'],
@@ -254,14 +255,14 @@ def check_ci(root):
         if 'taiki-e/install-action' in step:
             install = re.fullmatch(
                 r'      - uses: taiki-e/install-action@([0-9a-f]{40})(?: #[^\n]*)?\n'
-                r'        with:\n          tool: (cargo-mutants@[^\s]+)\n', step)
+                r'        with:\n          tool: (cargo-mutants|just)@([^\s]+)\n', step)
             if not install:
                 raise ValueError('plant CI tool install must be unconditional with reviewed fields')
-            action, tool = install.groups()
+            action, tool, version = install.groups()
             if action != values['install_action']:
                 raise ValueError('plant CI install-action pin drift')
-            if tool == 'cargo-mutants@' + values['cargo_mutants']:
-                available.add('cargo-mutants')
+            if version == values[tool.replace('-', '_')]:
+                available.add(tool)
     if not found_entrypoint:
         raise ValueError('plant CI entrypoint missing')
     if required - available:

@@ -162,8 +162,9 @@ unset CLAIMS
 # DOGFOOD-ATTR (C2): the candidate's own attributes do not shape the patch. A candidate that adds
 # `* -diff` at the root and `binary` in a subdirectory, with a secret-shaped added line, must still
 # reach the judge as readable added text, not as `GIT binary patch` hunks.
-git clone -q --no-local "$trusted" "$sandbox/attr-candidate"
-attr="$sandbox/attr-candidate"
+mkdir "$sandbox/checkouts"
+attr="$sandbox/checkouts/attr-candidate"
+git clone -q --no-local "$trusted" "$attr"
 mkdir -p "$attr/sub"
 printf '* -diff\n' > "$attr/.gitattributes"
 printf '* binary\n' > "$attr/sub/.gitattributes"
@@ -247,6 +248,17 @@ made() {
 }
 made explicit-checkout bash "$maker" "$base" "$attr_head" "$attr"
 made explicit-git-directory bash "$maker" "$base" "$attr_head" "$attr/.git"
+ln -s "$sandbox/checkouts" "$sandbox/home-alias"
+aliased="$sandbox/home-alias/attr-candidate"
+made ancestor-alias bash "$maker" "$base" "$attr_head" "$aliased"
+made ancestor-alias-git-directory bash "$maker" "$base" "$attr_head" "$aliased/.git"
+(
+ cd -L "$aliased"
+ made ancestor-alias-default bash "$maker" "$base" "$attr_head"
+ bash "$maker" --check-worktree
+ [[ "$(bash "$maker" --resolve-comparison "$base" HEAD)" = "$base $base" ]]
+ [[ "$(bash "$maker" --review-comparison)" = "$base $base $attr_head" ]]
+)
 git -C "$attr" config core.worktree "$candidate"
 if bash "$maker" "$base" "$attr_head" "$attr/.git" > "$sandbox/made.patch" || [[ -s "$sandbox/made.patch" ]]; then
  echo 'FAIL make_patch accepted a Git directory configured for another checkout'
@@ -296,7 +308,7 @@ chmod +x "$sandbox/git-probe/git"
   bash "$maker" "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || actual=$?
   [[ "$actual" = 2 && ! -s "$sandbox/made.patch" && ! -e "$PROBE_RECEIPT" ]]
  }
- for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. repository; do
+ for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. repository repository/objects/..; do
   refuse_before_git "$base" "$attr_head" "$entry"
   refuse_before_git --resolve-comparison "$base" "$attr_head" "$entry"
  done

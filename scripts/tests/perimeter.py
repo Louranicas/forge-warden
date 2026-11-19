@@ -273,7 +273,7 @@ class Contracts(unittest.TestCase):
             original = workflow.read_text()
             versions = TOOLS.versions(ROOT)
             pins = [name.replace("_", "-") + "@" + versions[name]
-                    for name in ("zizmor", "cargo_mutants", "cargo_deny")]
+                    for name in ("zizmor", "cargo_mutants", "cargo_deny", "just")]
             for pin in [*pins, versions["rust"], versions["ddf_rev"]]:
                 with self.subTest(pin=pin):
                     self.assertIn(pin, original)
@@ -342,6 +342,36 @@ class Contracts(unittest.TestCase):
             tool.chmod(0o700)
             with self.assertRaisesRegex(ValueError, "plant preflight: unavailable tool cargo-mutants"):
                 CAPS.preflight({'cargo-mutants'}, ROOT, {'PATH': directory})
+
+    def test_g35_missing_just_stops_before_baseline_or_mutation(self):
+        catalog = json.loads((ROOT / 'plants/catalog.json').read_text())
+        cases = [case for case in catalog['cases'] if case['guardrail'] == 'G-35']
+        self.assertEqual({case['id'] for case in cases},
+                         {'candidate-judge-build', 'candidate-attributes-honoured'})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').symlink_to(ROOT / 'scripts')
+            (root / 'plants').mkdir()
+            (root / 'plants/run.py').symlink_to(ROOT / 'plants/run.py')
+            tools = root / 'bin'
+            tools.mkdir()
+            for name in ('bash', 'cargo', 'env', 'python3', 'rustc', 'rustup', 'sh'):
+                (tools / name).symlink_to('/bin/true')
+            (tools / 'git').symlink_to(shutil.which('git'))
+            env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+            env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null')
+            subprocess.run(['git', 'init', '-q', '--template=', str(root)], env=env, check=True)
+            for case in cases:
+                with self.subTest(plant=case['id']):
+                    (root / 'plants/catalog.json').write_text(json.dumps({'cases': [case]}))
+                    subprocess.run(['git', 'add', '.'], cwd=root, env=env, check=True)
+                    subprocess.run(['git', '-c', 'user.name=fixture',
+                                    '-c', 'user.email=fixture@invalid', 'commit', '-qm', case['id']],
+                                   cwd=root, env=env, check=True)
+                    with patch.object(PLANTS, 'ROOT', root), patch.dict(os.environ, PATH=str(tools)):
+                        with self.assertRaisesRegex(ValueError, 'plant preflight: unavailable tool just$'):
+                            PLANTS.run()
+                    self.assertFalse((root / 'target').exists())
 
     def test_receipt_requires_exact_subject_complete_unique_cases_and_caught(self):
         good = {"revision": "subject", "results": [{"id": "one", "status": "CAUGHT"}, {"id": "two", "status": "CAUGHT"}], "pending_guardrails": [{"id": "G-99", "status": "PENDING"}]}

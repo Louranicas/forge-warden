@@ -40,15 +40,28 @@ fi
 if [[ "$repository" != /* ]]; then
   repository="$PWD/$repository"
 fi
-python3 -I - "$repository" <<'PYPATH'
-from pathlib import Path
+python3 -I - "$repository" "$mode" <<'PYPATH'
+import os
 import sys
+from pathlib import Path
 
 path = Path(sys.argv[1])
-for entry in (*reversed(path.parents), path):
+selected = Path(os.path.normpath(path))
+for entry in (path, *path.parents):
+    metadata = entry / ".git"
     if entry.is_symlink():
         print(f"make_patch: symlinked repository path: {entry}", file=sys.stderr)
         sys.exit(2)
+    if metadata.is_symlink():
+        print(f"make_patch: invalid checkout .git entry in {entry}", file=sys.stderr)
+        sys.exit(2)
+    if entry.name == "..":
+        continue
+    if metadata.exists():
+        break
+    if (sys.argv[2] == "patch" and entry == selected and entry.name != ".git"
+            and (entry / "HEAD").is_file() and (entry / "objects").is_dir()):
+        break
 PYPATH
 while IFS= read -r name; do
   case "$mode/$name" in
