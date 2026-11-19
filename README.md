@@ -5,7 +5,7 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 *does this change meet the standards this repository wrote down?*
 
 ```bash
-base="$(git rev-parse origin/main)" head="$(git rev-parse HEAD)"
+base="$(git rev-parse refs/remotes/origin/main)" head="$(git rev-parse HEAD)"
 bash make_patch.sh "$base" "$head" > change.patch   # scripts/make_patch.sh from the revision you installed
 forge-warden check --policy warden.toml --patch change.patch --ranker "$(command -v deep-diff-forge)" \
   --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"

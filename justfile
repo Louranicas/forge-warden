@@ -28,7 +28,7 @@ mutants:
     set -euo pipefail
     mutation_diff="$(mktemp)"
     trap 'rm -f -- "$mutation_diff"' EXIT
-    comparison="$(bash scripts/make_patch.sh --resolve-comparison origin/main HEAD)"
+    comparison="$(bash scripts/make_patch.sh --resolve-comparison refs/remotes/origin/main HEAD)"
     read -r _ mutation_base <<< "$comparison"
     git --no-replace-objects diff "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
     env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace
@@ -46,5 +46,5 @@ judge:
     set -euo pipefail
     patch="$(mktemp)"
     trap 'rm -f -- "$patch"' EXIT
-    scripts/make_patch.sh origin/main HEAD > "$patch"
+    scripts/make_patch.sh refs/remotes/origin/main HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -

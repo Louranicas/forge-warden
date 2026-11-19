@@ -24,7 +24,6 @@ boundary is repository write access plus runner-up's fork guard (docs/runner-up.
 import hashlib
 import os
 import re
-import runpy
 import subprocess
 import sys
 import tempfile
@@ -760,8 +759,7 @@ class Routing(unittest.TestCase):
             return fields.get("if", "success()").removeprefix("${{").removesuffix("}}").strip()
 
         active = {"true", "success()", "always()"}
-        matrix = runpy.run_path(str(ROOT / "scripts/mutation_ci.py"))["matrix"]
-        shard = matrix(21, "d" * 64)["include"][1]
+        shard = {"index": 1, "shards": 2, "total": 21, "digest": "d" * 64, "minutes": 66}
         for path, scope, job_condition, pr_base, merge_base in (
             (CI, "diff", "success()", "a" * 40, ""),
             (CI, "diff", "success()", "", "b" * 40),
