@@ -738,26 +738,49 @@ exit 1
 SH
  chmod +x "$sandbox/minimum-git/git" "$sandbox/bin/git-remote-probe"
  export TRANSPORT_LOG="$sandbox/transport.log" GIT_ALLOW_PROTOCOL=ssh:probe
- python3 -I - "$source_root/README.md" "$sandbox/quickstart.sh" <<'PYQUICK'
+ python3 -I - "$source_root" "$sandbox" <<'PYDOCS'
 import hashlib
 from pathlib import Path
 import re
 import sys
 
-block = re.search(rb'^```bash\n(.*?)^```$', Path(sys.argv[1]).read_bytes(), re.M | re.S)[1]
-if hashlib.sha256(block).hexdigest() != "d0e97e9b9405e0895e86330c7e76bbf8c3c6527c60e11e78bd3ee25eca44f9bd":
-    sys.exit("review the changed README quickstart before executing it")
-Path(sys.argv[2]).write_bytes(block)
-PYQUICK
+root, sandbox = map(Path, sys.argv[1:])
+for document, marker, script, digest in (
+    ("README.md", None, "quickstart.sh", "905c18adcfb720f427f6fd50709e5b96552a961a9be0075c0539d7f6b595f76b"),
+    ("docs/RUNBOOK.md", b'--repo "$repo"', "runbook.sh", "a63ddf958bd650f3abc68f4828cff691f2a04965e039c7c007bd9810e17daeb5"),
+    ("CLAUDE.md", b"--advisory --rank -", "advisory.sh", "8b69e54e6cd5e04f958b5d4e2905c100f685017e2a161566dc73ec5ace42429a"),
+):
+    blocks = re.findall(rb'^```bash\n(.*?)^```$', (root / document).read_bytes(), re.M | re.S)
+    block, = blocks[:1] if marker is None else [body for body in blocks if marker in body]
+    if hashlib.sha256(block).hexdigest() != digest:
+        sys.exit(f"review the changed {document} example before executing it")
+    (sandbox / script).write_bytes(block)
+PYDOCS
  cat > "$sandbox/bin/forge-warden" <<'SH'
 #!/usr/bin/env bash
 [[ "${GIT_ALLOW_PROTOCOL-unset}" = "" && "$GIT_NO_LAZY_FETCH" = 1 ]] || exit 93
 printf '%s\n' "$@" > "$QUICKSTART_RECEIPT"
-exit 8
+if [[ "${!#}" = --json ]]; then echo '{}'; fi
+exit "$DOC_EXIT"
 SH
  chmod +x "$sandbox/bin/forge-warden"
  cp -- "$sandbox/archive/$ddf_name/deep-diff-forge" "$sandbox/bin/deep-diff-forge"
- export QUICKSTART_RECEIPT="$sandbox/quickstart-args" GIT_NO_LAZY_FETCH=0 TMPDIR="$sandbox"
+ export QUICKSTART_RECEIPT="$sandbox/quickstart-args" GIT_NO_LAZY_FETCH=0 TMPDIR="$sandbox/doc-tmp"
+ export evidence="$sandbox/doc-evidence" DOC_EXIT=0
+ mkdir "$TMPDIR" "$evidence" target
+ bash "$maker" "$before" "$tip" > "$evidence/change.patch"
+ printf 'keep\n' > "$sandbox/sentinel"
+ ln -s "$sandbox/sentinel" target/change.patch
+ advisory() (
+  deep-diff-forge() { cat; }
+  cargo() {
+   while [[ "$#" -gt 1 && "$1" != --patch ]]; do shift; done
+   [[ "$1" = --patch && "$2" = "$TMPDIR"/*/* ]] || exit 93
+   same_bytes /dev/stdin "$2" && same_bytes "$2" "$evidence/change.patch" || exit 94
+   return "$DOC_EXIT"
+  }
+  source "$sandbox/advisory.sh"
+ )
  quickstart() {
   local status=0
   source "$sandbox/quickstart.sh" || status=$?
@@ -767,12 +790,27 @@ SH
   fi
   return "$status"
  }
- actual=0
- quickstart || actual=$?
- [[ "$actual" = 8 ]]
- grep -Fxq "$before" "$QUICKSTART_RECEIPT"
- grep -Fxq "$tip" "$QUICKSTART_RECEIPT"
+ check_cleanup() {
+  local actual=0
+  "$@" || actual=$?
+  [[ "$actual" = "$DOC_EXIT" && -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ]]
+  [[ "$(cat "$sandbox/sentinel")" = keep ]]
+ }
+ for DOC_EXIT in 0 8; do
+  check_cleanup quickstart
+  check_cleanup advisory
+  grep -Fxq "$before" "$QUICKSTART_RECEIPT"
+  grep -Fxq "$tip" "$QUICKSTART_RECEIPT"
+ done
+ DOC_EXIT=0
+ rm -- target/change.patch
+ rmdir target
+ bash "$sandbox/runbook.sh"
+ [[ "$(cat "$evidence/verdict.json")" = '{}' ]]
  rm -- "$QUICKSTART_RECEIPT"
+ actual=0
+ (cd scripts && bash "$sandbox/runbook.sh") 2> "$sandbox/output" || actual=$?
+ [[ "$actual" = 2 && -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" && ! -e "$QUICKSTART_RECEIPT" ]]
  snapshot() { find . -type f -print0 | sort -z | xargs -0 sha256sum; }
  offline_refusal() {
   local oid="$1" object
@@ -803,9 +841,16 @@ SH
   offline_refusal "$tip" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$tip" "$partial" "$sandbox/offline-evidence"
   offline_refusal "$before" bash "$maker" "$before" "$tip" "$partial"
   offline_refusal "$tip" bash "$maker" "$before" "$tip" "$partial"
+  for example in quickstart advisory; do
+   offline_refusal "$old_blob" "$example"
+   [[ ! -e "$QUICKSTART_RECEIPT" && -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ]]
+  done
   for oid in "$before" "$tip"; do
    offline_refusal "$oid" python3 -I "$source_root/scripts/checkout_just.py" judge-bound
    offline_refusal "$oid" quickstart
+   printf 'previous verdict\n' > "$evidence/verdict.json"
+   offline_refusal "$oid" bash "$sandbox/runbook.sh"
+   [[ -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" ]]
    test ! -e "$QUICKSTART_RECEIPT"
   done
   for document in README.md docs/RUNBOOK.md; do

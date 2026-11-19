@@ -13,6 +13,7 @@ This bound-mode example requires a build of the unreleased 0.3.0 code.
   base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')" || exit 1
   head="$(git rev-parse --verify 'HEAD^{commit}')" || exit 1
   evidence="$(mktemp -d)" || exit 1
+  trap 'rm -rf -- "$evidence"' EXIT
   bash make_patch.sh "$base" "$head" > "$evidence/change.patch" || exit 1   # scripts/make_patch.sh from the revision you installed
   forge-warden check --policy warden.toml --patch "$evidence/change.patch" --ranker "$(command -v deep-diff-forge)" \
     --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"

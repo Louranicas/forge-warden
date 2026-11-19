@@ -69,10 +69,21 @@ Run the [fast and full local gate commands](CONTRIBUTING.md#local-gate-commands)
 ```bash
 cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
-scripts/make_patch.sh refs/heads/main HEAD > target/change.patch   # committed changes only
-deep-diff-forge --stdin-patch --rank --json < target/change.patch \
-  | cargo run -q --bin forge-warden -- check --policy warden.toml \
-      --patch target/change.patch --advisory --rank -   # advice; never approves
+```
+
+This advisory check ranks committed changes. Its best result is a hold.
+
+```bash
+(
+  set -o pipefail
+  scratch="$(mktemp -d)" || exit 1
+  trap 'rm -rf -- "$scratch"' EXIT
+  patch="$scratch/change.patch"
+  scripts/make_patch.sh refs/heads/main HEAD > "$patch" || exit 1
+  deep-diff-forge --stdin-patch --rank --json < "$patch" \
+    | cargo run -q --bin forge-warden -- check --policy warden.toml \
+        --patch "$patch" --advisory --rank -
+)
 ```
 
 ## Subagents and skills

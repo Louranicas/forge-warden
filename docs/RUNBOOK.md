@@ -165,8 +165,8 @@ of the repository's objects that Git re-hashes, and refuses the run unless `--pa
   repo="$(git rev-parse --path-format=absolute --git-common-dir)" || exit 1
   forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
     --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --repo "$repo" \
-    --base "$base" --head "$head" --json > "${evidence:?}/verdict.json"
-)
+    --base "$base" --head "$head" --json
+) > "${evidence:?}/verdict.json"
 ```
 
 It needs `/usr/bin/prlimit`
