@@ -6,7 +6,7 @@ sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
 export TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target" XDG_CONFIG_HOME="$sandbox/config"
 mkdir -p "$TEST_ROOT/.githooks" "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants" "$XDG_CONFIG_HOME"
-cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/worktree_diff.py" "$source_root/scripts/review_comparison.sh" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
+cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/worktree_diff.py" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
 cp "$source_root/.githooks/pre-push" "$TEST_ROOT/.githooks/pre-push"
 cat >> "$TEST_ROOT/scripts/make_patch.sh" <<'STUB'
 printf '%s\n' "$1" "$2" > "$TEST_ROOT/patch-inputs"
@@ -197,7 +197,7 @@ mkdir -p .git/refs/remotes/origin
  chmod 600 .git/refs/remotes/origin
  if [ ! -x .git/refs/remotes/origin ]; then
   run_gate "$gate" 1
-  grep -qF 'ci_local: cannot inspect comparison ref' "$sandbox/output"
+  grep -qF 'make_patch: cannot inspect comparison ref' "$sandbox/output"
  fi
 )
 

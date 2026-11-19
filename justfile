@@ -123,14 +123,13 @@ judge-bound: (_check-script "make_patch.sh") _check-inputs
     cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$scratch/change.patch" \
         --ranker "$ranker" --repo "$repo" --base "$base" --head "$head"
 
-review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh")
+review: (_check-script "make_patch.sh")
     #!/usr/bin/env bash
     set -euo pipefail
     umask 077
     unset "${!GIT_@}"
-    head="$(git rev-parse --verify 'HEAD^{commit}')"
-    comparison="$(bash scripts/review_comparison.sh "$head")"
-    read -r base _ <<< "$comparison"
+    comparison="$(bash scripts/make_patch.sh --review-comparison)"
+    read -r base _ head <<< "$comparison"
     scratch="$(mktemp -d .review-XXXXXXXX)"
     printf 'Review directory: %s\n' "$scratch"
     publish_evidence() (

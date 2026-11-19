@@ -69,6 +69,12 @@ for checkout in "$trusted" "$candidate"; do
     exit 2
   fi
 done
+for checkout in "$trusted" "$candidate"; do
+  if [[ "$(git -C "$checkout" rev-parse --show-toplevel && printf .)" != "$checkout"$'\n.' ]]; then
+    echo "dogfood: Git worktree differs from the selected checkout $checkout" >&2
+    exit 2
+  fi
+done
 if [ "$trusted" = "$candidate" ] || [ "$(git -C "$trusted" rev-parse HEAD)" != "$base" ]; then
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2
   exit 2

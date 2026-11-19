@@ -16,24 +16,71 @@
 # The change is `base...head`: from the merge base of the two commits to HEAD, as on a pull request.
 # This does not prove to anyone else that the patch is that change; it makes it hard to get wrong.
 set -euo pipefail
-resolve=false
-if [ "${1:-}" = --resolve-comparison ]; then
-  resolve=true
-  shift
+mode=patch
+if [[ "${1:-}" = --review-comparison && "$#" = 1 ]]; then
+  mode=review
+  repository=.
+  head_ref=HEAD
+else
+  if [[ "${1:-}" = --resolve-comparison ]]; then
+    mode=resolve
+    shift
+  fi
+  if [[ "$#" != 2 && "$#" != 3 ]]; then
+    echo 'usage: make_patch.sh [--resolve-comparison] <base> <head> [<repository>] | --review-comparison' >&2
+    exit 2
+  fi
+  repository="${3:-.}"
+  base_ref="$1"
+  head_ref="$2"
 fi
-if [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; then
-  echo 'usage: make_patch.sh [--resolve-comparison] <base> <head> [<repository>]' >&2
-  exit 2
-fi
-repository="${3:-.}"
 # Nothing about Git comes from the caller's environment.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-head="$(git -C "$repository" rev-parse --verify --quiet --end-of-options "$2^{commit}")" || {
-  echo "make_patch: head is not a commit in $repository: $2" >&2
+CDPATH= cd -P -- "$repository"
+start="$PWD"
+while [[ "$mode" != review && "$PWD" != / && ! -L .git && ! -e .git && -x . ]]; do
+  cd -P ..
+done
+if [[ -L .git || ( ! -d .git && ! -f .git ) ]]; then
+  echo "make_patch: invalid checkout .git entry in $PWD" >&2
+  exit 2
+fi
+if [[ "$(git -C "$start" rev-parse --show-toplevel && printf .)" != "$PWD"$'\n.' ]]; then
+  echo "make_patch: Git worktree differs from the selected checkout $PWD" >&2
+  exit 2
+fi
+head="$(git rev-parse --verify --quiet --end-of-options "$head_ref^{commit}")" || {
+  echo "make_patch: head is not a commit in $PWD: $head_ref" >&2
   exit 2
 }
-objects="$(git -C "$repository" rev-parse --path-format=absolute --git-path objects)"
+if [[ "$mode" = review ]]; then
+  comparison_ref=refs/remotes/origin/main
+  ref_path="$(git rev-parse --git-path "$comparison_ref")"
+  loose="$(python3 -I - "$ref_path" <<'PYREF'
+import os
+import stat
+import sys
+
+try:
+    mode = os.lstat(sys.argv[1]).st_mode
+except (FileNotFoundError, NotADirectoryError):
+    print("absent")
+except OSError as error:
+    sys.exit(f"make_patch: cannot inspect comparison ref: {error}")
+else:
+    print("absent" if stat.S_ISDIR(mode) else "present")
+PYREF
+  )"
+  if [ "$loose" = present ] || git show-ref --verify --quiet "$comparison_ref"; then
+    base_ref="$(git show-ref --verify --hash "$comparison_ref")" || exit 1
+  elif [ "$?" -eq 1 ]; then
+    base_ref=""
+  else
+    exit 1
+  fi
+fi
+objects="$(git rev-parse --path-format=absolute --git-path objects)"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
 # The private repository has the store's object format (40 hex digits: SHA-1, 64: SHA-256), as the
@@ -49,8 +96,8 @@ printf '%s\n' "$objects" > "$scratch/diff.git/objects/info/alternates"
 # staging does the same, ADR 0012 D3.1), and several merge bases are refused as bound mode refuses
 # them (D7): `git diff A...B` would pick one with only a warning.
 nograph=(-c core.commitGraph=false -c core.multiPackIndex=false)
-if [ "$resolve" = true ] && [ -z "$1" ]; then
-  if [ "$(git -C "$repository" rev-parse --is-shallow-repository)" != false ]; then
+if [[ "$mode" != patch && -z "$base_ref" ]]; then
+  if [ "$(git rev-parse --is-shallow-repository)" != false ]; then
     echo 'make_patch: root comparison requires complete history' >&2
     exit 1
   fi
@@ -60,8 +107,8 @@ if [ "$resolve" = true ] && [ -z "$1" ]; then
     exit 2
   fi
 else
-  base="$(git -C "$repository" rev-parse --verify --quiet --end-of-options "$1^{commit}")" || {
-    echo "make_patch: base is not a commit in $repository: $1" >&2
+  base="$(git rev-parse --verify --quiet --end-of-options "$base_ref^{commit}")" || {
+    echo "make_patch: base is not a commit in $PWD: $base_ref" >&2
     exit 2
   }
 fi
@@ -84,10 +131,10 @@ if [ "$count" -ne 1 ]; then
   echo "make_patch: base and head have $count merge bases; name the merge base as --base" >&2
   exit 2
 fi
-if [ "$resolve" = true ]; then
-  printf '%s %s\n' "$base" "$bases"
-  exit 0
-fi
+case "$mode" in
+  review) printf '%s %s %s\n' "$base" "$bases" "$head"; exit 0 ;;
+  resolve) printf '%s %s\n' "$base" "$bases"; exit 0 ;;
+esac
 # Attributes come from the empty tree, not from any work tree: a `.gitattributes` saying `-diff`
 # or `binary` would otherwise turn added text into a binary patch the judge cannot read.
 # --attr-source needs Git 2.41 or later; an older Git refuses the option.

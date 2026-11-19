@@ -27,7 +27,6 @@ class MutationEnvironment(unittest.TestCase):
             (root / "plants").mkdir()
             (root / ".git").mkdir()
             shutil.copyfile(ROOT / "scripts/ci_local.sh", root / "scripts/ci_local.sh")
-            shutil.copyfile(ROOT / "scripts/review_comparison.sh", root / "scripts/review_comparison.sh")
             shutil.copyfile(ROOT / "scripts/worktree_diff.py", root / "scripts/worktree_diff.py")
             (root / "index").touch()
             shutil.copyfile(ROOT / "scripts/mutation_ci.py", root / "scripts/mutation_ci.py")
@@ -35,7 +34,7 @@ class MutationEnvironment(unittest.TestCase):
                          "scripts/tests/runner_routing.py", "plants/test_runner.py"):
                 (root / name).write_text("# explicit unrelated-gate fixture stub\n")
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
-            (root / "scripts/make_patch.sh").write_text('if [ "$1" = --resolve-comparison ]; then echo "$BASE_SHA $BASE_SHA"; fi\n')
+            (root / "scripts/make_patch.sh").write_text('if [ "$1" = --review-comparison ]; then echo "$BASE_SHA $BASE_SHA $BASE_SHA"; fi\n')
             scripts = {
                 "git": """#!/bin/sh
 if [ "$1" = --no-replace-objects ]; then shift; fi

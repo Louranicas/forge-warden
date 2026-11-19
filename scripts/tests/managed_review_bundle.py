@@ -64,7 +64,7 @@ class ReviewBundle(unittest.TestCase):
     def review_command(self):
         just = shutil.which("just")
         self.assertIsNotNone(just, "Just is required on PATH to verify review evidence")
-        for name in ("justfile", "scripts/review_comparison.sh", "scripts/make_patch.sh", "scripts/worktree_diff.py"):
+        for name in ("justfile", "scripts/make_patch.sh", "scripts/worktree_diff.py"):
             shutil.copy2(ROOT / name, self.candidate / name)
         return [just, "--justfile", self.candidate / "justfile", "review"]
 
@@ -97,6 +97,18 @@ class ReviewBundle(unittest.TestCase):
                 self.assertFalse((evidence / "review.rank.json").exists())
                 self.assertFalse((self.candidate / "called").exists())
                 shutil.rmtree(evidence)
+
+    def test_review_and_patch_refuse_redirected_worktree(self):
+        review = self.review_command()
+        self.git(self.candidate, "config", "--local", "core.worktree", str(self.trusted))
+        patcher = self.candidate / "scripts/make_patch.sh"
+        for command in (review, ["bash", patcher, self.base, self.head]):
+            with self.subTest(command=command):
+                result = subprocess.run(command, cwd=self.candidate / "scripts", env=self.env, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"worktree differs", result.stderr)
+                self.assertFalse(result.stdout)
+                self.assertFalse(list(self.candidate.glob(".review-*")))
 
     def test_copied_review_evidence_is_owner_only(self):
         command = self.review_command()
@@ -144,7 +156,7 @@ class ReviewBundle(unittest.TestCase):
         patcher = self.candidate / "scripts/make_patch.sh"
         original = patcher.with_name("make_patch.sh.original")
         patcher.rename(original)
-        patcher.write_text('#!/bin/sh\nif [ "$1" = --resolve-comparison ]; then exec bash "$0".original "$@"; fi\n'
+        patcher.write_text('#!/bin/sh\nif [ "$1" = --review-comparison ]; then exec bash "$0".original "$@"; fi\n'
                            'echo partial\ntest ! -e .review-*/review.patch || exit 1\nexit 31\n')
         patcher.chmod(0o755)
         result = subprocess.run(command, cwd=self.candidate, env=self.env, capture_output=True)

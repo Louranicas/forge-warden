@@ -250,6 +250,8 @@ git -C "$attr" branch maker-base "$base"
 git -C "$attr" branch maker-head "$attr_head"
 made with-branch-names bash "$maker" maker-base maker-head "$attr"
 made from-a-subdirectory-with-relative bash -c 'cd "$1/sub" && env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$2" bash "$3" "$4" "$5"' _ "$attr" "$sandbox/user-home" "$maker" "$base" "$attr_head"
+git -C "$attr" worktree add -q --detach "$sandbox/linked" "$attr_head"
+made linked-worktree bash "$maker" "$base" HEAD "$sandbox/linked"
 # Q58 S1: no repository at the caller's current directory is read; a SHA-256 one there once
 # made the empty-tree id the wrong length for the SHA-1 scratch repository.
 git init -q --object-format=sha256 "$sandbox/cwd-sha256"
@@ -354,14 +356,6 @@ mkdir -p "$sub/.git/info"
 printf '%s\n' "$sub_head" > "$sub/.git/info/grafts"
 (
 unset GIT_ATTR_NOSYSTEM GIT_GRAFT_FILE GIT_NO_REPLACE_OBJECTS
-git() {
- if [[ " $* " == *" diff "* && ${GIT_ATTR_NOSYSTEM:-} != 1 ]]; then
-  echo 'documented diff enabled system attributes' >&2
-  return 1
- fi
- command git "$@"
-}
-export -f git
 python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" "$named_patch" <<'PYDOC'
 from pathlib import Path
 import os
@@ -386,14 +380,20 @@ for document, revision_range, patch in (('README.md', base + '...' + head, suppl
                        (Path(source) / document).read_text())
     (prefix, arguments), = [(value, span) for value, span in spans if '...' in span and 'diff' in shlex.split(span)]
     arguments = arguments.replace('<base>', base).replace('<head>', head)
-    if not re.fullmatch(shell_syntax, arguments) or set(shlex.split(arguments)) - (read_only | {revision_range}):
+    argv = shlex.split(arguments)
+    if not re.fullmatch(shell_syntax, arguments) or set(argv) - (read_only | {revision_range}):
         sys.exit(f'{document}: unsupported argument in documented Git diff')
+    assignments = dict(word.split('=', 1) for word in shlex.split(prefix))
+    if assignments.get('GIT_ATTR_NOSYSTEM') != '1':
+        sys.exit(f'{document}: documented diff enabled system attributes')
+    empty_tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, text=True).strip()
+    argv = ['--attr-source=' + empty_tree if arg == '--attr-source=' + tree_lookup else arg for arg in argv]
     for setting in (None, 'diff.ignoreSubmodules=all', 'diff.submodule=log', 'diff.submodule=diff'):
-        env = os.environ.copy()
+        env = {**os.environ, **assignments}
         if setting:
             key, value = setting.split('=', 1)
             env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0=key, GIT_CONFIG_VALUE_0=value)
-        actual = subprocess.check_output(f'{prefix} git {arguments}', shell=True, executable='bash', cwd=repo, env=env)
+        actual = subprocess.check_output(['git', *argv], cwd=repo, env=env)
         if actual != expected:
             sys.exit(f'FAIL {document}: patch differs from make_patch with {setting or "default configuration"}')
     print(f'PASS {document} produces the same attribute and submodule patch as make_patch')

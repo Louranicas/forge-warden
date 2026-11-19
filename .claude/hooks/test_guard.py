@@ -398,13 +398,16 @@ class Guard(unittest.TestCase):
         env["PATH"] = str(tools) + os.pathsep + env["PATH"]
         for command in ([sys.executable, "-I", "scripts/worktree_diff.py", "--clean"],
                         [sys.executable, "-I", CHECKOUT_JUST, "judge-bound"],
+                        [sys.executable, "-I", CHECKOUT_JUST, "review"],
+                        ["bash", "scripts/make_patch.sh", "HEAD", "HEAD", "scripts"],
                         ["bash", "scripts/ci_fast.sh"], ["bash", "scripts/ci_local.sh"],
                         ["bash", ".githooks/pre-commit"], ["bash", ".githooks/pre-push"]):
             with self.subTest(command=command):
                 result = subprocess.run(command, cwd=self.root, env=env, capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b".git", result.stderr)
-                self.assertFalse((self.root / "git-called").exists())
+                self.assertFalse(list(self.root.rglob("git-called")))
+                self.assertFalse(list(self.root.glob(".review-*")))
 
     def test_fixed_just_recipes_select_checkout(self):
         recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review")
@@ -513,7 +516,7 @@ class Guard(unittest.TestCase):
         recorder.write_text("#!/bin/sh\ntouch ran\nexit 77\n")
         recorder.chmod(0o755)
         helpers = {
-            "review": ("review_comparison.sh", "make_patch.sh"),
+            "review": ("make_patch.sh",),
             "mutants": ("make_patch.sh", "worktree_diff.py"),
             "judge": ("make_patch.sh", "worktree_diff.py"),
             "judge-bound": ("make_patch.sh", "worktree_diff.py"),
@@ -545,14 +548,6 @@ class Guard(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b".cargo/config.toml", result.stderr)
                 self.assertFalse(marker.exists())
-        helper = scripts / "make_patch.sh"
-        helper.unlink()
-        helper.symlink_to(recorder)
-        result = subprocess.run(["bash", repo / "scripts/review_comparison.sh", "HEAD"],
-                                cwd=self.root, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(b"scripts/make_patch.sh", result.stderr)
-        self.assertFalse(marker.exists())
 
     @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
     def test_just_defers_vocabulary_lookup(self):

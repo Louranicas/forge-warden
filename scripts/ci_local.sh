@@ -32,9 +32,8 @@ step doc;     cargo doc --workspace --no-deps --locked --quiet
 hosted_only_not_run=""
 step deny; cargo deny check
 if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else hosted_only_not_run+=" zizmor"; fi
-head="$(git rev-parse --verify 'HEAD^{commit}')"
-comparison="$(bash scripts/review_comparison.sh "$head")"
-read -r base mutation_base <<< "$comparison"
+comparison="$(bash scripts/make_patch.sh --review-comparison)"
+read -r base mutation_base head <<< "$comparison"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
 patch="$scratch/change.patch"
