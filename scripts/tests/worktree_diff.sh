@@ -18,6 +18,22 @@ echo original > notes
 git add notes "$src"
 git commit -qm base
 base="$(git rev-parse HEAD)"
+mkdir -p .git/info
+git config filter.local.required true
+git config filter.local.clean false
+for attr in 'text eol=lf' ident working-tree-encoding=ISO-8859-1 filter=local; do
+    printf '*.rs %s\n' "$attr" > .git/info/attributes
+    python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+    [[ ! -s "$scratch/diff" ]]
+done
+printf '*.rs text eol=lf\n' > .git/info/attributes
+echo visible > "$src/lib.rs"
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+visible' "$scratch/diff"
+echo base > "$src/lib.rs"
+rm .git/info/attributes
+git config --unset filter.local.clean
+git config --unset filter.local.required
 git config core.trustctime false
 git config core.checkStat minimal
 touch -t 202001010000 "$src/lib.rs"

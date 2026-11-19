@@ -79,14 +79,18 @@ class Guard(unittest.TestCase):
             self.assertFalse(ran.exists())
             attributes = self.root / ".git/info/attributes"
             attributes.parent.mkdir(exist_ok=True)
-            ignored = template.parent / "bin/probe.rs"
-            ignored.parent.mkdir()
-            (attributes.parent / "exclude").write_text("/crates/core/src/bin/\n")
-            ignored.write_text("fn main() {}\n")
-            self.run_guard(event, mode="stop", expected=0)
-            self.assertTrue(ran.exists(), "ignored crate binary")
-            ran.unlink()
-            ignored.unlink()
+            (attributes.parent / "exclude").write_text("/crates/core/**/*.rs\n")
+            for target in ("src/bin/probe.rs", "tests/regression.rs", "examples/demo/main.rs",
+                           "benches/bench.rs", "build.rs"):
+                with self.subTest(target=target):
+                    ignored = self.root / "crates/core" / target
+                    ignored.parent.mkdir(parents=True, exist_ok=True)
+                    ignored.write_text("fn main() {}\n")
+                    git("check-ignore", "-q", "--", str(ignored))
+                    self.run_guard(event, mode="stop", expected=0)
+                    self.assertTrue(ran.exists(), target)
+                    ran.unlink()
+                    ignored.unlink()
             git("config", "core.fileMode", "false")
             gate.chmod(0o644)
             self.run_guard(event, mode="stop", expected=2)
