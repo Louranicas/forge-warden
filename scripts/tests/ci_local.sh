@@ -5,9 +5,9 @@ source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
 export TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target" XDG_CONFIG_HOME="$sandbox/config"
-mkdir -p "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants" "$XDG_CONFIG_HOME"
+mkdir -p "$TEST_ROOT/.githooks" "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants" "$XDG_CONFIG_HOME"
 cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/worktree_diff.py" "$source_root/scripts/review_comparison.sh" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
-cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
+cp "$source_root/.githooks/pre-push" "$TEST_ROOT/.githooks/pre-push"
 cat >> "$TEST_ROOT/scripts/make_patch.sh" <<'STUB'
 printf '%s\n' "$1" "$2" > "$TEST_ROOT/patch-inputs"
 if [ -n "${NEXT_HEAD:-}" ]; then
@@ -100,7 +100,7 @@ hash -p "$FIXTURE_GIT" git
 exec git "$@"
 STUB
 chmod +x "$sandbox/bin/"*
-for tool in bash env python3 mkdir mktemp rm head grep cat mv cp chmod true; do
+for tool in bash dirname env python3 mkdir mktemp rm head grep cat mv cp chmod true; do
  ln -s "$(type -P "$tool")" "$sandbox/bin/$tool"
 done
 export PATH="$sandbox/bin"
@@ -148,7 +148,7 @@ run_gate() {
 git worktree add --quiet --detach "$sandbox/base" "$root_id"
 base_git="$(git -C "$sandbox/base" rev-parse --absolute-git-dir)"
 gate="$TEST_ROOT/scripts/ci_local.sh"
-for entry in "$gate" "$sandbox/pre-push"; do
+for entry in "$gate" "$TEST_ROOT/.githooks/pre-push"; do
  rm -rf "$TEST_ROOT/target"
  previous_patch=""
  previous_diff=""
@@ -177,7 +177,7 @@ done
 
 git config --local diff.noprefix true
 cp "$source_root/fixtures/adversarial/no-secrets.toml" "$TEST_ROOT/warden.toml"
-for entry in "$gate" "$sandbox/pre-push"; do
+for entry in "$gate" "$TEST_ROOT/.githooks/pre-push"; do
  rm -f "$TEST_ROOT/judged-patch"
  JUDGE_EXIT=4 run_gate "$entry" 4
  [[ -s "$TEST_ROOT/judged-patch" ]]
@@ -235,7 +235,7 @@ grep -qF 'required tool missing: deep-diff-forge' "$sandbox/output"
 git update-ref refs/remotes/origin/main "$HEAD_ID"
 rm "$sandbox/bin/zizmor"
 BASE_ID="$HEAD_ID"
-for entry in "$gate" "$sandbox/pre-push"; do
+for entry in "$gate" "$TEST_ROOT/.githooks/pre-push"; do
  rm -f "$TEST_ROOT/judged-patch" "$TEST_ROOT/verified-empty"
  EMPTY_EXIT=3 run_gate "$entry" 3
  run_gate "$entry" 0

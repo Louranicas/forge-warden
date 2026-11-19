@@ -8,7 +8,7 @@
 set -euo pipefail
 # Hook-exported Git state must not redirect scratch-repository commands.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-cd "$(git rev-parse --show-toplevel)"
+CDPATH= cd -P -- "$(dirname -- "$0")/.."
 if [[ -L scripts || -L scripts/worktree_diff.py || ! -f scripts/worktree_diff.py ]]; then
   echo "Gate input refused: scripts/worktree_diff.py must be a regular file under a non-symlink scripts directory" >&2
   exit 2

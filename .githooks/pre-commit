@@ -3,7 +3,11 @@
 # failure to CI, where it is public.
 set -euo pipefail
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-root="$(git rev-parse --show-toplevel)"
+root="$(CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd -P)"
+if [[ ! "$root" -ef . || ! "$root" -ef "$(git -C "$root" rev-parse --show-toplevel)" ]]; then
+  echo "Gate input refused: Git worktree differs from the hook checkout" >&2
+  exit 2
+fi
 if [[ -L "$root/scripts" || -L "$root/scripts/ci_fast.sh" || ! -f "$root/scripts/ci_fast.sh" ]]; then
   echo "Gate input refused: scripts/ci_fast.sh" >&2
   exit 2

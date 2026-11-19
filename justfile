@@ -12,22 +12,48 @@ install-hooks:
         [[ -f ".githooks/$hook" && ! -L ".githooks/$hook" && -x ".githooks/$hook" ]]
     done
     export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-    config=(git --git-dir="$PWD/.git" config)
-    if [[ "$("${config[@]}" --show-scope --get core.hooksPath)" != worktree$'\t'* ]]; then
-        "${config[@]}" --local core.hooksPath .githooks
-    fi
-    if ! IFS= read -r -d '' effective < <("${config[@]}" --null --get core.hooksPath) || [[ "$effective" != .githooks ]]; then
+    repo=(git --git-dir="$PWD/.git")
+    config=("${repo[@]}" config)
+    local_config="$("${repo[@]}" rev-parse --path-format=absolute --git-path config)"
+    [[ -f "$local_config" && ! -L "$local_config" ]]
+    scratch="$(mktemp -d "${local_config%/*}/hooks-install.XXXXXXXX")"
+    trap 'rm -rf -- "$scratch"' EXIT
+    read_setting() {
+        "${config[@]}" --show-origin --null --get core.hooksPath > "$scratch/setting" || return $?
+        { IFS= read -r -d '' origin && IFS= read -r -d '' value; } < "$scratch/setting"
+    }
+    refuse() {
         echo "Hook installation refused: effective core.hooksPath must be .githooks in this worktree" >&2
         exit 1
+    }
+    (set -C; : > "$local_config.lock")
+    trap 'rm -f -- "$local_config.lock"; rm -rf -- "$scratch"' EXIT
+    value=""
+    if read_setting; then
+        if [[ "$value" != .githooks && ( "$origin" != file:* || ! "${origin#file:}" -ef "$local_config" ) ]]; then
+            refuse
+        fi
+    elif [[ $? != 1 ]]; then
+        refuse
+    fi
+    if [[ "$value" != .githooks ]]; then
+        cp -p -- "$local_config" "$scratch/prior"
+        cp -p -- "$local_config" "$scratch/new"
+        git config --file "$scratch/new" core.hooksPath .githooks
+        mv -- "$scratch/new" "$local_config"
+        if ! read_setting || [[ "$value" != .githooks || "$origin" != file:* || ! "${origin#file:}" -ef "$local_config" ]]; then
+            mv -- "$scratch/prior" "$local_config"
+            refuse
+        fi
     fi
     echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
 
 # fmt + clippy + tests: seconds. The pre-commit hook and Claude Code's Stop hook run this.
-fast: (_check-script "ci_fast.sh")
+fast: (_check-script "ci_fast.sh") _check-root
     scripts/ci_fast.sh
 
 # Every CI gate that can run locally.
-ci: (_check-script "ci_local.sh")
+ci: (_check-script "ci_local.sh") _check-root
     scripts/ci_local.sh
 
 # Regenerate golden verdicts after an intended change; review the diff before committing.
@@ -65,6 +91,9 @@ vocab $rev="": (_check-script "check_vocab.sh")
 _check-script $script:
     @test ! -L scripts && test ! -L "scripts/$script" && test -f "scripts/$script" || { echo "Gate input refused: scripts/$script" >&2; exit 2; }
 
+_check-root: (_check-script "worktree_diff.py")
+    @python3 -I scripts/worktree_diff.py --check-root
+
 _check-inputs: (_check-script "worktree_diff.py")
     @python3 -I scripts/worktree_diff.py --check-inputs
 
@@ -93,7 +122,7 @@ judge-bound: (_check-script "make_patch.sh") _check-inputs
     cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$scratch/change.patch" \
         --ranker "$ranker" --repo "$repo" --base "$base" --head "$head"
 
-review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh") _check-inputs
+review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh")
     #!/usr/bin/env bash
     set -euo pipefail
     umask 077
@@ -109,6 +138,11 @@ review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh") _
     create_evidence "$scratch/review.patch"
     scripts/make_patch.sh "$base" "$head" > "$scratch/review.patch"
     if command -v deep-diff-forge >/dev/null; then
+        if [[ -L scripts || -L scripts/worktree_diff.py || ! -f scripts/worktree_diff.py ]]; then
+            echo "Gate input refused: scripts/worktree_diff.py" >&2
+            exit 2
+        fi
+        python3 -I scripts/worktree_diff.py --check-inputs
         deep-diff-forge --stdin-patch --outline < "$scratch/review.patch"
         create_evidence "$scratch/review.rank.json"
         deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch" > "$scratch/review.rank.json"

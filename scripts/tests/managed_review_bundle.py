@@ -61,11 +61,45 @@ class ReviewBundle(unittest.TestCase):
                                str(self.candidate), str(out or self.root / "bundle")],
                               env=self.env, capture_output=True)
 
-    def test_copied_review_evidence_is_owner_only(self):
+    def review_command(self):
         just = shutil.which("just")
-        self.assertIsNotNone(just, "Just is required on PATH to verify review evidence permissions")
+        self.assertIsNotNone(just, "Just is required on PATH to verify review evidence")
         for name in ("justfile", "scripts/review_comparison.sh", "scripts/make_patch.sh", "scripts/worktree_diff.py"):
             shutil.copy2(ROOT / name, self.candidate / name)
+        return [just, "--justfile", self.candidate / "justfile", "review"]
+
+    def test_review_captures_patch_before_optional_ranking(self):
+        command = self.review_command()
+        (self.candidate / ".cargo").mkdir()
+        (self.candidate / ".cargo/config.toml").touch()
+        tools = self.root / "bin"
+        tools.mkdir()
+        for name in ("bash", "git", "grep", "mktemp", "python3", "rm", "sh"):
+            (tools / name).symlink_to(shutil.which(name))
+        env = {**self.env, "PATH": str(tools)}
+        expected = self.git(self.candidate, "diff", "--full-index", self.base, self.head).encode()
+        self.assertTrue(expected)
+        for has_ranker in (False, True):
+            with self.subTest(has_ranker=has_ranker):
+                if has_ranker:
+                    for name in ("deep-diff-forge", "cargo"):
+                        tool = tools / name
+                        tool.write_text("#!/bin/sh\necho ran > called\nexit 91\n")
+                        tool.chmod(0o755)
+                result = subprocess.run(command, cwd=self.candidate, env=env, capture_output=True)
+                if has_ranker:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b".cargo/config.toml", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                evidence, = self.candidate.glob(".review-*")
+                self.assertEqual((evidence / "review.patch").read_bytes(), expected)
+                self.assertFalse((evidence / "review.rank.json").exists())
+                self.assertFalse((self.candidate / "called").exists())
+                shutil.rmtree(evidence)
+
+    def test_copied_review_evidence_is_owner_only(self):
+        command = self.review_command()
         tools = self.root / "bin"
         tools.mkdir()
         for name, body in (("deep-diff-forge", "echo '{}'"), ("cargo", "exit 0")):
@@ -87,8 +121,7 @@ class ReviewBundle(unittest.TestCase):
                     raise
             else:
                 has_default_acl = True
-        subprocess.run([just, "--justfile", self.candidate / "justfile", "review"],
-                       cwd=self.candidate, env=env, umask=0o022, capture_output=True, check=True)
+        subprocess.run(command, cwd=self.candidate, env=env, umask=0o022, capture_output=True, check=True)
         evidence, = self.candidate.glob(".review-*")
         if has_default_acl:
             control = evidence / "ordinary-file"

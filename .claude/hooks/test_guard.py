@@ -66,6 +66,10 @@ class Guard(unittest.TestCase):
         shutil.copyfile(GUARD, guard)
         (scripts / "worktree_diff.py").write_bytes((GUARD.parents[2] / "scripts/worktree_diff.py").read_bytes())
         (scripts / "tests").mkdir()
+        direct = self.root / "direct"
+        direct.mkdir()
+        for entry in ("ci_fast.sh", "ci_local.sh"):
+            shutil.copy2(GUARD.parents[2] / "scripts" / entry, direct / entry)
         for first_step in (scripts / "tests/mutation_budget.py", scripts / "tool_versions.py"):
             first_step.write_text("from pathlib import Path\nPath('.git/gate-ran').touch()\nraise SystemExit(91)\n")
 
@@ -77,7 +81,7 @@ class Guard(unittest.TestCase):
             self.assertIn(b"after 3 attempts", result.stderr)
             for entry in ("ci_fast.sh", "ci_local.sh"):
                 with self.subTest(entry=entry):
-                    result = subprocess.run(["bash", GUARD.parents[2] / "scripts" / entry],
+                    result = subprocess.run(["bash", direct / entry],
                                             cwd=self.root, capture_output=True)
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn(os.fsencode(path), result.stderr)
@@ -280,6 +284,7 @@ class Guard(unittest.TestCase):
         hooks = self.root / ".githooks"
         hooks.mkdir()
         shutil.copyfile(repo / "justfile", self.root / "justfile")
+        shutil.copyfile(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "JUST_"))}
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
@@ -321,6 +326,49 @@ class Guard(unittest.TestCase):
                     self.assertFalse(ran.exists())
                     script.unlink()
 
+    def test_gate_checkout_identity(self):
+        source = GUARD.parents[2]
+        main = self.root / "main"
+        linked = self.root / "linked"
+        other = self.root / "other"
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "JUST_"))}
+        env.update(HOME=str(self.root), TMPDIR=str(self.root), XDG_CONFIG_HOME=str(self.root / ".config"))
+        for root in (main, other):
+            subprocess.run(["git", "init", "-q", "--template=", root], check=True, env=env)
+        for name in ("justfile", ".githooks/pre-commit", ".githooks/pre-push", "scripts/ci_fast.sh",
+                     "scripts/ci_local.sh", "scripts/worktree_diff.py"):
+            path = main / name
+            path.parent.mkdir(exist_ok=True)
+            shutil.copy2(source / name, path)
+        (main / "scripts/tests").mkdir()
+        for name in ("scripts/tests/mutation_budget.py", "scripts/tool_versions.py"):
+            (main / name).write_text("from pathlib import Path\nPath('ran').touch()\nraise SystemExit(91)\n")
+        subprocess.run(["git", "add", "."], cwd=main, env=env, check=True)
+        subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "commit", "-qm", "base"], cwd=main, env=env, check=True)
+        subprocess.run(["git", "worktree", "add", "-q", "--detach", linked], cwd=main, env=env, check=True)
+        for root in (linked, main):
+            if root == main:
+                subprocess.run(["git", "config", "core.worktree", str(other)], cwd=main, env=env, check=True)
+            (root / "edit").touch()
+            commands = []
+            for recipe, hook, gate in (("fast", "pre-commit", "ci_fast.sh"), ("ci", "pre-push", "ci_local.sh")):
+                commands.extend(([sys.executable, "-I", CHECKOUT_JUST, recipe], ["bash", root / "scripts" / gate],
+                                 ["git", "-c", f"core.hooksPath={root / '.githooks'}", "hook", "run", hook]))
+            commands.append([sys.executable, "-I", GUARD, "stop"])
+            for command in commands:
+                with self.subTest(root=root, command=command):
+                    result = subprocess.run(command, cwd=root, env={**env, "CLAUDE_PROJECT_DIR": str(root)},
+                                            input=b'{"session_id":"binding"}', capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    if root == main:
+                        self.assertIn(b"worktree differs", result.stderr)
+                        self.assertFalse((other / "ran").exists())
+                        self.assertFalse((root / "ran").exists())
+                    else:
+                        self.assertTrue((root / "ran").exists(), result.stderr)
+                        (root / "ran").unlink()
+
     def test_fixed_just_recipes_select_checkout(self):
         recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review")
         justfile = self.root / "justfile"
@@ -359,9 +407,9 @@ class Guard(unittest.TestCase):
         def git(*args):
             return subprocess.run(["git", *args], cwd=self.root, env=env, capture_output=True)
 
-        def install():
+        def install(**overrides):
             return subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=self.root,
-                                  env=redirects, capture_output=True)
+                                  env={**redirects, **overrides}, capture_output=True)
 
         git("config", "extensions.worktreeConfig", "true").check_returncode()
         git("config", "--worktree", "core.hooksPath", "other-hooks").check_returncode()
@@ -373,6 +421,33 @@ class Guard(unittest.TestCase):
         self.assertEqual(config.read_bytes(), before)
 
         git("config", "--worktree", "--unset", "core.hooksPath").check_returncode()
+        git("config", "--local", "core.hooksPath", "old-hooks").check_returncode()
+        included = self.root / "included"
+        included.write_text("[core]\n\thooksPath = other-hooks\n")
+        git("config", "--local", "include.path", str(included)).check_returncode()
+        local = self.root / ".git/config"
+        original = local.read_bytes()
+        refused = install()
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b"effective core.hooksPath", refused.stderr)
+        self.assertEqual(local.read_bytes(), original)
+        git("config", "--local", "--unset", "include.path").check_returncode()
+        tools = self.root / "bin"
+        tools.mkdir()
+        probe = tools / "git"
+        probe.write_text('#!/bin/sh\n'
+                         'if [ "$("$REAL_GIT" --git-dir=.git config --local --get core.hooksPath)" = .githooks ]; then\n'
+                         '    exec "$REAL_GIT" -c core.hooksPath=other-hooks "$@"\n'
+                         'fi\nexec "$REAL_GIT" "$@"\n')
+        probe.chmod(0o755)
+        for existing in (True, False):
+            if not existing:
+                git("config", "--local", "--unset", "core.hooksPath").check_returncode()
+            original = local.read_bytes()
+            refused = install(REAL_GIT=shutil.which("git"), PATH=str(tools) + os.pathsep + env["PATH"])
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn(b"effective core.hooksPath", refused.stderr)
+            self.assertEqual(local.read_bytes(), original)
         install().check_returncode()
         message = self.root / "message"
         message.write_text("wip\n")
@@ -391,7 +466,7 @@ class Guard(unittest.TestCase):
         recorder.write_text("#!/bin/sh\ntouch ran\nexit 77\n")
         recorder.chmod(0o755)
         helpers = {
-            "review": ("review_comparison.sh", "make_patch.sh", "worktree_diff.py"),
+            "review": ("review_comparison.sh", "make_patch.sh"),
             "mutants": ("make_patch.sh", "worktree_diff.py"),
             "judge": ("make_patch.sh", "worktree_diff.py"),
             "judge-bound": ("make_patch.sh", "worktree_diff.py"),
@@ -414,7 +489,9 @@ class Guard(unittest.TestCase):
         shutil.copy2(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
         (self.root / ".cargo").mkdir()
         (self.root / ".cargo/config.toml").write_text("[build]\n")
-        for recipe in helpers:
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        subprocess.run(["git", "init", "-q", "--template=", self.root], env=env, check=True)
+        for recipe in ("mutants", "judge", "judge-bound"):
             with self.subTest(recipe=recipe, forbidden="Cargo configuration"):
                 result = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, recipe], cwd=self.root,
                                         capture_output=True)
@@ -433,7 +510,7 @@ class Guard(unittest.TestCase):
     @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
     def test_just_defers_vocabulary_lookup(self):
         command = [shutil.which("just"), "--justfile", self.root / "justfile"]
-        env = {k: v for k, v in os.environ.items() if not k.startswith("JUST_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("JUST_", "GIT_"))}
 
         def run(*args):
             return subprocess.run([*command, *args], cwd=self.root, env=env, capture_output=True)
@@ -442,6 +519,8 @@ class Guard(unittest.TestCase):
         scripts = self.root / "scripts"
         scripts.mkdir()
         shutil.copyfile(repo / "justfile", self.root / "justfile")
+        shutil.copyfile(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
+        subprocess.run(["git", "init", "-q", "--template=", self.root], env=env, check=True)
         receipt = self.root / "lookup"
         lookup = scripts / "tool_versions.py"
         target = self.root / "version.py"

@@ -209,8 +209,14 @@ def mutation_diff(base):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] in (["--check-inputs"], ["--clean"]):
+    if sys.argv[1:] in (["--check-root"], ["--check-inputs"], ["--clean"]):
         try:
+            checkout = Path.cwd()
+            resolved = run_git("-C", checkout, "rev-parse", "--show-toplevel", env=worktree_env(), capture_output=True)
+            if resolved.returncode or resolved.stdout != os.fsencode(checkout) + b"\n":
+                raise ValueError(f"Git worktree differs from the selected checkout {checkout!s}.")
+            if sys.argv[1] == "--check-root":
+                sys.exit(0)
             inventory = gate_inventory()
         except (ValueError, OSError) as error:
             print(f"Gate input refused: {error}", file=sys.stderr)
