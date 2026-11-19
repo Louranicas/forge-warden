@@ -345,6 +345,7 @@ git -C "$sub" checkout --quiet --detach "$sub_head"
 git -C "$sub" branch -f main "$sub_base"
 python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" <<'PYDOC'
 from pathlib import Path
+import os
 import re
 import shlex
 import subprocess
@@ -352,23 +353,26 @@ import sys
 
 source, repo, base, head, patch = sys.argv[1:]
 expected = Path(patch).read_bytes()
-empty = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, text=True).strip()
+tree_lookup = '$(git hash-object -t tree /dev/null)'
+shell_syntax = rf"""(?:{re.escape(tree_lookup)}|[-a-zA-Z0-9./= '"\t])+"""
 read_only = {
-    '--attr-source=' + empty, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff',
+    '--attr-source=' + tree_lookup, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff',
     '--no-textconv', '--no-color', '--no-relative', '--binary', '--no-renames', '--full-index',
     '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '--ignore-submodules=none',
     base + '...' + head, 'main...HEAD',
 }
 for document in ('README.md', 'docs/RUNBOOK.md'):
-    spans = re.findall(r'`(git\s+[^`]+)`', (Path(source) / document).read_text())
-    command, = [span for span in spans if '...' in span and 'diff' in shlex.split(span)]
-    args = shlex.split(command.replace('$(git hash-object -t tree /dev/null)', empty)
-                       .replace('<base>', base).replace('<head>', head))[1:]
-    if set(args) - read_only:
+    spans = re.findall(r'`git[ \t]+([^`]+)`', (Path(source) / document).read_text())
+    arguments, = [span for span in spans if '...' in span and 'diff' in shlex.split(span)]
+    arguments = arguments.replace('<base>', base).replace('<head>', head)
+    if not re.fullmatch(shell_syntax, arguments) or set(shlex.split(arguments)) - read_only:
         sys.exit(f'{document}: unsupported argument in documented Git diff')
     for setting in (None, 'diff.ignoreSubmodules=all', 'diff.submodule=log', 'diff.submodule=diff'):
-        config = ['-c', setting] if setting else []
-        actual = subprocess.check_output(['git', *config, *args], cwd=repo)
+        env = os.environ.copy()
+        if setting:
+            key, value = setting.split('=', 1)
+            env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0=key, GIT_CONFIG_VALUE_0=value)
+        actual = subprocess.check_output(f'git {arguments}', shell=True, executable='bash', cwd=repo, env=env)
         if actual != expected:
             sys.exit(f'FAIL {document}: patch differs from make_patch with {setting or "default configuration"}')
     print(f'PASS {document} produces the same attribute and submodule patch as make_patch')

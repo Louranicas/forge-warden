@@ -15,6 +15,7 @@ it. Judge the bytes.
    `refs/remotes/origin/main`, set `tip=''` below to request a single-root comparison.
    ```bash
    set -e
+   unset "${!GIT_@}"
    tip=refs/remotes/origin/main
    head=$(git rev-parse --verify 'HEAD^{commit}')
    comparison=$(scripts/make_patch.sh --resolve-comparison "$tip" "$head")
@@ -25,7 +26,7 @@ it. Judge the bytes.
    cargo run -q --bin forge-warden -- check --policy warden.toml \
      --advisory --rank target/review.rank.json --patch target/review.patch
    ```
-   If `deep-diff-forge` is not installed, say so and review `git diff` directly in file order of
+   If `deep-diff-forge` is not installed, say so and review `target/review.patch` directly in file order of
    risk: `crates/*/src` before tests before docs.
 2. Read hunks in the outline's risk order (`deep-diff-forge --stdin-patch --hunks --address <A>`).
 3. For each finding, give: the hunk address (or path and line), what is wrong, why it matters,

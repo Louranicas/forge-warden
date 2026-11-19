@@ -23,6 +23,7 @@ Run each step. Record the command and its result; a step you could not run is re
    owner-enrolled Git allowlist ([GIT_RUNTIME](../../../docs/GIT_RUNTIME.md)), run it beside the advisory one:
    ```bash
    set -e
+   unset "${!GIT_@}"
    base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
    head="$(git rev-parse --verify 'HEAD^{commit}')"
    scripts/make_patch.sh "$base" "$head" > target/change.patch

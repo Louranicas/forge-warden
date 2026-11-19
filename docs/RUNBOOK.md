@@ -129,8 +129,8 @@ patch that leaves out every change outside that directory, which nothing can che
 same goes for a submodule change when `.gitmodules` (which the change itself can commit) says
 `ignore = all`, or `diff.ignoreSubmodules` is set: a plain `git diff` leaves it out. And a
 `.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
-binary sections the ranker cannot read. If you have to use Git directly, run what the script
-runs, from the top level, with Git 2.41 or later:
+binary sections the ranker cannot read. To run Git directly, start at the top level in Bash
+with Git 2.41 or later, run `unset "${!GIT_@}"`, then run
 `git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
 (the first two options take attributes from the empty tree; the script also reads no Git
 configuration).
@@ -144,7 +144,7 @@ Bound mode (ADR 0012, unreleased): add `--repo DIR --base BASE --head HEAD` (ful
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
 (exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). In a
-linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
+linked worktree run `unset "${!GIT_@}"` in Bash before passing `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
 (util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. A match records the
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.
 
