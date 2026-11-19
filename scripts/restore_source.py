@@ -37,6 +37,17 @@ def changed_paths(base, target):
     return sorted(path for path in base.keys() | target.keys() if base.get(path) != target.get(path))
 
 
+def matches_working_file(path, exists, entries, dirty, env):
+    if exists != (path in entries) or path in dirty:
+        return False
+    if not exists or path.is_symlink():
+        return True
+    mode, blob, _ = entries[path].split()
+    expected = (git("cat-file", "blob", blob, env=env) if mode == b"120000"
+                else source_stash.checkout_bytes(path, blob, env))
+    return path.read_bytes() == expected
+
+
 def restore_paths(layer, revision, paths, env):
     if paths:
         git("--literal-pathspecs", "restore", "--source=" + revision, "--" + layer,
@@ -63,9 +74,9 @@ def restore(stash, scratch, live):
         exists = os.path.lexists(path)
         if exists and not (path.is_symlink() or path.is_file()):
             refuse(path)
-        if exists == (path in worktree) and path not in worktree_dirty:
+        if matches_working_file(path, exists, worktree, worktree_dirty, saved):
             continue
-        if exists != (path in base) or path in base_dirty:
+        if not matches_working_file(path, exists, base, base_dirty, baseline):
             refuse(path)
         worktree_paths.append(path)
 

@@ -24,7 +24,8 @@ could not run as **not verified**.
    directory replaces either, the save refuses and leaves the changes in place. It also refuses when
    source edits are staged but the working source matches HEAD. Save refuses if Git marks any
    crate source path assume-unchanged or skip-worktree. Restore checks those flags only on paths
-   affected by the saved working or staged changes. Mark the failing-first check
+   affected by the saved working or staged changes. Save also refuses an incomplete source scan
+   or a working file whose exact bytes Git cannot reproduce on checkout. Mark the failing-first check
    **not verified** until the save succeeds. Record any printed stash object ID, including on a failed save.
    After a successful save, run the test and record the failure. Run `just restore-source OBJECT_ID`
    with the recorded ID to recover the working and staged source changes. The stash retains those

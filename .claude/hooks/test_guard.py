@@ -74,6 +74,19 @@ class Guard(unittest.TestCase):
             git("config", "status.showUntrackedFiles", "no")
             self.run_guard(event, mode="stop", expected=0)
             self.assertFalse(ran.exists())
+            restricted = self.root / "restricted"
+            restricted.mkdir()
+            (restricted / "new.rs").touch()
+            restricted.chmod(0)
+            try:
+                if not os.access(restricted, os.R_OK):
+                    self.run_guard(event, mode="stop", expected=0)
+                    self.assertTrue(ran.exists(), "unreadable directory")
+                    ran.unlink()
+            finally:
+                restricted.chmod(0o700)
+            (restricted / "new.rs").unlink()
+            restricted.rmdir()
             for flag in ("assume-unchanged", "skip-worktree"):
                 git("update-index", "--" + flag, "src/lib.rs")
                 source.write_text("pub fn changed() {}\n")

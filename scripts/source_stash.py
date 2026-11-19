@@ -58,9 +58,9 @@ def locked_index():
 
 def check_source(env):
     worktree_diff.check_index_flags(env, SOURCES)
-    untracked = git("ls-files", "--others", "--exclude-standard", "--", SOURCES, env=env)
-    ignored = git("ls-files", "--others", "--ignored", "--exclude-standard", "--",
-                  ":(glob)crates/*/src/**/*.rs", env=env)
+    untracked = worktree_diff.scan_worktree("ls-files", "--others", "--exclude-standard", "--", SOURCES, env=env)
+    ignored = worktree_diff.scan_worktree("ls-files", "--others", "--ignored", "--exclude-standard", "--",
+                                          ":(glob)crates/*/src/**/*.rs", env=env)
     if untracked or ignored:
         sys.exit("Failing-first check unverified. Stage the new source before saving:\n"
                  + os.fsdecode(untracked + ignored).rstrip("\n"))
@@ -68,6 +68,7 @@ def check_source(env):
                       "--", "crates", env=env)
     entries = {Path(os.fsdecode(row[3:])): row[:2] for row in status_rows.split(b"\0") if row}
     staged_source = False
+    working_files = []
     for path, status in entries.items():
         if len(path.parts) < 4 or path.parts[2] != "src":
             continue
@@ -79,17 +80,38 @@ def check_source(env):
                              (parent.exists() and not parent.is_dir()) for parent in path.parents)
         if blocked_parent or (not path.is_symlink() and path.is_dir()):
             sys.exit(f"Failing-first check unverified. Source changes between a file and a directory at {str(path)!r}.")
+        if not path.is_symlink() and path.is_file():
+            working_files.append(path)
     if staged_source and not git(
             "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--", SOURCES, env=env):
         sys.exit("Failing-first check unverified. Source edits are staged, but the working source matches HEAD.")
+    return working_files
+
+
+def checkout_bytes(path, blob, env):
+    return git("cat-file", "--filters", "--path=" + str(path), blob, env=env)
+
+
+def check_round_trip(paths, env, scratch):
+    objects = scratch / "objects"
+    objects.mkdir()
+    repository_objects = os.fsdecode(git("rev-parse", "--path-format=absolute", "--git-path", "objects", env=env)[:-1])
+    alternate = repository_objects.replace("\\", "\\\\").replace('"', '\\"')
+    env = {**env, "GIT_OBJECT_DIRECTORY": str(objects), "GIT_ALTERNATE_OBJECT_DIRECTORIES": f'"{alternate}"'}
+    for path in paths:
+        data = path.read_bytes()
+        blob = git("hash-object", "-w", "--path", str(path), "--stdin", data=data, env=env).strip()
+        if checkout_bytes(path, blob, env) != data:
+            sys.exit(f"Failing-first check unverified. Git would change the working bytes of {str(path)!r}.")
 
 
 def save(live, scratch):
-    check_source(live)
+    working_files = check_source(live)
     private_index = scratch / "source"
     shutil.copy2(live["GIT_INDEX_FILE"], private_index)
     private = {**live, "GIT_INDEX_FILE": str(private_index)}
     git("reset", "-q", "HEAD", "--", ":(exclude,glob)" + SOURCE_GLOB, env=private)
+    check_round_trip(working_files, private, scratch)
     marker = "forge-warden-source-" + str(uuid.uuid4())
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
     try:

@@ -23,6 +23,14 @@ def git(*args, env, data=None):
     return run_git(*args, env=env, input=data, stdout=subprocess.PIPE, check=True).stdout
 
 
+def scan_worktree(*args, env):
+    result = run_git("-c", "core.untrackedCache=false", *args, env=env, capture_output=True)
+    if result.returncode or result.stderr:
+        sys.stderr.buffer.write(result.stderr)
+        sys.exit("Working-tree scan unverified.")
+    return result.stdout
+
+
 def check_index_flags(env, scope, affected=None):
     if affected is not None:
         related = affected.union(parent for path in affected for parent in path.parents)
@@ -66,8 +74,8 @@ def mutation_diff(base):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--clean"]:
         with checked_snapshot(":(top,glob)**") as env:
-            sys.exit(bool(git("-c", "core.untrackedCache=false", "status", "--porcelain=v1", "-z",
-                              "--untracked-files=all", "--ignore-submodules=none", env=env)))
+            sys.exit(bool(scan_worktree("status", "--porcelain=v1", "-z", "--untracked-files=normal",
+                                        "--ignore-submodules=none", env=env)))
     if len(sys.argv) != 2 or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sys.argv[1]):
         sys.exit("expected a full mutation base object ID")
     mutation_diff(sys.argv[1])

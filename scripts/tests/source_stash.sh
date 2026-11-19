@@ -33,6 +33,9 @@ refuse_save() {
     grep -Fq "${1:-Failing-first check unverified}" log
     [[ $(git write-tree) == "$index" && -z $(git stash list) ]]
 }
+same_bytes() {
+    python3 -I -c 'import filecmp, sys; sys.exit(not filecmp.cmp(sys.argv[1], sys.argv[2], shallow=False))' "$1" "$2"
+}
 base="$(git rev-parse HEAD)"
 git config core.trustctime false
 git config core.checkStat minimal
@@ -59,6 +62,43 @@ git add notes
 refuse_save
 [[ $(git show :notes) == draft && $(cat notes) == draft ]]
 git restore --source=HEAD --staged --worktree -- notes
+
+mkdir "$src/restricted"
+echo new > "$src/restricted/new.rs"
+chmod 000 "$src/restricted"
+if [[ ! -r "$src/restricted" ]]; then
+    echo visible > "$src/lib.rs"
+    refuse_save 'Working-tree scan unverified'
+    [[ $(cat "$src/lib.rs") == visible ]]
+    git restore -- "$src/lib.rs"
+fi
+chmod 700 "$src/restricted"
+rm -r "$src/restricted"
+
+mkdir -p .git/info
+printf '*.rs text eol=lf\n' > .git/info/attributes
+for layer in working staged mixed; do
+    printf 'edited\r\n\r\n' > "$src/lib.rs"
+    if [[ $layer != working ]]; then git add "$src/lib.rs"; fi
+    if [[ $layer == mixed ]]; then printf 'different\r\n' > "$src/lib.rs"; fi
+    cp "$src/lib.rs" "$scratch/expected"
+    refuse_save 'Git would change the working bytes'
+    same_bytes "$src/lib.rs" "$scratch/expected"
+    git restore --source=HEAD --staged --worktree -- "$src/lib.rs"
+done
+printf '*.rs text eol=crlf\n' > .git/info/attributes
+printf 'reversible\r\n\r\n' > "$src/lib.rs"
+cp "$src/lib.rs" "$scratch/expected"
+stash="$(python3 -I scripts/source_stash.py | tail -n 1)"
+echo base > "$src/lib.rs"
+if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
+grep -Fq 'Resolve the overlap' log
+printf 'base\r\n' > "$src/lib.rs"
+python3 -I scripts/restore_source.py "$stash"
+same_bytes "$src/lib.rs" "$scratch/expected"
+rm .git/info/attributes
+git restore --source=HEAD --staged --worktree -- "$src/lib.rs"
+git stash drop -q
 
 echo hidden > "$src/lib.rs"
 echo visible > "$src/unrelated.rs"
@@ -199,14 +239,17 @@ git config core.whitespace indent-with-non-tab
 for whitespace in fix error; do
     git config apply.whitespace "$whitespace"
     printf '        fn staged() {}\n' > "$src/indented.rs"
+    cp "$src/indented.rs" "$scratch/staged"
     git add "$src/indented.rs"
     printf '        fn working() {}\n' > "$src/indented.rs"
+    cp "$src/indented.rs" "$scratch/expected"
     stash="$(python3 -I scripts/source_stash.py | tail -n 1)"
     git diff --exit-code HEAD -- "$src/indented.rs"
     git diff --cached --exit-code HEAD -- "$src/indented.rs"
     python3 -I scripts/restore_source.py "$stash"
-    [[ $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
-    [[ $(cat "$src/indented.rs") == '        fn working() {}' ]]
+    git show ":$src/indented.rs" > "$scratch/restored-index"
+    same_bytes "$scratch/restored-index" "$scratch/staged"
+    same_bytes "$src/indented.rs" "$scratch/expected"
 done
 
 mkdir "$scratch/bin"

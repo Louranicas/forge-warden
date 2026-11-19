@@ -4,8 +4,8 @@ set -euo pipefail
 source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
-export TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target"
-mkdir -p "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants"
+export TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target" XDG_CONFIG_HOME="$sandbox/config"
+mkdir -p "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants" "$XDG_CONFIG_HOME"
 cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/worktree_diff.py" "$source_root/scripts/review_comparison.sh" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 cat >> "$TEST_ROOT/scripts/make_patch.sh" <<'STUB'
