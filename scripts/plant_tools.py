@@ -49,6 +49,34 @@ JUST_TESTS = {
         'ReviewBundle.test_review_publishes_only_completed_outputs',
     },
 }
+INDEPENDENT_TESTS = {
+    'Guard.test_malformed_events_fail_closed',
+    'Guard.test_protected_paths_all_spellings',
+    'Guard.test_shell_tokenization_and_rust_writes',
+    'Guard.test_read_and_ordinary_edit_positive_controls',
+    'Guard.test_alternative_edit_tools_refuse',
+    'Guard.test_rust_spacing_and_complete_edit',
+    'Guard.test_toml_semantics_and_member_inheritance',
+    'Guard.test_owner_protected_manifest_refuses_even_unchanged_content',
+    'Guard.test_invalid_edit_shape_refuses',
+    'ReviewBundle.test_candidate_cannot_supply_instructions_or_policy',
+    'ReviewBundle.test_missing_trusted_policy_never_falls_back',
+    'ReviewBundle.test_missing_trusted_contract_refuses',
+    'ReviewBundle.test_symlink_contract_refuses',
+    'ReviewBundle.test_wrong_head_or_base_refuses',
+    'ReviewBundle.test_modified_worktree_instructions_are_ignored',
+    'ReviewBundle.test_modified_helper_refuses',
+    'ReviewBundle.test_output_inside_candidate_refuses',
+    'ReviewBundle.test_candidate_fsmonitor_cannot_execute',
+    'ReviewBundle.test_clean_filter',
+    'ReviewBundle.test_smudge_filter',
+    'ReviewBundle.test_textconv',
+    'ReviewBundle.test_external_diff',
+    'ReviewBundle.test_candidate_attributes_diff_driver',
+    'ReviewBundle.test_hooks_path',
+    'ReviewBundle.test_include_path',
+    'ReviewBundle.test_include_if',
+}
 
 
 def requirements(cases):
@@ -135,7 +163,7 @@ def workflow_lines(text):
         value = match[1] or ""
         if value.startswith((" ", "\t")):
             raise ValueError("CI timeout contract: extra scalar separation whitespace refused")
-        if value == "|":
+        if value == "|" or value in ("|-", "|+") and line.lstrip(" -").startswith("run:"):
             block_indent = indent
         elif value.startswith("'"):
             if not re.fullmatch(r"'(?:[^']|'')*'(?: +#[^\n]*)?", value):
@@ -285,9 +313,10 @@ def plant_needs_just(arguments, cases, unknown):
                and (options.runner is None or 'cargo' in case) for case in cases)
 
 
-def fixture_needs_just(arguments, dependent, unknown):
+def unittest_consumer(arguments, cwd, fixture, unknown):
+    unresolved = fixture or 'unittest'
     if arguments is None or any(arg is None or unknown in arg for arg in arguments):
-        return True
+        return unresolved
     parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
     parser.add_argument('-k', action='append', default=[])
     parser.add_argument('-h', '--help', action='store_true')
@@ -300,14 +329,34 @@ def fixture_needs_just(arguments, dependent, unknown):
     except (argparse.ArgumentError, SystemExit) as error:
         raise ValueError('cannot resolve unittest selection before Just installation') from error
     if options.help:
-        return False
-    if extra or 'discover' in options.names:
-        return True
-    names = {name.removeprefix('__main__.') for name in options.names}
+        return None
+    if extra or 'discover' in options.names or (not fixture and not options.names):
+        return unresolved
     patterns = [pattern if '*' in pattern else '*' + pattern + '*' for pattern in options.k]
-    return any((not names or test in names or test.partition('.')[0] in names)
-               and (not patterns or any(fnmatch.fnmatchcase('__main__.' + test, pattern) for pattern in patterns))
-               for test in dependent)
+    for name in options.names or ['']:
+        path, module = fixture, '__main__'
+        if path is None:
+            if name.endswith('.py'):
+                module = Path(os.path.normpath(name)).with_suffix('').as_posix().replace('/', '.')
+                path, name = os.path.normpath(cwd / name), ''
+            else:
+                parts = name.split('.')
+                for size in range(1, len(parts) + 1):
+                    path = (cwd / Path(*parts[:size])).as_posix() + '.py'
+                    if path in JUST_TESTS:
+                        module, name = '.'.join(parts[:size]), '.'.join(parts[size:])
+                        break
+            if path not in JUST_TESTS:
+                return unresolved
+        dependent = JUST_TESTS[path]
+        suite = next(iter(dependent)).partition('.')[0]
+        if name and name != suite:
+            if name.partition('.')[0] != suite or name not in INDEPENDENT_TESTS:
+                return path
+        elif not patterns or any(fnmatch.fnmatchcase(module + '.' + method, pattern)
+                                 for method in dependent for pattern in patterns):
+            return path
+    return None
 
 
 def just_consumer(step, commands, cases):
@@ -315,11 +364,20 @@ def just_consumer(step, commands, cases):
     directory = step.get('working-directory', '.')
     if not isinstance(directory, str):
         raise ValueError('cannot resolve gate working-directory before Just installation')
-    directory = lexer.location(lexer.workspace, lexer.actions_text(directory))
-    run = lexer.actions_text(step.get('run', ''))
+    directory = lexer.location(lexer.workspace, directory)
+    run = step.get('run', '')
     for _, word, _, arguments, cwd in commands['shell_calls'](run, lexer=lexer, directory=directory):
         marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
-        target = Path(word.removeprefix(marker))
+        if word.startswith('(module)'):
+            module = word.removeprefix('(module)')
+            if module in ('unittest', 'unittest.__main__'):
+                consumer = unittest_consumer(arguments, cwd.relative_to(lexer.workspace), None, lexer.unknown)
+                if consumer:
+                    return consumer
+                continue
+            target = Path(module.replace('.', '/') + '.py')
+        else:
+            target = Path(word.removeprefix(marker))
         if target.name == 'just':
             return 'just'
         path = Path(os.path.normpath(cwd / target))
@@ -328,7 +386,7 @@ def just_consumer(step, commands, cases):
                 raise ValueError('cannot resolve gate script outside the workspace before Just installation')
             continue
         path = path.relative_to(lexer.workspace).as_posix()
-        if path in JUST_TESTS and fixture_needs_just(arguments, JUST_TESTS[path], lexer.unknown):
+        if path in JUST_TESTS and unittest_consumer(arguments, cwd.relative_to(lexer.workspace), path, lexer.unknown):
             return path
         if path == '.claude/hooks/guard.py':
             if arguments is None or (len(arguments) == 1 and

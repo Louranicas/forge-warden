@@ -191,9 +191,10 @@ class Unsupported(ValueError):
 
 
 class Word:
-    def __init__(self, line, raw, value, literal):
+    def __init__(self, line, raw, value, literal, lexer):
         self.line, self.raw, self.value, self.literal = line, raw, value, literal
         self.argument = value
+        self.lexer = lexer
 
 
 class Lexer:
@@ -232,7 +233,7 @@ class Lexer:
             elif c in '<>' and text[self.i + 1:self.i + 2] == '(':
                 self.i += 2
                 self.substitution()
-                out.append(('word', Word(self.line, '<(...)', None, False)))
+                out.append(('word', Word(self.line, '<(...)', None, False, type(self))))
             elif FD_REDIRECT.match(text, self.i) or (
                     text.startswith(REDIRECTS, self.i) and not (c == '&' and text.startswith('&&', self.i))):
                 # `0< FILE`, `2>/dev/null`: the descriptor number is part of the redirect, not a word.
@@ -282,14 +283,15 @@ class Lexer:
             lines.append(raw)
         body = '\n'.join(lines) + '\n'
         quoted = any(q in word.raw for q in '\'"\\')
+        body_lexer = type(self)
         if not quoted:
-            body = self.unquoted_heredoc(body, start)
-        return ('heredoc', body, start, index)
+            body, body_lexer = self.unquoted_heredoc(body, start)
+        return ('heredoc', body, start, index, body_lexer)
 
     def unquoted_heredoc(self, body, start):
         if '$(' in body or '`' in body:
             type(self)(body, start, self.sink).double_quoted(stop=None)
-        return body
+        return body, type(self)
 
     def substitution(self):
         start = self.line
@@ -425,46 +427,63 @@ class Lexer:
                 self.i += 1
         if self.i == start:
             self.error(f'cannot read {text[self.i]!r}')
-        return Word(line, text[start:self.i], ''.join(value) if literal else None, literal)
+        return Word(line, text[start:self.i], ''.join(value) if literal else None, literal, type(self))
 
 
 class WorkflowLexer(Lexer):
     workspace = ROOT
     unknown = '\0dynamic'
+    actions_workspace = re.compile(r'\$\{\{\s*github\.workspace\s*\}\}')
+    expanded_workspace = False
     variable = re.compile(r'\$(?:GITHUB_WORKSPACE(?![A-Za-z0-9_])|\{GITHUB_WORKSPACE\})')
 
     @classmethod
-    def actions_text(cls, text):
-        return re.sub(r'\$\{\{\s*github\.workspace\s*\}\}', lambda _: str(cls.workspace), text)
+    def path(cls, directory, value):
+        if not value or cls.unknown in value:
+            raise Unsupported('cannot resolve gate command path before Just installation')
+        match = cls.actions_workspace.match(value)
+        if not match and cls.expanded_workspace:
+            match = cls.variable.match(value)
+        if match:
+            suffix = value[match.end():]
+            if suffix and not suffix.startswith('/'):
+                raise Unsupported('cannot resolve workspace path before Just installation')
+            directory, value = cls.workspace, suffix.lstrip('/')
+        if '${{' in value:
+            raise Unsupported('cannot resolve gate command path before Just installation')
+        return Path(os.path.normpath(directory / value))
 
     @classmethod
     def location(cls, directory, value):
-        if not value or cls.unknown in value or '${{' in value:
-            raise Unsupported('cannot resolve gate command directory before Just installation')
-        path = Path(os.path.normpath(directory / value))
+        path = cls.path(directory, value)
         if not path.is_relative_to(cls.workspace):
             raise Unsupported('gate command directory is outside the workspace before Just installation')
         return path
 
     def dollar(self):
-        match = self.variable.match(self.text, self.i)
+        match = self.actions_workspace.match(self.text, self.i) or self.variable.match(self.text, self.i)
         if match:
             self.i = match.end()
-            return str(self.workspace)
+            if match.re is self.variable:
+                self.has_workspace = True
+            return match.group()
         value = super().dollar()
         return self.unknown if value is None else value
 
     def word(self):
+        self.has_workspace = False
         word = super().word()
+        word.lexer = ExpandedWorkflowLexer if self.has_workspace else type(self)
         if word.value and self.unknown in word.value:
             word.value, word.literal = None, False
         return word
 
     def unquoted_heredoc(self, body, start):
-        source = type(self)(body, start, self.sink).double_quoted(stop=None)
+        reader = type(self)(body, start, self.sink)
+        source = reader.double_quoted(stop=None)
         if source is None or self.unknown in source:
             raise Unsupported('cannot resolve heredoc expansion before Just installation')
-        return source
+        return source, ExpandedWorkflowLexer if getattr(reader, 'has_workspace', False) else type(self)
 
     @staticmethod
     def call(line, word, external, tokens=None, start=0, directory=None):
@@ -481,6 +500,10 @@ class WorkflowLexer(Lexer):
             else:
                 break
         return line, word, external, arguments, directory
+
+
+class ExpandedWorkflowLexer(WorkflowLexer):
+    expanded_workspace = True
 
 
 def shell_calls(text, line=1, lexer=Lexer, directory=None):
@@ -534,7 +557,7 @@ def long_option(value, names):
     return hits[0] if len(hits) == 1 else None
 
 
-def operand_word(state, value, raw):
+def operand_word(state, value, raw, workflow=False):
     """One word after a program that runs a file or a command line it is given: a shell, Python,
     `.`/`source`, tar or sort, read as that program's own option parser reads it (option groups,
     attached arguments, `--`, long-option prefixes). value is None for a non-literal word.
@@ -607,6 +630,8 @@ def operand_word(state, value, raw):
                 if letter == 'c':
                     return (None, [('python', rest)]) if rest else ('next-python', [])
                 if letter == 'm':
+                    if workflow:
+                        return (None, [('(module)', rest)]) if rest else (('file-next', '(module)'), [])
                     return None, []
                 return (state if rest else ('option-argument', state, 1)), []
         return state, []
@@ -635,13 +660,14 @@ def flush_stdin(script, stdin_words, found, calls, lexer, directory):
         if operator == '<<<' and word.literal:
             text = word.value
             read = shell_calls if runner == '(sh)' else python_calls
-            calls.extend(read(text, word.line, lexer, directory))
+            calls.extend(read(text, word.line, word.lexer, directory))
         elif directory is not None and not word.literal:
             raise Unsupported('cannot resolve gate script input before Just installation')
         elif operator == '<<<':
             found.append(lexer.call(word.line, word.raw, True, directory=directory))  # a dynamic script text is named
         elif word.literal:
-            found.append(lexer.call(word.line, runner + word.value, True, directory=directory))
+            path = str(word.lexer.path(directory, word.value)) if directory is not None else word.value
+            found.append(lexer.call(word.line, runner + path, True, directory=directory))
     return []
 
 
@@ -655,13 +681,14 @@ def command_words(tokens, calls, lexer, directory):
         kind = token[0]
         if kind == 'heredoc':
             body, start, consumer = token[1], token[2], owner
+            body_lexer = token[4]
             first = body.split('\n', 1)[0]
             if first.startswith('#!'):
                 consumer = {'shell': 'bash', 'python': 'python3'}.get(shebang(first)[0])
             if consumer in SHELLS:
-                calls.extend(shell_calls(body, start, lexer, heredoc_directory))
+                calls.extend(shell_calls(body, start, body_lexer, heredoc_directory))
             elif consumer and PYTHONS.fullmatch(consumer):
-                calls.extend(python_calls(body, start, lexer, heredoc_directory))
+                calls.extend(python_calls(body, start, body_lexer, heredoc_directory))
             continue
         if kind == 'redirect':
             # Standard input (`<`, `0<`, `<>`, `0<>`, `<<<`), before or after the command word: decided at the
@@ -702,7 +729,7 @@ def command_words(tokens, calls, lexer, directory):
         if mode == 'array':
             continue
         if mode == 'env-directory':
-            directory = lexer.location(directory, word.value)
+            directory = word.lexer.location(directory, word.value)
             mode = None
             continue
         if mode and mode[0] in ('target', 'stdin-target'):
@@ -743,9 +770,9 @@ def command_words(tokens, calls, lexer, directory):
                         raise Unsupported('cannot resolve inline gate command before Just installation')
                     found.append(lexer.call(word.line, word.raw, True, directory=directory))
                 elif script == 'next':
-                    calls.extend(shell_calls(word.value, word.line, lexer, directory))
+                    calls.extend(shell_calls(word.value, word.line, word.lexer, directory))
                 else:
-                    calls.extend(python_calls(word.value, word.line, lexer, directory))
+                    calls.extend(python_calls(word.value, word.line, word.lexer, directory))
                 script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
@@ -758,17 +785,19 @@ def command_words(tokens, calls, lexer, directory):
                         isinstance(script, str) and PYTHONS.fullmatch(script) or
                         isinstance(script, tuple) and script[0] == 'file-next'):
                     raise Unsupported('cannot resolve gate script operand before Just installation')
-                script, events = operand_word(script, word.value if word.literal else None, word.raw)
+                script, events = operand_word(script, word.value if word.literal else None, word.raw, directory is not None)
                 for event, text in events:
                     if event == 'shell':
-                        calls.extend(external(shell_calls(text, word.line, lexer, directory)))
+                        calls.extend(external(shell_calls(text, word.line, word.lexer, directory)))
                     elif event == 'python':
-                        calls.extend(python_calls(text, word.line, lexer, directory))
+                        calls.extend(python_calls(text, word.line, word.lexer, directory))
                     elif event == 'dynamic':
                         if directory is not None:
                             raise Unsupported('cannot resolve inline gate command before Just installation')
                         found.append(lexer.call(word.line, text, True, directory=directory))
                     else:
+                        if directory is not None and event in RUNS:
+                            text = str(word.lexer.path(directory, text))
                         found.append(lexer.call(word.line, event + text, True, tokens, index + 1, directory))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
@@ -778,7 +807,7 @@ def command_words(tokens, calls, lexer, directory):
             if (directory is not None and prefix == 'env' and (word.value == '-C' or
                     (option.startswith('--') and len(option) > 2 and '--chdir'.startswith(option)))):
                 if equals:
-                    directory = lexer.location(directory, argument)
+                    directory = word.lexer.location(directory, argument)
                 else:
                     mode = 'env-directory'
             elif (directory is not None and prefix == 'env' and (re.match(r'^-[iv0]*S', option)
@@ -790,7 +819,7 @@ def command_words(tokens, calls, lexer, directory):
                 expect, script = False, 'next'
             elif prefix == 'env' and word.value.startswith(('-S', '--split-string=')):
                 text = word.value[2:] if word.value.startswith('-S') else word.value.split('=', 1)[1]
-                calls.extend(external(shell_calls(text, word.line, lexer, directory)))
+                calls.extend(external(shell_calls(text, word.line, word.lexer, directory)))
                 expect = False
             elif prefix == 'command' and word.value in ('-v', '-V'):
                 expect, prefix = False, 'probe'
@@ -803,7 +832,7 @@ def command_words(tokens, calls, lexer, directory):
                             if offset == len(word.value):
                                 mode = 'env-directory'
                             else:
-                                directory = lexer.location(directory, word.value[offset:])
+                                directory = word.lexer.location(directory, word.value[offset:])
                         elif offset == len(word.value):
                             mode = ('target', mode)
                         break
@@ -839,7 +868,10 @@ def command_words(tokens, calls, lexer, directory):
             continue
         if word.literal and value == 'eval':
             raise Unsupported(f'line {word.line}: eval')
-        found.append(lexer.call(word.line, value if word.literal else word.raw, prefix is not None or by_find,
+        command = value if word.literal else word.raw
+        if directory is not None and '/' in command:
+            command = str(word.lexer.path(directory, command))
+        found.append(lexer.call(word.line, command, prefix is not None or by_find,
                                 tokens, index + 1, directory))
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
         owner = value.rsplit('/', 1)[-1] if word.literal else None
