@@ -91,14 +91,20 @@ if command == "mutants":
 STUB
 printf '#!/usr/bin/env bash\nexit 98\n' > "$sandbox/bin/deep-diff-forge"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/zizmor"
+export FIXTURE_GIT
+FIXTURE_GIT="$(type -P git)"
+cat > "$sandbox/bin/git" <<'STUB'
+#!/usr/bin/env bash
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+hash -p "$FIXTURE_GIT" git
+exec git "$@"
+STUB
 chmod +x "$sandbox/bin/"*
-for tool in git bash env python3 mkdir mktemp rm head grep cat mv cp chmod true; do
+for tool in bash env python3 mkdir mktemp rm head grep cat mv cp chmod true; do
  ln -s "$(type -P "$tool")" "$sandbox/bin/$tool"
 done
 export PATH="$sandbox/bin"
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 command git "$@"; }
-export -f git
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 cd "$TEST_ROOT"

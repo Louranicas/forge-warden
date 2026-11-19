@@ -53,8 +53,11 @@ def restore(stash, scratch, live):
     worktree, worktree_dirty = snapshot(stash, saved)
     git("read-tree", stash + "^2", env=saved)
     staged = index_entries(saved, SOURCES)
+    worktree_changes = changed_paths(base, worktree)
+    staged_changes = changed_paths(base, staged)
+    source_stash.worktree_diff.check_index_flags(live, SOURCES, set(worktree_changes).union(staged_changes))
     worktree_paths = []
-    for path in changed_paths(base, worktree):
+    for path in worktree_changes:
         if any(p.is_symlink() or (p.exists() and not p.is_dir()) for p in path.parents):
             refuse(path)
         exists = os.path.lexists(path)
@@ -69,7 +72,7 @@ def restore(stash, scratch, live):
     current = index_entries(live)
     index_dirs = {directory for path in current for directory in path.parents}
     staged_paths = []
-    for path in changed_paths(base, staged):
+    for path in staged_changes:
         if path in index_dirs or any(p in current for p in path.parents):
             refuse(path)
         if current.get(path) == staged.get(path):

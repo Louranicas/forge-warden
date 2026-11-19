@@ -46,9 +46,7 @@ def locked_index():
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous)
                     pending = scratch / "index"
                     shutil.copy2(index, pending)
-                    live = {**env, "GIT_INDEX_FILE": str(pending)}
-                    worktree_diff.check_index_flags(live, SOURCES)
-                    yield live, scratch
+                    yield {**env, "GIT_INDEX_FILE": str(pending)}, scratch
                     os.replace(pending, index)
                 finally:
                     signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
@@ -59,6 +57,7 @@ def locked_index():
 
 
 def check_source(env):
+    worktree_diff.check_index_flags(env, SOURCES)
     untracked = git("ls-files", "--others", "--exclude-standard", "--", SOURCES, env=env)
     ignored = git("ls-files", "--others", "--ignored", "--exclude-standard", "--",
                   ":(glob)crates/*/src/**/*.rs", env=env)
@@ -88,7 +87,7 @@ def check_source(env):
 def save(live, scratch):
     check_source(live)
     private_index = scratch / "source"
-    shutil.copyfile(live["GIT_INDEX_FILE"], private_index)
+    shutil.copy2(live["GIT_INDEX_FILE"], private_index)
     private = {**live, "GIT_INDEX_FILE": str(private_index)}
     git("reset", "-q", "HEAD", "--", ":(exclude,glob)" + SOURCE_GLOB, env=private)
     marker = "forge-warden-source-" + str(uuid.uuid4())

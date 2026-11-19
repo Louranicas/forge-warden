@@ -203,8 +203,9 @@ def stop(event: dict) -> None:
     session = required_text(event, "session_id", True)
     root = project_dir()
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, env=env, capture_output=True, text=True, check=False)
-    if dirty.returncode == 0 and not dirty.stdout.strip():
+    probe = Path(__file__).resolve().parents[2] / "scripts/worktree_diff.py"
+    clean = subprocess.run([sys.executable, "-I", str(probe), "--clean"], cwd=root, env=env, capture_output=True)
+    if clean.returncode == 0:
         return  # nothing changed in this session's working tree
     identity = hashlib.sha256((str(root.resolve()) + "\0" + session).encode()).hexdigest()
     counter = Path(tempfile.gettempdir()) / f"forge-warden-stop-{identity}"

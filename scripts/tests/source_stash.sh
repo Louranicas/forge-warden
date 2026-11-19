@@ -33,6 +33,25 @@ refuse_save() {
     grep -Fq "${1:-Failing-first check unverified}" log
     [[ $(git write-tree) == "$index" && -z $(git stash list) ]]
 }
+base="$(git rev-parse HEAD)"
+git config core.trustctime false
+git config core.checkStat minimal
+touch -t 202001010000 "$src/lib.rs"
+git add "$src/lib.rs"
+touch -r "$src/lib.rs" .git/index
+echo edit > "$src/lib.rs"
+touch -r .git/index "$src/lib.rs"
+python3 -I scripts/worktree_diff.py "$base" > diff.out
+grep -Fxq '+edit' diff.out
+stash="$(python3 -I scripts/source_stash.py | tail -n 1)"
+[[ $(cat "$src/lib.rs") == base ]]
+python3 -I scripts/restore_source.py "$stash"
+[[ $(cat "$src/lib.rs") == edit && $(git show ":$src/lib.rs") == base ]]
+git restore -- "$src/lib.rs"
+git stash drop -q
+git config --unset core.checkStat
+git config --unset core.trustctime
+
 refuse_save
 echo draft > notes
 refuse_save
@@ -43,7 +62,6 @@ git restore --source=HEAD --staged --worktree -- notes
 
 echo hidden > "$src/lib.rs"
 echo visible > "$src/unrelated.rs"
-base="$(git rev-parse HEAD)"
 for flag in assume-unchanged skip-worktree; do
     git update-index "--$flag" -- "$src/lib.rs"
     refuse_save "$flag"
@@ -106,6 +124,7 @@ rm "$src/removed.rs"
 git add "$src"
 echo base > "$src/staged-only.rs"
 echo working > "$src/lib.rs"
+echo working-only > "$src/indented.rs"
 touch "$src/editor.swp"
 for new in new.rs ignored.rs; do
     touch "$src/$new"
@@ -128,11 +147,13 @@ git diff --cached --exit-code HEAD -- "$src"
 [[ -f "$src/editor.swp" && $(cat "$src/lib.rs") == base ]]
 
 for flag in assume-unchanged skip-worktree; do
-    git update-index "--$flag" -- "$src/lib.rs"
-    if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
-    grep -Fq "$flag" log
-    [[ $(cat "$src/lib.rs") == base && $(git show ":$src/lib.rs") == base ]]
-    git update-index "--no-$flag" -- "$src/lib.rs"
+    for file in lib.rs staged-only.rs indented.rs; do
+        git update-index "--$flag" -- "$src/$file"
+        if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
+        grep -Fq "$flag" log
+        [[ $(cat "$src/lib.rs") == base && $(git show ":$src/lib.rs") == base ]]
+        git update-index "--no-$flag" -- "$src/$file"
+    done
 done
 
 echo later > "$src/staged-only.rs"
@@ -159,11 +180,15 @@ refused
 rm "$src/nested"
 git restore --source="$stash" --worktree -- "$src/lib.rs"
 git restore --source="$stash^2" --staged -- "$src/removed.rs"
-for attempt in 1 2; do
+for flag in assume-unchanged skip-worktree; do
+    git update-index "--$flag" -- "$src/unrelated.rs"
     python3 -I scripts/restore_source.py "$stash"
     [[ $(git show ":$src/lib.rs") == staged && $(cat "$src/lib.rs") == working ]]
     [[ $(git show ":$src/generated") == saved && $(cat "$src/generated") == saved ]]
     [[ $(git show ":$src/unrelated.rs") == later && $(cat "$src/unrelated.rs") == later ]]
+    tag="$(git ls-files -v -- "$src/unrelated.rs")"
+    if [[ $flag == assume-unchanged ]]; then [[ $tag == "h "* ]]; else [[ $tag == "S "* ]]; fi
+    git update-index "--no-$flag" -- "$src/unrelated.rs"
     [[ $(git show ":$src/staged-only.rs") == staged && $(cat "$src/staged-only.rs") == later ]]
     [[ ! -e "$src/removed.rs" ]]
     if git ls-files --error-unmatch -- "$src/removed.rs" >/dev/null 2>&1; then exit 1; fi

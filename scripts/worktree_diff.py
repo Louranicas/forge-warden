@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -22,29 +23,51 @@ def git(*args, env, data=None):
     return run_git(*args, env=env, input=data, stdout=subprocess.PIPE, check=True).stdout
 
 
-def check_index_flags(env, scope):
+def check_index_flags(env, scope, affected=None):
+    if affected is not None:
+        related = affected.union(parent for path in affected for parent in path.parents)
     for row in git("ls-files", "-v", "-z", "--", scope, env=env).split(b"\0"):
         tag = row[:1]
         if tag.islower() or tag == b"S":
+            path = Path(os.fsdecode(row[2:]))
+            if affected is not None and path not in related and affected.isdisjoint(path.parents):
+                continue
             flag = "assume-unchanged" if tag.islower() else "skip-worktree"
-            sys.exit(f"Working-tree comparison unverified. Git marks {os.fsdecode(row[2:])!r} {flag}.")
+            sys.exit(f"Working-tree comparison unverified. Git marks {str(path)!r} {flag}.")
+
+
+@contextmanager
+def checked_snapshot(scope):
+    env = {**worktree_env(), "GIT_NO_REPLACE_OBJECTS": "1"}
+    index = Path(os.fsdecode(git("rev-parse", "--path-format=absolute", "--git-path", "index", env=env)[:-1]))
+    scratch_parent = Path(tempfile.gettempdir())
+    if scratch_parent.is_relative_to(Path.cwd()):
+        scratch_parent = index.parent
+    with tempfile.TemporaryDirectory(dir=scratch_parent) as directory:
+        snapshot = Path(directory) / "index"
+        with index.open("rb") as source:
+            stat = os.fstat(source.fileno())
+            with snapshot.open("wb") as target:
+                shutil.copyfileobj(source, target)
+            os.utime(snapshot, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        env["GIT_INDEX_FILE"] = str(snapshot)
+        check_index_flags(env, scope)
+        yield env
 
 
 def mutation_diff(base):
     scope = "crates/*/src/**.rs"
-    env = {**worktree_env(), "GIT_NO_REPLACE_OBJECTS": "1"}
-    index = git("rev-parse", "--path-format=absolute", "--git-path", "index", env=env)
-    with tempfile.TemporaryDirectory() as directory:
-        snapshot = Path(directory) / "index"
-        shutil.copyfile(os.fsdecode(index[:-1]), snapshot)
-        env["GIT_INDEX_FILE"] = str(snapshot)
-        check_index_flags(env, scope)
+    with checked_snapshot(scope) as env:
         run_git("-c", "core.quotePath=false", "-c", "diff.renames=true", "diff", "--no-ext-diff",
                 "--no-textconv", "--text", "--no-color", "--src-prefix=a/", "--dst-prefix=b/",
                 base, "--", scope, env=env, check=True)
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--clean"]:
+        with checked_snapshot(":(top,glob)**") as env:
+            sys.exit(bool(git("-c", "core.untrackedCache=false", "status", "--porcelain=v1", "-z",
+                              "--untracked-files=all", "--ignore-submodules=none", env=env)))
     if len(sys.argv) != 2 or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sys.argv[1]):
         sys.exit("expected a full mutation base object ID")
     mutation_diff(sys.argv[1])

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 GUARD = Path(__file__).with_name("guard.py")
 
@@ -49,6 +50,42 @@ class Guard(unittest.TestCase):
         (self.root / "alias").symlink_to(self.root / "warden.toml")
         self.run_guard(self.tool("Write", file_path="alias", content="x"))
         self.run_guard(self.tool("Write", file_path="../outside", content="x"))
+
+    def test_stop_runs_gate_for_hidden_and_untracked_changes(self):
+        event = {"session_id": "stop-visibility"}
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        gate = scripts / "ci_fast.sh"
+        gate.write_text("#!/bin/sh\ntouch .git/gate-ran\n")
+        gate.chmod(0o755)
+        ran = self.root / ".git/gate-ran"
+        source = self.root / "src/lib.rs"
+        original = source.read_bytes()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {
+                **env, "HOME": home, "XDG_CONFIG_HOME": home, "GIT_CONFIG_NOSYSTEM": "1"}, clear=True):
+            def git(*args):
+                subprocess.run(["git", *args], cwd=self.root, check=True)
+
+            git("init", "-q", "--template=")
+            git("add", ".")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-qm", "base")
+            git("config", "status.showUntrackedFiles", "no")
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertFalse(ran.exists())
+            for flag in ("assume-unchanged", "skip-worktree"):
+                git("update-index", "--" + flag, "src/lib.rs")
+                source.write_text("pub fn changed() {}\n")
+                self.run_guard(event, mode="stop", expected=0)
+                self.assertTrue(ran.exists(), flag)
+                ran.unlink()
+                source.write_bytes(original)
+                git("update-index", "--no-" + flag, "src/lib.rs")
+            (self.root / "tests").mkdir()
+            (self.root / "tests/new.rs").touch()
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertTrue(ran.exists())
 
     def test_shell_tokenization_and_rust_writes(self):
         for command in ("echo x > war''den.toml", "echo x > " + str(self.root / "warden.toml"),
