@@ -115,6 +115,16 @@ fn file_option(id: &'static str, help: &'static str) -> Arg {
         .help(help)
 }
 
+fn repo_option(help: &str) -> Arg {
+    Arg::new("repo")
+        .long("repo")
+        .value_name("DIR")
+        .value_parser(value_parser!(PathBuf))
+        .help(format!(
+            "{help}. For a linked worktree pass `--repo \"$(git rev-parse --git-common-dir)\"`"
+        ))
+}
+
 /// A `--ID <VALUE_NAME>` option read as text.
 fn text_option(id: &'static str, value_name: &'static str, help: &'static str) -> Arg {
     Arg::new(id)
@@ -147,7 +157,7 @@ fn cli() -> clap::Command {
         .subcommand(
             clap::Command::new("empty")
                 .about("Verify that the bound repository comparison has an empty diff")
-                .arg(file_option("repo", "The repository to verify").required(true))
+                .arg(repo_option("The repository to verify").required(true))
                 .arg(text_option("base", "REV", "Full base commit ID").required(true))
                 .arg(text_option("head", "REV", "Full head commit ID").required(true)),
         )
@@ -249,19 +259,14 @@ fn check_command() -> clap::Command {
             "A claimed head commit (hex), recorded unverified in the verdict",
         ))
         .arg(
-            Arg::new("repo")
-                .long("repo")
-                .value_name("DIR")
-                .value_parser(value_parser!(PathBuf))
-                .requires_all(["ranker", "base", "head"])
-                .conflicts_with("advisory")
-                .help(
-                    "Bound mode (ADR 0012, authority mode only): the repository whose objects hold \
-                     --base and --head (full ids). forge-warden makes `git diff merge-base..head` \
-                     itself, from a verified copy of those objects, and refuses a --patch that is not \
-                     byte-equal to it. For a linked worktree pass `--repo \"$(git rev-parse \
-                     --git-common-dir)\"`",
-                ),
+            repo_option(
+                "Bound mode (ADR 0012, authority mode only): the repository whose objects hold \
+                 --base and --head (full ids). forge-warden makes `git diff merge-base..head` \
+                 itself, from a verified copy of those objects, and refuses a --patch that is not \
+                 byte-equal to it",
+            )
+            .requires_all(["ranker", "base", "head"])
+            .conflicts_with("advisory"),
         )
         .arg(text_option(
             "today",
