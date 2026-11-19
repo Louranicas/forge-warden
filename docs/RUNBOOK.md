@@ -12,12 +12,14 @@ pinning a different deep-diff-forge (step 3). Everything else runs as an ordinar
 ## 1. Check the machine
 
 forge-warden runs on Linux only (it reads `/proc`). Authority mode also needs Git and a SHA-256 tool.
+The patch helper used in both modes requires Python 3.9 or newer.
 
 ```bash
 uname -s                      # Linux
 test -d /proc/self/fd && echo ok
 command -v git sha256sum
 git --version
+python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else "Python 3.9 or newer is required")'
 ```
 
 ## 2. Install forge-warden at a pinned revision

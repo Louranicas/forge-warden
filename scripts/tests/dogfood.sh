@@ -250,6 +250,9 @@ made explicit-checkout bash "$maker" "$base" "$attr_head" "$attr"
 made explicit-git-directory bash "$maker" "$base" "$attr_head" "$attr/.git"
 ln -s "$sandbox/checkouts" "$sandbox/home-alias"
 aliased="$sandbox/home-alias/attr-candidate"
+out="$sandbox/evidence-ancestor-alias"
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$attr_head" "$aliased/sub" "$out" > "$sandbox/output" 2>&1
+same_bytes "$clean_patch" "$out/change.patch"
 made ancestor-alias bash "$maker" "$base" "$attr_head" "$aliased"
 made ancestor-alias-git-directory bash "$maker" "$base" "$attr_head" "$aliased/.git"
 (
@@ -670,17 +673,27 @@ ln -s "$candidate/.git" "$sandbox/redirected-checkout/.git"
 [[ -L "$sandbox/redirected-checkout/.git" && "$sandbox/redirected-checkout/.git" -ef "$candidate/.git" ]]
 [[ "$(git -C "$candidate" rev-parse --is-bare-repository)" = false ]]
 snapshot "$candidate/.git/objects" > "$sandbox/checkout-before"
-if bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$sandbox/redirected-checkout/sub" "$sandbox/redirected-out" > "$sandbox/output" 2>&1; then
- exit 1
-fi
-grep -q 'invalid checkout .git entry' "$sandbox/output"
-test ! -e "$sandbox/redirected-out"
+git clone -q --no-local "$attr" "$sandbox/second-clone"
+ln -s "$sandbox/second-clone/sub" "$attr/linked-sub"
+ln -s "$trusted" "$sandbox/trusted-link"
+ln -s git "$sandbox/git-probe/cargo"
+(
+ export PATH="$sandbox/git-probe:$PATH" PROBE_RECEIPT="$sandbox/dogfood-tool-called"
+ refuse_candidate() {
+  local status=0
+  bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$2" "$1" "$sandbox/redirected-out" > "$sandbox/output" 2>&1 || status=$?
+  [[ "$status" = 2 && ! -e "$sandbox/redirected-out" && ! -e "$PROBE_RECEIPT" ]]
+  grep -Fq "$3" "$sandbox/output"
+ }
+ refuse_candidate "$sandbox/redirected-checkout/sub" "$head" 'invalid checkout .git entry'
+ refuse_candidate "$attr/linked-sub" "$attr_head" 'symlinked repository path'
+ refuse_candidate "$sandbox/trusted-link" "$base" 'symlinked repository path'
+)
 snapshot "$candidate/.git/objects" > "$sandbox/checkout-after"
 same_bytes "$sandbox/checkout-before" "$sandbox/checkout-after"
-ln -s "$trusted" "$sandbox/trusted-link"
 git -C "$trusted" worktree add -q --detach "$candidate/nested-base" "$base"
 git -C "$candidate" worktree add -q --detach "$trusted/nested-candidate" "$head"
-for row in "same-path $trusted $trusted" "same-through-link $trusted $sandbox/trusted-link" \
+for row in "same-path $trusted $trusted" \
            "trusted-inside $candidate/nested-base $candidate" "candidate-inside $trusted $trusted/nested-candidate"; do
  read -r name judge given <<< "$row"
  set +e

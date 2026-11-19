@@ -4,7 +4,8 @@
 does and where its risk is. forge-warden takes that sealed ranking and answers the next question:
 *does this change meet the standards this repository wrote down?*
 
-This bound-mode example requires a build of the unreleased 0.3.0 code.
+This bound-mode example requires a build of the unreleased 0.3.0 code and Python 3.9 or newer
+for `make_patch.sh`.
 
 ```bash
 (

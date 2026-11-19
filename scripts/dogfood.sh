@@ -35,10 +35,6 @@ if [ -n "$ranker_archive" ] && [ ! -f "$ranker_archive" ]; then
   echo "dogfood: --ranker-archive $ranker_archive is not a file" >&2
   exit 2
 fi
-# Absolute now: the script changes directory before it copies the archive.
-if [ -n "$ranker_archive" ]; then
-  ranker_archive="$(cd "$(dirname -- "$ranker_archive")" && pwd -P)/$(basename -- "$ranker_archive")"
-fi
 if [ "$#" -ne 4 ] && [ "$#" -ne 6 ]; then
   echo "dogfood: expected [--hosted-advisory] [--ranker-archive <file>] and four arguments, optionally followed by signed acknowledgement and signature" >&2
   exit 2
@@ -52,11 +48,36 @@ if [[ ! "$base" =~ ^[0-9a-f]{40}$ || ! "$head" =~ ^[0-9a-f]{40}$ ]]; then
   exit 2
 fi
 # The runner and this script must be trusted independently of the candidate workflow.
+IFS= read -r -d '' candidate < <(python3 -I - "$PWD" "$candidate" <<'PYCANDIDATE'
+import os
+import stat
+import sys
+from pathlib import Path
+
+supplied = Path(sys.argv[1]) / sys.argv[2]
+selected = Path(os.path.normpath(supplied))
+if not supplied.is_dir() or not selected.is_dir() or not selected.samefile(supplied):
+    sys.exit(f"dogfood: invalid candidate directory: {supplied}")
+for entry in (selected, *selected.parents):
+    if entry.is_symlink():
+        sys.exit(f"dogfood: symlinked repository path: {entry}")
+    try:
+        mode = (entry / ".git").lstat().st_mode
+    except FileNotFoundError:
+        continue
+    if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+        sys.exit(f"dogfood: invalid checkout .git entry in {entry}")
+    sys.stdout.buffer.write(os.fsencode(entry.resolve(strict=True)) + b"\0")
+    break
+else:
+    sys.exit(f"dogfood: no checkout contains {supplied}")
+PYCANDIDATE
+) || exit 2
+# Absolute now: the script changes directory before it copies the archive.
+if [ -n "$ranker_archive" ]; then
+  ranker_archive="$(cd "$(dirname -- "$ranker_archive")" && pwd -P)/$(basename -- "$ranker_archive")"
+fi
 trusted="$(cd "$(dirname "$0")/.." && pwd -P)"
-candidate="$(cd "$candidate" && pwd -P)"
-while [[ "$candidate" != / && ! -e "$candidate/.git" && ! -L "$candidate/.git" ]]; do
-  candidate="$(dirname -- "$candidate")"
-done
 # Nothing about Git comes from the caller's environment: GIT_CONFIG_COUNT/KEY_n/VALUE_n and
 # GIT_CONFIG_PARAMETERS carry configuration (diff.noprefix alone makes the judge read
 # `scripts/x` as `x`, so no path rule matches), GIT_DIFF_OPTS changes the hunks, GIT_DIR and
