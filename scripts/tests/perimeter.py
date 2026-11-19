@@ -152,7 +152,7 @@ class Contracts(unittest.TestCase):
                     CAPS.check_ci(root)
 
     def copy_ci_fixture(self, root):
-        for file in ("plants/catalog.json", "scripts/tool-versions.toml", "scripts/mutation_ci.py",
+        for file in ("plants/catalog.json", "plants/run.py", "scripts/tool-versions.toml", "scripts/mutation_ci.py",
                      "scripts/plant_tools.py", "scripts/script_commands.py", "rust-toolchain.toml", "Cargo.toml",
                      ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
             (root / file).parent.mkdir(parents=True, exist_ok=True)
@@ -312,6 +312,12 @@ class Contracts(unittest.TestCase):
             plant = {'run': 'python3 -I scripts/check_plants.py'}
             compiler = next(step for step in steps if '--component rustfmt,clippy' in step.get('run', ''))
 
+            cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
+            plant_run = 'python3 -I "$GITHUB_WORKSPACE/plants/run.py" --source .. --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/plants"'
+
+            def consumer_path(step):
+                return CAPS.just_consumer(step, vars(COMMANDS), cases)
+
             def write_steps(blocks):
                 body = ''.join(block if isinstance(block, str) else
                                yaml.safe_dump([block], sort_keys=False, width=1000) for block in blocks)
@@ -344,7 +350,7 @@ class Contracts(unittest.TestCase):
                 last = remaining.index(plant)
                 first = last
                 if name == 'just':
-                    first = next(i for i, step in enumerate(remaining) if CAPS.just_consumer(step, vars(COMMANDS)))
+                    first = next(i for i, step in enumerate(remaining) if consumer_path(step))
                 write_steps([*remaining[:first], install, *remaining[first:]])
                 CAPS.check_ci(root)
                 for position in range(first + 1, last + 2):
@@ -365,21 +371,42 @@ class Contracts(unittest.TestCase):
                         ('.', './.githooks/pre-commit', '.githooks/pre-commit'),
                         ('.', 'bash .githooks/pre-push', '.githooks/pre-push'),
                         ('.claude/hooks', 'python3 guard.py stop', '.claude/hooks/guard.py'),
-                        ('plants', 'python3 -I run.py --source .. --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/plants"'
-                                   ' --case candidate-judge-build', 'plants/run.py'),
+                        ('plants', plant_run, 'plants/run.py'),
+                        ('plants', plant_run + ' --case candidate-judge-build', 'plants/run.py'),
+                        ('plants', plant_run + ' --case=core-read --case candidate-attributes-honoured', 'plants/run.py'),
+                        ('plants', plant_run + ' --case "$CASE_ID"', 'plants/run.py'),
+                        ('scripts', 'bash "$GITHUB_WORKSPACE/scripts/tests/dogfood.sh"', 'scripts/tests/dogfood.sh'),
+                        ('scripts', 'python3 -I "${GITHUB_WORKSPACE}/.claude/hooks/test_guard.py"', '.claude/hooks/test_guard.py'),
+                        ('scripts', 'python3 -I $GITHUB_WORKSPACE/scripts/tests/managed_review_bundle.py',
+                         'scripts/tests/managed_review_bundle.py'),
+                        ('scripts', 'python3 -I -- "${GITHUB_WORKSPACE}"/scripts/checkout_just.py fast',
+                         'scripts/checkout_just.py'),
+                        ('scripts', 'env bash -- "${GITHUB_WORKSPACE}/scripts/ci_fast.sh"', 'scripts/ci_fast.sh'),
+                        ('scripts', '"$GITHUB_WORKSPACE/scripts/ci_local.sh"', 'scripts/ci_local.sh'),
+                        ('scripts', 'python3 -I "$GITHUB_WORKSPACE/.claude/hooks/guard.py" stop', '.claude/hooks/guard.py'),
+                        ('scripts', 'python3 ../.claude/hooks/guard.py pre && python3 ../.claude/hooks/guard.py stop',
+                         '.claude/hooks/guard.py'),
                     ):
                         with self.subTest(directory=directory, first_consumer=run):
                             consumer = {'working-directory': directory, 'run': run}
-                            later = [step for step in after if CAPS.just_consumer(step, vars(COMMANDS)) != expected]
+                            later = [step for step in after if consumer_path(step) != expected]
                             write_steps([*before, install, consumer, *later])
                             CAPS.check_ci(root)
                             write_steps([*before, consumer, install, *later])
                             with self.assertRaises(ValueError) as refused:
                                 CAPS.check_ci(root)
                             self.assertEqual(str(refused.exception), 'gate must install Just before running ' + expected)
-                    write_steps([*before, {'working-directory': 'scripts', 'run': 'bash dogfood.sh'}, install, *after])
-                    CAPS.check_ci(root)
-                    independent = [step for step in remaining[:last] if not CAPS.just_consumer(step, vars(COMMANDS))]
+                    for run in ('bash dogfood.sh', 'python3 -I ../.claude/hooks/guard.py pre',
+                                'python3 -I "${GITHUB_WORKSPACE}/.claude/hooks/guard.py" post',
+                                "bash '$GITHUB_WORKSPACE/scripts/tests/dogfood.sh'",
+                                plant_run + ' --case core-read', plant_run + ' --case=core-read --case unchecked-add',
+                                plant_run + ' --case=core-read --output="$RUNNER_TEMP/other"',
+                                plant_run + ' --runner ./cargo-backend --case core-read',
+                                plant_run + ' --help'):
+                        with self.subTest(independent=run):
+                            write_steps([*before, {'working-directory': 'scripts', 'run': run}, install, *after])
+                            CAPS.check_ci(root)
+                    independent = [step for step in remaining[:last] if not consumer_path(step)]
                     write_steps([*independent, install, plant, *remaining[last + 1:]])
                     CAPS.check_ci(root)
                     write_steps([*independent, plant, install, *remaining[last + 1:]])

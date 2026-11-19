@@ -211,15 +211,19 @@ def command_for(case, root, target, cargo_runner=None, exec_runner=None):
     return [*argv[:split], '--target-dir', str(target), *argv[split:]]
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, required=True, help='local repository, read only')
-    parser.add_argument('--revision', required=True, help='exact full lowercase commit id')
-    parser.add_argument('--output', type=Path, required=True, help='new private evidence directory')
+def add_arguments(parser, *, required_inputs=True):
+    parser.add_argument('--source', type=Path, required=required_inputs, help='local repository, read only')
+    parser.add_argument('--revision', required=required_inputs, help='exact full lowercase commit id')
+    parser.add_argument('--output', type=Path, required=required_inputs, help='new private evidence directory')
     backends = parser.add_mutually_exclusive_group()
     backends.add_argument('--runner', type=Path, help='trusted executable taking CHECKOUT then cargo arguments')
     backends.add_argument('--exec-runner', type=Path, help='trusted executable taking CHECKOUT PROGRAM ARGUMENTS')
     parser.add_argument('--case', action='append', help='case id; repeat to select; default all runnable')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
     args = parser.parse_args()
     if not re.fullmatch('[0-9a-f]{40}', args.revision):
         parser.error('revision must be an exact full lowercase commit id')

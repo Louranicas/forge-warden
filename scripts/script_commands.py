@@ -193,6 +193,7 @@ class Unsupported(ValueError):
 class Word:
     def __init__(self, line, raw, value, literal):
         self.line, self.raw, self.value, self.literal = line, raw, value, literal
+        self.argument = value
 
 
 class Lexer:
@@ -200,6 +201,10 @@ class Lexer:
 
     def __init__(self, text, line, sink):
         self.text, self.i, self.line, self.sink = text, 0, line, sink
+
+    @staticmethod
+    def call(line, word, external, tokens=None, start=0):
+        return line, word, external
 
     def error(self, why):
         raise Unsupported(f'line {self.line}: {why}')
@@ -278,12 +283,12 @@ class Lexer:
         body = '\n'.join(lines) + '\n'
         quoted = any(q in word.raw for q in '\'"\\')
         if not quoted and ('$(' in body or '`' in body):
-            Lexer(body, start, self.sink).double_quoted(stop=None)
+            type(self)(body, start, self.sink).double_quoted(stop=None)
         return ('heredoc', body, start, index)
 
     def substitution(self):
         start = self.line
-        nested = Lexer(self.text, self.line, self.sink)
+        nested = type(self)(self.text, self.line, self.sink)
         nested.i = self.i
         tokens = nested.tokens(closer=')')
         if any(t[0] == 'word' and t[1].value == 'case' for t in tokens):
@@ -299,7 +304,7 @@ class Lexer:
         if end < 0:
             self.error('unterminated backquote')
         inner = self.text[self.i:end]
-        self.sink(Lexer(inner, start, self.sink).tokens())
+        self.sink(type(self)(inner, start, self.sink).tokens())
         self.line += inner.count('\n')
         self.i = end + 1
 
@@ -331,7 +336,7 @@ class Lexer:
                 self.error('unterminated ${')
             inner = text[i + 2:j]
             if '$(' in inner or '`' in inner:
-                Lexer(inner, self.line, self.sink).double_quoted(stop=None)
+                type(self)(inner, self.line, self.sink).double_quoted(stop=None)
             self.i = j + 1
             return None
         if text.startswith("$'", i):
@@ -412,22 +417,57 @@ class Lexer:
         return Word(line, text[start:self.i], ''.join(value) if literal else None, literal)
 
 
-def shell_calls(text, line=1):
+class WorkflowLexer(Lexer):
+    workspace = '/\0GITHUB_WORKSPACE'
+    unknown = '\0dynamic'
+    variable = re.compile(r'\$(?:GITHUB_WORKSPACE(?![A-Za-z0-9_])|\{GITHUB_WORKSPACE\})')
+
+    def dollar(self):
+        match = self.variable.match(self.text, self.i)
+        if match:
+            self.i = match.end()
+            return self.workspace
+        value = super().dollar()
+        return self.unknown if value is None else value
+
+    def word(self):
+        word = super().word()
+        if word.value and self.unknown in word.value:
+            word.value, word.literal = None, False
+        return word
+
+    @staticmethod
+    def call(line, word, external, tokens=None, start=0):
+        if tokens is None:
+            return line, word, external, None
+        arguments = []
+        while start < len(tokens):
+            token = tokens[start]
+            if token[0] == 'redirect':
+                start += 2
+            elif token[0] == 'word':
+                arguments.append(token[1].argument)
+                start += 1
+            else:
+                break
+        return line, word, external, arguments
+
+
+def shell_calls(text, line=1, lexer=Lexer):
     """(line, word, external) for each command word of the shell text, nested substitutions
     included. external: the word is run by a prefix or by find, so no shell function can be it."""
     calls = []
 
     def sink(tokens):
-        calls.extend(command_words(tokens, calls))
+        calls.extend(command_words(tokens, calls, lexer))
 
-    lexer = Lexer(text, line, sink)
-    sink(lexer.tokens())
+    sink(lexer(text, line, sink).tokens())
     return calls
 
 
 def external(calls):
     """The same calls, none of which a shell function can answer (a prefix or Python runs them)."""
-    return [(line, word, True) for line, word, _ in calls if not word.startswith('()')]
+    return [(line, word, True, *args) for line, word, _, *args in calls if not word.startswith('()')]
 
 
 def shebang(line):
@@ -557,22 +597,22 @@ def stdin_runner(script):
     return None
 
 
-def flush_stdin(script, stdin_words, found, calls):
+def flush_stdin(script, stdin_words, found, calls, lexer):
     """At the end of a simple command: `bash < FILE`, `< FILE bash`, `0< FILE sh` run FILE, and
     `bash <<< 'TEXT'` runs TEXT. Returns the emptied list."""
     runner = stdin_runner(script) if stdin_words else None
     for operator, word in stdin_words if runner else []:
         if operator == '<<<' and word.literal:
             text = word.value
-            calls.extend(shell_calls(text, word.line) if runner == '(sh)' else python_calls(text, word.line))
+            calls.extend(shell_calls(text, word.line, lexer) if runner == '(sh)' else python_calls(text, word.line, lexer))
         elif operator == '<<<':
-            found.append((word.line, word.raw, True))  # a dynamic script text is named
+            found.append(lexer.call(word.line, word.raw, True))  # a dynamic script text is named
         elif word.literal:
-            found.append((word.line, runner + word.value, True))
+            found.append(lexer.call(word.line, runner + word.value, True))
     return []
 
 
-def command_words(tokens, calls):
+def command_words(tokens, calls, lexer):
     found, functions = [], set()
     expect, mode, prefix, owner, script = True, None, None, None, None
     finding = by_find = skip_parens = after_coproc = False
@@ -585,9 +625,9 @@ def command_words(tokens, calls):
             if first.startswith('#!'):
                 consumer = {'shell': 'bash', 'python': 'python3'}.get(shebang(first)[0])
             if consumer in SHELLS:
-                calls.extend(shell_calls(body, start))
+                calls.extend(shell_calls(body, start, lexer))
             elif consumer and PYTHONS.fullmatch(consumer):
-                calls.extend(python_calls(body, start))
+                calls.extend(python_calls(body, start, lexer))
             continue
         if kind == 'redirect':
             # Standard input (`<`, `0<`, `<>`, `0<>`, `<<<`), before or after the command word: decided at the
@@ -597,7 +637,7 @@ def command_words(tokens, calls):
             continue
         if kind == 'op':
             op = token[1]
-            stdin_words = flush_stdin(script, stdin_words, found, calls)
+            stdin_words = flush_stdin(script, stdin_words, found, calls, lexer)
             if mode == 'array':
                 if op == ')':
                     mode = None
@@ -659,11 +699,11 @@ def command_words(tokens, calls):
                 # The text of `trap '...'`, `bash -c '...'`, `env -S '...'` runs as shell;
                 # the text of `python3 -c '...'` runs as Python.
                 if not word.literal:
-                    found.append((word.line, word.raw, True))
+                    found.append(lexer.call(word.line, word.raw, True))
                 elif script == 'next':
-                    calls.extend(shell_calls(word.value, word.line))
+                    calls.extend(shell_calls(word.value, word.line, lexer))
                 else:
-                    calls.extend(python_calls(word.value, word.line))
+                    calls.extend(python_calls(word.value, word.line, lexer))
                 script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
@@ -674,13 +714,13 @@ def command_words(tokens, calls):
                 script, events = operand_word(script, word.value if word.literal else None, word.raw)
                 for event, text in events:
                     if event == 'shell':
-                        calls.extend(external(shell_calls(text, word.line)))
+                        calls.extend(external(shell_calls(text, word.line, lexer)))
                     elif event == 'python':
-                        calls.extend(python_calls(text, word.line))
+                        calls.extend(python_calls(text, word.line, lexer))
                     elif event == 'dynamic':
-                        found.append((word.line, text, True))
+                        found.append(lexer.call(word.line, text, True))
                     else:
-                        found.append((word.line, event + text, True))
+                        found.append(lexer.call(word.line, event + text, True, tokens, index + 1))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
@@ -691,7 +731,7 @@ def command_words(tokens, calls):
                 expect, script = False, 'next'
             elif prefix == 'env' and word.value.startswith(('-S', '--split-string=')):
                 text = word.value[2:] if word.value.startswith('-S') else word.value.split('=', 1)[1]
-                calls.extend(external(shell_calls(text, word.line)))
+                calls.extend(external(shell_calls(text, word.line, lexer)))
                 expect = False
             elif prefix == 'command' and word.value in ('-v', '-V'):
                 expect, prefix = False, 'probe'
@@ -733,7 +773,8 @@ def command_words(tokens, calls):
             continue
         if word.literal and value == 'eval':
             raise Unsupported(f'line {word.line}: eval')
-        found.append((word.line, value if word.literal else word.raw, prefix is not None or by_find))
+        found.append(lexer.call(word.line, value if word.literal else word.raw, prefix is not None or by_find,
+                                tokens, index + 1))
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
         owner = value.rsplit('/', 1)[-1] if word.literal else None
         prefix = owner if owner in PREFIXES else None
@@ -741,8 +782,8 @@ def command_words(tokens, calls):
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
-    flush_stdin(script, stdin_words, found, calls)
-    return found + [(0, '()' + name, False) for name in functions]
+    flush_stdin(script, stdin_words, found, calls, lexer)
+    return found + [lexer.call(0, '()' + name, False) for name in functions]
 
 
 def branches(node):
@@ -802,7 +843,7 @@ def argv_text(items):
     return ' '.join(py_word(item) for item in items)
 
 
-def python_calls(text, line=1):
+def python_calls(text, line=1, lexer=Lexer):
     """(line, command, True) for each process call whose program is a string literal: the call is
     turned into the shell text or command line it runs, which shell_calls reads."""
     tree = ast.parse(text)
@@ -858,7 +899,7 @@ def python_calls(text, line=1):
                     texts.append(argv_text([args[program]] + args[start:]))
         for shell_text in texts:
             if shell_text is not None:
-                found.extend(external(shell_calls(shell_text, line + node.lineno - 1)))
+                found.extend(external(shell_calls(shell_text, line + node.lineno - 1, lexer)))
     return found
 
 

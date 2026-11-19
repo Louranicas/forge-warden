@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Reviewed plant capabilities and fail-closed runtime/hosted provisioning checks."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -30,7 +31,7 @@ HOSTED = {'bash', 'coreutils', 'git', 'python3', 'sh', 'ssh-keygen'}
 JUST_CONSUMERS = {
     'scripts/tests/dogfood.sh', '.claude/hooks/test_guard.py', 'scripts/tests/managed_review_bundle.py',
     'scripts/checkout_just.py', 'scripts/ci_fast.sh', 'scripts/ci_local.sh', 'scripts/check_plants.py',
-    '.githooks/pre-commit', '.githooks/pre-push', '.claude/hooks/guard.py', 'plants/run.py',
+    '.githooks/pre-commit', '.githooks/pre-push',
 }
 
 
@@ -252,17 +253,41 @@ def installed_tool(step, values):
     return inputs['tool']
 
 
-def just_consumer(step, commands):
+def plant_needs_just(arguments, cases, unknown):
+    parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
+    runner = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'plants/run.py'))
+    runner['add_arguments'](parser, required_inputs=False)
+    parser.add_argument('-h', '--help', action='store_true')
+    try:
+        options, extra = parser.parse_known_args([arg if arg is not None else unknown for arg in arguments or ()])
+    except (argparse.ArgumentError, SystemExit) as error:
+        raise ValueError('cannot resolve plant runner options before Just installation') from error
+    if options.help:
+        return False
+    all_possible = not options.case or any(unknown in arg for arg in [*options.case, *extra])
+    return any('just' in case['required_tools'] and (all_possible or case['id'] in options.case)
+               and (options.runner is None or 'cargo' in case) for case in cases)
+
+
+def just_consumer(step, commands, cases):
     directory = step.get('working-directory', '.')
     if (not isinstance(directory, str) or not directory or '${{' in directory
             or commands['repo_path'](directory) is None):
         raise ValueError('cannot resolve gate working-directory before Just installation')
-    for _, word, _ in commands['shell_calls'](step.get('run', '')):
+    lexer = commands['WorkflowLexer']
+    for _, word, _, arguments in commands['shell_calls'](step.get('run', ''), lexer=lexer):
         marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
         target = Path(word.removeprefix(marker))
         if target.name == 'just':
             return 'just'
-        path = commands['repo_path'](str(Path(directory) / target))
+        path = str(Path(directory) / target).removeprefix(lexer.workspace + '/')
+        path = commands['repo_path'](path)
+        if path == '.claude/hooks/guard.py':
+            if arguments is None or (len(arguments) == 1 and
+                    (arguments[0] in ('stop', None) or lexer.unknown in arguments[0])):
+                return path
+        if path == 'plants/run.py' and plant_needs_just(arguments, cases, lexer.unknown):
+            return path
         if path in JUST_CONSUMERS:
             return path
     return None
@@ -297,7 +322,7 @@ def check_ci(root):
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
-            consumer = just_consumer(step, commands)
+            consumer = just_consumer(step, commands, cases)
             if consumer:
                 raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
