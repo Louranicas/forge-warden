@@ -33,6 +33,14 @@ refuse_save() {
     grep -Fq 'Failing-first check unverified' log
     [[ $(git write-tree) == "$index" && -z $(git stash list) ]]
 }
+refuse_save
+echo draft > notes
+refuse_save
+git add notes
+refuse_save
+[[ $(git show :notes) == draft && $(cat notes) == draft ]]
+git restore --source=HEAD --staged --worktree -- notes
+
 for kind in file symlink; do
     mv "$src/tree" "$src/moved"
     if [[ $kind == file ]]; then
@@ -164,3 +172,37 @@ done
 python3 -I scripts/restore_source.py "$(tail -n 1 log)"
 [[ $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
 [[ $(cat "$src/indented.rs") == '        fn working() {}' ]]
+
+lock="$(git rev-parse --git-path index).lock"
+printf 'busy\n' > "$lock"
+if bash scripts/stash_source.sh > log 2>&1; then exit 1; fi
+if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
+[[ $(cat "$lock") == busy && $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
+rm "$lock"
+
+mkdir "$scratch/bin"
+export FIXTURE_PATH="$PATH" RACE_LOG="$scratch/race" RACE_PATH="$src/indented.rs"
+export RACE_BLOB
+RACE_BLOB="$(printf 'concurrent selection\n' | git hash-object -w --stdin)"
+cat > "$scratch/bin/git" <<'SH'
+#!/usr/bin/env bash
+export PATH="$FIXTURE_PATH"
+case " $* " in
+    *' stash push '*|*' restore '*' --staged '*)
+        if env -u GIT_INDEX_FILE git update-index --cacheinfo "100644,$RACE_BLOB,$RACE_PATH"; then
+            exit 99
+        fi
+        echo blocked >> "$RACE_LOG"
+        ;;
+esac
+exec git "$@"
+SH
+chmod +x "$scratch/bin/git"
+stash="$(PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh | tail -n 1)"
+[[ $(cat "$RACE_LOG") == blocked ]]
+rm "$RACE_LOG"
+PATH="$scratch/bin:$PATH" python3 -I scripts/restore_source.py "$stash"
+[[ $(cat "$RACE_LOG") == blocked ]]
+[[ $(git show ":$RACE_PATH") == '        fn staged() {}' ]]
+git update-index --cacheinfo "100644,$RACE_BLOB,$RACE_PATH"
+[[ $(git show ":$RACE_PATH") == 'concurrent selection' ]]

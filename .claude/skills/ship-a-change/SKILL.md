@@ -13,8 +13,9 @@ could not run as **not verified**.
 1. **Fast gate**: `scripts/ci_fast.sh`. Must be green.
 2. **Docs build**: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`.
 3. **New behaviour has a failing-first test.** For each behaviour change, name the test and
-   confirm it fails without the change: stash the source change
-   with `just stash-source`. If it lists untracked files, stage the listed source before retrying.
+   confirm it fails without the change. For implementation changes under `crates/*/src/**`,
+   save the source with `just stash-source`. If it records no crate source stash, mark the check
+   **not verified**. If it lists untracked files, stage the listed source before retrying.
    Ignored Rust source also needs to be included. If a file or symlink replaces a directory, or a
    directory replaces either, the save refuses and leaves the changes in place. It also refuses when
    source edits are staged but the working source matches HEAD. Mark the failing-first check
