@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -432,8 +433,17 @@ class Contracts(unittest.TestCase):
                         with self.subTest(independent_shell=shell):
                             write_steps([*before, {'shell': shell, 'run': 'print("ready")'}, install, *after])
                             check_ci(root)
-                    for source in ("import pty as terminal; terminal.spawn(['just', '--version'])",
-                                   "from subprocess import run as launch; launch(['just', '--version'])"):
+                    linux = ("import sys\nif sys.platform == 'linux':\n"
+                             "    from subprocess import run as launch\n"
+                             "else:\n    def launch(*args): return args\n"
+                             "launch(['just', '--version'])")
+                    for source in (linux, "import pty as terminal; terminal.spawn(['just', '--version'])",
+                                   "from subprocess import run as launch; launch(['just', '--version'])",
+                                   "from subprocess import *; run(['just', '--version'])",
+                                   "import asyncio.subprocess as proc; import asyncio; "
+                                   "asyncio.run(proc.create_subprocess_exec(program='just'))",
+                                   "from asyncio.subprocess import *; import asyncio; "
+                                   "asyncio.run(create_subprocess_shell(cmd='just --version'))"):
                         with self.subTest(process_alias=source):
                             step = {'shell': 'python', 'run': source}
                             write_steps([*before, install, step, *after])
@@ -444,6 +454,9 @@ class Contracts(unittest.TestCase):
                     local_run = ("def run(**overrides): return overrides\n"
                                  "run(**{'args': ['just']})")
                     write_steps([*before, {'shell': 'python', 'run': local_run}, install, *after])
+                    check_ci(root)
+                    local_branches = linux.replace("from subprocess import run as launch", "def launch(*args): return args")
+                    write_steps([*before, {'shell': 'python', 'run': local_branches}, install, *after])
                     check_ci(root)
                     for shell in ('pwsh', 'python -m unittest {0}'):
                         with self.subTest(unsupported_shell=shell):
@@ -646,13 +659,62 @@ class Contracts(unittest.TestCase):
                 PLANTS.validate_report(dict(good, **{field: value}), "subject", ["one", "two"])
 
     def test_merge_queue_jobs_bind_both_subjects(self):
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        for job, end in (("mutation-plan", "dogfood"), ("dogfood", "vocabulary")):
-            body = workflow.split("\n  " + job + ":\n", 1)[1].split("\n  " + end + ":\n", 1)[0]
-            self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'merge_group'", body)
-            self.assertIn("github.event.pull_request.base.sha || github.event.merge_group.base_sha", body)
-            if job == "dogfood":
-                self.assertIn("github.event.pull_request.head.sha || github.event.merge_group.head_sha", body)
+        jobs = CAPS.workflow_jobs((ROOT / ".github/workflows/ci.yml").read_text())
+        evaluate = runpy.run_path(str(ROOT / "scripts/tests/runner_routing.py"))["evaluate"]
+        events = ("pull_request", "merge_group", "push")
+        contexts = [{"github.event_name": event, "github.sha": "e" * 40,
+                     "github.event.pull_request.base.sha": "a" * 40 if event == "pull_request" else "",
+                     "github.event.pull_request.head.sha": "b" * 40 if event == "pull_request" else "",
+                     "github.event.merge_group.base_sha": "c" * 40 if event == "merge_group" else "",
+                     "github.event.merge_group.head_sha": "d" * 40 if event == "merge_group" else ""}
+                    for event in events]
+        bases, heads = ["a" * 40, "c" * 40], ["b" * 40, "d" * 40]
+        workers = {"mutation-plan": "python3 -I scripts/mutation_ci.py plan diff",
+                   "mutation-shards": "python3 -I scripts/mutation_ci.py run diff"}
+
+        def check_field(mapping, key, read, expected, wrong):
+            self.assertEqual(read(mapping), expected)
+            with mock.patch.dict(mapping, {key: wrong}):
+                self.assertNotEqual(read(mapping), expected)
+
+        for name in (*workers, "dogfood"):
+            job = jobs[name]
+            steps = job["steps"]
+            with self.subTest(job=name):
+                if name == "mutation-shards":
+                    check_field(job, "needs", lambda job: job["needs"], ["mutation-plan"], [])
+                    check_field(job, "if", lambda job: job.get("if", "success()").removeprefix("${{")
+                                .removesuffix("}}").strip() in ("true", "success()"), True, "false")
+                else:
+                    def active(job):
+                        condition = job.get("if", "true")
+                        if not condition.startswith("${{"):
+                            condition = "${{ " + condition + " }}"
+                        return [evaluate(condition, context) for context in contexts]
+                    check_field(job, "if", active, [True, True, False], "false")
+
+                if name == "dogfood":
+                    worker, = (step for step in steps if any(
+                        word == "(sh)trusted/scripts/dogfood.sh"
+                        for _, word, _ in COMMANDS.shell_calls(step.get("run", ""))))
+                    refs = {"trusted": bases, "candidate": heads}
+                    env = {"BASE_SHA": bases, "HEAD_SHA": heads}
+                else:
+                    worker, = (step for step in steps if step.get("run") == workers[name])
+                    refs = {".": [context["github.sha"] for context in contexts[:2]]}
+                    env = {"BASE_SHA": bases}
+                checkouts = [step.get("with", {}) for step in steps
+                             if step.get("uses", "").partition("@")[0] == "actions/checkout"]
+                self.assertCountEqual([inputs.get("path", ".") for inputs in checkouts], refs.keys())
+                self.assertEqual(worker["env"].keys() & {"BASE_SHA", "HEAD_SHA"}, env.keys())
+                fields = [(inputs, "ref", refs[inputs.get("path", ".")]) for inputs in checkouts]
+                fields.extend((worker["env"], key, expected) for key, expected in env.items())
+                for mapping, key, expected in fields:
+                    with self.subTest(field=key, path=mapping.get("path")):
+                        def revisions(fields):
+                            expression = fields.get("ref", "${{ github.sha }}") if key == "ref" else fields[key]
+                            return [evaluate(expression, context) for context in contexts[:2]]
+                        check_field(mapping, key, revisions, expected, "${{ 'wrong-revision' }}")
 
     def test_required_perimeter_is_owned(self):
         paths = set((ROOT / "protected-paths.txt").read_text().splitlines())
@@ -907,6 +969,39 @@ class GateImageCommands(unittest.TestCase):
         """)
         found = self.problems({"t.py": source})
         self.assertEqual(found, ["t.py:10: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)"])
+
+    def test_exported_process_commands_in_tracked_and_nested_python(self):
+        for source in (
+            "import asyncio.subprocess; asyncio.run(asyncio.subprocess.create_subprocess_exec(program='cmp'))",
+            "import asyncio.subprocess as proc; import asyncio; asyncio.run(proc.create_subprocess_shell(cmd='cmp a b'))",
+            "from asyncio.subprocess import create_subprocess_exec as launch; import asyncio; asyncio.run(launch('cmp'))",
+            "from asyncio import *; run(create_subprocess_exec(program='cmp'))",
+            "from asyncio.subprocess import *; import asyncio; asyncio.run(create_subprocess_shell('cmp a b'))",
+            "from subprocess import *; run(['cmp'])",
+            "from os import *; system('cmp a b')",
+            "from pty import *; spawn(['cmp'])",
+        ):
+            with self.subTest(source=source):
+                found = self.problems({"t.py": source, "nested.sh": 'python3 -c ' + shlex.quote(source)})
+                self.assertCountEqual(found, [path + ":1: calls `cmp`, which the gate image does not declare "
+                                              "(scripts/script_commands.py)" for path in ("t.py", "nested.sh")])
+
+    def test_conditional_imports_retain_reachable_process_calls(self):
+        for bindings in (
+            "if linux:\n    from subprocess import run as launch\nelse:\n    def launch(*args): pass",
+            "if linux:\n    def launch(*args): pass\nelse:\n    from subprocess import run as launch",
+            "from subprocess import run as launch\nif linux:\n    launch = print",
+            "import subprocess\nlaunch = subprocess.run if linux else print",
+            "try:\n    from subprocess import run as launch\nexcept ImportError:\n    launch = print",
+            "from subprocess import run as launch\nlinux or (launch := print)",
+            "from subprocess import run as launch\nfor item in []:\n    launch = print",
+            "match linux:\n    case True:\n        from subprocess import run as launch\n    case _:\n        launch = print",
+        ):
+            with self.subTest(bindings=bindings):
+                source = "import sys\nlinux = sys.platform == 'linux'\n" + bindings + "\nlaunch(['cmp'])"
+                found = self.problems({"t.py": source})
+                self.assertEqual(found, [f"t.py:{len(source.splitlines())}: calls `cmp`, which the gate image "
+                                         "does not declare (scripts/script_commands.py)"])
 
     def test_unpacked_process_keywords_refuse_tracked_scripts(self):
         unpacked = "from subprocess import run; run(**{'args': ['cmp', 'a', 'b']})"
