@@ -3,7 +3,8 @@
 This is the procedure for running forge-warden in **authority mode** on one Linux machine: the only
 mode whose verdict can be `pass`. Each step says what to run and how to check it worked; do them in
 order and stop at the first check that fails. Advisory mode (a supplied ranking, at best `hold`) needs
-steps 1, 2, 3 and 5 and the advisory commands at the end of step 6; it needs no Git allowlist.
+steps 1, 2, 3 and 5. In step 6, run the shared patch setup and then the advisory commands in the
+same Bash session. Advisory mode needs no Git allowlist.
 
 Two steps are owner acts that need root: installing the Git allowlist (step 4) and, if you choose,
 pinning a different deep-diff-forge (step 3). Everything else runs as an ordinary user.
@@ -113,9 +114,16 @@ change to a protected path `hold` (exit 8), a wrong `[producer]` digest exit 4, 
 unenrolled Git exit 3. That proves the commands and the refusals, not an owner-held allowlist. The
 advisory commands below were run as written.
 
+For either mode, first create a private evidence directory and write the patch.
+
 ```bash
 evidence="$(mktemp -d)" || exit 1
-bash make_patch.sh main HEAD > "$evidence/change.patch"
+bash make_patch.sh main HEAD > "$evidence/change.patch" || exit 1
+```
+
+For authority mode, run the following in the same Bash session.
+
+```bash
 forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
   --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > "${evidence:?}/verdict.json"
 echo "exit $?"
@@ -155,7 +163,7 @@ Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a r
 next step on stderr. An authority refusal leaves `$evidence/verdict.json` empty. `forge-warden schema exit-codes` lists them all.
 
 Advisory mode instead (no allowlist needed; the best result is `hold`, exit 8): rank the patch
-yourself and hand the ranking over. Use the same evidence directory and Bash session as above.
+yourself and hand the ranking over. Run the shared patch setup above first, then run these commands in that Bash session.
 
 ```bash
 "$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < "${evidence:?}/change.patch" > "${evidence:?}/rank.json"

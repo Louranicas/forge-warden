@@ -55,9 +55,11 @@ stash-source:
     set -eu
     unset "${!GIT_@}"
     sources=':(glob)crates/*/src/**'
-    untracked="$(git ls-files --others -- "$sources")"
-    if [[ -n $untracked ]]; then
-        printf 'Failing-first check unverified. Stage the new source before saving:\n%s\n' "$untracked" >&2
+    untracked="$(git ls-files --others --exclude-standard -- "$sources")"
+    ignored_rust="$(git ls-files --others --ignored --exclude-standard -- ':(glob)crates/*/src/**/*.rs')"
+    if [[ -n $untracked || -n $ignored_rust ]]; then
+        echo 'Failing-first check unverified. Stage the new source before saving:' >&2
+        printf '%s\n' ${untracked:+"$untracked"} ${ignored_rust:+"$ignored_rust"} >&2
         exit 1
     fi
     tracked="$(git status --porcelain=v1 --no-renames --untracked-files=no -- "$sources")"
@@ -71,35 +73,7 @@ stash-source:
 
 [positional-arguments]
 restore-source object:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    unset "${!GIT_@}"
-    [[ $1 =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || { echo 'expected a full stash object ID' >&2; exit 2; }
-    scratch="$(mktemp -d)"
-    trap 'rm -rf -- "$scratch"' EXIT
-    sources=(':(glob)crates/*/src/**')
-    staged="$(git --no-replace-objects rev-parse --verify "$1^2^{tree}")"
-    worktree="$(git --no-replace-objects rev-parse --verify "$1^{tree}")"
-    git diff --name-only --no-renames -z "$1^1" -- "${sources[@]}" > "$scratch/changed"
-    git diff --cached --name-only --no-renames -z "$1^1" -- "${sources[@]}" >> "$scratch/changed"
-    git ls-files --others -z -- "${sources[@]}" >> "$scratch/changed"
-    while IFS= read -r -d '' path; do
-        original="$(git --literal-pathspecs ls-tree -r "$1^1" -- "$path")"
-        saved_index="$(git --no-replace-objects --literal-pathspecs ls-tree -r "$staged" -- "$path")"
-        saved_worktree="$(git --no-replace-objects --literal-pathspecs ls-tree -r "$worktree" -- "$path")"
-        if [[ $original != "$saved_index" || $original != "$saved_worktree" ]]; then
-            echo 'Source changed since the stash was saved. Resolve the overlapping edits before restoring.' >&2
-            exit 1
-        fi
-        sources+=(":(exclude,literal)$path")
-    done < "$scratch/changed"
-    for layer in worktree staged; do
-        tree="${!layer}"
-        git --no-replace-objects ls-files --with-tree="$tree" -z -- "${sources[@]}" > "$scratch/paths"
-        if [[ -s $scratch/paths ]]; then
-            git --no-replace-objects --literal-pathspecs restore --source="$tree" "--$layer" --pathspec-from-file="$scratch/paths" --pathspec-file-nul
-        fi
-    done
+    python3 -I scripts/restore_source.py "$1"
 
 judge-bound:
     #!/usr/bin/env bash
