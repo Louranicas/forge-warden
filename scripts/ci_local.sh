@@ -6,9 +6,9 @@
 # local-tools check itself does run here, below: tool_versions.py --check-local-tools.) `just ci`
 # calls this.
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
 # Hook-exported Git state must not redirect scratch-repository commands.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
+cd "$(git rev-parse --show-toplevel)"
 export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
 step tool-versions; python3 -I scripts/tool_versions.py --check

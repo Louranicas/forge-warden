@@ -133,6 +133,8 @@ run_gate() {
   exit 1
  fi
 }
+git worktree add --quiet --detach "$sandbox/base" "$root_id"
+base_git="$(git -C "$sandbox/base" rev-parse --absolute-git-dir)"
 gate="$TEST_ROOT/scripts/ci_local.sh"
 for entry in "$gate" "$sandbox/pre-push"; do
  rm -rf "$TEST_ROOT/target"
@@ -141,7 +143,7 @@ for entry in "$gate" "$sandbox/pre-push"; do
  for JUDGE_EXIT in 0 3 4 7 8 9; do
   export JUDGE_EXIT
   rm -f "$TEST_ROOT/judged-patch" "$TEST_ROOT/mutated-diff"
-  run_gate "$entry" "$JUDGE_EXIT"
+  GIT_DIR="$base_git" GIT_WORK_TREE="$sandbox/base" run_gate "$entry" "$JUDGE_EXIT"
   patch="$(cat "$TEST_ROOT/judged-patch")"
   mutation_diff="$(cat "$TEST_ROOT/mutated-diff")"
   [[ ! -e "$patch" && ! -e "$mutation_diff" && "$patch" != "$previous_patch" && "$mutation_diff" != "$previous_diff" ]]

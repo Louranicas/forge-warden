@@ -307,12 +307,7 @@ echo 'PASS make_patch tells unrelated histories from a Git failure (shallow clon
 # `ignore = all`; with that file alone, a `git diff` without the two submodule options leaves the
 # gitlink out and the rest of the change is judged without it. The script's diff runs in another
 # repository, so its rows pass with or without the options; the by-hand rows are the ones that
-# fail without them. They run the option line read from the script, and the README and the
-# runbook must print that same line, so the three cannot drift apart.
-# M7-WORKTREE-ATTACK W1: the change also commits `.gitattributes` with `*.rs -diff`. Read from the
-# work tree, it makes Git write `build.rs` as a binary section the ranker cannot read. The
-# documented command takes attributes from the empty tree, as the script does; a control row
-# shows the same command without those two options gives other bytes.
+# fail without them.
 git clone -q --no-local "$trusted" "$sandbox/sub-candidate"
 sub="$sandbox/sub-candidate"
 fixture_commit() { git -C "$sub" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm "$1"; }
@@ -340,39 +335,44 @@ for setting in diff.ignoreSubmodules=all diff.submodule=log; do
  same_bytes "$sub_patch" "$sandbox/made.patch" || { echo "FAIL submodule: candidate config $setting shaped make_patch's patch"; exit 1; }
  echo "PASS make_patch candidate config $setting does not hide the submodule change"
 done
-by_hand="$(sed -n 's/^  \(diff --no-ext-diff .*\) \\$/\1/p' "$maker")"
-if [ "$(printf '%s\n' "$by_hand" | grep -c -- '--dst-prefix=b/')" != 1 ]; then
- echo "FAIL by hand: make_patch.sh has no single line of diff options: $by_hand"
- exit 1
-fi
-attr_options='--attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null'
-grep -qF "\`git $attr_options $by_hand <base>...<head>\`" "$source_root/README.md" || { echo "FAIL by hand: README.md does not print: git $attr_options $by_hand <base>...<head>"; exit 1; }
-grep -qF "\`git $attr_options $by_hand main...HEAD\`" "$source_root/docs/RUNBOOK.md" || { echo "FAIL by hand: docs/RUNBOOK.md does not print: git $attr_options $by_hand main...HEAD"; exit 1; }
-echo 'PASS the README and the runbook print the diff command make_patch.sh runs'
 grep -q '^diff --git a/build.rs b/build.rs$' "$sub_patch" && grep -q '^+fn beside_the_bump() {}$' "$sub_patch" || { echo 'FAIL attributes: make_patch did not write build.rs as text'; exit 1; }
-empty_tree="$(git -C "$sub" hash-object -t tree /dev/null)"
-# shellcheck disable=SC2086
-git -C "$sub" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
-if same_bytes "$sub_patch" "$sandbox/made.patch" || grep -q '^+fn beside_the_bump() {}$' "$sandbox/made.patch"; then
- echo 'FAIL attributes control: without the attribute options the committed *.rs -diff should hide build.rs'
+git -C "$sub" diff "$sub_base...$sub_head" -- build.rs > "$sandbox/made.patch"
+if grep -q '^+fn beside_the_bump() {}$' "$sandbox/made.patch"; then
+ echo 'FAIL attributes control: the committed *.rs -diff should hide the build.rs hunk'
  exit 1
 fi
-echo 'PASS attributes control: without the attribute options build.rs becomes a binary section'
-by_hand_row() {
- name="$1"; shift
- # The option line is split into words on purpose, as a shell would split the documented command.
- # shellcheck disable=SC2086
- git -C "$sub" --attr-source="$empty_tree" -c core.attributesFile=/dev/null "$@" $by_hand "$sub_base...$sub_head" > "$sandbox/made.patch"
- if ! same_bytes "$sub_patch" "$sandbox/made.patch"; then
-  echo "FAIL by hand $name: the documented command does not give make_patch's patch ($(grep -c '^diff --git a/scripts/sub ' "$sandbox/made.patch" || true) submodule sections)"
-  exit 1
- fi
- echo "PASS by hand $name: the documented command keeps the submodule change"
+git -C "$sub" checkout --quiet --detach "$sub_head"
+git -C "$sub" branch -f main "$sub_base"
+python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" <<'PYDOC'
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+
+source, repo, base, head, patch = sys.argv[1:]
+expected = Path(patch).read_bytes()
+empty = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, text=True).strip()
+read_only = {
+    '--attr-source=' + empty, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff',
+    '--no-textconv', '--no-color', '--no-relative', '--binary', '--no-renames', '--full-index',
+    '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '--ignore-submodules=none',
+    base + '...' + head, 'main...HEAD',
 }
-by_hand_row the-changes-own-gitmodules-ignore-all
-by_hand_row ignore-submodules-all -c diff.ignoreSubmodules=all
-by_hand_row submodule-log -c diff.submodule=log
-by_hand_row submodule-diff -c diff.submodule=diff
+for document in ('README.md', 'docs/RUNBOOK.md'):
+    spans = re.findall(r'`(git\s+[^`]+)`', (Path(source) / document).read_text())
+    command, = [span for span in spans if '...' in span and 'diff' in shlex.split(span)]
+    args = shlex.split(command.replace('$(git hash-object -t tree /dev/null)', empty)
+                       .replace('<base>', base).replace('<head>', head))[1:]
+    if set(args) - read_only:
+        sys.exit(f'{document}: unsupported argument in documented Git diff')
+    for setting in (None, 'diff.ignoreSubmodules=all', 'diff.submodule=log', 'diff.submodule=diff'):
+        config = ['-c', setting] if setting else []
+        actual = subprocess.check_output(['git', *config, *args], cwd=repo)
+        if actual != expected:
+            sys.exit(f'FAIL {document}: patch differs from make_patch with {setting or "default configuration"}')
+    print(f'PASS {document} produces the same attribute and submodule patch as make_patch')
+PYDOC
 # Every local run so far left the curl log empty: none of them downloaded the ranker.
 test ! -s "$CURL_LOG" || { cat "$CURL_LOG"; echo 'FAIL a local run called curl'; exit 1; }
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop

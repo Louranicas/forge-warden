@@ -37,10 +37,8 @@ def aggregate(plan, shards):
 
 def inventory(scope):
     # A caller's target/config must not redirect or reduce mutation coverage.
-    env = dict(os.environ)
-    for key in ('CARGO_TARGET_DIR', 'GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS',
-                'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS'):
-        env.pop(key, None)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith('GIT_') and key != 'CARGO_TARGET_DIR'}
     command = ['cargo', 'mutants', '--no-config', '--cap-lints', 'true',
                '--workspace', '--no-shuffle', '--jobs', '1', '--cargo-arg=--locked']
     empty_diff = False

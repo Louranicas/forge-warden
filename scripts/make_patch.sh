@@ -95,8 +95,6 @@ empty_tree="$(git --git-dir="$scratch/diff.git" hash-object -t tree /dev/null)"
 # A submodule change is always written as its `diff --git` section with mode 160000. In a work
 # tree, `diff.ignoreSubmodules` or `ignore = all` in `.gitmodules` (a file the change itself can
 # commit) leaves it out, and `diff.submodule=log` writes a line no patch reader takes as a change.
-# The diff options are one line: scripts/tests/dogfood.sh reads it, runs it by hand, and checks
-# that the README and the runbook print the same command.
 git --git-dir="$scratch/diff.git" "${nograph[@]}" --attr-source="$empty_tree" -c core.attributesFile=/dev/null \
   -c core.quotePath=true \
   diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none \

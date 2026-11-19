@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 # Runs the full local replica of CI before anything leaves the machine.
 set -euo pipefail
+while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 exec "$(git rev-parse --show-toplevel)/scripts/ci_local.sh"
