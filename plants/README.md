@@ -93,7 +93,7 @@ Batch 5 adds an external-consumer private-constructor probe, a measured normal-c
 B7 v3 compatibility: string-slice targets the named fail-safe helper; unreviewed-default now
 plants the fail-open raw `unwrap_or(0)` at the file-count conversion and requires the compiler's
 `disallowed_methods` diagnostic. It no longer relies on removing a comment marker. The swallowed
-judge-exit recipe targets D8's explicit advisory command. Those three recipe updates preserved
+judge-exit recipe checks that the local gate propagates the bound judge’s exit status. Those three recipe updates preserved
 the original 38-case count and require fresh baselines, named red diagnostics and clean restoration.
 
 Post-C1c additions exercise missing-patch usage errors mapped to success, an omitted-file coverage
@@ -108,10 +108,9 @@ stronger controls proposed in the register remain outside these observations. G-
 checks that a missing-patch usage refusal cannot report success. G-15 qualifies an explicitly
 admitted fixture binary digest, not its release string, provenance, or hostile-runtime isolation.
 
-A second G-17 plant covers the authority command. Its small adapter runs the maintained shell
-fixture suite in a private copy and adds a named diagnostic to the existing exact-exit assertion,
-without relaxing that assertion or changing checked-out source. These controlled command fixtures
-prove script exit propagation; they do not qualify a live ranker or hosted admission.
+The second G-17 plant checks that the pre-push hook propagates the local gate’s exit status.
+Both plants run `bash scripts/tests/ci_local.sh`. If either boundary swallows exit 3, the fixture
+names the entry point and reports the observed exit 0.
 
 The three retired rows were retired from 1.0 by owner decision D3 (2026-11-16): nothing of this project runs at
 GitHub, so the GitHub-shaped guardrails do not apply. G-38 (required check names, a GitHub ruleset feature) and

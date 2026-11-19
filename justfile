@@ -30,7 +30,8 @@ mutants:
     trap 'rm -f -- "$mutation_diff"' EXIT
     comparison="$(bash scripts/make_patch.sh --resolve-comparison refs/remotes/origin/main HEAD)"
     read -r _ mutation_base <<< "$comparison"
-    git --no-replace-objects diff --no-ext-diff --no-textconv --text --no-color --src-prefix=a/ --dst-prefix=b/ "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
+    unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
+    git --no-replace-objects -c core.quotePath=false diff --no-ext-diff --no-textconv --text --no-color --src-prefix=a/ --dst-prefix=b/ "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
     env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace
 
 # Check the signal vocabulary against a deep-diff-forge checkout or commit.

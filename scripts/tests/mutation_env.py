@@ -30,7 +30,7 @@ class MutationEnvironment(unittest.TestCase):
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
             (root / "scripts/make_patch.sh").write_text('if [ "$1" = --resolve-comparison ]; then echo "base base"; fi\n')
             scripts = {
-                "git": '#!/bin/sh\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nshow-ref) echo tip;;\n--no-replace-objects|diff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',
+                "git": '#!/bin/sh\nif [ "$1" = --no-replace-objects ]; then shift; fi\nwhile [ "$1" = -c ]; do shift 2; done\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nshow-ref) echo tip;;\ndiff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',
                 "cargo": '#!/usr/bin/env python3\nimport json,os,sys\nif sys.argv[1] == "mutants":\n if "--list" in sys.argv:\n  print("[]"); sys.exit(0)\n with open(os.environ["RECEIPT"],"w") as f: json.dump({"target":os.environ.get("CARGO_TARGET_DIR"),"args":sys.argv[2:]},f)\n sys.exit(2)\n',
             }
             for name in ("cargo-deny", "cargo-mutants", "zizmor"):

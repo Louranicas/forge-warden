@@ -38,7 +38,9 @@ def aggregate(plan, shards):
 def inventory(scope):
     # A caller's target/config must not redirect or reduce mutation coverage.
     env = dict(os.environ)
-    env.pop('CARGO_TARGET_DIR', None)
+    for key in ('CARGO_TARGET_DIR', 'GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS',
+                'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS'):
+        env.pop(key, None)
     command = ['cargo', 'mutants', '--no-config', '--cap-lints', 'true',
                '--workspace', '--no-shuffle', '--jobs', '1', '--cargo-arg=--locked']
     empty_diff = False
@@ -46,9 +48,10 @@ def inventory(scope):
         base = env.get('BASE_SHA', '')
         if not re.fullmatch('[0-9a-f]{40}', base):
             raise ValueError('BASE_SHA must be the full trusted base SHA')
-        diff = subprocess.check_output(['git', 'diff', '--no-ext-diff', '--no-textconv', '--text',
+        diff = subprocess.check_output(['git', '-c', 'core.quotePath=false', 'diff',
+                                        '--no-ext-diff', '--no-textconv', '--text',
                                         '--no-color', '--src-prefix=a/', '--dst-prefix=b/',
-                                        base + '...HEAD', '--', 'crates/*/src/**.rs'])
+                                        base + '...HEAD', '--', 'crates/*/src/**.rs'], env=env)
         Path('pr.diff').write_bytes(diff)
         empty_diff = not diff
         command += ['--in-diff', 'pr.diff']

@@ -79,7 +79,7 @@ if command == "mutants":
     parser.add_argument("--cap-lints", required=True, choices=["true"])
     parser.add_argument("--in-diff", required=True, type=Path)
     diff = parser.parse_args(args).in_diff
-    expected = {"--- a/crates/sample/src/lib.rs", "+++ b/crates/sample/src/lib.rs",
+    expected = {"--- a/crates/sample/src/café.rs", "+++ b/crates/sample/src/café.rs",
                 "--- /dev/null", "+++ b/crates/sample/src/other.rs",
                 "-original", "+fixture", "+binary-marked"}
     if not expected.issubset(diff.read_text().splitlines()):
@@ -102,11 +102,11 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 cd "$TEST_ROOT"
 git init -q
 mkdir -p crates/sample/src
-printf 'original\n' > crates/sample/src/lib.rs
-git add crates/sample/src/lib.rs
+printf 'original\n' > crates/sample/src/café.rs
+git add crates/sample/src/café.rs
 git commit -qm root
 root_id="$(git rev-parse HEAD)"
-printf 'fixture\n' > crates/sample/src/lib.rs
+printf 'fixture\n' > crates/sample/src/café.rs
 printf 'binary-marked\n' > crates/sample/src/other.rs
 git add crates/sample/src
 git commit -qm head
@@ -121,7 +121,7 @@ git config --local diff.mnemonicPrefix true
 git config --local color.diff always
 git config --local diff.external true
 git config --local diff.silent.textconv true
-printf 'lib.rs diff=silent\nother.rs -diff\n' > .git/info/attributes
+printf 'café.rs diff=silent\nother.rs -diff\n' > .git/info/attributes
 
 run_gate() {
  local entry="$1" expected="$2" actual=0
