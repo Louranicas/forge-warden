@@ -23,15 +23,15 @@ def worktree_env():
     return env
 
 
-def run_git(*args, env, **kwargs):
+def run_git(*args, env, data=None, capture_output=False, check=False):
     return subprocess.run(["git", "-c", "core.fsmonitor=false", "-c", "core.ignoreStat=false",
                            "-c", "core.checkStat=default", "-c", "core.trustctime=true",
                            "-c", "core.fileMode=true", "-c", "submodule.recurse=false",
-                           *args], env=env, **kwargs)
+                           *args], env=env, input=data, capture_output=capture_output, check=check)
 
 
 def git(*args, env, data=None):
-    result = run_git("-c", "core.untrackedCache=false", *args, env=env, input=data, capture_output=True)
+    result = run_git("-c", "core.untrackedCache=false", *args, env=env, data=data, capture_output=True)
     if result.returncode or result.stderr:
         sys.stderr.buffer.write(result.stderr)
         sys.exit("Working-tree scan unverified.")

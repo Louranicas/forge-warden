@@ -320,12 +320,6 @@ class Contracts(unittest.TestCase):
             cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
             plant_run = 'python3 -I "$GITHUB_WORKSPACE/plants/run.py" --source .. --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/plants"'
 
-            def needs_installer(step):
-                try:
-                    return bool(CAPS.just_consumer(step, vars(COMMANDS), cases))
-                except (ValueError, SyntaxError):
-                    return True
-
             class LiteralRun(str):
                 pass
 
@@ -379,19 +373,23 @@ class Contracts(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             check_ci(root)
                 remaining = [*before, *after]
-                last = remaining.index(plant)
-                first = last
-                if name == 'just':
-                    first = next(i for i, step in enumerate(remaining[:last + 1]) if needs_installer(step))
-                write_steps([*remaining[:first], install, *remaining[first:]])
-                check_ci(root)
-                for position in range(first + 1, last + 2):
-                    with self.subTest(tool=name, after=remaining[position - 1]):
-                        write_steps([*remaining[:position], install, *remaining[position:]])
-                        with self.assertRaises((ValueError, SyntaxError)):
+                dogfood = 'bash scripts/tests/dogfood.sh'
+                remaining.insert(index if name == 'just' else remaining.index(plant), {'run': dogfood})
+                first = index if name == 'just' else remaining.index(plant)
+                for position in range(first, remaining.index(plant) + 2):
+                    with self.subTest(tool=name, position=position):
+                        moved = remaining.copy()
+                        moved.insert(position, steps[index])
+                        write_steps(moved)
+                        decoded = CAPS.workflow_jobs(path.read_text())['gate']['steps']
+                        self.assertEqual(decoded.pop(position), install)
+                        self.assertEqual(decoded, remaining)
+                        if position == first:
                             check_ci(root)
+                        else:
+                            with self.assertRaises(ValueError):
+                                check_ci(root)
                 if name == 'just':
-                    dogfood = 'bash scripts/tests/dogfood.sh'
                     for step in ({'run': '\n' + dogfood + '\n'},
                                  {'run': dogfood + '\n'},
                                  {'run': 'true\n' + dogfood},
@@ -418,7 +416,6 @@ class Contracts(unittest.TestCase):
                     for shell in ('pwsh', 'python -m unittest {0}'):
                         with self.subTest(unsupported_shell=shell):
                             step = {'shell': shell, 'run': 'true'}
-                            self.assertTrue(needs_installer(step))
                             write_steps([*before, install, step, *after])
                             self.assertTrue(path.read_bytes().endswith(original[offsets[index + 1]:].encode()))
                             check_ci(root)
@@ -551,12 +548,6 @@ class Contracts(unittest.TestCase):
                         with self.subTest(independent=run):
                             write_steps([*before, {'working-directory': 'scripts', 'run': run}, install, *after])
                             check_ci(root)
-                    independent = remaining[:first]
-                    write_steps([*independent, install, plant, *remaining[last + 1:]])
-                    check_ci(root)
-                    write_steps([*independent, plant, install, *remaining[last + 1:]])
-                    with self.assertRaises(ValueError):
-                        check_ci(root)
             for target in (compiler, plant):
                 write_steps([dict(step, **{'if': 'false'}) if step == target else step for step in steps])
                 with self.assertRaises(ValueError):
@@ -862,6 +853,19 @@ class GateImageCommands(unittest.TestCase):
         found = self.problems({"t.py": "from subprocess import run as sh\nsh(['cmp', 'a', 'b'])\n"})
         self.assertEqual(len(found), 1, found)
         self.assertTrue(found[0].startswith("t.py:2: calls `cmp`"), found)
+
+    def test_unpacked_process_keywords_refuse_tracked_scripts(self):
+        unpacked = "from subprocess import run; run(**{'args': ['cmp', 'a', 'b']})"
+        found = self.problems({
+            "unpacked.py": unpacked,
+            "nested.sh": f'python3 -c "{unpacked}"\n',
+            "explicit.py": "from subprocess import run; run(args=['cmp', 'a', 'b'])",
+        })
+        self.assertCountEqual(found, [
+            "unpacked.py: not read: cannot resolve unpacked Python process keywords",
+            "nested.sh: not read: cannot resolve unpacked Python process keywords",
+            "explicit.py:1: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)",
+        ])
 
     def test_a_file_a_call_runs_is_read_in_that_language(self):
         """Round 3 (Bastion): a tracked file run or sourced by a literal path is read in the

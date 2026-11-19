@@ -965,8 +965,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
             continue
         args = list(node.args)
         keywords = {item.arg: item.value for item in node.keywords}
-        if directory is not None and None in keywords:
-            raise Unsupported('cannot resolve unpacked Python process keywords before Just installation')
+        if None in keywords:
+            raise Unsupported('cannot resolve unpacked Python process keywords')
         texts = []
         if name in PY_SHELL_TEXT:
             first = args[0] if args else keywords.get('cmd', keywords.get('command'))

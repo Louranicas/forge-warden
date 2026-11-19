@@ -315,10 +315,10 @@ class Guard(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "JUST_"))}
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
-        def run(*args, **overrides):
+        def run(args, overrides):
             return subprocess.run(args, cwd=self.root, env={**env, **overrides}, capture_output=True)
 
-        run("git", "init", "-q", "--template=").check_returncode()
+        run(["git", "init", "-q", "--template="], {}).check_returncode()
         ran = self.root / ".git/ran"
         recorder = self.root / ".git/record"
         recorder.write_text("#!/bin/sh\ntouch .git/ran\n")
@@ -333,13 +333,13 @@ class Guard(unittest.TestCase):
                 with self.subTest(command=command):
                     script = scripts / gate
                     shutil.copy2(recorder, script)
-                    run(*command, **overrides).check_returncode()
+                    run(command, overrides).check_returncode()
                     self.assertTrue(ran.exists())
                     ran.unlink()
                     saved = self.root / ".git/scripts"
                     scripts.rename(saved)
                     scripts.symlink_to(saved)
-                    result = run(*command, **overrides)
+                    result = run(command, overrides)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(gate.encode(), result.stderr)
                     self.assertFalse(ran.exists())
@@ -347,7 +347,7 @@ class Guard(unittest.TestCase):
                     saved.rename(scripts)
                     script.unlink()
                     script.symlink_to(recorder)
-                    result = run(*command, **overrides)
+                    result = run(command, overrides)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(gate.encode(), result.stderr)
                     self.assertFalse(ran.exists())
