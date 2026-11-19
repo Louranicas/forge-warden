@@ -72,7 +72,7 @@ cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
 ```
 
 For an advisory check, use the `judge` launcher in [Claude settings](.claude/settings.json#L16).
-It ranks committed changes from the merge base of `refs/remotes/origin/main` and `HEAD` to `HEAD`. Its best result is a hold.
+It ranks committed changes from the merge base of the local branch `refs/heads/main` and `HEAD` to `HEAD`. Its best result is a hold.
 
 ## Subagents and skills
 

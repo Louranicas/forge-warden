@@ -276,6 +276,24 @@ for role in candidate trusted; do
  [[ ! -e "$sandbox/refused" ]]
 done
 git clone -q --bare "$attr" "$sandbox/mirror.git"
+mkdir "$sandbox/redirected" "$sandbox/git-probe"
+ln -s "$sandbox/mirror.git" "$sandbox/redirected/.git"
+cat > "$sandbox/git-probe/git" <<'SH'
+#!/bin/sh
+touch "$PROBE_RECEIPT"
+exit 91
+SH
+chmod +x "$sandbox/git-probe/git"
+(
+ cd "$sandbox/redirected"
+ export PATH="$sandbox/git-probe:$PATH" PROBE_RECEIPT="$sandbox/git-called"
+ for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. .; do
+  if [[ "$entry" = . ]]; then cd -L .git; fi
+  actual=0
+  bash "$maker" "$base" "$attr_head" "$entry" > "$sandbox/made.patch" 2> "$sandbox/made.err" || actual=$?
+  [[ "$actual" = 2 && ! -s "$sandbox/made.patch" && ! -e "$PROBE_RECEIPT" ]]
+ done
+)
 made explicit-bare bash "$maker" "$base" "$attr_head" "$sandbox/mirror.git"
 (cd "$sandbox/mirror.git" && made default-bare bash "$maker" "$base" "$attr_head")
 git init -q "$sandbox/super"
@@ -713,10 +731,10 @@ git clone -q --no-hardlinks "$trusted" "$partial"
  src=crates/fixture/src/lib.rs
  mkdir -p crates/fixture/src
  cp -- scripts/make_patch.sh make_patch.sh
- cp -- "$source_root/justfile" .
- cp -- "$source_root/scripts/worktree_diff.py" scripts/
+ cp -- "$source_root/justfile" "$source_root/protected-paths.txt" .
+ cp -- "$source_root/scripts/checkout_just.py" "$source_root/scripts/worktree_diff.py" scripts/
  printf 'old\n' > "$src"
- git add -- "$src" justfile scripts/worktree_diff.py make_patch.sh
+ git add -- "$src" justfile protected-paths.txt scripts/checkout_just.py scripts/worktree_diff.py make_patch.sh
  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm before
  before="$(git rev-parse HEAD)"
  old_blob="$(git rev-parse "HEAD:$src")"
@@ -725,6 +743,49 @@ git clone -q --no-hardlinks "$trusted" "$partial"
  tip="$(git rev-parse HEAD)"
  git checkout -q --detach "$tip"
  git branch -f main "$before"
+ git remote remove origin
+ mkdir "$sandbox/advisory-bin"
+ printf '#!/bin/sh\ncat\n' > "$sandbox/advisory-bin/deep-diff-forge"
+ cat > "$sandbox/advisory-bin/cargo" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[[ " $* " = *" --advisory "* ]]
+while [[ "$1" != --patch ]]; do shift; done
+[[ "$(stat -c %a -- "$2")" = 600 ]]
+printf '%s\n' "$2" > "$ADVISORY_RESULT/path"
+cp -- "$2" "$ADVISORY_RESULT/judged"
+cat > "$ADVISORY_RESULT/ranked"
+exit 8
+SH
+ chmod +x "$sandbox/advisory-bin/"{cargo,deep-diff-forge}
+ bash "$maker" "$before" "$tip" > "$sandbox/local-main.patch"
+ for comparison in local-only remote-at-head; do
+  if [[ "$comparison" = remote-at-head ]]; then
+   git remote add origin "$trusted"
+   git update-ref refs/remotes/origin/main "$tip"
+  fi
+  export ADVISORY_RESULT="$sandbox/$comparison"
+  mkdir "$ADVISORY_RESULT"
+  CLAUDE_PROJECT_DIR="$PWD" PATH="$sandbox/advisory-bin:$PATH" python3 -I - "$source_root" <<'PYJUDGE'
+import json
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+root = Path(sys.argv[1])
+launcher = ["bash", "-c", "[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py judge"]
+command = shlex.join(launcher)
+settings = json.loads((root / ".claude/settings.json").read_bytes())
+assert f"Bash({command})" in settings["permissions"]["allow"]
+event = {"tool_name": "Bash", "tool_input": {"command": command}}
+subprocess.run([sys.executable, "-I", root / ".claude/hooks/guard.py", "pre"], input=json.dumps(event), text=True, check=True)
+assert subprocess.run(launcher).returncode == 8
+PYJUDGE
+  same_bytes "$sandbox/local-main.patch" "$ADVISORY_RESULT/ranked"
+  same_bytes "$sandbox/local-main.patch" "$ADVISORY_RESULT/judged"
+  [[ ! -e "$(cat "$ADVISORY_RESULT/path")" ]]
+ done
  git update-ref refs/remotes/origin/main "$before"
  tree="$(git rev-parse HEAD:crates)"
  git -C "$candidate" fetch -q "$partial" "$tip"

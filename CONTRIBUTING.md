@@ -71,7 +71,7 @@ Mutation testing
 bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py mutants'
 ```
 
-Advisory judgment
+Advisory judgment compares committed changes against the local branch `refs/heads/main`.
 
 ```bash
 bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py judge'

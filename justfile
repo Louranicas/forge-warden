@@ -103,7 +103,7 @@ judge: (_check-script "make_patch.sh") _check-inputs
     set -euo pipefail
     patch="$(mktemp)"
     trap 'rm -f -- "$patch"' EXIT
-    scripts/make_patch.sh refs/remotes/origin/main HEAD > "$patch"
+    scripts/make_patch.sh refs/heads/main HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
 
 judge-bound: (_check-script "make_patch.sh") _check-inputs
