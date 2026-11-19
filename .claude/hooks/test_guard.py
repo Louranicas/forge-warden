@@ -355,11 +355,30 @@ class Guard(unittest.TestCase):
         redirects = {**env, "GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other),
                      "GIT_CONFIG": str(config), "GIT_CONFIG_COUNT": "1",
                      "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "elsewhere"}
-        subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=self.root, env=redirects,
-                       capture_output=True, check=True)
-        actual = subprocess.check_output(["git", "config", "--local", "--get", "core.hooksPath"],
-                                         cwd=self.root, env=env)
-        self.assertEqual(actual, b".githooks\n")
+
+        def git(*args):
+            return subprocess.run(["git", *args], cwd=self.root, env=env, capture_output=True)
+
+        def install():
+            return subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=self.root,
+                                  env=redirects, capture_output=True)
+
+        git("config", "extensions.worktreeConfig", "true").check_returncode()
+        git("config", "--worktree", "core.hooksPath", "other-hooks").check_returncode()
+        (self.root / "other-hooks").mkdir()
+        refused = install()
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b"effective core.hooksPath", refused.stderr)
+        self.assertEqual(git("config", "--worktree", "--get", "core.hooksPath").stdout, b"other-hooks\n")
+        self.assertEqual(config.read_bytes(), before)
+
+        git("config", "--worktree", "--unset", "core.hooksPath").check_returncode()
+        install().check_returncode()
+        message = self.root / "message"
+        message.write_text("wip\n")
+        result = git("hook", "run", "commit-msg", "--", str(message))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(b"does not say what changed", result.stderr)
         self.assertEqual(config.read_bytes(), before)
 
     def test_recipe_helpers_are_checked_before_execution(self):
@@ -372,10 +391,10 @@ class Guard(unittest.TestCase):
         recorder.write_text("#!/bin/sh\ntouch ran\nexit 77\n")
         recorder.chmod(0o755)
         helpers = {
-            "review": ("review_comparison.sh", "make_patch.sh"),
+            "review": ("review_comparison.sh", "make_patch.sh", "worktree_diff.py"),
             "mutants": ("make_patch.sh", "worktree_diff.py"),
-            "judge": ("make_patch.sh",),
-            "judge-bound": ("make_patch.sh",),
+            "judge": ("make_patch.sh", "worktree_diff.py"),
+            "judge-bound": ("make_patch.sh", "worktree_diff.py"),
         }
         for recipe, names in helpers.items():
             for name in names:
@@ -392,6 +411,16 @@ class Guard(unittest.TestCase):
                     self.assertFalse(marker.exists())
                     helper.unlink()
                     shutil.copy2(recorder, helper)
+        shutil.copy2(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
+        (self.root / ".cargo").mkdir()
+        (self.root / ".cargo/config.toml").write_text("[build]\n")
+        for recipe in helpers:
+            with self.subTest(recipe=recipe, forbidden="Cargo configuration"):
+                result = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, recipe], cwd=self.root,
+                                        capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b".cargo/config.toml", result.stderr)
+                self.assertFalse(marker.exists())
         helper = scripts / "make_patch.sh"
         helper.unlink()
         helper.symlink_to(recorder)

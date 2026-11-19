@@ -56,8 +56,10 @@ script calls that is not in its declared list; adding a command to that list mea
 in the gate image.
 
 The fast gate requires Just to check launcher behavior and review evidence permissions.
-The measured `localhost/ddf-council-gate:20261026c` image (`8f4ea620d021`) lacks Just on
-its PATH. An image with Just installed and measured is required to pass those checks offline.
+The measured `localhost/ddf-council-gate:20261026c` image (`8f4ea620d021`) is incompatible
+with this gate because Just is absent from its PATH. A hosted-parity claim requires a newly
+provisioned replacement image, a measurement confirming Just on its PATH, and a passing replay
+in that image. A passing local toolbox run certifies only the toolbox.
 
 ### Mutation, judgment, and review
 

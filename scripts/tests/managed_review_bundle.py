@@ -64,7 +64,7 @@ class ReviewBundle(unittest.TestCase):
     def test_copied_review_evidence_is_owner_only(self):
         just = shutil.which("just")
         self.assertIsNotNone(just, "Just is required on PATH to verify review evidence permissions")
-        for name in ("justfile", "scripts/review_comparison.sh", "scripts/make_patch.sh"):
+        for name in ("justfile", "scripts/review_comparison.sh", "scripts/make_patch.sh", "scripts/worktree_diff.py"):
             shutil.copy2(ROOT / name, self.candidate / name)
         tools = self.root / "bin"
         tools.mkdir()

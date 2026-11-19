@@ -11,7 +11,15 @@ install-hooks:
     for hook in pre-commit commit-msg pre-push; do
         [[ -f ".githooks/$hook" && ! -L ".githooks/$hook" && -x ".githooks/$hook" ]]
     done
-    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git --git-dir="$PWD/.git" config --local core.hooksPath .githooks
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+    config=(git --git-dir="$PWD/.git" config)
+    if [[ "$("${config[@]}" --show-scope --get core.hooksPath)" != worktree$'\t'* ]]; then
+        "${config[@]}" --local core.hooksPath .githooks
+    fi
+    if ! IFS= read -r -d '' effective < <("${config[@]}" --null --get core.hooksPath) || [[ "$effective" != .githooks ]]; then
+        echo "Hook installation refused: effective core.hooksPath must be .githooks in this worktree" >&2
+        exit 1
+    fi
     echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
 
 # fmt + clippy + tests: seconds. The pre-commit hook and Claude Code's Stop hook run this.
@@ -23,14 +31,14 @@ ci: (_check-script "ci_local.sh")
     scripts/ci_local.sh
 
 # Regenerate golden verdicts after an intended change; review the diff before committing.
-bless: (_check-script "bless.sh") (_check-script "golden_output.py")
+bless: (_check-script "bless.sh")
     scripts/bless.sh
 
 # Mutation-test the lines changed since main. A surviving mutant is a missing test.
 # --cap-lints: with `warnings = "deny"`, a mutant that leaves an unused binding fails to compile
 # and is counted "unviable", hiding survivors (main c44c00e: 3 missed, 59 more viable when capped).
 # CARGO_TARGET_DIR unset: each worker builds in its own copy; a shared target dir mixes binaries.
-mutants: (_check-script "make_patch.sh") (_check-script "worktree_diff.py")
+mutants: (_check-script "make_patch.sh") _check-inputs
     #!/usr/bin/env bash
     set -euo pipefail
     while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
@@ -57,10 +65,13 @@ vocab $rev="": (_check-script "check_vocab.sh")
 _check-script $script:
     @test ! -L scripts && test ! -L "scripts/$script" && test -f "scripts/$script" || { echo "Gate input refused: scripts/$script" >&2; exit 2; }
 
+_check-inputs: (_check-script "worktree_diff.py")
+    @python3 -I scripts/worktree_diff.py --check-inputs
+
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
 # Advisory mode: the ranking is supplied, so the verdict is at best hold. Committed changes only:
 # the patch-maker diffs commits, not the work tree.
-judge: (_check-script "make_patch.sh")
+judge: (_check-script "make_patch.sh") _check-inputs
     #!/usr/bin/env bash
     set -euo pipefail
     patch="$(mktemp)"
@@ -68,7 +79,7 @@ judge: (_check-script "make_patch.sh")
     scripts/make_patch.sh refs/remotes/origin/main HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
 
-judge-bound: (_check-script "make_patch.sh")
+judge-bound: (_check-script "make_patch.sh") _check-inputs
     #!/usr/bin/env bash
     set -euo pipefail
     unset "${!GIT_@}"
@@ -82,7 +93,7 @@ judge-bound: (_check-script "make_patch.sh")
     cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$scratch/change.patch" \
         --ranker "$ranker" --repo "$repo" --base "$base" --head "$head"
 
-review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh")
+review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh") _check-inputs
     #!/usr/bin/env bash
     set -euo pipefail
     umask 077
