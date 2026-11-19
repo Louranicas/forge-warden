@@ -110,6 +110,7 @@ judge-bound: (_check-script "make_patch.sh") _check-inputs
     #!/usr/bin/env bash
     set -euo pipefail
     unset "${!GIT_@}"
+    export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
     base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
     head="$(git rev-parse --verify 'HEAD^{commit}')"
     scratch="$(mktemp -d)"

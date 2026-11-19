@@ -224,16 +224,21 @@ def stop(event: dict) -> None:
     root = project_dir()
     identity = hashlib.sha256((str(root.resolve()) + "\0" + session).encode()).hexdigest()
     counter = Path(tempfile.gettempdir()) / f"forge-warden-stop-{identity}"
-    if counter.is_symlink():
-        refuse("stop counter must not be a symlink")
-    blocks = int(counter.read_text()) if counter.exists() else 0
     try:
         failure = fast_gate_failure(root)
     except OSError as error:
         failure = f"Gate unavailable: {error}"
+    if counter.is_symlink():
+        refuse("stop counter must not be a symlink")
     if failure is None:
         counter.unlink(missing_ok=True)
         return
+    counts = {str(n).encode(): n for n in range(1, MAX_STOP_BLOCKS + 1)}
+    try:
+        with os.fdopen(os.open(counter, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+            blocks = counts.get(stream.read(len(str(MAX_STOP_BLOCKS)) + 1), 0)
+    except FileNotFoundError:
+        blocks = 0
     if blocks >= MAX_STOP_BLOCKS:
         counter.unlink(missing_ok=True)
         print(
@@ -242,7 +247,13 @@ def stop(event: dict) -> None:
             file=sys.stderr,
         )
         return
-    counter.write_text(str(blocks + 1))
+    pending = tempfile.NamedTemporaryFile(dir=counter.parent, delete=False)
+    try:
+        with pending:
+            pending.write(str(blocks + 1).encode())
+        os.replace(pending.name, counter)
+    finally:
+        Path(pending.name).unlink(missing_ok=True)
     refuse(failure)
 
 

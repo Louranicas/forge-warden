@@ -110,6 +110,33 @@ class Guard(unittest.TestCase):
             git("config", "status.showUntrackedFiles", "no")
             self.run_guard(event, mode="stop", expected=0)
             self.assertFalse(ran.exists())
+            gate_bytes = gate.read_bytes()
+            gate.write_text("#!/bin/sh\necho fixture-failure >&2\nexit 1\n")
+            self.run_guard(event, mode="stop")
+            counter, = Path(home).glob("forge-warden-stop-*")
+            counter.write_bytes(b"")
+            gate.write_bytes(gate_bytes)
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertFalse(counter.exists())
+            self.assertFalse(ran.exists())
+            gate.write_text("#!/bin/sh\necho fixture-failure >&2\nexit 1\n")
+            for damaged in (b"", b"2x", b"99", b"\xff"):
+                counter.write_bytes(damaged)
+                with counter.open("rb") as old:
+                    for count in (1, 2, 3):
+                        result = self.run_guard(event, mode="stop")
+                        self.assertIn(b"fixture-failure", result.stderr)
+                        self.assertEqual(counter.read_bytes(), str(count).encode())
+                        self.assertEqual(counter.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(old.read(), damaged)
+                result = self.run_guard(event, mode="stop", expected=0)
+                self.assertIn(b"after 3 attempts", result.stderr)
+                self.assertFalse(counter.exists())
+            gate.write_bytes(gate_bytes)
+            counter.symlink_to(source)
+            self.assertIn(b"symlink", self.run_guard(event, mode="stop").stderr)
+            self.assertEqual(source.read_bytes(), original)
+            counter.unlink()
             attributes = self.root / ".git/info/attributes"
             attributes.parent.mkdir(exist_ok=True)
             (attributes.parent / "exclude").write_text(

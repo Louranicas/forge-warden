@@ -140,7 +140,7 @@ same goes for a submodule change when `.gitmodules` (which the change itself can
 `.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
 binary sections the ranker cannot read. To run Git directly, start at the top level in Bash
 with Git 2.41 or later, run `unset "${!GIT_@}"`, then run
-`GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
+`export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
 from the checkout root. Git still reads `info/attributes` in the common Git directory
 (normally `.git/info/attributes`). A local
 `*.rs -diff` rule can hide the changed Rust lines. Use the isolated `make_patch.sh` from step 2
@@ -155,7 +155,7 @@ For bound mode in unreleased 0.3.0 (ADR 0012), add `--repo DIR --base BASE --hea
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
 (exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). At the
-checkout root, run `unset "${!GIT_@}"` and `bash make_patch.sh --check-worktree || exit 2` in Bash
+checkout root, run `unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1` and `bash make_patch.sh --check-worktree || exit 2` in Bash
 before passing `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
 (util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. A match records the
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.

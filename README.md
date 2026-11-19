@@ -7,11 +7,12 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 This bound-mode example requires a build of the unreleased 0.3.0 code.
 
 ```bash
-unset "${!GIT_@}"
+unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
 bash make_patch.sh --check-worktree || exit 2
-base="$(git rev-parse refs/remotes/origin/main)" head="$(git rev-parse HEAD)"
+base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')" || exit 1
+head="$(git rev-parse --verify 'HEAD^{commit}')" || exit 1
 evidence="$(mktemp -d)" || exit 1
-bash make_patch.sh "$base" "$head" > "$evidence/change.patch"   # scripts/make_patch.sh from the revision you installed
+bash make_patch.sh "$base" "$head" > "$evidence/change.patch" || exit 1   # scripts/make_patch.sh from the revision you installed
 forge-warden check --policy warden.toml --patch "$evidence/change.patch" --ranker "$(command -v deep-diff-forge)" \
   --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"
 ```
@@ -194,7 +195,7 @@ patch is refused), `diff.relative` in a subdirectory leaves out every change out
 `.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
 cannot read; no check of the patch can see any of these. To make the patch directly in Bash,
 run `unset "${!GIT_@}"` and then
-`GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+`export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && GIT_ATTR_NOSYSTEM=1 GIT_GRAFT_FILE= git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level, with Git 2.41 or later: the first two options take attributes from the empty
 tree. Git still reads `info/attributes` in the common Git directory (normally
 `.git/info/attributes`), which can turn a changed Rust file into a binary diff. Use the isolated `scripts/make_patch.sh` for canonical patch bytes.
@@ -204,7 +205,7 @@ between two commits, so whoever makes the patch is part of the trust boundary; i
 (`--repo`) it makes that diff itself and refuses any other patch. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
 The unreleased 0.3.0 command `forge-warden empty --repo DIR --base BASE --head HEAD`
-verifies an empty comparison using full commit IDs. At the checkout root, run `unset "${!GIT_@}"` and
+verifies an empty comparison using full commit IDs. At the checkout root, run `unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1` and
 `bash make_patch.sh --check-worktree || exit 2` in Bash before taking the directory from
 `git rev-parse --git-common-dir`. The command uses the enrolled `/usr/bin/git` to compare the
 merge base to the supplied head commit from verified objects. It exits silently with 0 for an
@@ -271,9 +272,9 @@ This bound-mode workflow requires the unreleased 0.3.0 binary and its matching p
 
 ```yaml
 - run: evidence="$(mktemp -d "$RUNNER_TEMP/warden-XXXXXXXX")" && printf 'WARDEN_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
-- run: unset "${!GIT_@}" && bash make_patch.sh --check-worktree && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > "${WARDEN_EVIDENCE:?}/change.patch"
+- run: unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && bash make_patch.sh --check-worktree && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > "${WARDEN_EVIDENCE:?}/change.patch"
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
-- run: unset "${!GIT_@}" && bash make_patch.sh --check-worktree && forge-warden check --policy base/warden.toml --patch "${WARDEN_EVIDENCE:?}/change.patch" --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > "${WARDEN_EVIDENCE:?}/verdict.json"
+- run: unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 && bash make_patch.sh --check-worktree && forge-warden check --policy base/warden.toml --patch "${WARDEN_EVIDENCE:?}/change.patch" --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > "${WARDEN_EVIDENCE:?}/verdict.json"
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
 ```
 

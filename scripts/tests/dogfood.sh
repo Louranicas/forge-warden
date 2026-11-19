@@ -394,9 +394,7 @@ git -C "$sub" replace "$sub_base^{tree}" "$sub_head^{tree}"
 git -C "$sub" replace "$base^{tree}" 'HEAD^{tree}'
 mkdir -p "$sub/.git/info"
 printf '%s\n' "$sub_head" > "$sub/.git/info/grafts"
-(
-unset GIT_ATTR_NOSYSTEM GIT_GRAFT_FILE GIT_NO_REPLACE_OBJECTS
-python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" "$named_patch" <<'PYDOC'
+cat > "$sandbox/document_diff.py" <<'PYDOC'
 from pathlib import Path
 import os
 import re
@@ -404,7 +402,8 @@ import shlex
 import subprocess
 import sys
 
-source, repo, base, head, supplied_patch, named_patch = sys.argv[1:]
+source, document, repo, base, head = sys.argv[1:]
+revision_range = base + '...' + head if document == 'README.md' else 'main...HEAD'
 tree_option = '--attr-source="$(git hash-object -t tree /dev/null)"'
 plain = r"[-a-zA-Z0-9./=]+"
 word = rf"""(?:{re.escape(tree_option)}|{plain}|'{plain}'|"{plain}")"""
@@ -414,33 +413,40 @@ read_only = {
     '--no-textconv', '--no-color', '--no-relative', '--binary', '--no-renames', '--full-index',
     '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '--ignore-submodules=none',
 }
-for document, revision_range, patch in (('README.md', base + '...' + head, supplied_patch),
-                                        ('docs/RUNBOOK.md', 'main...HEAD', named_patch)):
-    expected = Path(patch).read_bytes()
-    spans = re.findall(r'`(GIT_ATTR_NOSYSTEM=[01](?:[ \t]+GIT_GRAFT_FILE=)?)[ \t]+git[ \t]+([^`]+)`',
-                       (Path(source) / document).read_text())
-    (prefix, arguments), = [(value, span) for value, span in spans if '...' in span]
-    arguments = arguments.replace('<base>', base).replace('<head>', head)
-    if arguments.count(tree_option) != 1 or not re.fullmatch(rf"{word}(?:[ \t]+{word})*", arguments):
-        sys.exit(f'{document}: unsupported syntax in documented Git diff')
-    assignments = dict(word.split('=', 1) for word in shlex.split(prefix))
-    if assignments.get('GIT_ATTR_NOSYSTEM') != '1':
-        sys.exit(f'{document}: documented diff enabled system attributes')
-    empty_tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, text=True).strip()
-    attr_option = '--attr-source=' + empty_tree
-    argv = shlex.split(arguments.replace(tree_option, attr_option))
-    if set(argv) - (read_only | {revision_range, attr_option}):
-        sys.exit(f'{document}: unsupported argument in documented Git diff')
-    for setting in (None, 'diff.ignoreSubmodules=all', 'diff.submodule=log', 'diff.submodule=diff'):
-        env = {**os.environ, **assignments}
-        if setting:
-            key, value = setting.split('=', 1)
-            env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0=key, GIT_CONFIG_VALUE_0=value)
-        actual = subprocess.check_output(['git', *argv], cwd=repo, env=env)
-        if actual != expected:
-            sys.exit(f'FAIL {document}: patch differs from make_patch with {setting or "default configuration"}')
-    print(f'PASS {document} produces the same attribute and submodule patch as make_patch')
+offline_option = r'(?:GIT_ALLOW_PROTOCOL=|GIT_NO_LAZY_FETCH=[01])'
+spans = re.findall(rf'`(?:export ({offline_option}(?: {offline_option})*) && )?'
+                   r'(GIT_ATTR_NOSYSTEM=[01](?:[ \t]+GIT_GRAFT_FILE=)?)[ \t]+git[ \t]+([^`]+)`',
+                   (Path(source) / document).read_text())
+(exports, prefix, arguments), = [(exports, value, span) for exports, value, span in spans if '...' in span]
+arguments = arguments.replace('<base>', base).replace('<head>', head)
+if arguments.count(tree_option) != 1 or not re.fullmatch(rf"{word}(?:[ \t]+{word})*", arguments):
+    sys.exit(f'{document}: unsupported syntax in documented Git diff')
+assignments = dict(word.split('=', 1) for word in shlex.split(prefix))
+if assignments.get('GIT_ATTR_NOSYSTEM') != '1':
+    sys.exit(f'{document}: documented diff enabled system attributes')
+env = {**os.environ, **dict(item.split('=', 1) for item in shlex.split(exports))}
+empty_tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, env=env, text=True).strip()
+attr_option = '--attr-source=' + empty_tree
+argv = shlex.split(arguments.replace(tree_option, attr_option))
+if set(argv) - (read_only | {revision_range, attr_option}):
+    sys.exit(f'{document}: unsupported argument in documented Git diff')
+sys.exit(subprocess.run(['git', *argv], cwd=repo, env={**env, **assignments}).returncode)
 PYDOC
+(
+ unset GIT_ATTR_NOSYSTEM GIT_GRAFT_FILE GIT_NO_REPLACE_OBJECTS
+ for document in README.md docs/RUNBOOK.md; do
+  expected="$sub_patch"
+  if [[ "$document" = docs/RUNBOOK.md ]]; then expected="$named_patch"; fi
+  for setting in default diff.ignoreSubmodules=all diff.submodule=log diff.submodule=diff; do
+   if [[ "$setting" != default ]]; then
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="${setting%%=*}" GIT_CONFIG_VALUE_0="${setting#*=}"
+   fi
+   python3 -I "$sandbox/document_diff.py" "$source_root" "$document" "$sub" "$sub_base" "$sub_head" > "$sandbox/made.patch"
+   same_bytes "$expected" "$sandbox/made.patch"
+   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+  done
+  echo "PASS $document produces the same attribute and submodule patch as make_patch"
+ done
 )
 # Every local run so far left the curl log empty: none of them downloaded the ranker.
 test ! -s "$CURL_LOG" || { cat "$CURL_LOG"; echo 'FAIL a local run called curl'; exit 1; }
@@ -693,14 +699,19 @@ git clone -q --no-hardlinks "$trusted" "$partial"
  cd "$partial"
  src=crates/fixture/src/lib.rs
  mkdir -p crates/fixture/src
+ cp -- "$source_root/justfile" .
+ cp -- "$source_root/scripts/worktree_diff.py" scripts/
  printf 'old\n' > "$src"
- git add -- "$src"
+ git add -- "$src" justfile scripts/worktree_diff.py
  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm before
  before="$(git rev-parse HEAD)"
  old_blob="$(git rev-parse "HEAD:$src")"
  printf 'new\n' > "$src"
  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qam after
  tip="$(git rev-parse HEAD)"
+ git checkout -q --detach "$tip"
+ git branch -f main "$before"
+ git update-ref refs/remotes/origin/main "$before"
  tree="$(git rev-parse HEAD:crates)"
  git -C "$candidate" fetch -q "$partial" "$tip"
  git config core.repositoryformatversion 1
@@ -750,6 +761,14 @@ SH
   offline_refusal "$tip" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$tip" "$partial" "$sandbox/offline-evidence"
   offline_refusal "$before" bash "$maker" "$before" "$tip" "$partial"
   offline_refusal "$tip" bash "$maker" "$before" "$tip" "$partial"
+  if command -v just >/dev/null; then
+   for oid in "$before" "$tip"; do
+    offline_refusal "$oid" python3 -I "$source_root/scripts/checkout_just.py" judge-bound
+   done
+  fi
+  for document in README.md docs/RUNBOOK.md; do
+   offline_refusal "$old_blob" python3 -I "$sandbox/document_diff.py" "$source_root" "$document" "$partial" "$before" "$tip"
+  done
  done
 )
 echo 'PASS missing local objects refused without transport or checkout changes'

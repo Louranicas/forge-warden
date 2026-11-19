@@ -191,7 +191,7 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
   require_verified = true
   ```
 
-  For a bound authority run, start at the checkout root in Bash. Run `unset "${!GIT_@}"` and
+  For a bound authority run, start at the checkout root in Bash. Run `unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1` and
   `bash scripts/make_patch.sh --check-worktree || exit 2`, then make the patch with `scripts/make_patch.sh BASE HEAD` and pass
   `--repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base BASE --head HEAD` (full ids).
 
