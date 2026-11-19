@@ -87,7 +87,7 @@ STUB
 printf '#!/usr/bin/env bash\nexit 98\n' > "$sandbox/bin/deep-diff-forge"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/zizmor"
 chmod +x "$sandbox/bin/"*
-for tool in git bash env python3 mkdir mktemp rm head grep cat mv cp chmod; do
+for tool in git bash env python3 mkdir mktemp rm head grep cat mv cp chmod true; do
  ln -s "$(type -P "$tool")" "$sandbox/bin/$tool"
 done
 export PATH="$sandbox/bin"
@@ -112,6 +112,7 @@ git update-ref refs/remotes/origin/main "$BASE_ID"
 git pack-refs --all
 bash "$source_root/scripts/make_patch.sh" "$BASE_ID" "$HEAD_ID" > "$TEST_ROOT/expected.patch"
 git config --local diff.noprefix true
+git config --local diff.external true
 
 run_gate() {
  local entry="$1" expected="$2" actual=0

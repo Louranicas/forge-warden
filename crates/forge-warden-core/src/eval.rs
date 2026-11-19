@@ -23,6 +23,7 @@ use crate::verdict::{
 use crate::vocab::{Signal, Status};
 use alloc::collections::BTreeSet;
 use alloc::{borrow::ToOwned, format, string::String, string::ToString, vec, vec::Vec};
+use core::cell::LazyCell;
 
 /// Evaluate `policy` over `rank`, judging waivers as of `today`. The raw rule engine: it knows
 /// nothing of provenance or coverage, so it is crate-private (Q1-01). The only public judges are
@@ -69,14 +70,18 @@ fn judge_rule(
     matched: &mut BTreeSet<usize>,
 ) -> RuleResult {
     let mut violations = find_violations(&rule.check, rank.files());
+    let live_waivers = LazyCell::new(|| {
+        waivers
+            .iter()
+            .enumerate()
+            .filter(|(_, waiver)| waiver.rule == rule.id && waiver.expires >= today)
+            .collect::<Vec<_>>()
+    });
     for violation in &mut violations {
         let Some(path) = violation.path.as_deref() else {
             continue;
         };
-        let mut live = waivers
-            .iter()
-            .enumerate()
-            .filter(|(_, waiver)| waiver.rule == rule.id && waiver.expires >= today);
+        let mut live = live_waivers.iter().copied();
         if let Some((index, _)) = live.find(|(_, waiver)| waiver.paths.matches(path)) {
             violation.waived_by = Some(index);
             used.insert(index);
