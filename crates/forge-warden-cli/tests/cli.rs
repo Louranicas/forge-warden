@@ -709,6 +709,7 @@ fn machine_contract_every_subcommand_has_json_or_an_explicit_exception() {
                 // Init is the explicit TOML producer; --json is refused rather than silently ignored.
                 assert_eq!(run(&[name, "--json"], b"").code, 2);
             }
+            "empty" => assert!(!run(&[name, "--help"], b"").stdout.contains("--json")),
             "help" => {} // clap's documentation command is human text, as are --help/--version.
             other => assert!(
                 run(&[other, "--help"], b"").stdout.contains("--json"),
@@ -718,6 +719,7 @@ fn machine_contract_every_subcommand_has_json_or_an_explicit_exception() {
     }
     assert!(seen.contains("lint"));
     assert!(seen.contains("check"));
+    assert!(seen.contains("empty"));
 }
 
 #[test]

@@ -85,9 +85,14 @@ review:
     read -r base _ <<< "$comparison"
     scratch="$(mktemp -d .review-XXXXXXXX)"
     printf 'Review directory: %s\n' "$scratch"
+    create_evidence() {
+        python3 -I -c 'import sys; from pathlib import Path; Path(sys.argv[1]).touch(mode=0o600, exist_ok=False)' "$1"
+    }
+    create_evidence "$scratch/review.patch"
     scripts/make_patch.sh "$base" "$head" > "$scratch/review.patch"
     if command -v deep-diff-forge >/dev/null; then
         deep-diff-forge --stdin-patch --outline < "$scratch/review.patch"
+        create_evidence "$scratch/review.rank.json"
         deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch" > "$scratch/review.rank.json"
         cargo run -q --bin forge-warden -- check --policy warden.toml --advisory --rank "$scratch/review.rank.json" --patch "$scratch/review.patch"
     fi

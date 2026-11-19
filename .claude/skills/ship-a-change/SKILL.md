@@ -10,7 +10,7 @@ Start each Bash session at the root of the checkout under review and run `unset 
 before the first step in that session. Record each command and its result. Report a step you
 could not run as **not verified**.
 
-1. **Fast gate**: `scripts/ci_fast.sh`. Must be green.
+1. Run `just fast`. It must pass.
 2. **Docs build**: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`.
 3. **New behaviour has a failing-first test.** Identify the full commit ID of the intended
    pre-change baseline. Create a fresh disposable worktree at that commit with

@@ -3,7 +3,9 @@
 import json
 import os
 import shutil
+import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,9 +71,20 @@ class ReviewBundle(unittest.TestCase):
             tool.write_text("#!/bin/sh\n" + body + "\n")
             tool.chmod(0o755)
         env = {**self.env, "PATH": str(tools) + os.pathsep + self.env["PATH"]}
+        if sys.platform == "linux":
+            owner, group, other = 0x01, 0x04, 0x20
+            default_acl = struct.pack("<I", 2) + b"".join(
+                struct.pack("<HHI", tag, perms, 0xFFFFFFFF)
+                for tag, perms in ((owner, 7), (group, 5), (other, 0))
+            )
+            os.setxattr(self.candidate, "system.posix_acl_default", default_acl)
         subprocess.run([shutil.which("just"), "review"], cwd=self.candidate, env=env, umask=0o022,
                        capture_output=True, check=True)
         evidence, = self.candidate.glob(".review-*")
+        if sys.platform == "linux":
+            control = evidence / "ordinary-file"
+            subprocess.run(["touch", control], check=True, umask=0o077)
+            self.assertEqual(control.stat().st_mode & 0o777, 0o640)
         copy = self.root / "tutorial-copy"
         copy.mkdir()
         copy.chmod(0o755)

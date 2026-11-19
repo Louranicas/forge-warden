@@ -9,8 +9,6 @@
       "Bash(cargo doc *)",
       "Bash(cargo run *)",
       "Bash(cargo mutants *)",
-      "Bash(scripts/ci_fast.sh)",
-      "Bash(scripts/ci_local.sh)",
       "Bash(scripts/check_vocab.sh *)",
       "Bash(just fast)",
       "Bash(just ci)",

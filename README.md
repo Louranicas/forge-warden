@@ -204,7 +204,8 @@ To verify an empty comparison, run `forge-warden empty --repo DIR --base BASE --
 with full commit IDs. In a linked worktree, run `unset "${!GIT_@}"` in Bash before taking the directory from
 `git rev-parse --git-common-dir`. The command uses the enrolled `/usr/bin/git` to compare the
 merge base to the supplied head commit from verified objects. It exits silently with 0 for an
-empty diff or exits with 4 if the comparison contains changes. It needs no policy or ranker.
+empty diff or exits with 4 if the comparison contains changes. Its machine interface uses the
+exit status alone, so `empty` has no `--json` option. It needs no policy or ranker.
 
 ## Verdicts
 
@@ -333,9 +334,8 @@ change, the vocabulary check and the workflow audit.
 | **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), `just install-hooks` |
 | **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 
-Run the offline build, lint, test and audit part of the gate locally with `just ci` (or
-`scripts/ci_local.sh`); it is a subset, and `scripts/ci_fast.sh` runs the script and fixture checks
-beside it.
+Run the offline build, lint, test and audit checks with `just ci`. Run the script and fixture
+checks with `just fast`.
 
 ## Working with Claude
 

@@ -64,8 +64,8 @@ A change to them is a change to this repository's gate.
 
 This repository's gate has two layers:
 
-- **In the repository**, runnable by anyone: `scripts/ci_fast.sh` (`just fast`, the pre-commit hook
-  and the agent Stop hook) and `scripts/ci_local.sh` (`just ci`, the pre-push hook).
+- **In the repository**, run `just fast` for the gate used by the pre-commit and agent Stop
+  hooks. Run `just ci` for the full local gate used by the pre-push hook.
 - **The integrator gate**, which the maintainers run on every merge to `main` and on every release
   commit: `fw-verify`, kept with the project's coordination records, not in this repository. It
   builds the subject commit in a fresh clone and runs format, lints, tests, docs, `cargo deny`,
