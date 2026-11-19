@@ -13,20 +13,27 @@ if [[ -n $untracked || -n $ignored_rust ]]; then
 fi
 git status --porcelain=v1 -z --no-renames --untracked-files=no -- crates | python3 -I -c '
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 entries = {Path(os.fsdecode(row[3:])): row[:2] for row in sys.stdin.buffer.read().split(b"\0") if row}
+staged_source = False
 for path, status in entries.items():
     if len(path.parts) < 4 or path.parts[2] != "src":
         continue
+    if status[:1] != b" ":
+        staged_source = True
     if status == b"AD":
         sys.exit("Failing-first check unverified. Git stash cannot preserve a newly staged file missing from the working tree.")
     blocked_parent = any(parent in entries or parent.is_symlink() or
                          (parent.exists() and not parent.is_dir()) for parent in path.parents)
     if blocked_parent or (not path.is_symlink() and path.is_dir()):
         sys.exit(f"Failing-first check unverified. Source changes between a file and a directory at {str(path)!r}.")
-'
+if staged_source and not subprocess.check_output(
+        ["git", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--", sys.argv[1]]):
+    sys.exit("Failing-first check unverified. Source edits are staged, but the working source matches HEAD.")
+' "$sources"
 marker="forge-warden-source-$(python3 -I -c 'import uuid; print(uuid.uuid4())')"
 git stash push --message "$marker" -- "$sources"
 git stash list --fixed-strings --grep-reflog="$marker" --format=%H

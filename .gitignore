@@ -1,6 +1,7 @@
 /target
 /mutants.out*
 /change.patch
+/.review-????????/
 /rank.json
 /verdict.json
 /verdict.txt

@@ -36,7 +36,7 @@ patch="$scratch/change.patch"
 mutation_diff="$scratch/pr.diff"
 bash scripts/make_patch.sh "$base" "$head" > "$patch"
 step mutation
-git --no-replace-objects -c core.quotePath=false diff --no-ext-diff --no-textconv --text --no-color --src-prefix=a/ --dst-prefix=b/ "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
+git --no-replace-objects -c core.quotePath=false -c diff.renames=true diff --no-ext-diff --no-textconv --text --no-color --src-prefix=a/ --dst-prefix=b/ "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
 if [ -s "$mutation_diff" ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace; else echo "no source changes to mutate"; fi
 step dogfood
 repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"

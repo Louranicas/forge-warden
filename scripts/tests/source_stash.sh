@@ -61,6 +61,13 @@ for kind in file symlink; do
     git restore --source=HEAD --staged --worktree -- "$src"
 done
 
+echo staged > "$src/staged-only.rs"
+git add "$src/staged-only.rs"
+git restore --source=HEAD --worktree -- "$src/staged-only.rs"
+refuse_save
+[[ $(cat "$src/staged-only.rs") == base && $(git show ":$src/staged-only.rs") == staged ]]
+git restore --staged -- "$src/staged-only.rs"
+
 echo staged > "$src/lib.rs"
 echo saved > "$src/generated"
 mkdir "$src/nested"

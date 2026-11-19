@@ -81,6 +81,8 @@ if command == "mutants":
     diff = parser.parse_args(args).in_diff
     expected = {"--- a/crates/sample/src/café.rs", "+++ b/crates/sample/src/café.rs",
                 "--- /dev/null", "+++ b/crates/sample/src/other.rs",
+                "+++ b/crates/sample/src/copied.rs", "+original",
+                "rename from crates/sample/src/old.rs", "rename to crates/sample/src/renamed.rs",
                 "-original", "+fixture", "+binary-marked"}
     if not expected.issubset(diff.read_text().splitlines()):
         sys.exit(93)
@@ -103,9 +105,12 @@ cd "$TEST_ROOT"
 git init -q
 mkdir -p crates/sample/src
 printf 'original\n' > crates/sample/src/café.rs
-git add crates/sample/src/café.rs
+printf 'renamed module\n' > crates/sample/src/old.rs
+git add crates/sample/src
 git commit -qm root
 root_id="$(git rev-parse HEAD)"
+cp crates/sample/src/café.rs crates/sample/src/copied.rs
+mv crates/sample/src/old.rs crates/sample/src/renamed.rs
 printf 'fixture\n' > crates/sample/src/café.rs
 printf 'binary-marked\n' > crates/sample/src/other.rs
 git add crates/sample/src
@@ -118,6 +123,7 @@ git update-ref refs/remotes/origin/main "$BASE_ID"
 git pack-refs --all
 bash "$source_root/scripts/make_patch.sh" "$BASE_ID" "$HEAD_ID" > "$TEST_ROOT/expected.patch"
 git config --local diff.mnemonicPrefix true
+git config --local diff.renames copies
 git config --local color.diff always
 git config --local diff.external true
 git config --local diff.silent.textconv true
