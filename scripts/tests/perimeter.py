@@ -48,6 +48,49 @@ TIMEOUTS = {
 require_bytecode_guard = load("python_imports").require_bytecode_guard
 
 
+def gate_step_fixture(path, original):
+    steps = CAPS.workflow_jobs(original)['gate']['steps']
+    node = yaml.compose(original, Loader=yaml.BaseLoader)
+    for field in ('jobs', 'gate', 'steps'):
+        node = next(value for key, value in node.value if key.value == field)
+    start = node.start_mark.index - node.start_mark.column
+    end = node.end_mark.index - node.end_mark.column
+    offsets = [item.start_mark.index - item.start_mark.column for item in node.value] + [end]
+    original_blocks = {id(step): original[left:right] for step, left, right in
+                       zip(steps, offsets, offsets[1:])}
+
+    class LiteralRun(str):
+        pass
+
+    class StepDumper(yaml.SafeDumper):
+        def determine_block_hints(self, text):
+            hints = super().determine_block_hints(text)
+            if text.startswith('\n') and not text.lstrip('\n').startswith(' '):
+                return hints.lstrip('123456789')
+            return hints
+
+    StepDumper.add_representer(LiteralRun, lambda dumper, run:
+                               dumper.represent_scalar('tag:yaml.org,2002:str', run, style='|'))
+    StepDumper.add_representer(str, lambda dumper, value:
+                               dumper.represent_scalar('tag:yaml.org,2002:str', value,
+                                                       style='"' if '\n' in value else None))
+
+    def step_yaml(step):
+        if isinstance(step, str):
+            return step
+        if '\n' in step.get('run', ''):
+            step = dict(step, run=LiteralRun(step['run']))
+        return yaml.dump([step], Dumper=StepDumper, sort_keys=False, width=float('inf')).removesuffix('...\n')
+
+    def write_steps(blocks):
+        indent = ' ' * node.start_mark.column
+        body = ''.join(original_blocks[id(block)] if id(block) in original_blocks else
+                       textwrap.indent(step_yaml(block), indent) for block in blocks)
+        path.write_text(original[:start] + body + original[end:])
+
+    return steps, offsets, write_steps
+
+
 class Contracts(unittest.TestCase):
     def test_runpy_module_bytecode_effect_is_guarded(self):
         for guarded in (False, True):
@@ -141,16 +184,29 @@ class Contracts(unittest.TestCase):
             root = Path(directory)
             self.copy_ci_fixture(root)
             path = root / '.github/workflows/ci.yml'
-            original = path.read_text()
-            entry = '      - run: python3 -I scripts/check_plants.py\n'
-            moved = original.replace(entry, '', 1).replace(
-                '      - run: cargo doc --workspace --no-deps --locked\n',
-                entry + '      - run: cargo doc --workspace --no-deps --locked\n', 1)
-            for text in (moved, original.replace(entry, entry * 2, 1),
-                         original.replace(entry, entry + '      - run: touch leftover\n', 1)):
-                path.write_text(text)
-                with self.assertRaisesRegex(ValueError, 'clean-tree'):
-                    CAPS.check_ci(root)
+            steps, _, write_steps = gate_step_fixture(path, path.read_text())
+            plant = {'run': 'python3 -I scripts/check_plants.py'}
+            index = steps.index(plant)
+            quoted = '- run: "python3 -I scripts/check_plants.py"\n'
+            write_steps([*steps[:index], quoted, *steps[index + 1:]])
+            self.assertEqual(CAPS.workflow_jobs(path.read_text())['gate']['steps'], steps)
+            CAPS.check_ci(root)
+
+            steps, _, write_steps = gate_step_fixture(path, path.read_text())
+            before, entry, after = steps[:index], steps[index], steps[index + 1:]
+            previous = max(i for i, step in enumerate(before) if 'run' in step)
+            for change, expected in (
+                ('move', [*before[:previous], entry, *before[previous:], *after]),
+                ('duplicate', [*before, entry, entry, *after]),
+                ('trailing command', [*before, entry, {'run': 'touch leftover'}, *after]),
+            ):
+                with self.subTest(change=change):
+                    write_steps(expected)
+                    decoded = CAPS.workflow_jobs(path.read_text())['gate']['steps']
+                    self.assertNotEqual(decoded, steps)
+                    self.assertEqual(decoded, expected)
+                    with self.assertRaisesRegex(ValueError, 'clean-tree'):
+                        CAPS.check_ci(root)
 
     def copy_ci_fixture(self, root):
         for file in ("plants/catalog.json", "plants/run.py", "scripts/tool-versions.toml", "scripts/mutation_ci.py",
@@ -303,15 +359,7 @@ class Contracts(unittest.TestCase):
             check_ci = load('plant_tools', root).check_ci
             path = root / ".github/workflows/ci.yml"
             original = path.read_text()
-            steps = CAPS.workflow_jobs(original)['gate']['steps']
-            node = yaml.compose(original, Loader=yaml.BaseLoader)
-            for field in ('jobs', 'gate', 'steps'):
-                node = next(value for key, value in node.value if key.value == field)
-            start = node.start_mark.index - node.start_mark.column
-            end = node.end_mark.index - node.end_mark.column
-            offsets = [item.start_mark.index - item.start_mark.column for item in node.value] + [end]
-            original_blocks = {id(step): original[left:right] for step, left, right in
-                               zip(steps, offsets, offsets[1:])}
+            steps, offsets, write_steps = gate_step_fixture(path, original)
             versions = TOOLS.versions(ROOT)
             action = 'taiki-e/install-action@' + versions['install_action']
             plant = {'run': 'python3 -I scripts/check_plants.py'}
@@ -319,35 +367,6 @@ class Contracts(unittest.TestCase):
 
             cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
             plant_run = 'python3 -I "$GITHUB_WORKSPACE/plants/run.py" --source .. --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/plants"'
-
-            class LiteralRun(str):
-                pass
-
-            class StepDumper(yaml.SafeDumper):
-                def determine_block_hints(self, text):
-                    hints = super().determine_block_hints(text)
-                    if text.startswith('\n') and not text.lstrip('\n').startswith(' '):
-                        return hints.lstrip('123456789')
-                    return hints
-
-            StepDumper.add_representer(LiteralRun, lambda dumper, run:
-                                       dumper.represent_scalar('tag:yaml.org,2002:str', run, style='|'))
-            StepDumper.add_representer(str, lambda dumper, value:
-                                       dumper.represent_scalar('tag:yaml.org,2002:str', value,
-                                                               style='"' if '\n' in value else None))
-
-            def step_yaml(step):
-                if isinstance(step, str):
-                    return step
-                if '\n' in step.get('run', ''):
-                    step = dict(step, run=LiteralRun(step['run']))
-                return yaml.dump([step], Dumper=StepDumper, sort_keys=False, width=float('inf')).removesuffix('...\n')
-
-            def write_steps(blocks):
-                indent = ' ' * node.start_mark.column
-                body = ''.join(original_blocks[id(block)] if id(block) in original_blocks else
-                               textwrap.indent(step_yaml(block), indent) for block in blocks)
-                path.write_text(original[:start] + body + original[end:])
 
             for name in ('just', 'cargo-mutants'):
                 tool = name + '@' + versions[name.replace('-', '_')]
@@ -413,6 +432,19 @@ class Contracts(unittest.TestCase):
                         with self.subTest(independent_shell=shell):
                             write_steps([*before, {'shell': shell, 'run': 'print("ready")'}, install, *after])
                             check_ci(root)
+                    for source in ("import pty as terminal; terminal.spawn(['just', '--version'])",
+                                   "from subprocess import run as launch; launch(['just', '--version'])"):
+                        with self.subTest(process_alias=source):
+                            step = {'shell': 'python', 'run': source}
+                            write_steps([*before, install, step, *after])
+                            check_ci(root)
+                            write_steps([*before, step, install, *after])
+                            with self.assertRaisesRegex(ValueError, 'install Just before running just'):
+                                check_ci(root)
+                    local_run = ("def run(**overrides): return overrides\n"
+                                 "run(**{'args': ['just']})")
+                    write_steps([*before, {'shell': 'python', 'run': local_run}, install, *after])
+                    check_ci(root)
                     for shell in ('pwsh', 'python -m unittest {0}'):
                         with self.subTest(unsupported_shell=shell):
                             step = {'shell': shell, 'run': 'true'}
@@ -424,6 +456,7 @@ class Contracts(unittest.TestCase):
                                 check_ci(root)
                     unpacked = "import subprocess; subprocess.run(['bash', 'dogfood.sh'], **{'cwd': 'scripts/tests'})"
                     for step in ({'shell': 'python', 'run': unpacked},
+                                 {'shell': 'python', 'run': "import pty as terminal; terminal.spawn(**{'argv': ['just']})"},
                                  {'run': f'python3 -c "{unpacked}"'},
                                  {'run': f'python3 -c"{unpacked}"'},
                                  {'run': f'python3 - <<< "{unpacked}"'},
@@ -850,19 +883,42 @@ class GateImageCommands(unittest.TestCase):
                 self.assertRegex(found[0], r"^t\.py:2: calls `(cmp|jq|xxd)`, which the gate image")
 
     def test_an_aliased_process_function_is_read(self):
-        found = self.problems({"t.py": "from subprocess import run as sh\nsh(['cmp', 'a', 'b'])\n"})
-        self.assertEqual(len(found), 1, found)
-        self.assertTrue(found[0].startswith("t.py:2: calls `cmp`"), found)
+        for source in ("from subprocess import run as sh\nsh(['cmp', 'a', 'b'])",
+                       "import subprocess as process\nprocess.run(['cmp', 'a', 'b'])",
+                       "import pty as terminal\nterminal.spawn(['cmp', 'a', 'b'])",
+                       "from pty import spawn as launch\nlaunch(argv=['cmp', 'a', 'b'])"):
+            with self.subTest(source=source):
+                found = self.problems({"t.py": source})
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith("t.py:2: calls `cmp`"), found)
+
+    def test_local_run_helpers_do_not_mask_imported_process_calls(self):
+        source = textwrap.dedent("""\
+            from subprocess import run
+            class Helper:
+                def run(self, **overrides): return overrides
+                def use(self): self.run(**{'args': ['cmp']})
+            def local():
+                def run(**overrides): return overrides
+                run(**{'args': ['cmp']})
+            local()
+            Helper().use()
+            run(['cmp', 'a', 'b'])
+        """)
+        found = self.problems({"t.py": source})
+        self.assertEqual(found, ["t.py:10: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)"])
 
     def test_unpacked_process_keywords_refuse_tracked_scripts(self):
         unpacked = "from subprocess import run; run(**{'args': ['cmp', 'a', 'b']})"
         found = self.problems({
             "unpacked.py": unpacked,
+            "terminal.py": "import pty as terminal; terminal.spawn(**{'argv': ['cmp', 'a', 'b']})",
             "nested.sh": f'python3 -c "{unpacked}"\n',
             "explicit.py": "from subprocess import run; run(args=['cmp', 'a', 'b'])",
         })
         self.assertCountEqual(found, [
             "unpacked.py: not read: cannot resolve unpacked Python process keywords",
+            "terminal.py: not read: cannot resolve unpacked Python process keywords",
             "nested.sh: not read: cannot resolve unpacked Python process keywords",
             "explicit.py:1: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)",
         ])

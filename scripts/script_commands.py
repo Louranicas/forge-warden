@@ -168,21 +168,24 @@ RUNS = {'(sh)': 'shell', '(py)': 'python', '(src)': 'shell'}
 # Python process calls, by where the command is: (index of the program, index where its
 # arguments start, whether those arguments are one list or spread out). Shell-text calls read
 # their first argument as shell text.
-PY_SHELL_TEXT = frozenset({'system', 'popen', 'getoutput', 'getstatusoutput', 'create_subprocess_shell'})
+PY_SHELL_TEXT = frozenset({
+    'os.system', 'os.popen', 'subprocess.getoutput', 'subprocess.getstatusoutput', 'asyncio.create_subprocess_shell',
+})
 PY_ARGV = {
     # subprocess: one list (or a string, which is the program; with shell=True, shell text).
-    'run': None, 'call': None, 'check_call': None, 'check_output': None, 'Popen': None,
+    'subprocess.run': None, 'subprocess.call': None, 'subprocess.check_call': None,
+    'subprocess.check_output': None, 'subprocess.Popen': None,
     # os.exec*/posix_spawn*: program, then an argv list whose first item is only argv[0].
-    'execv': (0, 1, 'list'), 'execve': (0, 1, 'list'), 'execvp': (0, 1, 'list'),
-    'execvpe': (0, 1, 'list'), 'posix_spawn': (0, 1, 'list'), 'posix_spawnp': (0, 1, 'list'),
-    'execl': (0, 1, 'spread'), 'execle': (0, 1, 'spread'), 'execlp': (0, 1, 'spread'),
-    'execlpe': (0, 1, 'spread'),
+    'os.execv': (0, 1, 'list'), 'os.execve': (0, 1, 'list'), 'os.execvp': (0, 1, 'list'),
+    'os.execvpe': (0, 1, 'list'), 'os.posix_spawn': (0, 1, 'list'), 'os.posix_spawnp': (0, 1, 'list'),
+    'os.execl': (0, 1, 'spread'), 'os.execle': (0, 1, 'spread'), 'os.execlp': (0, 1, 'spread'),
+    'os.execlpe': (0, 1, 'spread'),
     # os.spawn*: mode first, then the program.
-    'spawnv': (1, 2, 'list'), 'spawnve': (1, 2, 'list'), 'spawnvp': (1, 2, 'list'),
-    'spawnvpe': (1, 2, 'list'), 'spawnl': (1, 2, 'spread'), 'spawnle': (1, 2, 'spread'),
-    'spawnlp': (1, 2, 'spread'), 'spawnlpe': (1, 2, 'spread'),
+    'os.spawnv': (1, 2, 'list'), 'os.spawnve': (1, 2, 'list'), 'os.spawnvp': (1, 2, 'list'),
+    'os.spawnvpe': (1, 2, 'list'), 'os.spawnl': (1, 2, 'spread'), 'os.spawnle': (1, 2, 'spread'),
+    'os.spawnlp': (1, 2, 'spread'), 'os.spawnlpe': (1, 2, 'spread'),
     # asyncio.create_subprocess_exec(program, *args): no argv[0] to skip.
-    'create_subprocess_exec': (0, 1, 'program-then-args'),
+    'asyncio.create_subprocess_exec': (0, 1, 'program-then-args'),
 }
 
 
@@ -941,27 +944,61 @@ def argv_text(items):
     return ' '.join(py_word(item) for item in items)
 
 
+def python_callees(body, bindings):
+    functions = []
+
+    def visit(node, names):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for child in ast.iter_child_nodes(node):
+                if not isinstance(child, ast.stmt):
+                    yield from visit(child, names)
+            names.pop(node.name, None)
+            if isinstance(node, ast.ClassDef):
+                members = names.copy()
+                for statement in node.body:
+                    yield from visit(statement, members)
+            else:
+                functions.append(node)
+            return
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split('.')[0]
+                names[alias.asname or root] = alias.name if alias.asname else root
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names[alias.asname or alias.name] = '.' * node.level + (node.module or '') + '.' + alias.name
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.pop(node.id, None)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                yield node, names.get(func.id)
+            elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                owner = names.get(func.value.id)
+                if owner:
+                    yield node, owner + '.' + func.attr
+        for child in ast.iter_child_nodes(node):
+            yield from visit(child, names)
+
+    for statement in body:
+        yield from visit(statement, bindings)
+    for function in functions:
+        local = bindings.copy()
+        for argument in ast.iter_child_nodes(function.args):
+            if isinstance(argument, ast.arg):
+                local.pop(argument.arg, None)
+        yield from python_callees(function.body, local)
+
+
 def python_calls(text, line=1, lexer=Lexer, directory=None):
     """(line, command, True) for each process call whose program is a string literal: the call is
     turned into the shell text or command line it runs, which shell_calls reads."""
     tree = ast.parse(text)
-    imported = {}  # local name -> (module, name), for `from subprocess import run as sh`
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in ('subprocess', 'os', 'asyncio', 'pty'):
-            for alias in node.names:
-                imported[alias.asname or alias.name] = (node.module, alias.name)
     found = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if isinstance(func, ast.Attribute):
-            module, name = getattr(func.value, 'id', None), func.attr
-        else:
-            module, name = imported.get(getattr(func, 'id', None), (None, getattr(func, 'id', None)))
-        if directory is not None and name in ('chdir', 'fchdir'):
+    for node, name in python_callees(tree.body, {}):
+        if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
-        if name not in PY_SHELL_TEXT and name not in PY_ARGV and (module, name) != ('pty', 'spawn'):
+        if name not in PY_SHELL_TEXT and name not in PY_ARGV and name != 'pty.spawn':
             continue
         args = list(node.args)
         keywords = {item.arg: item.value for item in node.keywords}
@@ -971,7 +1008,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         if name in PY_SHELL_TEXT:
             first = args[0] if args else keywords.get('cmd', keywords.get('command'))
             texts = [py_text(branch) for branch in branches(first)] if first is not None else []
-        elif name == 'spawn' and module == 'pty':
+        elif name == 'pty.spawn':
             argv = args[0] if args else keywords.get('argv')
             texts = [argv_text(py_items(branch) or [branch]) for branch in branches(argv)] if argv is not None else []
         else:
