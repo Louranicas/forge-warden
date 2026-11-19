@@ -61,7 +61,7 @@ adding `* -diff` (or `binary`, at any depth) turned every added line into a `GIT
 hunk, so the judge never saw them as text (ledger candidate C2).
 
 **Decision.** The driver passes `--attr-source=<the empty tree>`, so attributes come from no file
-in the candidate tree. It needs Git 2.40 or later; an older Git refuses the option and the
+in the candidate tree. It needs Git 2.41 or later; an older Git refuses the option and the
 driver stops before judging. `scripts/tests/dogfood.sh` holds a candidate with a root `* -diff`
 and a subdirectory `* binary` whose two secret-shaped added lines must reach the patch as text;
 the plant `candidate-attributes-honoured` (G-35) removes the option and that test fails.

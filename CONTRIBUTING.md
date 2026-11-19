@@ -30,7 +30,7 @@ The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned i
 `scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
 (G-18). The gate judges committed changes from the merge base of `refs/remotes/origin/main` and HEAD to HEAD.
 If that ref is absent, HEAD must have complete history with a single root, which serves as the base.
-Both paths require Git 2.40 or later and an [owner-enrolled Git](docs/GIT_RUNTIME.md).
+Both paths require Git 2.41 or later and an [owner-enrolled Git](docs/GIT_RUNTIME.md).
 A nonempty patch requires `deep-diff-forge` on `PATH` with its binary hash enrolled in the policy.
 For an empty patch the gate runs [`forge-warden empty`](README.md#authority-and-advisory-mode).
 When `zizmor` is absent, the gate's last line names the skipped workflow audit.

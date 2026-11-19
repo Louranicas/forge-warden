@@ -47,6 +47,7 @@ def inventory(scope):
         if not re.fullmatch('[0-9a-f]{40}', base):
             raise ValueError('BASE_SHA must be the full trusted base SHA')
         diff = subprocess.check_output(['git', 'diff', '--no-ext-diff', '--no-textconv', '--text',
+                                        '--no-color', '--src-prefix=a/', '--dst-prefix=b/',
                                         base + '...HEAD', '--', 'crates/*/src/**.rs'])
         Path('pr.diff').write_bytes(diff)
         empty_diff = not diff

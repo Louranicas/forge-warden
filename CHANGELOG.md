@@ -174,7 +174,7 @@ registry is always listed, because consumers parse them.
 ## [0.2.0] - 2026-11-13
 
 - The documented by-hand `git diff` (README, runbook) now takes attributes from the empty tree
-  (`--attr-source=<empty tree> -c core.attributesFile=/dev/null`, Git 2.40 or later), as
+  (`--attr-source=<empty tree> -c core.attributesFile=/dev/null`, Git 2.41 or later), as
   `scripts/make_patch.sh` already did. Without them, a `.gitattributes` the change commits
   (`*.rs -diff`) made Git write the edited text as binary sections, and signal rules saw nothing.
   The dogfood test commits such a file and fails if the documents drop the options.

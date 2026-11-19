@@ -192,7 +192,7 @@ MUTATION_CONTRACT = {
     ('mutation-baseline.yml', 'mutation-shards'): 'e9867e6cf81ef1edaa343ae218822bd4070e9d782ad795be6d18d14f8683901a',
     ('mutation-baseline.yml', 'full-workspace'): '952432a0135022009d488de17045a82fc742520493518173f5e02fda1e4c6277',
 }
-MUTATION_DRIVER_SHA256 = '0a10cd1b274de82bc6d0751248e32050d54042ac3aff6620e261c119af6fe05d'
+MUTATION_DRIVER_SHA256 = '3c993d15a6def1c96e2b55ac4760bc504f192ab09d22f555f5efb47dff486ca5'
 
 
 def check_mutation_contract(root):

@@ -90,7 +90,7 @@ if [ "$resolve" = true ]; then
 fi
 # Attributes come from the empty tree, not from any work tree: a `.gitattributes` saying `-diff`
 # or `binary` would otherwise turn added text into a binary patch the judge cannot read.
-# --attr-source needs Git 2.40 or later; an older Git refuses the option.
+# --attr-source needs Git 2.41 or later; an older Git refuses the option.
 empty_tree="$(git --git-dir="$scratch/diff.git" hash-object -t tree /dev/null)"
 # A submodule change is always written as its `diff --git` section with mode 160000. In a work
 # tree, `diff.ignoreSubmodules` or `ignore = all` in `.gitmodules` (a file the change itself can

@@ -79,7 +79,10 @@ if command == "mutants":
     parser.add_argument("--cap-lints", required=True, choices=["true"])
     parser.add_argument("--in-diff", required=True, type=Path)
     diff = parser.parse_args(args).in_diff
-    if not {"-original", "+fixture", "+binary-marked"}.issubset(diff.read_text().splitlines()):
+    expected = {"--- a/crates/sample/src/lib.rs", "+++ b/crates/sample/src/lib.rs",
+                "--- /dev/null", "+++ b/crates/sample/src/other.rs",
+                "-original", "+fixture", "+binary-marked"}
+    if not expected.issubset(diff.read_text().splitlines()):
         sys.exit(93)
     (root / "mutated-diff").write_text(str(diff))
     sys.exit(int(os.environ.get("MUTANTS_EXIT", "0")))
@@ -114,7 +117,8 @@ export BASE_ID HEAD_ID
 git update-ref refs/remotes/origin/main "$BASE_ID"
 git pack-refs --all
 bash "$source_root/scripts/make_patch.sh" "$BASE_ID" "$HEAD_ID" > "$TEST_ROOT/expected.patch"
-git config --local diff.noprefix true
+git config --local diff.mnemonicPrefix true
+git config --local color.diff always
 git config --local diff.external true
 git config --local diff.silent.textconv true
 printf 'lib.rs diff=silent\nother.rs -diff\n' > .git/info/attributes
@@ -157,6 +161,7 @@ for entry in "$gate" "$sandbox/pre-push"; do
  done
 done
 
+git config --local diff.noprefix true
 cp "$source_root/fixtures/adversarial/no-secrets.toml" "$TEST_ROOT/warden.toml"
 for entry in "$gate" "$sandbox/pre-push"; do
  rm -f "$TEST_ROOT/judged-patch"

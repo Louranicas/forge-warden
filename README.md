@@ -190,7 +190,7 @@ patch is refused), `diff.relative` in a subdirectory leaves out every change out
 cannot read; no check of the patch can see any of these. If you must use Git directly, run what
 the script runs,
 `git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
-from the top level, with Git 2.40 or later: the first two options take attributes from the empty
+from the top level, with Git 2.41 or later: the first two options take attributes from the empty
 tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
 repository root. Outside bound mode forge-warden does not check that the patch is the whole change
 between two commits, so whoever makes the patch is part of the trust boundary; in bound mode
