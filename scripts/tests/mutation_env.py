@@ -21,7 +21,6 @@ class MutationEnvironment(unittest.TestCase):
             root = Path(directory)
             sentinel = root / "source.rs"
             sentinel.write_text("original source\n")
-            (root / "pr.diff").symlink_to(sentinel)
             (root / "bin").mkdir()
             (root / "target").mkdir()
             (root / "scripts/tests").mkdir(parents=True)
@@ -73,6 +72,8 @@ if sys.argv[1] == "mutants":
                 path.write_text(text)
                 path.chmod(0o700)
             for entry, command in commands.items():
+                if entry == "workflow":
+                    (root / "pr.diff").symlink_to(sentinel)
                 for inherited in (False, True):
                     with self.subTest(entry=entry, inherited=inherited):
                         receipt = root / "receipt.json"

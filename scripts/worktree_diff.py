@@ -146,31 +146,34 @@ def check_index_flags(env, scope):
             sys.exit(f"Working-tree comparison unverified. Git marks {str(path)!r} {flag}.")
 
 
-def check_stop_inventory(env):
-    tracked = set(git("ls-files", "-z", "--", ":(top,icase,glob)**/*.md", env=env).split(b"\0"))
+def gate_inventory():
+    paths = set()
     reviewed_clippy = (b"clippy.toml", b"crates/forge-warden-core/clippy.toml")
     directories = [b"."]
     while directories:
         directory = directories.pop()
         with os.scandir(directory) as entries:
             for entry in entries:
+                if directory == b"./.github/workflows":
+                    paths.add(os.path.relpath(entry.path))
                 if entry.name == b".git" or (directory == b"." and entry.name in
                                              (b"target", b"mutants.out", b"mutants.out.old")):
                     continue
                 if entry.is_symlink():
-                    sys.exit(f"Working-tree comparison unverified. Source symlink: {os.fsdecode(entry.path)!r}.")
+                    raise ValueError(f"Source symlink: {os.fsdecode(entry.path)!r}.")
                 if entry.name in (b"config", b"config.toml") and os.path.basename(directory) == b".cargo":
-                    sys.exit(f"Working-tree comparison unverified. Cargo configuration: {os.fsdecode(entry.path)!r}.")
+                    raise ValueError(f"Cargo configuration: {os.fsdecode(entry.path)!r}.")
                 if entry.name in (b"clippy.toml", b".clippy.toml"):
                     path = os.path.relpath(entry.path)
                     if path not in reviewed_clippy or not entry.is_file(follow_symlinks=False):
-                        sys.exit(f"Working-tree comparison unverified. Clippy configuration: {os.fsdecode(path)!r}.")
+                        raise ValueError(f"Clippy configuration: {os.fsdecode(path)!r}.")
+                if entry.name == b"Cargo.toml" and entry.path.startswith(b"./crates/"):
+                    paths.add(os.path.relpath(entry.path))
                 if entry.is_dir(follow_symlinks=False):
                     directories.append(entry.path)
                 elif entry.name.lower().endswith(b".md") and len(entry.name) > 3:
-                    path = os.path.relpath(entry.path)
-                    if path not in tracked:
-                        sys.exit(f"Working-tree comparison unverified. Untracked Markdown: {os.fsdecode(path)!r}.")
+                    paths.add(os.path.relpath(entry.path))
+    return paths
 
 
 @contextmanager
@@ -206,9 +209,18 @@ def mutation_diff(base):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--clean"]:
+    if sys.argv[1:] in (["--check-inputs"], ["--clean"]):
+        try:
+            inventory = gate_inventory()
+        except (ValueError, OSError) as error:
+            print(f"Gate input refused: {error}", file=sys.stderr)
+            sys.exit(2)
+        if sys.argv[1] == "--check-inputs":
+            sys.exit(0)
         with checked_snapshot(ALL_FILES) as env:
-            check_stop_inventory(env)
+            untracked = inventory.difference(git("ls-files", "-z", env=env).split(b"\0"))
+            if untracked:
+                sys.exit(f"Untracked gate input: {os.fsdecode(min(untracked))!r}.")
             check_conversions(env, ALL_FILES)
             sys.exit(bool(git("status", "--porcelain=v1", "-z", "--untracked-files=normal",
                               "--ignore-submodules=none", env=env)))

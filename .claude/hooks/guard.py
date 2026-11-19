@@ -204,9 +204,13 @@ def stop(event: dict) -> None:
     root = project_dir()
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     probe = Path(__file__).resolve().parents[2] / "scripts/worktree_diff.py"
+    if probe.parent.is_symlink() or probe.is_symlink():
+        refuse("symlink in scripts/worktree_diff.py")
     clean = subprocess.run([sys.executable, "-I", str(probe), "--clean"], cwd=root, env=env, capture_output=True)
     if clean.returncode == 0:
         return  # nothing changed in this session's working tree
+    if clean.returncode != 1:
+        refuse(clean.stderr.decode(errors="replace").strip() or "gate input check failed")
     identity = hashlib.sha256((str(root.resolve()) + "\0" + session).encode()).hexdigest()
     counter = Path(tempfile.gettempdir()) / f"forge-warden-stop-{identity}"
     if counter.is_symlink():

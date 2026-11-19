@@ -4,6 +4,11 @@ set -euo pipefail
 # Hook-exported Git state must not redirect scratch-repository commands.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 cd "$(git rev-parse --show-toplevel)"
+if [[ -L scripts || -L scripts/worktree_diff.py ]]; then
+  echo "Gate input refused: symlink in scripts/worktree_diff.py" >&2
+  exit 2
+fi
+python3 -I scripts/worktree_diff.py --check-inputs
 python3 -I scripts/tests/mutation_budget.py
 bash scripts/tests/ci_local.sh
 bash scripts/tests/worktree_diff.sh

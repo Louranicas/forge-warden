@@ -59,6 +59,23 @@ class Guard(unittest.TestCase):
         gate.write_text("#!/bin/sh\ntouch .git/gate-ran\n")
         gate.chmod(0o755)
         ran = self.root / ".git/gate-ran"
+        (scripts / "worktree_diff.py").write_bytes((GUARD.parents[2] / "scripts/worktree_diff.py").read_bytes())
+        (scripts / "tests").mkdir()
+        for first_step in (scripts / "tests/mutation_budget.py", scripts / "tool_versions.py"):
+            first_step.write_text("from pathlib import Path\nPath('.git/gate-ran').touch()\nraise SystemExit(91)\n")
+
+        def assert_refused_before_gate(path):
+            result = self.run_guard(event, mode="stop", expected=2)
+            self.assertIn(os.fsencode(path), result.stderr)
+            self.assertFalse(ran.exists())
+            for entry in ("ci_fast.sh", "ci_local.sh"):
+                with self.subTest(entry=entry):
+                    result = subprocess.run(["bash", GUARD.parents[2] / "scripts" / entry],
+                                            cwd=self.root, capture_output=True)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(os.fsencode(path), result.stderr)
+                    self.assertFalse(ran.exists())
+
         source = self.root / "src/lib.rs"
         original = source.read_bytes()
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -84,7 +101,8 @@ class Guard(unittest.TestCase):
             attributes = self.root / ".git/info/attributes"
             attributes.parent.mkdir(exist_ok=True)
             (attributes.parent / "exclude").write_text(
-                "/crates/core/**/*.rs\n*.[mM][dD]\ncurrent\nconfig\nconfig.toml\nclippy.toml\n.clippy.toml\n")
+                "/crates/core/**/*.rs\n*.[mM][dD]\ncurrent\nconfig\nconfig.toml\nclippy.toml\n.clippy.toml\n"
+                "/.github/workflows/\nCargo.toml\n")
             for directory in ("target", "mutants.out", "mutants.out.old", ".git", "docs/.git"):
                 generated = self.root / directory / "report.md"
                 generated.parent.mkdir(parents=True, exist_ok=True)
@@ -94,18 +112,46 @@ class Guard(unittest.TestCase):
             (self.root / "docs/config.toml").touch()
             self.run_guard(event, mode="stop", expected=0)
             self.assertFalse(ran.exists(), "excluded outputs and ordinary configuration files")
+            (self.root / "docs/pending.md").touch()
+            git("update-index", "--assume-unchanged", "src/lib.rs")
+            recorder = Path(home) / "cargo"
+            recorder.write_text("#!/bin/sh\ntouch .git/gate-ran\nexit 91\n")
+            recorder.chmod(0o755)
+            os.environ["PATH"] = home + os.pathsep + os.environ["PATH"]
+            os.environ["RUSTC_WRAPPER"] = str(recorder)
+            git("config", "filter.record.clean", "cargo")
+            attributes.write_text("template.txt filter=record\n")
+            template.write_bytes(b"changed\n")
+            probe = scripts / "worktree_diff.py"
+            saved_probe = scripts / "saved-probe.py"
+            probe.rename(saved_probe)
+            probe.symlink_to("tests/mutation_budget.py")
+            assert_refused_before_gate("scripts/worktree_diff.py")
+            probe.unlink()
+            saved_probe.rename(probe)
             link = self.root / "docs/current"
             for destination in (".", "../Cargo.toml", "missing"):
                 with self.subTest(destination=destination):
                     link.symlink_to(destination)
                     git("check-ignore", "-q", "--", str(link))
-                    self.run_guard(event, mode="stop", expected=0)
-                    self.assertTrue(ran.exists(), destination)
-                    ran.unlink()
+                    assert_refused_before_gate("docs/current")
                     link.unlink()
-            for path in ("docs/local-review.md", "docs/target/source.MD", "mutants.out.backup/source.Md",
-                         ".cargo/config", "crates/core/.cargo/config.toml", "crates/core/clippy.toml",
+            for path in (".cargo/config", "crates/core/.cargo/config.toml", "crates/core/clippy.toml",
                          "docs/target/.clippy.toml"):
+                with self.subTest(path=path):
+                    ignored = self.root / path
+                    ignored.parent.mkdir(parents=True, exist_ok=True)
+                    ignored.touch()
+                    git("check-ignore", "-q", "--", str(ignored))
+                    assert_refused_before_gate(path)
+                    ignored.unlink()
+            attributes.unlink()
+            template.write_bytes(b"embedded\n")
+            git("update-index", "--no-assume-unchanged", "src/lib.rs")
+            (self.root / "docs/pending.md").unlink()
+            for path in ("docs/local-review.md", "docs/target/source.MD", "mutants.out.backup/source.Md",
+                         ".github/workflows/local.yml", ".github/workflows/.note", "crates/local/Cargo.toml",
+                         "crates/group/nested/Cargo.toml"):
                 with self.subTest(path=path):
                     ignored = self.root / path
                     ignored.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +161,12 @@ class Guard(unittest.TestCase):
                     self.assertTrue(ran.exists(), path)
                     ran.unlink()
                     ignored.unlink()
+            workflow_dir = self.root / ".github/workflows/empty"
+            workflow_dir.mkdir()
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertTrue(ran.exists(), "empty workflow subdirectory")
+            ran.unlink()
+            workflow_dir.rmdir()
             for target in ("src/bin/probe.rs", "tests/regression.rs", "examples/demo/main.rs",
                            "benches/bench.rs", "build.rs"):
                 with self.subTest(target=target):
@@ -176,9 +228,7 @@ class Guard(unittest.TestCase):
             restricted.chmod(0)
             try:
                 if not os.access(restricted, os.R_OK):
-                    self.run_guard(event, mode="stop", expected=0)
-                    self.assertTrue(ran.exists(), "unreadable directory")
-                    ran.unlink()
+                    assert_refused_before_gate("restricted")
             finally:
                 restricted.chmod(0o700)
             (restricted / "new.rs").unlink()
