@@ -67,17 +67,90 @@ if [[ -L "$trusted/scripts" || -L "$trusted/scripts/make_patch.sh" || ! -f "$tru
   echo "dogfood: invalid trusted patch-maker" >&2
   exit 2
 fi
-for checkout in "$trusted" "$candidate"; do
-  (cd -- "$checkout" && bash "$trusted/scripts/make_patch.sh" --check-worktree)
-done
-if [ "$trusted" = "$candidate" ] || [ "$(git -C "$trusted" rev-parse HEAD)" != "$base" ]; then
+if [[ "$trusted" = "$candidate" ]]; then
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2
   exit 2
 fi
-if [ -n "$(git -C "$trusted" status --porcelain --untracked-files=all --ignored)" ]; then
-  echo 'dogfood: trusted checkout must be clean, including ignored files' >&2
-  exit 2
-fi
+export GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0
+python3 -I - "$trusted" "$base" <<'PYBASE'
+import hashlib
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+
+def git(root, *args):
+    return subprocess.check_output(["git", "-C", root, "-c", "core.fsmonitor=false",
+                                    "-c", "core.untrackedCache=false", "-c", "core.hooksPath=/dev/null", *args])
+
+
+def check_base(root, commit):
+    entry = root / ".git"
+    mode = entry.lstat().st_mode
+    if stat.S_ISREG(mode):
+        pointer = entry.read_bytes().rstrip(b"\r\n")
+        if not pointer.startswith(b"gitdir: "):
+            raise ValueError("invalid checkout .git entry")
+        admin = root / os.fsdecode(pointer[len(b"gitdir: "):])
+        backlink = admin / "gitdir"
+        if os.path.lexists(backlink) or os.path.lexists(admin / "commondir"):
+            if not stat.S_ISREG(backlink.lstat().st_mode):
+                raise ValueError("invalid administrative gitdir")
+            target = os.fsdecode(backlink.read_bytes().rstrip(b"\r\n"))
+            if (admin / target).resolve(strict=True) != entry:
+                raise ValueError("administrative gitdir points to a different checkout")
+        else:
+            target = git(root, "config", "--file", admin / "config", "--null", "--path", "--get", "core.worktree")[:-1]
+            if not target or (admin / os.fsdecode(target)).resolve(strict=True) != root:
+                raise ValueError("submodule worktree points to a different checkout")
+    elif not stat.S_ISDIR(mode):
+        raise ValueError("invalid checkout .git entry")
+    if (git(root, "rev-parse", "--show-toplevel") != os.fsencode(root) + b"\n"
+            or git(root, "rev-parse", "--verify", "HEAD") != commit + b"\n"):
+        raise ValueError("judge checkout must be the distinct trusted base")
+    dirty = "trusted checkout must be clean, including ignored files"
+    tree = git(root, "ls-tree", "-rz", "--format=%(objectmode) %(objectname) 0%x09%(path)", commit)
+    if git(root, "ls-files", "--stage", "--others", "-z") != tree:
+        raise ValueError(dirty)
+    for row in tree.split(b"\0")[:-1]:
+        metadata, name = row.split(b"\t", 1)
+        mode, oid, _ = metadata.split()
+        path = root / os.fsdecode(name)
+        if mode == b"160000":
+            if path.is_symlink():
+                raise ValueError(dirty)
+            if path.exists() and any(path.iterdir()):
+                check_base(path, oid)
+            continue
+        file_mode = path.lstat().st_mode
+        if stat.S_ISLNK(file_mode) and mode == b"120000":
+            data = os.fsencode(os.readlink(path))
+        elif stat.S_ISREG(file_mode) and mode == (b"100755" if file_mode & stat.S_IXUSR else b"100644"):
+            data = path.read_bytes()
+        else:
+            raise ValueError(dirty)
+        header = b"blob %d\0" % len(data)
+        if hashlib.sha1(header + data).hexdigest().encode() != oid:
+            raise ValueError(dirty)
+
+
+try:
+    check_base(Path(sys.argv[1]), sys.argv[2].encode())
+except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+    print(f"dogfood: {error}", file=sys.stderr)
+    sys.exit(2)
+PYBASE
+helper="$(mktemp)"
+helper="$(realpath -- "$helper")"
+trap 'rm -f -- "$helper"' EXIT
+git -C "$trusted" cat-file blob "$base:scripts/make_patch.sh" > "$helper"
+expected="$(git -C "$trusted" rev-parse --verify "$base:scripts/make_patch.sh")"
+[[ "$(git -C "$trusted" hash-object --no-filters "$helper")" = "$expected" ]] || exit 2
+for checkout in "$trusted" "$candidate"; do
+  (cd -- "$checkout" && bash "$helper" --check-worktree)
+done
 for commit in "$base" "$head"; do
   test "$(git -C "$candidate" rev-parse --verify "$commit^{commit}")" = "$commit"
 done
@@ -95,7 +168,7 @@ esac
 # only borrows the candidate's objects, so nothing in the candidate's .git/config, in the
 # caller's environment or in the directory named for the candidate can shape it, and attributes
 # come from the empty tree (scripts/make_patch.sh says why for each).
-bash "$trusted/scripts/make_patch.sh" "$base" "$head" "$candidate" > "$out/change.patch"
+bash "$helper" "$base" "$head" "$candidate" > "$out/change.patch"
 # Source, policy, lockfile and build configuration all come from the trusted checkout.
 cd "$trusted"
 cp -- warden.toml "$out/policy.toml"

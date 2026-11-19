@@ -49,7 +49,7 @@ fi
 CDPATH= cd -P -- "$repository"
 start="$PWD"
 repo_args=()
-if [[ "$mode" = patch && -n "${3:-}" && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; then
+if [[ "$mode" = patch && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; then
   repo_args=(--git-dir="$PWD")
   [[ "$(git "${repo_args[@]}" rev-parse --is-bare-repository)" = true ]] || exit 2
 else
@@ -64,6 +64,7 @@ else
     python3 -I - <<'PYLINK'
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -74,12 +75,22 @@ try:
         raise ValueError("invalid .git pointer")
     admin = entry.parent / os.fsdecode(pointer[len(b"gitdir: "):])
     backlink = admin / "gitdir"
-    if not stat.S_ISREG(backlink.lstat().st_mode):
-        raise ValueError("invalid administrative gitdir")
-    target = os.fsdecode(backlink.read_bytes().rstrip(b"\r\n"))
-    if (admin / target).resolve(strict=True) != entry:
-        raise ValueError("administrative gitdir points to a different checkout")
-except (OSError, RuntimeError, ValueError) as error:
+    try:
+        mode = backlink.lstat().st_mode
+    except FileNotFoundError:
+        if os.path.lexists(admin / "commondir"):
+            raise ValueError("missing linked-worktree gitdir")
+        worktree = subprocess.check_output(["git", "config", "--file", admin / "config", "--null",
+                                            "--path", "--get", "core.worktree"]).removesuffix(b"\0")
+        if not worktree or (admin / os.fsdecode(worktree)).resolve(strict=True) != entry.parent:
+            raise ValueError("submodule worktree points to a different checkout")
+    else:
+        if not stat.S_ISREG(mode):
+            raise ValueError("invalid administrative gitdir")
+        target = os.fsdecode(backlink.read_bytes().rstrip(b"\r\n"))
+        if (admin / target).resolve(strict=True) != entry:
+            raise ValueError("administrative gitdir points to a different checkout")
+except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
     print(f"Git worktree differs from the selected checkout {entry.parent}: {error}", file=sys.stderr)
     sys.exit(2)
 PYLINK

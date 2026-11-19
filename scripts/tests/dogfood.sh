@@ -269,6 +269,25 @@ for role in candidate trusted; do
 done
 git clone -q --bare "$attr" "$sandbox/mirror.git"
 made explicit-bare bash "$maker" "$base" "$attr_head" "$sandbox/mirror.git"
+(cd "$sandbox/mirror.git" && made default-bare bash "$maker" "$base" "$attr_head")
+git init -q "$sandbox/super"
+git -C "$sandbox/super" -c protocol.file.allow=always submodule add -q "$attr" module
+module="$sandbox/super/module"
+made submodule bash "$maker" "$base" "$attr_head" "$module"
+(cd "$module" && bash "$maker" --check-worktree)
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$attr_head" "$module" "$sandbox/module-candidate"
+same_bytes "$clean_patch" "$sandbox/module-candidate/change.patch"
+git -C "$module" checkout -q --detach "$base"
+EXPECTED_TRUSTED="$module" bash "$module/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$attr_head" "$attr" "$sandbox/module-trusted"
+same_bytes "$clean_patch" "$sandbox/module-trusted/change.patch"
+mkdir "$sandbox/super/copied-module"
+cp "$module/.git" "$sandbox/super/copied-module/.git"
+if bash "$maker" "$base" "$attr_head" "$sandbox/super/copied-module" > "$sandbox/made.patch" 2> "$sandbox/made.err"; then
+ echo 'FAIL make_patch accepted a copied submodule pointer'
+ exit 1
+fi
+grep -q 'submodule worktree points to a different checkout' "$sandbox/made.err"
+[[ ! -s "$sandbox/made.patch" ]]
 if bash "$maker" --resolve-comparison "" HEAD "$attr" > "$sandbox/made.patch" || [[ -s "$sandbox/made.patch" ]]; then
  echo 'FAIL explicit comparison accepted an empty base'
  exit 1
@@ -626,14 +645,23 @@ if ! same_bytes "$clean_patch" "$out/change.patch"; then
 fi
 echo 'PASS diverged history: the patch is the change from the merge base to head'
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
+export HELPER_RECEIPT="$sandbox/helper-ran"
+printf '%s\n' 'echo ran >> "$HELPER_RECEIPT"' 'exit 0' > "$trusted/scripts/make_patch.sh"
 set +e
 bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$head" "$head" "$candidate" "$sandbox/wrong-base" >/dev/null 2>&1
 wrong=$?
+git -C "$trusted" update-index --assume-unchanged scripts/make_patch.sh
+bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$sandbox/dirty-helper" >/dev/null 2>&1
+helper_status=$?
+git -C "$trusted" update-index --no-assume-unchanged scripts/make_patch.sh
+git -C "$trusted" restore -- scripts/make_patch.sh
 printf 'dirty\n' >> "$trusted/warden.toml"
 bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$candidate" "$sandbox/dirty" >/dev/null 2>&1
 dirty=$?
 set -e
-[ "$wrong" = 2 ] && [ "$dirty" = 2 ]
+[[ "$wrong" = 2 && "$helper_status" = 2 && "$dirty" = 2 ]]
 test ! -e "$sandbox/wrong-base"
 test ! -e "$sandbox/dirty"
+test ! -e "$sandbox/dirty-helper"
+test ! -e "$HELPER_RECEIPT"
 echo 'PASS wrong-base and dirty trusted checkout refused before effects'
