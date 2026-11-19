@@ -60,7 +60,7 @@ for entry in (selected, *selected.parents):
         sys.exit(2)
     if metadata.exists():
         break
-    if (sys.argv[2] == "patch" and entry == selected and entry.name != ".git"
+    if (sys.argv[2] in ("patch", "resolve") and entry == selected and entry.name != ".git"
             and (entry / "HEAD").is_file() and (entry / "objects").is_dir()):
         break
 PYPATH
@@ -77,11 +77,11 @@ fi
 CDPATH= cd -P -- "$repository"
 start="$PWD"
 repo_args=()
-if [[ "$mode" = patch && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; then
+if [[ ( "$mode" = patch || "$mode" = resolve ) && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; then
   repo_args=(--git-dir="$PWD")
   bare="$(git "${repo_args[@]}" rev-parse --is-bare-repository)" || exit 2
   if [[ "$bare" != true ]]; then
-    [[ "$#" = 3 && "$bare" = false ]] || exit 2
+    [[ "$mode" = patch && "$#" = 3 && "$bare" = false ]] || exit 2
     [[ "${PWD##*/}" = .git ]] || exit 2
     cd -P ..
     [[ "$(git rev-parse --absolute-git-dir --show-toplevel && printf .)" = "$start"$'\n'"$PWD"$'\n.' ]] || exit 2

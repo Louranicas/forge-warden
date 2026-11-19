@@ -339,7 +339,8 @@ ambiguous="$sandbox/checkouts/build/../attr-candidate"
 )
 snapshot "$sandbox/mirror.git/objects" > "$sandbox/bare-after"
 same_bytes "$sandbox/bare-before" "$sandbox/bare-after"
-made explicit-bare bash "$maker" "$base" "$attr_head" "$sandbox/mirror.git"
+made explicit-bare bash "$maker" maker-base maker-head "$sandbox/mirror.git"
+[[ "$(bash "$maker" --resolve-comparison maker-base maker-head "$sandbox/mirror.git")" = "$base $base" ]]
 (cd "$sandbox/mirror.git" && made default-bare bash "$maker" "$base" "$attr_head")
 git init -q "$sandbox/super"
 git -C "$sandbox/super" -c protocol.file.allow=always submodule add -q "$attr" module
