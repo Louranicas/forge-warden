@@ -7,8 +7,9 @@ does and where its risk is. forge-warden takes that sealed ranking and answers t
 ```bash
 unset "${!GIT_@}"
 base="$(git rev-parse refs/remotes/origin/main)" head="$(git rev-parse HEAD)"
-bash make_patch.sh "$base" "$head" > change.patch   # scripts/make_patch.sh from the revision you installed
-forge-warden check --policy warden.toml --patch change.patch --ranker "$(command -v deep-diff-forge)" \
+evidence="$(mktemp -d)" || exit 1
+bash make_patch.sh "$base" "$head" > "$evidence/change.patch"   # scripts/make_patch.sh from the revision you installed
+forge-warden check --policy warden.toml --patch "$evidence/change.patch" --ranker "$(command -v deep-diff-forge)" \
   --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$base" --head "$head"
 ```
 
@@ -192,7 +193,9 @@ cannot read; no check of the patch can see any of these. To make the patch direc
 run `unset "${!GIT_@}"` and then
 `GIT_ATTR_NOSYSTEM=1 git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level, with Git 2.41 or later: the first two options take attributes from the empty
-tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
+tree. Git still reads `info/attributes` in the common Git directory (normally
+`.git/info/attributes`), which can turn a changed Rust file into a binary diff. Use the isolated `scripts/make_patch.sh` for canonical patch bytes.
+A verdict is about the patch bytes it was given, with paths read from the
 repository root. Outside bound mode forge-warden does not check that the patch is the whole change
 between two commits, so whoever makes the patch is part of the trust boundary; in bound mode
 (`--repo`) it makes that diff itself and refuses any other patch. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
@@ -260,9 +263,10 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- run: unset "${!GIT_@}" && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > change.patch
+- run: evidence="$(mktemp -d "$RUNNER_TEMP/warden-XXXXXXXX")" && printf 'WARDEN_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+- run: unset "${!GIT_@}" && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > "${WARDEN_EVIDENCE:?}/change.patch"
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
-- run: unset "${!GIT_@}" && forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > verdict.json
+- run: unset "${!GIT_@}" && forge-warden check --policy base/warden.toml --patch "${WARDEN_EVIDENCE:?}/change.patch" --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > "${WARDEN_EVIDENCE:?}/verdict.json"
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
 ```
 

@@ -54,13 +54,25 @@ stash-source:
     #!/usr/bin/env bash
     set -eu
     unset "${!GIT_@}"
-    git stash push -- crates/*/src
+    marker="forge-warden-source-$(python3 -I -c 'import uuid; print(uuid.uuid4())')"
+    git stash push --message "$marker" -- ':(glob)crates/*/src/**'
+    git stash list --fixed-strings --grep-reflog="$marker" --format=%H
 
-restore-source:
+[positional-arguments]
+restore-source object:
     #!/usr/bin/env bash
-    set -eu
+    set -euo pipefail
     unset "${!GIT_@}"
-    git stash pop
+    [[ $1 =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || { echo 'expected a full stash object ID' >&2; exit 2; }
+    scratch="$(mktemp -d)"
+    trap 'rm -rf -- "$scratch"' EXIT
+    diff=(git --no-replace-objects diff-tree -p --binary --no-renames --no-color --src-prefix=a/ --dst-prefix=b/ "$1^1")
+    "${diff[@]}" "$1^2" -- ':(glob)crates/*/src/**' > "$scratch/index.diff"
+    "${diff[@]}" "$1" -- ':(glob)crates/*/src/**' > "$scratch/worktree.diff"
+    for mode in --check --apply; do
+        git apply --allow-empty --whitespace=nowarn "$mode" --cached "$scratch/index.diff"
+        git apply --allow-empty --whitespace=nowarn "$mode" "$scratch/worktree.diff"
+    done
 
 judge-bound:
     #!/usr/bin/env bash
@@ -76,13 +88,12 @@ judge-bound:
     cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$scratch/change.patch" \
         --ranker "$ranker" --repo "$repo" --base "$base" --head "$head"
 
-[positional-arguments]
-review tip="refs/remotes/origin/main":
+review:
     #!/usr/bin/env bash
     set -euo pipefail
     unset "${!GIT_@}"
     head="$(git rev-parse --verify 'HEAD^{commit}')"
-    comparison="$(scripts/make_patch.sh --resolve-comparison "$1" "$head")"
+    comparison="$(bash scripts/review_comparison.sh "$head")"
     read -r base _ <<< "$comparison"
     scratch="$(mktemp -d .review-XXXXXXXX)"
     printf 'Review directory: %s\n' "$scratch"

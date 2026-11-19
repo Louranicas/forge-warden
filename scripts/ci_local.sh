@@ -28,31 +28,7 @@ hosted_only_not_run=""
 step deny; cargo deny check
 if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else hosted_only_not_run+=" zizmor"; fi
 head="$(git rev-parse --verify 'HEAD^{commit}')"
-comparison_ref=refs/remotes/origin/main
-ref_path="$(git rev-parse --git-path "$comparison_ref")"
-loose="$(python3 -I - "$ref_path" <<'PYREF'
-import os
-import stat
-import sys
-
-try:
-    mode = os.lstat(sys.argv[1]).st_mode
-except (FileNotFoundError, NotADirectoryError):
-    print("absent")
-except OSError as error:
-    sys.exit(f"ci_local: cannot inspect comparison ref: {error}")
-else:
-    print("absent" if stat.S_ISDIR(mode) else "present")
-PYREF
-)"
-if [ "$loose" = present ] || git show-ref --verify --quiet "$comparison_ref"; then
-  tip="$(git show-ref --verify --hash "$comparison_ref")" || exit 1
-elif [ "$?" -eq 1 ]; then
-  tip=""
-else
-  exit 1
-fi
-comparison="$(bash scripts/make_patch.sh --resolve-comparison "$tip" "$head")"
+comparison="$(bash scripts/review_comparison.sh "$head")"
 read -r base mutation_base <<< "$comparison"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT

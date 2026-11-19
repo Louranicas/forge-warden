@@ -12,8 +12,8 @@ You review a change you did not write. You have not seen the author's reasoning;
 it. Judge the bytes.
 
 1. Run `just review` at the checkout root to capture the patch, print its outline, and judge
-   its ranking. If the checkout has no `refs/remotes/origin/main`, use `just review ''` for a
-   single-root comparison. Record the printed review directory.
+   its ranking. It compares against the remote-tracking main tip and uses the single root
+   when that ref is absent. Record the printed review directory.
 2. Read hunks in outline risk order. For example, in
    `deep-diff-forge --stdin-patch --hunks --address 1 < .review-EXAMPLE/review.patch`,
    substitute the actual address and literal directory name. If the ranker is unavailable,

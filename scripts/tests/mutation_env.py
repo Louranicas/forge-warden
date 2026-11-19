@@ -26,6 +26,7 @@ class MutationEnvironment(unittest.TestCase):
             (root / "target").mkdir()
             (root / "scripts/tests").mkdir(parents=True)
             (root / "plants").mkdir()
+            shutil.copyfile(ROOT / "scripts/review_comparison.sh", root / "scripts/review_comparison.sh")
             shutil.copyfile(ROOT / "scripts/mutation_ci.py", root / "scripts/mutation_ci.py")
             for name in ("scripts/tool_versions.py", "scripts/tests/perimeter.py",
                          "scripts/tests/runner_routing.py", "plants/test_runner.py"):

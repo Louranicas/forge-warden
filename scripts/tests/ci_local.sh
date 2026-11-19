@@ -6,7 +6,7 @@ sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
 export TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target"
 mkdir -p "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants"
-cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
+cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/review_comparison.sh" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
 cat >> "$TEST_ROOT/scripts/make_patch.sh" <<'STUB'
 printf '%s\n' "$1" "$2" > "$TEST_ROOT/patch-inputs"

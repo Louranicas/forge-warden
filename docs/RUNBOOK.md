@@ -114,9 +114,10 @@ unenrolled Git exit 3. That proves the commands and the refusals, not an owner-h
 advisory commands below were run as written.
 
 ```bash
-bash make_patch.sh main HEAD > change.patch
-forge-warden check --policy warden.toml --patch change.patch \
-  --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > verdict.json
+evidence="$(mktemp -d)" || exit 1
+bash make_patch.sh main HEAD > "$evidence/change.patch"
+forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
+  --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > "${evidence:?}/verdict.json"
 echo "exit $?"
 ```
 
@@ -132,8 +133,10 @@ same goes for a submodule change when `.gitmodules` (which the change itself can
 binary sections the ranker cannot read. To run Git directly, start at the top level in Bash
 with Git 2.41 or later, run `unset "${!GIT_@}"`, then run
 `GIT_ATTR_NOSYSTEM=1 git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
-(the first two options take attributes from the empty tree; the script also reads no Git
-configuration).
+from the checkout root. Git still reads `info/attributes` in the common Git directory
+(normally `.git/info/attributes`). A local
+`*.rs -diff` rule can hide the changed Rust lines. Use the isolated `make_patch.sh` from step 2
+for canonical patch bytes.
 
 What a verdict is about: these patch bytes, with paths read from the repository root.
 forge-warden does not check that the patch is the whole change between two commits; `--base`
@@ -149,14 +152,14 @@ linked worktree run `unset "${!GIT_@}"` in Bash before passing `--repo "$(git re
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
-next step on stderr, and `verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.
+next step on stderr, and `$evidence/verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.
 
 Advisory mode instead (no allowlist needed; the best result is `hold`, exit 8): rank the patch
-yourself and hand the ranking over.
+yourself and hand the ranking over. Use the same evidence directory and Bash session as above.
 
 ```bash
-"$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < change.patch > rank.json
-forge-warden check --policy warden.toml --patch change.patch --advisory --rank rank.json --json > verdict.json
+"$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < "${evidence:?}/change.patch" > "${evidence:?}/rank.json"
+forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" --advisory --rank "${evidence:?}/rank.json" --json > "${evidence:?}/advisory-verdict.json"
 ```
 
 ## 7. Check that the verdict is an authority verdict
@@ -166,11 +169,11 @@ checks (provenance `produced`, the pinned ranker digest, Git admission `approved
 digest), but the commands below were not run on it, and not on a host with the owner's allowlist (step 4).
 
 ```bash
-python3 -c 'import json,sys; v=json.load(open("verdict.json")); s=v["seals"]; print(v["verdict"], s["provenance"], s["ranked_by"]["sha256"], s["git"]["admission"], s["git"]["allowlist_sha256"])'
+python3 -c 'import json,sys; v=json.load(sys.stdin); s=v["seals"]; print(v["verdict"], s["provenance"], s["ranked_by"]["sha256"], s["git"]["admission"], s["git"]["allowlist_sha256"])' < "${evidence:?}/verdict.json"
 sha256sum /etc/forge-warden/git-allowlist.toml
 ```
 
-Run it only after exit 0, 7 or 8: on a refusal `verdict.json` is empty. Check: provenance is `produced`; `ranked_by.sha256` is the digest from step 3; `git.admission` is
+Run it only after exit 0, 7 or 8: on a refusal `$evidence/verdict.json` is empty. Check: provenance is `produced`; `ranked_by.sha256` is the digest from step 3; `git.admission` is
 `approved`; and `git.allowlist_sha256` equals the file's SHA-256. A verdict without all four is not an
 authority verdict, whatever it says.
 
@@ -192,7 +195,7 @@ authority verdict, whatever it says.
 | exit 3, `executable digest is not enrolled` | Git changed (step 8) | add the new digest, new revision |
 | exit 4, the ranker's digest `does not list` | the binary is not the one the policy pins | use the pinned binary, or change the policy in review |
 | exit 4, `pinning …` | the ranker file is a symlink, a FIFO, or writable by others | install it as a plain file only you can write |
-| exit 8 | a rule or note holds: a person must decide | read `verdict.json`; the binary has no acknowledgement path, so the hold stands until the change or the policy changes in review (the signed acknowledgement of ADR 0007 exists only in this repository's own driver, `scripts/dogfood.sh`); a `claims_unverified` hold (the policy's `[claims] require_verified`, which `init` sets) cannot be acknowledged; re-run in bound mode: `--repo` with full `--base`/`--head` and a patch from `scripts/make_patch.sh` |
+| exit 8 | a rule or note holds: a person must decide | read `$evidence/verdict.json`; the binary has no acknowledgement path, so the hold stands until the change or the policy changes in review (the signed acknowledgement of ADR 0007 exists only in this repository's own driver, `scripts/dogfood.sh`); a `claims_unverified` hold (the policy's `[claims] require_verified`, which `init` sets) cannot be acknowledged; re-run in bound mode: `--repo` with full `--base`/`--head` and a patch from `scripts/make_patch.sh` |
 
 **Roll back** by removing `/etc/forge-warden/git-allowlist.toml` (authority mode then refuses; advisory
 mode still runs and records `unpinned`), or by reinstalling the previous forge-warden revision.
