@@ -309,6 +309,9 @@ class Contracts(unittest.TestCase):
                 node = next(value for key, value in node.value if key.value == field)
             start = node.start_mark.index - node.start_mark.column
             end = node.end_mark.index - node.end_mark.column
+            offsets = [item.start_mark.index - item.start_mark.column for item in node.value] + [end]
+            original_blocks = {id(step): original[left:right] for step, left, right in
+                               zip(steps, offsets, offsets[1:])}
             versions = TOOLS.versions(ROOT)
             action = 'taiki-e/install-action@' + versions['install_action']
             plant = {'run': 'python3 -I scripts/check_plants.py'}
@@ -317,14 +320,21 @@ class Contracts(unittest.TestCase):
             cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
             plant_run = 'python3 -I "$GITHUB_WORKSPACE/plants/run.py" --source .. --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/plants"'
 
-            def consumer_path(step):
-                return CAPS.just_consumer(step, vars(COMMANDS), cases)
+            def needs_installer(step):
+                try:
+                    return bool(CAPS.just_consumer(step, vars(COMMANDS), cases))
+                except (ValueError, SyntaxError):
+                    return True
 
             class LiteralRun(str):
                 pass
 
             class StepDumper(yaml.SafeDumper):
-                pass
+                def determine_block_hints(self, text):
+                    hints = super().determine_block_hints(text)
+                    if text.startswith('\n') and not text.lstrip('\n').startswith(' '):
+                        return hints.lstrip('123456789')
+                    return hints
 
             StepDumper.add_representer(LiteralRun, lambda dumper, run:
                                        dumper.represent_scalar('tag:yaml.org,2002:str', run, style='|'))
@@ -340,8 +350,10 @@ class Contracts(unittest.TestCase):
                 return yaml.dump([step], Dumper=StepDumper, sort_keys=False, width=float('inf')).removesuffix('...\n')
 
             def write_steps(blocks):
-                body = ''.join(step_yaml(block) for block in blocks)
-                path.write_text(original[:start] + textwrap.indent(body, ' ' * node.start_mark.column) + original[end:])
+                indent = ' ' * node.start_mark.column
+                body = ''.join(original_blocks[id(block)] if id(block) in original_blocks else
+                               textwrap.indent(step_yaml(block), indent) for block in blocks)
+                path.write_text(original[:start] + body + original[end:])
 
             for name in ('just', 'cargo-mutants'):
                 tool = name + '@' + versions[name.replace('-', '_')]
@@ -370,24 +382,27 @@ class Contracts(unittest.TestCase):
                 last = remaining.index(plant)
                 first = last
                 if name == 'just':
-                    first = next(i for i, step in enumerate(remaining) if consumer_path(step))
+                    first = next(i for i, step in enumerate(remaining[:last + 1]) if needs_installer(step))
                 write_steps([*remaining[:first], install, *remaining[first:]])
                 check_ci(root)
                 for position in range(first + 1, last + 2):
                     with self.subTest(tool=name, after=remaining[position - 1]):
                         write_steps([*remaining[:position], install, *remaining[position:]])
-                        with self.assertRaises(ValueError):
+                        with self.assertRaises((ValueError, SyntaxError)):
                             check_ci(root)
                 if name == 'just':
-                    dogfood = next(step for step in after if consumer_path(step) == 'scripts/tests/dogfood.sh')
-                    for step in (dict(dogfood, run=dogfood['run'] + '\n'),
-                                 dict(dogfood, run='true\n' + dogfood['run']),
-                                 dict(dogfood, run=dogfood['run'] + '\n\n'),
+                    dogfood = 'bash scripts/tests/dogfood.sh'
+                    for step in ({'run': '\n' + dogfood + '\n'},
+                                 {'run': dogfood + '\n'},
+                                 {'run': 'true\n' + dogfood},
+                                 {'run': dogfood + '\n\n'},
                                  {'run': "bash '${{ github.workspace }}/scripts/tests/dogfood.sh'\n",
                                   'name': 'Run dogfood\nfixture', 'if': 'success()', 'env': {'MODE': 'local\nfixture\n'},
                                   'shell': 'bash', 'working-directory': 'scripts'},
                                  {'run': "import subprocess\nsubprocess.check_call(['bash', 'dogfood.sh'])",
-                                  'shell': 'python', 'working-directory': 'scripts/tests'}):
+                                  'shell': 'python', 'working-directory': 'scripts/tests'},
+                                 {'run': "import subprocess\nsubprocess.run(args=['bash', 'dogfood.sh'], cwd='scripts/tests')",
+                                  'shell': 'python'}):
                         with self.subTest(step=step):
                             write_steps([*before, install, step, *after])
                             decoded = CAPS.workflow_jobs(path.read_text())['gate']['steps']
@@ -402,8 +417,24 @@ class Contracts(unittest.TestCase):
                             check_ci(root)
                     for shell in ('pwsh', 'python -m unittest {0}'):
                         with self.subTest(unsupported_shell=shell):
-                            write_steps([*before, {'shell': shell, 'run': 'true'}, install, *after])
+                            step = {'shell': shell, 'run': 'true'}
+                            self.assertTrue(needs_installer(step))
+                            write_steps([*before, install, step, *after])
+                            self.assertTrue(path.read_bytes().endswith(original[offsets[index + 1]:].encode()))
+                            check_ci(root)
+                            write_steps([*before, step, install, *after])
                             with self.assertRaisesRegex(ValueError, 'unsupported gate shell'):
+                                check_ci(root)
+                    unpacked = "import subprocess; subprocess.run(['bash', 'dogfood.sh'], **{'cwd': 'scripts/tests'})"
+                    for step in ({'shell': 'python', 'run': unpacked},
+                                 {'run': f'python3 -c "{unpacked}"'},
+                                 {'run': f'python3 -c"{unpacked}"'},
+                                 {'run': f'python3 - <<< "{unpacked}"'},
+                                 {'run': f"python3 - <<'PY'\n{unpacked}\nPY\n"},
+                                 {'shell': 'python', 'run': "from subprocess import run; run(**{'args': ['just']})"}):
+                        with self.subTest(unpacked=step):
+                            write_steps([*before, step, install, *after])
+                            with self.assertRaisesRegex(ValueError, 'unpacked Python process keywords'):
                                 check_ci(root)
                     python_source = "import subprocess; subprocess.run(['bash', '$GITHUB_WORKSPACE/scripts/tests/dogfood.sh'])"
                     for directory, run, expected in (
@@ -475,10 +506,9 @@ class Contracts(unittest.TestCase):
                     ):
                         with self.subTest(directory=directory, first_consumer=run):
                             consumer = {'working-directory': directory, 'run': run}
-                            later = [step for step in after if consumer_path(step) != expected]
-                            write_steps([*before, install, consumer, *later])
+                            write_steps([*before, install, consumer, *after])
                             check_ci(root)
-                            write_steps([*before, consumer, install, *later])
+                            write_steps([*before, consumer, install, *after])
                             with self.assertRaises(ValueError) as refused:
                                 check_ci(root)
                             self.assertEqual(str(refused.exception), 'gate must install Just before running ' + expected)

@@ -959,10 +959,14 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
             module, name = getattr(func.value, 'id', None), func.attr
         else:
             module, name = imported.get(getattr(func, 'id', None), (None, getattr(func, 'id', None)))
-        args = list(node.args)
-        keywords = {item.arg: item.value for item in node.keywords if item.arg}
         if directory is not None and name in ('chdir', 'fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
+        if name not in PY_SHELL_TEXT and name not in PY_ARGV and (module, name) != ('pty', 'spawn'):
+            continue
+        args = list(node.args)
+        keywords = {item.arg: item.value for item in node.keywords}
+        if directory is not None and None in keywords:
+            raise Unsupported('cannot resolve unpacked Python process keywords before Just installation')
         texts = []
         if name in PY_SHELL_TEXT:
             first = args[0] if args else keywords.get('cmd', keywords.get('command'))
@@ -970,7 +974,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         elif name == 'spawn' and module == 'pty':
             argv = args[0] if args else keywords.get('argv')
             texts = [argv_text(py_items(branch) or [branch]) for branch in branches(argv)] if argv is not None else []
-        elif name in PY_ARGV:
+        else:
             spec = PY_ARGV[name]
             if spec is None:
                 first = args[0] if args else keywords.get('args')
