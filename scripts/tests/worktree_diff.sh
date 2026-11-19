@@ -26,6 +26,19 @@ for attr in 'text eol=lf' ident working-tree-encoding=ISO-8859-1 filter=local; d
     python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
     [[ ! -s "$scratch/diff" ]]
 done
+git config filter.local.clean 'touch .git/filter-ran && cat'
+echo 'working edit' > "$src/lib.rs"
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+working edit' "$scratch/diff"
+grep -Fxq -- '-base' "$scratch/diff"
+for setting in smudge process; do
+    git config "filter.local.$setting" 'touch .git/filter-ran && exit 1'
+    if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$scratch/log"; then exit 1; fi
+    grep -Fq "$src/lib.rs" "$scratch/log"
+    [[ ! -s "$scratch/diff" ]]
+    git config --unset "filter.local.$setting"
+done
+[[ ! -e .git/filter-ran ]]
 printf '*.rs text eol=lf\n' > .git/info/attributes
 echo visible > "$src/lib.rs"
 python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
@@ -91,6 +104,20 @@ git config filter.local.clean ''
 python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
 grep -Fxq '+hidden' "$scratch/diff"
 printf 'id.rs ident\n' > .git/info/attributes
+rm -- "$src/id.rs"
+git checkout-index -- "$src/id.rs"
+expanded="$(git hash-object --no-filters "$src/id.rs")"
+stored="$(git rev-parse "$base:$src/id.rs")"
+[[ "$expanded" != "$stored" ]]
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+hidden' "$scratch/diff"
+if grep -Fq "$src/id.rs" "$scratch/diff"; then exit 1; fi
+git cat-file blob "$stored" > "$src/id.rs"
+index_before="$(git hash-object --no-filters .git/index)"
+if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$scratch/log"; then exit 1; fi
+grep -Fq "$src/id.rs" "$scratch/log"
+[[ ! -s "$scratch/diff" && $(git hash-object --no-filters .git/index) == "$index_before" ]]
+[[ $(git hash-object --no-filters "$src/id.rs") == "$stored" ]]
 echo 'pub fn id() -> String { "$Id: edited $".to_owned() }' > "$src/id.rs"
 git add -- "$src/id.rs"
 git diff --quiet "$base" -- "$src/id.rs"
@@ -100,3 +127,14 @@ if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$sc
 grep -Fq "$src/id.rs" "$scratch/log"
 [[ ! -s "$scratch/diff" && $(git hash-object --no-filters .git/index) == "$index_before" ]]
 [[ $(git hash-object --no-filters "$src/id.rs") == "$bytes_before" ]]
+
+mv .git/info/attributes .gitattributes
+git add .gitattributes
+git commit -qm 'record checkout attributes'
+base="$(git rev-parse HEAD)"
+rm .gitattributes
+git add -u -- .gitattributes
+git cat-file blob "$stored" > "$src/id.rs"
+if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$scratch/log"; then exit 1; fi
+grep -Fq "$src/id.rs" "$scratch/log"
+[[ ! -s "$scratch/diff" ]]

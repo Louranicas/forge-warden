@@ -36,64 +36,101 @@ def git(*args, env, data=None):
     return result.stdout
 
 
-def check_conversions(env, scope):
+def base_source_blobs(env, base, scope, indexed):
+    blobs = indexed.copy()
+    changes = git("diff-index", "--cached", "--raw", "--no-abbrev", "--no-renames", "-z",
+                  base, "--", scope, env=env).split(b"\0")
+    for metadata, path in zip(changes[::2], changes[1::2]):
+        old_mode, _, old_blob, _, _ = metadata[1:].split()
+        if old_mode.startswith(b"100"):
+            blobs[path] = old_blob
+        else:
+            blobs.pop(path, None)
+    return blobs
+
+
+def check_conversions(env, scope, base=None):
     entries = git("ls-files", "--abbrev=64", "-z", "--format=%(objectmode) %(objectname) %(eolattr)%x09%(path)",
                   "--", scope, env=env)
-    if not entries:
-        return []
-    autocrlf = git("config", "--default", "false", "--get", "core.autocrlf", env=env).strip().lower()
     blobs = {}
-    sensitive = set()
-    for entry in entries.rstrip(b"\0").split(b"\0"):
+    regular = {}
+    eol_attrs = {}
+    for entry in entries.split(b"\0")[:-1]:
         metadata, path = entry.split(b"\t", 1)
         mode, blob, eol = metadata.split(b" ", 2)
-        if mode == b"120000" and (os.path.islink(path) or not os.path.isfile(path)):
+        if mode.startswith(b"100"):
+            regular[path] = blob
+        elif mode == b"120000" and (os.path.islink(path) or not os.path.isfile(path)):
             continue
         blobs[path] = blob
-        if eol != b"-text" and (eol or autocrlf not in (b"false", b"no", b"off", b"0")):
-            sensitive.add(path)
-    attrs = git("check-attr", "-z", "--stdin", "--all", env=env,
-                data=b"".join(path + b"\0" for path in blobs)).split(b"\0")
+        eol_attrs[path] = eol
+    baseline = base_source_blobs(env, base, scope, regular) if base else {}
+    if not blobs and not baseline:
+        return []
+    autocrlf = git("config", "--default", "false", "--get", "core.autocrlf", env=env).strip().lower()
+    auto = autocrlf not in (b"false", b"no", b"off", b"0")
+    sensitive = {path for path, eol in eol_attrs.items() if eol != b"-text" and (eol or auto)}
+    base_options = ["--attr-source=" + base] if base else []
     filters = {}
-    for path, name, value in zip(attrs[0::3], attrs[1::3], attrs[2::3]):
-        if ((name == b"ident" and value == b"set") or
-                (name == b"working-tree-encoding" and value.lower() not in (b"", b"utf8", b"utf-8"))):
-            sensitive.add(path)
-        if name == b"filter":
-            filters.setdefault(value, set()).add(path)
-    external = set()
+    checkout_filters = {}
+    for paths, source in ((blobs.keys() | baseline.keys(), []), (baseline, base_options)):
+        if not paths:
+            continue
+        attrs = git(*source, "check-attr", "-z", "--stdin", "--all", env=env,
+                    data=b"".join(path + b"\0" for path in paths)).split(b"\0")
+        if source and auto:
+            sensitive.update(paths)
+        for path, name, value in zip(attrs[0::3], attrs[1::3], attrs[2::3]):
+            if ((name == b"ident" and value == b"set") or
+                    (name == b"working-tree-encoding" and value.lower() not in (b"", b"utf8", b"utf-8")) or
+                    (source and name in (b"text", b"crlf", b"eol"))):
+                sensitive.add(path)
+            if name == b"filter":
+                filters.setdefault(value, set()).add(path)
+                if source:
+                    checkout_filters.setdefault(value, set()).add(path)
+    unknown_checkout = set()
     options = []
     for driver, paths in filters.items():
         prefix = b"filter." + driver + b"."
         required = git("config", "--type=bool", "--default=false", "--get", prefix + b"required", env=env)
-        if required == b"true\n" or any(
-                git("config", "-z", "--default=", "--get", prefix + setting, env=env) != b"\0"
-                for setting in (b"clean", b"smudge", b"process")):
-            external.update(paths)
+        commands = {setting for setting in (b"clean", b"smudge", b"process")
+                    if git("config", "-z", "--default=", "--get", prefix + setting, env=env) != b"\0"}
+        if required == b"true\n" or commands:
+            sensitive.update(paths)
+            if commands & {b"smudge", b"process"}:
+                unknown_checkout.update(checkout_filters.get(driver, ()))
             for setting in (b"clean=", b"smudge=", b"process=", b"required=false"):
                 options.extend(("-c", prefix + setting))
-    candidates = sensitive | external
-    if not candidates:
-        return []
-    if scope == ALL_FILES:
-        sys.exit(f"Working-tree comparison unverified. Git may convert {os.fsdecode(min(candidates))!r}.")
+    if not sensitive:
+        return options
+    if base is None:
+        sys.exit(f"Working-tree comparison unverified. Git may convert {os.fsdecode(min(sensitive))!r}.")
     unstaged = set(git(*options, "diff-files", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
                        "--", scope, env=env).split(b"\0"))
-    for path in sorted(candidates):
+    for path in sorted(sensitive):
         refusal = f"Working-tree comparison unverified. Git may convert {os.fsdecode(path)!r}."
-        if any(parent.is_symlink() for parent in Path(os.fsdecode(path)).parents):
+        if path in unknown_checkout or any(parent.is_symlink() for parent in Path(os.fsdecode(path)).parents):
             sys.exit(refusal)
+        original = baseline.get(path)
+        checkout = original
+        if original is not None:
+            content = git(*options, *base_options, "cat-file", "--filters", b"--path=" + path, original, env=env)
+            checkout = git("hash-object", "--stdin", env=env, data=content).strip()
         try:
             mode = os.lstat(path).st_mode
         except (FileNotFoundError, NotADirectoryError):
-            continue
+            mode = 0
         if not stat.S_ISREG(mode):
+            if checkout != original:
+                sys.exit(refusal)
             continue
         raw = git("hash-object", "--no-filters", "--", path, env=env).strip()
-        if path in external and raw != blobs[path]:
-            sys.exit(refusal)
-        endpoint = git(*options, "hash-object", "--", path, env=env).strip() if path in unstaged else blobs[path]
-        if raw != endpoint:
+        endpoint = git(*options, "hash-object", "--", path, env=env).strip() if path in unstaged else blobs.get(path)
+        if checkout == original:
+            if raw != endpoint:
+                sys.exit(refusal)
+        elif raw != checkout or endpoint != original:
             sys.exit(refusal)
     return options
 
@@ -107,6 +144,24 @@ def check_index_flags(env, scope):
             path = Path(os.fsdecode(row.split(b"\t", 1)[1]))
             flag = "assume-unchanged" if tag.islower() else "skip-worktree"
             sys.exit(f"Working-tree comparison unverified. Git marks {str(path)!r} {flag}.")
+
+
+def check_untracked_markdown(env):
+    tracked = set(git("ls-files", "-z", "--", ":(top,icase,glob)**/*.md", env=env).split(b"\0"))
+    directories = [b"."]
+    while directories:
+        directory = directories.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.name == b".git" or (directory == b"." and entry.name in
+                                             (b"target", b"mutants.out", b"mutants.out.old")):
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    directories.append(entry.path)
+                elif entry.name.lower().endswith(b".md") and len(entry.name) > 3:
+                    path = os.path.relpath(entry.path)
+                    if path not in tracked:
+                        sys.exit(f"Working-tree comparison unverified. Untracked Markdown: {os.fsdecode(path)!r}.")
 
 
 @contextmanager
@@ -135,7 +190,7 @@ def checked_snapshot(scope):
 
 def mutation_diff(base):
     with checked_snapshot(RUST_SOURCES) as env:
-        options = check_conversions(env, RUST_SOURCES)
+        options = check_conversions(env, RUST_SOURCES, base)
         run_git(*options, "-c", "core.quotePath=false", "-c", "diff.renames=true", "diff", "--no-ext-diff",
                 "--no-textconv", "--text", "--no-color", "--src-prefix=a/", "--dst-prefix=b/",
                 base, "--", RUST_SOURCES, env=env, check=True)
@@ -144,6 +199,7 @@ def mutation_diff(base):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--clean"]:
         with checked_snapshot(ALL_FILES) as env:
+            check_untracked_markdown(env)
             check_conversions(env, ALL_FILES)
             sys.exit(bool(git("status", "--porcelain=v1", "-z", "--untracked-files=normal",
                               "--ignore-submodules=none", env=env)))

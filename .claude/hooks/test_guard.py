@@ -79,7 +79,23 @@ class Guard(unittest.TestCase):
             self.assertFalse(ran.exists())
             attributes = self.root / ".git/info/attributes"
             attributes.parent.mkdir(exist_ok=True)
-            (attributes.parent / "exclude").write_text("/crates/core/**/*.rs\n")
+            (attributes.parent / "exclude").write_text("/crates/core/**/*.rs\n*.[mM][dD]\n")
+            for directory in ("target", "mutants.out", "mutants.out.old", ".git", "docs/.git"):
+                generated = self.root / directory / "report.md"
+                generated.parent.mkdir(parents=True, exist_ok=True)
+                generated.touch()
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertFalse(ran.exists(), "generated Markdown")
+            for document in ("docs/local-review.md", "docs/target/source.MD", "mutants.out.backup/source.Md"):
+                with self.subTest(document=document):
+                    ignored = self.root / document
+                    ignored.parent.mkdir(parents=True, exist_ok=True)
+                    ignored.touch()
+                    git("check-ignore", "-q", "--", str(ignored))
+                    self.run_guard(event, mode="stop", expected=0)
+                    self.assertTrue(ran.exists(), document)
+                    ran.unlink()
+                    ignored.unlink()
             for target in ("src/bin/probe.rs", "tests/regression.rs", "examples/demo/main.rs",
                            "benches/bench.rs", "build.rs"):
                 with self.subTest(target=target):

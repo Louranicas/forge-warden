@@ -43,7 +43,7 @@ case "$1" in
     rev-parse)
         if [ "$4" = index ]; then echo "$TEST_ROOT/index"; else echo "$TEST_ROOT"; fi
         ;;
-    ls-files) exit 0;;
+    ls-files|diff-index) exit 0;;
     show-ref)
         if [ "$3" = --hash ]; then echo "$BASE_SHA"; fi
         ;;
