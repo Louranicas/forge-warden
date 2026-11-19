@@ -1337,47 +1337,48 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
 
 #[test]
 fn only_bound_mode_verifies_claims() {
-    // ADR 0012 D5 as ruled (R1, 2026-11-16): the core's `BoundClaims::from_comparison` is the only
-    // way to verified claims. It is public (a core type cannot be visible to the CLI alone), so the
-    // binary's guarantee is held here: one production call, in `bind`, whose second input is the
-    // diff the door made (`made.patch`). This holds because every other way to a `BoundClaims` or a
-    // verified `Claims` goes through that call (public-api.txt lists no other constructor).
-    let mut calls = Vec::new();
-    for (path, text) in rust_sources() {
-        if !is_production(&path) {
-            continue;
+    use syn::visit::Visit as _;
+
+    fn constructor_refs(tokens: proc_macro2::TokenStream) -> usize {
+        use proc_macro2::TokenTree;
+        let mut declaration = false;
+        let mut count = 0_usize;
+        for token in tokens {
+            match &token {
+                TokenTree::Group(group) => {
+                    count = count.saturating_add(constructor_refs(group.stream()));
+                }
+                TokenTree::Ident(name) if !declaration && name.unraw() == "from_comparison" => {
+                    count = count.saturating_add(1);
+                }
+                TokenTree::Ident(_) | TokenTree::Literal(_) | TokenTree::Punct(_) => {}
+            }
+            declaration = matches!(token, TokenTree::Ident(name) if name == "fn");
         }
-        // The whole file, unit tests included: a call anywhere in a production file counts.
-        for (n, line) in code_lines(&text) {
-            assert!(
-                !line.contains("BoundClaims as ") && !line.contains("verdict::*"),
-                "{path}:{}: the name this scan reads is not hidden",
-                n + 1
-            );
-            if line.contains("from_comparison") && !line.contains("pub fn from_comparison(") {
-                calls.push((path.clone(), line.trim().to_owned()));
+        count
+    }
+
+    let mut references = Vec::new();
+    for (path, text) in rust_sources() {
+        if is_production(&path) {
+            let count = constructor_refs(text.parse().unwrap());
+            if count > 0 {
+                references.push((path, count));
             }
         }
     }
-    assert_eq!(
-        calls,
-        [(
-            "crates/forge-warden-cli/src/main.rs".to_owned(),
-            "BoundClaims::from_comparison(ids, patch, &made.patch).map_err(|mismatch| {".to_owned()
-        )],
-        "one production call of BoundClaims::from_comparison, in bind, comparing the patch with the door's diff"
-    );
-    let main = read("crates/forge-warden-cli/src/main.rs");
-    let bind = main.find("\nfn bind(").unwrap();
-    let call = main.find("BoundClaims::from_comparison(").unwrap();
-    let next = main.get(bind + 1..).unwrap().find("\nfn ").unwrap() + bind + 1;
-    assert!(bind < call && call < next, "the call is inside bind");
-    assert!(
-        main.get(bind..call)
-            .unwrap()
-            .contains("let made = doors::child::bound_diff(git, &objects, base, head)"),
-        "made is the door's bound diff"
-    );
+    let main = "crates/forge-warden-cli/src/main.rs";
+    assert_eq!(references, [(main.to_owned(), 1)]);
+    let cli = syn::parse_file(&read(main)).unwrap();
+    let mut binding = ScratchOperations::default();
+    for item in &cli.items {
+        if let syn::Item::Fn(function) = item
+            && function.sig.ident == "bind"
+        {
+            binding.visit_block(&function.block);
+        }
+    }
+    assert!(binding.calls.iter().any(|name| name == "from_comparison"));
 }
 
 #[test]

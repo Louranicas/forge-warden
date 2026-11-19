@@ -879,6 +879,10 @@ fn bound_mode_verifies_the_claims_only_through_the_comparison() {
         verdict(&plain)["seals"]["claims"],
         serde_json::json!({"base": base, "head": head, "verified": false})
     );
+
+    let unclaimed = authority(&policy, &made, &ranker, &[]);
+    assert_eq!(unclaimed.code, 0, "{}", unclaimed.stderr);
+    assert!(verdict(&unclaimed)["seals"].get("claims").is_none());
 }
 
 #[test]

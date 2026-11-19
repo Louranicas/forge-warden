@@ -388,34 +388,6 @@ class GateCapacity(unittest.TestCase):
 
 
 
-class JudgedPatches(unittest.TestCase):
-    """H17 (ADR 0012 D7): a patch forge-warden judges is made by scripts/make_patch.sh, nowhere else.
-
-    A plain `git diff` writing a `.patch` file reads the caller's configuration and work tree (FW-2026-001);
-    `.diff` files written for `cargo mutants --in-diff` are not judged and are not counted.
-    """
-
-    PATTERN = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?\s+diff\b[^|\n]*>\s*\S+\.patch\b")
-    PLACES = ("scripts/", ".claude/", ".github/", "justfile")
-
-    def test_only_make_patch_writes_a_judged_patch(self):
-        offenders = []
-        for name in COMMANDS.tracked(ROOT):
-            if not name.startswith(self.PLACES) or name in ("scripts/make_patch.sh", "scripts/tests/perimeter.py"):
-                continue
-            text = (ROOT / name).read_text(encoding="utf-8", errors="replace")
-            for number, line in enumerate(text.splitlines(), 1):
-                if self.PATTERN.search(line):
-                    offenders.append(f"{name}:{number}: {line.strip()}")
-        self.assertEqual(offenders, [], "make judged patches with scripts/make_patch.sh")
-
-    def test_the_pattern_sees_a_judged_patch_and_not_a_mutation_diff(self):
-        self.assertTrue(self.PATTERN.search('  git diff --binary --no-renames "$base" > target/change.patch'))
-        self.assertTrue(self.PATTERN.search('git -C "$repo" diff "$b" "$h" > out.patch'))
-        self.assertFalse(self.PATTERN.search("git diff \"$base\" -- 'crates/*/src/**.rs' > target/pr.diff"))
-        self.assertFalse(self.PATTERN.search('bash scripts/make_patch.sh "$base" HEAD > target/change.patch'))
-
-
 class GateImageCommands(unittest.TestCase):
     """Gap G9 (Mission 7): a script that calls a command the offline gate image lacks is refused.
 

@@ -1740,8 +1740,8 @@
         "--",
         "--nocapture"
       ],
-      "old": "w.rule == rule.id && w.expires >= today",
-      "new": "w.rule == rule.id && w.expires > today",
+      "old": "waiver.rule == rule.id && waiver.expires >= today",
+      "new": "waiver.rule == rule.id && waiver.expires > today",
       "required_tools": [
         "cargo",
         "git",

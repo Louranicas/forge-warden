@@ -24,7 +24,6 @@ boundary is repository write access plus runner-up's fork guard (docs/runner-up.
 import hashlib
 import os
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -764,13 +763,23 @@ class Routing(unittest.TestCase):
                 workflow = yaml.load((ROOT / path).read_text(), Loader=yaml.BaseLoader)
                 job = workflow["jobs"]["mutation-shards"]
                 self.assertIn(condition(job), active | {job_condition})
-                expected = ["python3", "-I", "scripts/mutation_ci.py", "run", scope]
-                guards = []
-                for step in job["steps"]:
-                    command = step.get("run", "").strip().replace("\\\n", "")
-                    if "\n" not in command and shlex.split(command, comments=True) == expected:
-                        guards.append(condition(step) in active)
-                self.assertEqual(guards, [True])
+                workers = [step for step in job["steps"] if "SHARD_INDEX" in step.get("env", {})]
+                self.assertEqual(len(workers), 1)
+                (worker,) = workers
+                self.assertIn(condition(worker), active)
+                with tempfile.TemporaryDirectory() as directory:
+                    receipt = Path(directory) / "argv"
+                    script = Path(directory) / "step.sh"
+                    script.write_text(worker["run"])
+                    python = Path(directory) / "python3"
+                    python.write_text("#!/bin/sh\nprintf '%s\\0' python3 \"$@\" >> \"$RECEIPT\"\n")
+                    python.chmod(0o700)
+                    result = subprocess.run(["/bin/bash", "-eo", "pipefail", str(script)],
+                                            cwd=directory, env={"PATH": directory, "RECEIPT": str(receipt)},
+                                            stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(receipt.read_bytes().split(b"\0"),
+                                     [b"python3", b"-I", b"scripts/mutation_ci.py", b"run", scope.encode(), b""])
 
     def test_the_aggregate_check_stays_hosted_and_needs_plan_and_shards(self):
         body = job_bodies((ROOT / ".github/workflows/mutation-baseline.yml").read_text())["full-workspace"]

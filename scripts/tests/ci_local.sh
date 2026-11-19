@@ -34,7 +34,6 @@ import argparse
 import os
 from pathlib import Path
 import sys
-import tomllib
 
 root = Path(os.environ["TEST_ROOT"])
 command, *args = sys.argv[1:]
@@ -67,11 +66,9 @@ if command == "run":
         sys.exit(int(os.environ.get("EMPTY_EXIT", "0")))
     if (inputs.policy.resolve() != root / "warden.toml"
             or inputs.ranker.resolve() != root.parent / "bin/deep-diff-forge"
-            or "+fixture" not in inputs.patch.read_text().splitlines()):
+            or inputs.patch.read_bytes() != (root / "expected.patch").read_bytes()):
         sys.exit(95)
     (root / "judged-patch").write_text(str(inputs.patch))
-    if not tomllib.loads(inputs.policy.read_text()).get("producer", {}).get("sha256"):
-        sys.exit(4)
     sys.exit(int(os.environ.get("JUDGE_EXIT", "0")))
 if command == "deny":
     sys.exit(int(os.environ.get("DENY_EXIT", "0")))
@@ -113,6 +110,8 @@ BASE_ID="$(git commit-tree "$tree" -p "$root_id" -m upstream)"
 export BASE_ID HEAD_ID
 git update-ref refs/remotes/origin/main "$BASE_ID"
 git pack-refs --all
+bash "$source_root/scripts/make_patch.sh" "$BASE_ID" "$HEAD_ID" > "$TEST_ROOT/expected.patch"
+git config --local diff.noprefix true
 
 run_gate() {
  local entry="$1" expected="$2" actual=0
@@ -152,9 +151,11 @@ for entry in "$gate" "$sandbox/pre-push"; do
  done
 done
 
-printf 'schema = "forge-warden.policy.v0"\n' > "$TEST_ROOT/warden.toml"
+cp "$source_root/fixtures/adversarial/no-secrets.toml" "$TEST_ROOT/warden.toml"
 for entry in "$gate" "$sandbox/pre-push"; do
- run_gate "$entry" 4
+ rm -f "$TEST_ROOT/judged-patch"
+ JUDGE_EXIT=4 run_gate "$entry" 4
+ [[ -s "$TEST_ROOT/judged-patch" ]]
 done
 cp "$source_root/warden.toml" "$TEST_ROOT/warden.toml"
 

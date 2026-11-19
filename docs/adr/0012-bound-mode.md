@@ -298,9 +298,9 @@ is the crate that mints it). D5's sentence stays as written above; this entry re
 - **What this guarantees, said plainly.** A verified claim means a byte comparison of two inputs passed and the ids are
   well formed. The core cannot know where the second input came from: a library caller can pass the same bytes twice,
   as it could already print any JSON. The property that matters, "the forge-warden binary never says verified without
-  its door's diff", is held in the CLI: `tests/repo_invariants.rs` (`only_bound_mode_verifies_claims`) allows exactly
-  one production call of `from_comparison`, in `bind`, with `made.patch` from the door's `bound_diff` as its second
-  input, and a plant that adds a second call must be caught by that test.
+  its door's diff", is held in the CLI: `tests/repo_invariants.rs` (`only_bound_mode_verifies_claims`) checks that
+  `bind` owns the sole production reference to `from_comparison`. The second-call plant exercises that guard.
+  The authority CLI tests check the emitted claims and the refusal of mismatched patch bytes and corrupt objects.
 - **Schema.** `seals.claims` in `verdict.v3.schema.json` is `oneOf` the bound object and v2's asserted object
   (unchanged), rather than one object with `if`/`then`.
 
