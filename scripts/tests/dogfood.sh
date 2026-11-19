@@ -634,15 +634,16 @@ echo 'PASS an ignored file in the trusted checkout refused before effects'
 git clone -q --no-local "$trusted" "$sandbox/moved-trusted"
 moved="$sandbox/moved-trusted"
 git -C "$moved" -c protocol.file.allow=always submodule add -q "$trusted" "modulé"
-git -C "$moved" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm later -- .gitmodules "modulé"
+python3 -I -c 'import sys; sys.stdout.buffer.write(b"a" * (2 * 1024 * 1024) + b"end")' > "$moved/multichunk.bin"
+git -C "$moved" add -- multichunk.bin
+git -C "$moved" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm later -- .gitmodules "modulé" multichunk.bin
 moved_base="$(git -C "$moved" rev-parse HEAD)"
 git -C "$attr" fetch -q "$moved" HEAD
-export EXPECTED_TRUSTED="$moved"
+judge_moved() {
+ EXPECTED_TRUSTED="$moved" bash "$moved/scripts/dogfood.sh" "${LOCAL[@]}" "$moved_base" "$attr_head" "$attr" "$1"
+}
 out="$sandbox/s3-diverged"
-set +e
-bash "$moved/scripts/dogfood.sh" "${LOCAL[@]}" "$moved_base" "$attr_head" "$attr" "$out" > "$sandbox/output" 2>&1
-set -e
-export EXPECTED_TRUSTED="$trusted"
+judge_moved "$out" > "$sandbox/output" 2>&1
 if ! same_bytes "$clean_patch" "$out/change.patch"; then
  echo "FAIL diverged history: the patch is not base...head ($(grep -c '^diff --git' "$out/change.patch" || true) sections)"
  exit 1
@@ -654,7 +655,7 @@ for root in "$moved" "$moved/modulé"; do
  chmod 0111 "$root/.cargo"
  if [[ ! -r "$root/.cargo" ]]; then
   actual=0
-  EXPECTED_TRUSTED="$moved" bash "$moved/scripts/dogfood.sh" "${LOCAL[@]}" "$moved_base" "$attr_head" "$attr" "$sandbox/incomplete" > "$sandbox/output" 2>&1 || actual=$?
+  judge_moved "$sandbox/incomplete" > "$sandbox/output" 2>&1 || actual=$?
   chmod 0700 "$root/.cargo"
   [[ "$actual" = 2 && ! -e "$sandbox/incomplete" ]] && grep -Fq '.cargo' "$sandbox/output" || { cat "$sandbox/output"; exit 1; }
   echo "PASS incomplete trusted inventory under $root refused before effects"
@@ -663,6 +664,28 @@ for root in "$moved" "$moved/modulé"; do
  fi
  rm -r -- "$root/.cargo"
 done
+module="$moved/modulé"
+python3 -I -c 'import os, sys; os.truncate(sys.argv[1], 160 * 1024 * 1024)' "$module/build.rs"
+actual=0
+(ulimit -v 98304 && judge_moved "$sandbox/large-file") > "$sandbox/output" 2>&1 || actual=$?
+[[ "$actual" = 2 && ! -e "$sandbox/large-file" ]] && grep -Fq 'trusted checkout must be clean' "$sandbox/output" || { cat "$sandbox/output"; exit 1; }
+echo 'PASS oversized tracked submodule file refused under memory limit'
+mv -- "$module" "$sandbox/saved-module"
+mkdir "$sandbox/empty-module"
+for kind in missing file symlink; do
+ case "$kind" in
+  file) touch "$module" ;;
+  symlink) ln -s "$sandbox/empty-module" "$module" ;;
+ esac
+ actual=0
+ judge_moved "$sandbox/gitlink-$kind" > "$sandbox/output" 2>&1 || actual=$?
+ [[ "$actual" = 2 && ! -e "$sandbox/gitlink-$kind" ]] || { cat "$sandbox/output"; exit 1; }
+ rm -f -- "$module"
+done
+mkdir "$module"
+judge_moved "$sandbox/uninitialized" > "$sandbox/output" 2>&1
+same_bytes "$clean_patch" "$sandbox/uninitialized/change.patch"
+echo 'PASS gitlink admission requires a real directory and accepts an empty one'
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
 export HELPER_RECEIPT="$sandbox/helper-ran"
 printf '%s\n' 'echo ran >> "$HELPER_RECEIPT"' 'exit 0' > "$trusted/scripts/make_patch.sh"

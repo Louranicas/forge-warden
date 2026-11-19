@@ -91,6 +91,29 @@ def git(root, *args):
     return result.stdout
 
 
+def file_version(info):
+    return info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_ctime_ns
+
+
+def regular_blob(path, expected):
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        version = file_version(opened)
+        if version != file_version(expected):
+            raise ValueError(f"trusted file changed during verification: {path}")
+        remaining = opened.st_size
+        digest = hashlib.sha1(b"blob %d\0" % remaining)
+        while remaining:
+            chunk = stream.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                raise ValueError(f"trusted file shortened during verification: {path}")
+            digest.update(chunk)
+            remaining -= len(chunk)
+        if version != file_version(path.lstat()):
+            raise ValueError(f"trusted file changed during verification: {path}")
+    return digest
+
+
 def check_base(root, commit):
     entry = root / ".git"
     mode = entry.lstat().st_mode
@@ -130,21 +153,22 @@ def check_base(root, commit):
         if (index_mode, index_oid, stage, index_name) != (mode, oid, b"0", name):
             raise ValueError(dirty)
         path = root / os.fsdecode(name)
+        info = path.lstat()
+        file_mode = info.st_mode
         if mode == b"160000":
-            if path.is_symlink():
+            if not stat.S_ISDIR(file_mode):
                 raise ValueError(dirty)
-            if path.exists() and any(path.iterdir()):
+            if any(path.iterdir()):
                 check_base(path, oid)
             continue
-        file_mode = path.lstat().st_mode
         if stat.S_ISLNK(file_mode) and mode == b"120000":
             data = os.fsencode(os.readlink(path))
+            digest = hashlib.sha1(b"blob %d\0" % len(data) + data)
         elif stat.S_ISREG(file_mode) and mode == (b"100755" if file_mode & stat.S_IXUSR else b"100644"):
-            data = path.read_bytes()
+            digest = regular_blob(path, info)
         else:
             raise ValueError(dirty)
-        header = b"blob %d\0" % len(data)
-        if hashlib.sha1(header + data).hexdigest().encode() != oid:
+        if digest.hexdigest().encode() != oid:
             raise ValueError(dirty)
 
 
