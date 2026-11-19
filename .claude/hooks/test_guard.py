@@ -79,6 +79,14 @@ class Guard(unittest.TestCase):
             self.assertFalse(ran.exists())
             attributes = self.root / ".git/info/attributes"
             attributes.parent.mkdir(exist_ok=True)
+            attributes.write_text("*.rs -filter -ident -text eol=lf working-tree-encoding=UTF-8\n")
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertFalse(ran.exists(), "disabled conversions")
+            git("config", "filter.unset.clean", "cat")
+            attributes.write_text("*.rs filter=unset\n")
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertTrue(ran.exists(), "configured filter named unset")
+            ran.unlink()
             for eol, edited in (("lf", b"embedded\r\n"), ("crlf", b"embedded\n")):
                 with self.subTest(eol=eol):
                     attributes.write_text(f"*.txt text eol={eol}\n")
@@ -120,6 +128,26 @@ class Guard(unittest.TestCase):
             (self.root / "tests/new.rs").touch()
             self.run_guard(event, mode="stop", expected=0)
             self.assertTrue(ran.exists())
+            (self.root / "tests/new.rs").unlink()
+            ran.unlink()
+
+            git("init", "-q", "--template=", "module")
+            nested = self.root / "module"
+            (nested / "file").write_text("submodule content\n")
+            git("-C", "module", "add", "file")
+            git("-C", "module", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-qm", "nested base")
+            git("submodule", "add", "./module", "module")
+            git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-qm", "add module")
+            nested_index = subprocess.check_output(
+                ["git", "rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=nested)
+            indexes = [self.root / ".git/index", Path(os.fsdecode(nested_index.rstrip(b"\n")))]
+            before = [index.read_bytes() for index in indexes]
+            os.utime(nested / "file", (1_000_000_000, 1_000_000_000))
+            self.run_guard(event, mode="stop", expected=0)
+            self.assertTrue(ran.exists(), "initialized submodule")
+            self.assertEqual([index.read_bytes() for index in indexes], before)
 
     def test_shell_tokenization_and_rust_writes(self):
         for command in ("echo x > war''den.toml", "echo x > " + str(self.root / "warden.toml"),

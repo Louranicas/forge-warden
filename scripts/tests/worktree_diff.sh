@@ -25,8 +25,15 @@ git add "$src/lib.rs"
 touch -r "$src/lib.rs" .git/index
 echo edit > "$src/lib.rs"
 touch -r .git/index "$src/lib.rs"
-python3 -I "$root/scripts/worktree_diff.py" "$base" > diff.out
-grep -Fxq '+edit' diff.out
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+edit' "$scratch/diff"
+touch -t 202001020000 .git/index
+printf 'edit\n' > "$scratch/replacement"
+touch -r "$src/lib.rs" "$scratch/replacement"
+mv "$scratch/replacement" "$src/lib.rs"
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+edit' "$scratch/diff"
+if python3 -I "$root/scripts/worktree_diff.py" --clean; then exit 1; fi
 git config --unset core.checkStat
 git config --unset core.trustctime
 
@@ -34,12 +41,25 @@ echo hidden > "$src/lib.rs"
 echo visible > "$src/unrelated.rs"
 for flag in assume-unchanged skip-worktree; do
     git update-index "--$flag" -- "$src/lib.rs"
-    if python3 -I "$root/scripts/worktree_diff.py" "$base" > diff.out 2> log; then exit 1; fi
-    grep -Fq "$flag" log
-    [[ ! -s diff.out && $(cat "$src/lib.rs") == hidden && $(cat "$src/unrelated.rs") == visible ]]
+    if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$scratch/log"; then exit 1; fi
+    grep -Fq "$flag" "$scratch/log"
+    [[ ! -s "$scratch/diff" && $(cat "$src/lib.rs") == hidden && $(cat "$src/unrelated.rs") == visible ]]
     git update-index "--no-$flag" -- "$src/lib.rs"
 done
 git update-index --assume-unchanged -- notes
-python3 -I "$root/scripts/worktree_diff.py" "$base" > diff.out
-grep -Fxq '+hidden' diff.out
-grep -Fxq '+visible' diff.out
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+hidden' "$scratch/diff"
+grep -Fxq '+visible' "$scratch/diff"
+
+mkdir -p "$src/parser" crates/x/tests .git/info
+echo 'fn helper() {}' > crates/x/tests/helper.rs
+printf 'ignored.rs\n' > .git/info/exclude
+for path in "$src/parser/new.rs" "$src/parser/ignored.rs"; do
+    echo 'pub fn parse() {}' > "$path"
+    if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$scratch/log"; then exit 1; fi
+    grep -Fq "$path" "$scratch/log"
+    [[ ! -s "$scratch/diff" ]]
+    git add -f -- "$path"
+    python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+    grep -Fxq "+++ b/$path" "$scratch/diff"
+done
