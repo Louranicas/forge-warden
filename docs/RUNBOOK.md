@@ -131,7 +131,7 @@ same goes for a submodule change when `.gitmodules` (which the change itself can
 `.gitattributes` the change commits (`*.rs -diff`) makes a plain `git diff` write its text as
 binary sections the ranker cannot read. To run Git directly, start at the top level in Bash
 with Git 2.41 or later, run `unset "${!GIT_@}"`, then run
-`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
+`GIT_ATTR_NOSYSTEM=1 git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none main...HEAD`
 (the first two options take attributes from the empty tree; the script also reads no Git
 configuration).
 

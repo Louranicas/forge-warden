@@ -190,7 +190,7 @@ patch is refused), `diff.relative` in a subdirectory leaves out every change out
 `.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker
 cannot read; no check of the patch can see any of these. To make the patch directly in Bash,
 run `unset "${!GIT_@}"` and then
-`git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
+`GIT_ATTR_NOSYSTEM=1 git --attr-source="$(git hash-object -t tree /dev/null)" -c core.attributesFile=/dev/null --no-replace-objects diff --no-ext-diff --no-textconv --no-color --no-relative --binary --no-renames --full-index --src-prefix=a/ --dst-prefix=b/ --submodule=short --ignore-submodules=none <base>...<head>`,
 from the top level, with Git 2.41 or later: the first two options take attributes from the empty
 tree, not from the work tree (the script also reads no Git configuration). A verdict is about the patch bytes it was given, with paths read from the
 repository root. Outside bound mode forge-warden does not check that the patch is the whole change
@@ -260,14 +260,13 @@ as JSON, and a test fails if this table drifts from it.
 ## In CI
 
 ```yaml
-- shell: bash
-  run: |
-    unset "${!GIT_@}"
-    bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > change.patch   # scripts/make_patch.sh, pinned like the binary
-    forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > verdict.json
+- run: unset "${!GIT_@}" && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > change.patch
+  env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
+- run: unset "${!GIT_@}" && forge-warden check --policy base/warden.toml --patch change.patch --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > verdict.json
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
 ```
 
+Run these steps with Bash and pin `make_patch.sh` to the same revision as the binary.
 Take the policy from the **base** checkout, not from the pull request. Otherwise a pull request
 can loosen the rules that judge it. This repository's example workflow
 ([`ci.yml`](.github/workflows/ci.yml), job `dogfood`) runs [`scripts/dogfood.sh`](scripts/dogfood.sh)

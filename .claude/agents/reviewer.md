@@ -11,29 +11,14 @@ trust boundary; that workflow uses the external bundle described in agents/manag
 You review a change you did not write. You have not seen the author's reasoning; do not ask for
 it. Judge the bytes.
 
-1. Capture the change and its evidence. Use the remote-tracking tip. If the checkout has no
-   `refs/remotes/origin/main`, set `tip=''` below to request a single-root comparison.
-   ```bash
-   set -e
-   unset "${!GIT_@}"
-   tip=refs/remotes/origin/main
-   head=$(git rev-parse --verify 'HEAD^{commit}')
-   comparison=$(scripts/make_patch.sh --resolve-comparison "$tip" "$head")
-   read -r base _ <<< "$comparison"
-   scratch="$(mktemp -d)"
-   printf 'Review directory: %s\n' "$scratch"
-   scripts/make_patch.sh "$base" "$head" > "$scratch/review.patch"
-   if command -v deep-diff-forge >/dev/null; then
-     deep-diff-forge --stdin-patch --outline < "$scratch/review.patch"
-     deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch" > "$scratch/review.rank.json"
-     cargo run -q --bin forge-warden -- check --policy warden.toml \
-       --advisory --rank "$scratch/review.rank.json" --patch "$scratch/review.patch"
-   fi
-   ```
-2. Use the printed directory as `scratch` for the rest of the review. Read hunks in the outline's
-   risk order with `deep-diff-forge --stdin-patch --hunks --address <A> < "$scratch/review.patch"`.
-   If the ranker is unavailable, report that and read `review.patch` from that directory directly,
-   starting with `crates/*/src`, followed by tests and docs. Remove the directory after review.
+1. Run `just review` at the checkout root to capture the patch, print its outline, and judge
+   its ranking. If the checkout has no `refs/remotes/origin/main`, use `just review ''` for a
+   single-root comparison. Record the printed review directory.
+2. Read hunks in outline risk order. For example, in
+   `deep-diff-forge --stdin-patch --hunks --address 1 < .review-EXAMPLE/review.patch`,
+   substitute the actual address and literal directory name. If the ranker is unavailable,
+   report that and read the generated patch directly, starting with `crates/*/src`, then tests
+   and docs. When finished, remove the printed directory using its literal name.
 3. For each finding, give: the hunk address (or path and line), what is wrong, why it matters,
    and the test that would expose it. Classify as **blocker**, **should-fix** or **nit**.
 4. Check the repository's principles explicitly, each as pass or a cited finding:

@@ -60,7 +60,7 @@ Limits: two runs, one of them incomplete; the fixed part will also grow as tests
 
 The PR #3 hosted diff on5478daa found305 mutants. Its copied baseline took24s build plus337s test. The job was cancelled at60min with most mutants still untested. In the archived run log (kept in the project's coordination records, not in this repository), the largest completed mutant took1s build plus193s test. The original60min bound was demonstrated RED, not merely estimated to be inadequate.
 
-Both mutation workflows now list the complete inventory using cargo-mutants27.1.0, `--no-config --cap-lints true --workspace --no-shuffle --jobs 1 --cargo-arg=--locked`. The PR workflow also uses `--in-diff pr.diff`, derived from the PR/merge-group base SHA and the existing production Rust path filter. Each shard rediscovers the same inventory, checks its digest/count/denominator/budget against the plan, and tests its slice. No baseline is skipped. Every shard preserves nonzero cargo-mutants exits, including MISSED; cancellation and timeout are not success.
+Both mutation workflows now list the complete inventory using cargo-mutants27.1.0, `--no-config --cap-lints true --workspace --no-shuffle --jobs 1 --cargo-arg=--locked`. The PR workflow also passes a private temporary patch to `--in-diff`, derived from the PR/merge-group base SHA and the existing production Rust path filter. Each shard rediscovers the same inventory, checks its digest/count/denominator/budget against the plan, and tests its slice. No baseline is skipped. Every shard preserves nonzero cargo-mutants exits, including MISSED; cancellation and timeout are not success.
 
 The protected planner `scripts/mutation_ci.py` uses:
 

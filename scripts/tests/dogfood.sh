@@ -350,6 +350,16 @@ named_patch="$sandbox/main-to-head.patch"
 bash "$maker" main HEAD "$sub" > "$named_patch"
 git -C "$sub" replace "$sub_base^{tree}" "$sub_head^{tree}"
 git -C "$sub" replace "$base^{tree}" 'HEAD^{tree}'
+(
+unset GIT_ATTR_NOSYSTEM
+git() {
+ if [[ " $* " == *" diff "* && ${GIT_ATTR_NOSYSTEM:-} != 1 ]]; then
+  echo 'documented diff enabled system attributes' >&2
+  return 1
+ fi
+ command git "$@"
+}
+export -f git
 python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" "$named_patch" <<'PYDOC'
 from pathlib import Path
 import os
@@ -370,8 +380,8 @@ read_only = {
 for document, revision_range, patch in (('README.md', base + '...' + head, supplied_patch),
                                         ('docs/RUNBOOK.md', 'main...HEAD', named_patch)):
     expected = Path(patch).read_bytes()
-    spans = re.findall(r'`git[ \t]+([^`]+)`', (Path(source) / document).read_text())
-    arguments, = [span for span in spans if '...' in span and 'diff' in shlex.split(span)]
+    spans = re.findall(r'`GIT_ATTR_NOSYSTEM=([01])[ \t]+git[ \t]+([^`]+)`', (Path(source) / document).read_text())
+    (nosystem, arguments), = [(value, span) for value, span in spans if '...' in span and 'diff' in shlex.split(span)]
     arguments = arguments.replace('<base>', base).replace('<head>', head)
     if not re.fullmatch(shell_syntax, arguments) or set(shlex.split(arguments)) - (read_only | {revision_range}):
         sys.exit(f'{document}: unsupported argument in documented Git diff')
@@ -380,11 +390,12 @@ for document, revision_range, patch in (('README.md', base + '...' + head, suppl
         if setting:
             key, value = setting.split('=', 1)
             env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0=key, GIT_CONFIG_VALUE_0=value)
-        actual = subprocess.check_output(f'git {arguments}', shell=True, executable='bash', cwd=repo, env=env)
+        actual = subprocess.check_output(f'GIT_ATTR_NOSYSTEM={nosystem} git {arguments}', shell=True, executable='bash', cwd=repo, env=env)
         if actual != expected:
             sys.exit(f'FAIL {document}: patch differs from make_patch with {setting or "default configuration"}')
     print(f'PASS {document} produces the same attribute and submodule patch as make_patch')
 PYDOC
+)
 # Every local run so far left the curl log empty: none of them downloaded the ranker.
 test ! -s "$CURL_LOG" || { cat "$CURL_LOG"; echo 'FAIL a local run called curl'; exit 1; }
 # The ranker is the pinned release archive or nothing: other bytes and a failed download both stop

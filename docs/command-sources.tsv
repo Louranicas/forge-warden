@@ -1,7 +1,7 @@
 .claude/agents/falsifier.md	0
-.claude/agents/reviewer.md	1
+.claude/agents/reviewer.md	0
 .claude/agents/subtractor.md	0
-.claude/skills/ship-a-change/SKILL.md	1
+.claude/skills/ship-a-change/SKILL.md	0
 .claude/skills/write-a-rule/SKILL.md	0
 .github/hold-reviewers/README.md	0
 .github/release-signers/README.md	0
@@ -47,6 +47,6 @@ fixtures/hostile/README.md	0
 fixtures/hostile/binary-text/README.md	0
 fixtures/hostile/lone-header/README.md	0
 fixtures/hostile/patch-prefix/README.md	0
-justfile	1
+justfile	3
 plants/README.md	0
 schemas/README.md	0

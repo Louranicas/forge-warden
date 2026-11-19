@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Measured mutation sharding; every shard rediscovers the same complete inventory."""
+from contextlib import ExitStack
 import hashlib
 import json
 import math
@@ -8,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 
 # Hosted5478daa: baseline24+337s, largest completed mutant1+193s.
 # Conservative serial workers avoid assuming unmeasured --jobs2/4 throughput.
@@ -35,7 +37,7 @@ def aggregate(plan, shards):
     return plan == shards == 'success'
 
 
-def inventory(scope):
+def inventory(scope, resources):
     # A caller's target/config must not redirect or reduce mutation coverage.
     env = {key: value for key, value in os.environ.items()
            if not key.startswith('GIT_') and key != 'CARGO_TARGET_DIR'}
@@ -50,9 +52,10 @@ def inventory(scope):
                                         '--no-ext-diff', '--no-textconv', '--text',
                                         '--no-color', '--src-prefix=a/', '--dst-prefix=b/',
                                         base + '...HEAD', '--', 'crates/*/src/**.rs'], env=env)
-        Path('pr.diff').write_bytes(diff)
+        diff_path = Path(resources.enter_context(TemporaryDirectory())) / 'pr.diff'
+        diff_path.write_bytes(diff)
         empty_diff = not diff
-        command += ['--in-diff', 'pr.diff']
+        command += ['--in-diff', str(diff_path)]
     elif scope != 'full':
         raise ValueError('unknown mutation scope')
     # cargo-mutants exits early without JSON for an empty diff. Only that proven-empty
@@ -73,27 +76,28 @@ def main(args):
         return
     if len(args) != 2 or args[0] not in ('plan', 'run'):
         raise ValueError('usage: mutation_ci.py plan|run diff|full OR aggregate')
-    command, env, total, digest = inventory(args[1])
-    plan = matrix(total, digest)
-    if args[0] == 'plan':
-        payload = json.dumps(plan, separators=(',', ':'))
-        print(payload)
-        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-            output.write('matrix=' + payload + '\n')
-        return
-    index = int(os.environ['SHARD_INDEX'])
-    if not 0 <= index < len(plan['include']):
-        raise ValueError('invalid shard index')
-    expected = plan['include'][index]
-    supplied = dict(index=index, shards=int(os.environ['SHARD_COUNT']),
-                    total=int(os.environ['MUTANT_TOTAL']), digest=os.environ['INVENTORY_DIGEST'],
-                    minutes=int(os.environ['SHARD_MINUTES']))
-    if supplied != expected:
-        raise ValueError('shard inventory, denominator or measured budget differs from plan')
-    print(json.dumps(expected), flush=True)
-    # Baseline remains enabled on EVERY shard; no warm gate substitutes for copied-tree tests.
-    subprocess.run(command + ['--shard', f'{index}/{expected["shards"]}', '-vV'],
-                   env=env, check=True)
+    with ExitStack() as resources:
+        command, env, total, digest = inventory(args[1], resources)
+        plan = matrix(total, digest)
+        if args[0] == 'plan':
+            payload = json.dumps(plan, separators=(',', ':'))
+            print(payload)
+            with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+                output.write('matrix=' + payload + '\n')
+            return
+        index = int(os.environ['SHARD_INDEX'])
+        if not 0 <= index < len(plan['include']):
+            raise ValueError('invalid shard index')
+        expected = plan['include'][index]
+        supplied = dict(index=index, shards=int(os.environ['SHARD_COUNT']),
+                        total=int(os.environ['MUTANT_TOTAL']), digest=os.environ['INVENTORY_DIGEST'],
+                        minutes=int(os.environ['SHARD_MINUTES']))
+        if supplied != expected:
+            raise ValueError('shard inventory, denominator or measured budget differs from plan')
+        print(json.dumps(expected), flush=True)
+        # Baseline remains enabled on EVERY shard; no warm gate substitutes for copied-tree tests.
+        subprocess.run(command + ['--shard', f'{index}/{expected["shards"]}', '-vV'],
+                       env=env, check=True)
 
 
 if __name__ == '__main__':

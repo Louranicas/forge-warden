@@ -49,3 +49,46 @@ judge:
     trap 'rm -f -- "$patch"' EXIT
     scripts/make_patch.sh refs/remotes/origin/main HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
+
+stash-source:
+    #!/usr/bin/env bash
+    set -eu
+    unset "${!GIT_@}"
+    git stash push -- crates/*/src
+
+restore-source:
+    #!/usr/bin/env bash
+    set -eu
+    unset "${!GIT_@}"
+    git stash pop
+
+judge-bound:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unset "${!GIT_@}"
+    base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+    head="$(git rev-parse --verify 'HEAD^{commit}')"
+    scratch="$(mktemp -d)"
+    trap 'rm -rf -- "$scratch"' EXIT
+    scripts/make_patch.sh "$base" "$head" > "$scratch/change.patch"
+    ranker="$(type -P deep-diff-forge)"
+    repo="$(git rev-parse --path-format=absolute --git-common-dir)"
+    cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$scratch/change.patch" \
+        --ranker "$ranker" --repo "$repo" --base "$base" --head "$head"
+
+[positional-arguments]
+review tip="refs/remotes/origin/main":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unset "${!GIT_@}"
+    head="$(git rev-parse --verify 'HEAD^{commit}')"
+    comparison="$(scripts/make_patch.sh --resolve-comparison "$1" "$head")"
+    read -r base _ <<< "$comparison"
+    scratch="$(mktemp -d .review-XXXXXXXX)"
+    printf 'Review directory: %s\n' "$scratch"
+    scripts/make_patch.sh "$base" "$head" > "$scratch/review.patch"
+    if command -v deep-diff-forge >/dev/null; then
+        deep-diff-forge --stdin-patch --outline < "$scratch/review.patch"
+        deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch" > "$scratch/review.rank.json"
+        cargo run -q --bin forge-warden -- check --policy warden.toml --advisory --rank "$scratch/review.rank.json" --patch "$scratch/review.patch"
+    fi

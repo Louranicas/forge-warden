@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Independent measured-capacity and failure tests for the mutation planner."""
+from contextlib import ExitStack
 import importlib.util
 from pathlib import Path
 import unittest
@@ -70,21 +71,21 @@ class Execution(unittest.TestCase):
         with patch.dict(os.environ,{'BASE_SHA':'a'*40},clear=True), \
              patch.object(M.Path,'write_bytes'), \
              patch.object(M.subprocess,'check_output',return_value=b'') as read:
-            command,env,total,digest=M.inventory('diff')
+            command,env,total,digest=M.inventory('diff', self.enterContext(ExitStack()))
             self.assertEqual(total,0)
             self.assertIn('--in-diff',command)
             self.assertEqual(read.call_count,1)  # git diff only; cargo emits no JSON here.
         with patch.dict(os.environ,{'BASE_SHA':'a'*40},clear=True), \
              patch.object(M.Path,'write_bytes'), \
              patch.object(M.subprocess,'check_output',side_effect=[b'nonempty',b'']):
-            with self.assertRaises(ValueError): M.inventory('diff')
+            with self.assertRaises(ValueError): M.inventory('diff', self.enterContext(ExitStack()))
 
     def test_both_scopes_keep_honest_flags(self):
         for scope in ('diff','full'):
             with self.subTest(scope=scope), patch.dict(os.environ,{'BASE_SHA':'a'*40,'CARGO_TARGET_DIR':'/inherited'},clear=True), \
                  patch.object(M.Path,'write_bytes'), \
                  patch.object(M.subprocess,'check_output',side_effect=([b'diff',b'[]'] if scope=='diff' else [b'[]'])) as read:
-                command,env,total,digest=M.inventory(scope)
+                command,env,total,digest=M.inventory(scope, self.enterContext(ExitStack()))
                 self.assertEqual(total,0)
                 self.assertNotIn('CARGO_TARGET_DIR',env)
                 for flag in ('--no-config','--cap-lints','--no-shuffle','--workspace','--cargo-arg=--locked'):
