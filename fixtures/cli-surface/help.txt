@@ -39,6 +39,18 @@ Options:
       --json           Print the forge-warden.verdict.v3 document instead of the human summary
   -h, --help           Print help
 --- stderr
+=== forge-warden empty --help (exit 0)
+--- stdout
+Verify that the bound repository comparison has an empty diff
+
+Usage: forge-warden empty --repo <DIR> --base <REV> --head <REV>
+
+Options:
+      --repo <DIR>  The repository to verify. For a linked worktree pass `--repo "$(git rev-parse --git-common-dir)"`
+      --base <REV>  Full base commit ID
+      --head <REV>  Full head commit ID
+  -h, --help        Print help
+--- stderr
 === forge-warden lint --help (exit 0)
 --- stdout
 Validate a policy without judging anything; lists every issue at once
