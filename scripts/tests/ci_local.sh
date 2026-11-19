@@ -79,7 +79,7 @@ if command == "mutants":
     parser.add_argument("--cap-lints", required=True, choices=["true"])
     parser.add_argument("--in-diff", required=True, type=Path)
     diff = parser.parse_args(args).in_diff
-    if "+fixture" not in diff.read_text().splitlines():
+    if not {"-original", "+fixture", "+binary-marked"}.issubset(diff.read_text().splitlines()):
         sys.exit(93)
     (root / "mutated-diff").write_text(str(diff))
     sys.exit(int(os.environ.get("MUTANTS_EXIT", "0")))
@@ -98,11 +98,14 @@ export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 cd "$TEST_ROOT"
 git init -q
-git commit --allow-empty -qm root
-root_id="$(git rev-parse HEAD)"
 mkdir -p crates/sample/src
-printf 'fixture\n' > crates/sample/src/lib.rs
+printf 'original\n' > crates/sample/src/lib.rs
 git add crates/sample/src/lib.rs
+git commit -qm root
+root_id="$(git rev-parse HEAD)"
+printf 'fixture\n' > crates/sample/src/lib.rs
+printf 'binary-marked\n' > crates/sample/src/other.rs
+git add crates/sample/src
 git commit -qm head
 HEAD_ID="$(git rev-parse HEAD)"
 tree="$(git rev-parse 'HEAD^{tree}')"
@@ -113,6 +116,8 @@ git pack-refs --all
 bash "$source_root/scripts/make_patch.sh" "$BASE_ID" "$HEAD_ID" > "$TEST_ROOT/expected.patch"
 git config --local diff.noprefix true
 git config --local diff.external true
+git config --local diff.silent.textconv true
+printf 'lib.rs diff=silent\nother.rs -diff\n' > .git/info/attributes
 
 run_gate() {
  local entry="$1" expected="$2" actual=0
