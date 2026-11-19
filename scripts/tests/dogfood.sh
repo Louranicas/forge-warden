@@ -666,6 +666,7 @@ for root in "$moved" "$moved/modulé"; do
 done
 module="$moved/modulé"
 python3 -I -c 'import os, sys; os.truncate(sys.argv[1], 160 * 1024 * 1024)' "$module/build.rs"
+chmod 000 "$module/build.rs"
 actual=0
 (ulimit -v 98304 && judge_moved "$sandbox/large-file") > "$sandbox/output" 2>&1 || actual=$?
 [[ "$actual" = 2 && ! -e "$sandbox/large-file" ]] && grep -Fq 'trusted checkout must be clean' "$sandbox/output" || { cat "$sandbox/output"; exit 1; }
@@ -686,6 +687,72 @@ mkdir "$module"
 judge_moved "$sandbox/uninitialized" > "$sandbox/output" 2>&1
 same_bytes "$clean_patch" "$sandbox/uninitialized/change.patch"
 echo 'PASS gitlink admission requires a real directory and accepts an empty one'
+partial="$sandbox/partial"
+git clone -q --no-hardlinks "$trusted" "$partial"
+(
+ cd "$partial"
+ src=crates/fixture/src/lib.rs
+ mkdir -p crates/fixture/src
+ printf 'old\n' > "$src"
+ git add -- "$src"
+ git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm before
+ before="$(git rev-parse HEAD)"
+ old_blob="$(git rev-parse "HEAD:$src")"
+ printf 'new\n' > "$src"
+ git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qam after
+ tip="$(git rev-parse HEAD)"
+ tree="$(git rev-parse HEAD:crates)"
+ git -C "$candidate" fetch -q "$partial" "$tip"
+ git config core.repositoryformatversion 1
+ git config remote.origin.promisor true
+ git config remote.origin.partialclonefilter blob:none
+ git config core.sshCommand git-remote-probe
+ mkdir "$sandbox/minimum-git"
+ cat > "$sandbox/minimum-git/git" <<'SH'
+#!/bin/sh
+unset GIT_NO_LAZY_FETCH
+PATH="${PATH#*:}" exec git "$@"
+SH
+ cat > "$sandbox/bin/git-remote-probe" <<'SH'
+#!/bin/sh
+echo invoked >> "$TRANSPORT_LOG"
+exit 1
+SH
+ chmod +x "$sandbox/minimum-git/git" "$sandbox/bin/git-remote-probe"
+ export TRANSPORT_LOG="$sandbox/transport.log" GIT_ALLOW_PROTOCOL=ssh:probe
+ snapshot() { find . -type f -print0 | sort -z | xargs -0 sha256sum; }
+ offline_refusal() {
+  local oid="$1" object
+  shift
+  object=".git/objects/${oid:0:2}/${oid:2}"
+  mv -- "$object" "$sandbox/missing-object"
+  snapshot > "$sandbox/before"
+  if PATH="$sandbox/minimum-git:$PATH" "$@" > "$sandbox/output" 2>&1; then
+   echo "FAIL missing object $oid was accepted"
+   exit 1
+  fi
+  [[ ! -e "$TRANSPORT_LOG" && ! -e "$sandbox/offline-evidence" ]]
+  snapshot > "$sandbox/after"
+  same_bytes "$sandbox/before" "$sandbox/after"
+  mv -- "$sandbox/missing-object" "$object"
+ }
+ for url in probe::fixture ssh://fixture.invalid/fixture; do
+  git remote set-url origin "$url"
+  absent="$(printf 'absent\n' | git hash-object --stdin)"
+  if GIT_NO_LAZY_FETCH=0 git cat-file blob "$absent" > /dev/null 2>&1; then exit 1; fi
+  test -s "$TRANSPORT_LOG"
+  rm -- "$TRANSPORT_LOG"
+  offline_refusal "$old_blob" python3 -I "$source_root/scripts/worktree_diff.py" "$before"
+  printf '*.rs text eol=lf\n' > .git/info/attributes
+  offline_refusal "$old_blob" python3 -I "$source_root/scripts/worktree_diff.py" "$before"
+  rm -- .git/info/attributes
+  offline_refusal "$tree" bash scripts/dogfood.sh "${LOCAL[@]}" "$tip" "$head" "$candidate" "$sandbox/offline-evidence"
+  offline_refusal "$tip" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$tip" "$partial" "$sandbox/offline-evidence"
+  offline_refusal "$before" bash "$maker" "$before" "$tip" "$partial"
+  offline_refusal "$tip" bash "$maker" "$before" "$tip" "$partial"
+ done
+)
+echo 'PASS missing local objects refused without transport or checkout changes'
 # Candidate cannot be its own trusted checkout; modified trusted files refuse before any build.
 export HELPER_RECEIPT="$sandbox/helper-ran"
 printf '%s\n' 'echo ran >> "$HELPER_RECEIPT"' 'exit 0' > "$trusted/scripts/make_patch.sh"

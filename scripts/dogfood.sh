@@ -71,7 +71,7 @@ if [[ "${trusted%/}/" == "${candidate%/}/"* || "${candidate%/}/" == "${trusted%/
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2
   exit 2
 fi
-export GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0
+export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0
 python3 -I - "$trusted" "$base" <<'PYBASE'
 import hashlib
 import os
@@ -141,13 +141,13 @@ def check_base(root, commit):
     dirty = "trusted checkout must be clean, including ignored files"
     if git(root, "ls-files", "--others", "-z"):
         raise ValueError(dirty)
-    tree = git(root, "ls-tree", "-rz", commit).split(b"\0")[:-1]
+    tree = git(root, "ls-tree", "-rzl", commit).split(b"\0")[:-1]
     index = git(root, "ls-files", "--stage", "-z").split(b"\0")[:-1]
     if len(tree) != len(index):
         raise ValueError(dirty)
     for tree_row, index_row in zip(tree, index):
         tree_meta, name = tree_row.split(b"\t", 1)
-        mode, _, oid = tree_meta.split()
+        mode, _, oid, blob_size = tree_meta.split()
         index_meta, index_name = index_row.split(b"\t", 1)
         index_mode, index_oid, stage = index_meta.split()
         if (index_mode, index_oid, stage, index_name) != (mode, oid, b"0", name):
@@ -163,8 +163,12 @@ def check_base(root, commit):
             continue
         if stat.S_ISLNK(file_mode) and mode == b"120000":
             data = os.fsencode(os.readlink(path))
+            if len(data) != int(blob_size):
+                raise ValueError(dirty)
             digest = hashlib.sha1(b"blob %d\0" % len(data) + data)
         elif stat.S_ISREG(file_mode) and mode == (b"100755" if file_mode & stat.S_IXUSR else b"100644"):
+            if info.st_size != int(blob_size):
+                raise ValueError(dirty)
             digest = regular_blob(path, info)
         else:
             raise ValueError(dirty)

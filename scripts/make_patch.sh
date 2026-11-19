@@ -43,6 +43,7 @@ while IFS= read -r name; do
   esac
   unset "$name"
 done < <(compgen -v GIT_)
+export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
 if [[ "$mode" != check ]]; then
   export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
 fi

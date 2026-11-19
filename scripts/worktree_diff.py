@@ -19,7 +19,7 @@ CARGO_INPUTS = (RUST_SOURCES, ":(top,glob)crates/*/build.rs",
 def worktree_env():
     env = {key: value for key, value in os.environ.items()
            if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
-    env.update(GIT_GRAFT_FILE="", GIT_NO_REPLACE_OBJECTS="1")
+    env.update(GIT_GRAFT_FILE="", GIT_NO_REPLACE_OBJECTS="1", GIT_ALLOW_PROTOCOL="", GIT_NO_LAZY_FETCH="1")
     return env
 
 

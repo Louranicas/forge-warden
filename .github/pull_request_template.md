@@ -6,7 +6,7 @@
 
 <!-- Claims need construction, not assertion. For each claim, the command that proves it. -->
 
-- [ ] The [full local gate](../CONTRIBUTING.md#local-gate-commands) passes (fmt, clippy, tests, docs; deny, zizmor and mutants if installed)
+- [ ] The full local gate passes with the required `cargo-deny` and `cargo-mutants` checks. [Local gate requirements](../CONTRIBUTING.md#local-gate-commands)
 - [ ] New behaviour has a test that fails without the change (say which)
 - [ ] Schema or exit-code changes: `CHANGELOG.md` updated, `scripts/bless.sh` run and the golden diff reviewed
 - [ ] No new `#[expect]`, or each one's `reason` is in this description
