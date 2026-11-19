@@ -8,11 +8,11 @@ install-hooks:
     @echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
 
 # fmt + clippy + tests: seconds. The pre-commit hook and Claude Code's Stop hook run this.
-fast:
+fast: (_check-script "ci_fast.sh")
     scripts/ci_fast.sh
 
 # Every CI gate that can run locally.
-ci:
+ci: (_check-script "ci_local.sh")
     scripts/ci_local.sh
 
 # Regenerate golden verdicts after an intended change; review the diff before committing.
@@ -35,9 +35,14 @@ mutants:
     env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace
 
 # Check the signal vocabulary against a deep-diff-forge checkout or commit.
-ddf_rev := `python3 -I scripts/tool_versions.py ddf_rev`
-vocab rev=ddf_rev:
-    scripts/check_vocab.sh {{rev}}
+vocab $rev="": (_check-script "tool_versions.py") (_check-script "check_vocab.sh")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "$rev" ]]; then rev="$(python3 -I scripts/tool_versions.py ddf_rev)"; fi
+    scripts/check_vocab.sh "$rev"
+
+_check-script $script:
+    @test ! -L scripts && test ! -L "scripts/$script" && test -f "scripts/$script" || { echo "Gate input refused: scripts/$script" >&2; exit 2; }
 
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
 # Advisory mode: the ranking is supplied, so the verdict is at best hold. Committed changes only:

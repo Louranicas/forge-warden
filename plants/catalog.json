@@ -866,8 +866,8 @@
         "bash",
         "scripts/tests/ci_local.sh"
       ],
-      "old": "exec \"$(git rev-parse --show-toplevel)/scripts/ci_local.sh\"",
-      "new": "\"$(git rev-parse --show-toplevel)/scripts/ci_local.sh\" || true",
+      "old": "exec \"$root/scripts/ci_local.sh\"",
+      "new": "\"$root/scripts/ci_local.sh\" || true",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {

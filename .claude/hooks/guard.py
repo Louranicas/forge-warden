@@ -199,41 +199,51 @@ def post(event: dict) -> None:
         sys.exit(2)
 
 
+def fast_gate_failure(root: Path) -> str | None:
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    probe = Path(__file__).resolve().parents[2] / "scripts/worktree_diff.py"
+    gate = root / "scripts/ci_fast.sh"
+    for script in (probe, gate):
+        if script.parent.is_symlink() or script.is_symlink() or not script.is_file():
+            return f"Gate input refused: {script!s} must be a regular file under a non-symlink scripts directory."
+    clean = subprocess.run([sys.executable, "-I", str(probe), "--clean"], cwd=root, env=env,
+                           capture_output=True, text=True, errors="replace")
+    if clean.returncode == 0:
+        return None
+    if clean.returncode != 1:
+        return clean.stderr.strip() or "gate input check failed"
+    result = subprocess.run([str(gate)], cwd=root, env=env, capture_output=True, text=True, errors="replace")
+    if result.returncode == 0:
+        return None
+    tail = "\n".join((result.stdout + result.stderr).splitlines()[-60:])
+    return f"Fast gate failed (exit {result.returncode}).\n{tail}"
+
+
 def stop(event: dict) -> None:
     session = required_text(event, "session_id", True)
     root = project_dir()
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    probe = Path(__file__).resolve().parents[2] / "scripts/worktree_diff.py"
-    if probe.parent.is_symlink() or probe.is_symlink():
-        refuse("symlink in scripts/worktree_diff.py")
-    clean = subprocess.run([sys.executable, "-I", str(probe), "--clean"], cwd=root, env=env, capture_output=True)
-    if clean.returncode == 0:
-        return  # nothing changed in this session's working tree
-    if clean.returncode != 1:
-        refuse(clean.stderr.decode(errors="replace").strip() or "gate input check failed")
     identity = hashlib.sha256((str(root.resolve()) + "\0" + session).encode()).hexdigest()
     counter = Path(tempfile.gettempdir()) / f"forge-warden-stop-{identity}"
     if counter.is_symlink():
         refuse("stop counter must not be a symlink")
     blocks = int(counter.read_text()) if counter.exists() else 0
-    gate = subprocess.run([str(root / "scripts/ci_fast.sh")], cwd=root, env=env, capture_output=True, text=True, check=False)
-    if gate.returncode == 0:
+    try:
+        failure = fast_gate_failure(root)
+    except OSError as error:
+        failure = f"Gate unavailable: {error}"
+    if failure is None:
         counter.unlink(missing_ok=True)
         return
     if blocks >= MAX_STOP_BLOCKS:
         counter.unlink(missing_ok=True)
         print(
-            f"forge-warden guard: the fast gate is still red after {blocks} attempts; stopping. "
-            "Tell the human exactly what fails and what you tried.",
+            f"forge-warden guard: allowing termination after {blocks} attempts. "
+            f"Tell the human exactly what fails and what you tried.\n{failure}",
             file=sys.stderr,
         )
         return
     counter.write_text(str(blocks + 1))
-    tail = "\n".join((gate.stdout + gate.stderr).splitlines()[-60:])
-    refuse(
-        "the fast gate (scripts/ci_fast.sh: fmt, clippy, tests) is red. Fix it before finishing; "
-        f"do not weaken a check to make it pass.\n{tail}"
-    )
+    refuse(failure)
 
 
 def unique_pairs(items):

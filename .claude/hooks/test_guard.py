@@ -2,6 +2,7 @@
 """Hook protocol and known M3 bypass regressions; never executes proposed commands."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,9 +25,9 @@ class Guard(unittest.TestCase):
         (self.root / "Cargo.toml").write_text('[workspace.lints.clippy]\nunwrap_used = "deny"\n')
         (self.root / "crates/core/Cargo.toml").write_text('[lints]\nworkspace = true\n')
 
-    def run_guard(self, event, mode="pre", expected=2):
+    def run_guard(self, event, mode="pre", expected=2, guard=GUARD):
         raw = event if isinstance(event, bytes) else json.dumps(event).encode()
-        result = subprocess.run([sys.executable, "-I", str(GUARD), mode], input=raw,
+        result = subprocess.run([sys.executable, "-I", str(guard), mode], input=raw,
                                 env={**os.environ, "CLAUDE_PROJECT_DIR": str(self.root)}, capture_output=True)
         self.assertEqual(result.returncode, expected, (event, result.stderr))
         return result
@@ -59,15 +60,20 @@ class Guard(unittest.TestCase):
         gate.write_text("#!/bin/sh\ntouch .git/gate-ran\n")
         gate.chmod(0o755)
         ran = self.root / ".git/gate-ran"
+        guard = self.root / ".claude/hooks/guard.py"
+        guard.parent.mkdir(parents=True)
+        shutil.copyfile(GUARD, guard)
         (scripts / "worktree_diff.py").write_bytes((GUARD.parents[2] / "scripts/worktree_diff.py").read_bytes())
         (scripts / "tests").mkdir()
         for first_step in (scripts / "tests/mutation_budget.py", scripts / "tool_versions.py"):
             first_step.write_text("from pathlib import Path\nPath('.git/gate-ran').touch()\nraise SystemExit(91)\n")
 
         def assert_refused_before_gate(path):
-            result = self.run_guard(event, mode="stop", expected=2)
-            self.assertIn(os.fsencode(path), result.stderr)
-            self.assertFalse(ran.exists())
+            for expected in (2, 2, 2, 0):
+                result = self.run_guard(event, mode="stop", expected=expected, guard=guard)
+                self.assertIn(os.fsencode(path), result.stderr)
+                self.assertFalse(ran.exists())
+            self.assertIn(b"after 3 attempts", result.stderr)
             for entry in ("ci_fast.sh", "ci_local.sh"):
                 with self.subTest(entry=entry):
                     result = subprocess.run(["bash", GUARD.parents[2] / "scripts" / entry],
@@ -80,7 +86,7 @@ class Guard(unittest.TestCase):
         original = source.read_bytes()
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {
-                **env, "HOME": home, "XDG_CONFIG_HOME": home, "GIT_CONFIG_NOSYSTEM": "1"}, clear=True):
+                **env, "HOME": home, "TMPDIR": home, "XDG_CONFIG_HOME": home, "GIT_CONFIG_NOSYSTEM": "1"}, clear=True):
             def git(*args):
                 subprocess.run(["git", *args], cwd=self.root, check=True)
 
@@ -265,6 +271,88 @@ class Guard(unittest.TestCase):
             self.run_guard(event, mode="stop", expected=0)
             self.assertTrue(ran.exists(), "initialized submodule")
             self.assertEqual([index.read_bytes() for index in indexes], before)
+
+    def test_gate_launchers_validate_script_paths(self):
+        repo = GUARD.parents[2]
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        hooks = self.root / ".githooks"
+        hooks.mkdir()
+        shutil.copyfile(repo / "justfile", self.root / "justfile")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+        def run(*args):
+            return subprocess.run(args, cwd=self.root, env=env, capture_output=True)
+
+        run("git", "init", "-q", "--template=").check_returncode()
+        ran = self.root / ".git/ran"
+        recorder = self.root / ".git/record"
+        recorder.write_text("#!/bin/sh\ntouch .git/ran\n")
+        recorder.chmod(0o755)
+        just = shutil.which("just")
+        for hook, recipe, gate in (("pre-commit", "fast", "ci_fast.sh"), ("pre-push", "ci", "ci_local.sh")):
+            shutil.copy2(repo / ".githooks" / hook, hooks / hook)
+            launchers = [["git", "-c", "core.hooksPath=.githooks", "hook", "run", hook]]
+            if just:
+                launchers.append([just, recipe])
+            for command in launchers:
+                with self.subTest(command=command):
+                    script = scripts / gate
+                    shutil.copy2(recorder, script)
+                    run(*command).check_returncode()
+                    self.assertTrue(ran.exists())
+                    ran.unlink()
+                    saved = self.root / ".git/scripts"
+                    scripts.rename(saved)
+                    scripts.symlink_to(saved)
+                    result = run(*command)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(gate.encode(), result.stderr)
+                    self.assertFalse(ran.exists())
+                    scripts.unlink()
+                    saved.rename(scripts)
+                    script.unlink()
+                    script.symlink_to(recorder)
+                    result = run(*command)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(gate.encode(), result.stderr)
+                    self.assertFalse(ran.exists())
+                    script.unlink()
+
+    @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
+    def test_just_defers_vocabulary_lookup(self):
+        just = shutil.which("just")
+        repo = GUARD.parents[2]
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        shutil.copyfile(repo / "justfile", self.root / "justfile")
+        receipt = self.root / "lookup"
+        lookup = scripts / "tool_versions.py"
+        target = self.root / "version.py"
+        target.write_text("from pathlib import Path\nPath('lookup').touch()\nprint('pinned')\n")
+        lookup.symlink_to(target)
+        vocab = scripts / "check_vocab.sh"
+        vocab.write_text('#!/bin/sh\nprintf "%s" "$1" > revision\n')
+        vocab.chmod(0o755)
+        for recipe, gate in (("fast", "ci_fast.sh"), ("ci", "ci_local.sh")):
+            script = scripts / gate
+            script.write_text("#!/bin/sh\nexit 0\n")
+            script.chmod(0o755)
+            subprocess.run([just, recipe], cwd=self.root, capture_output=True, check=True)
+            self.assertFalse(receipt.exists())
+        result = subprocess.run([just, "vocab"], cwd=self.root, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(receipt.exists())
+        lookup.unlink()
+        target.rename(lookup)
+        revision = self.root / "revision"
+        subprocess.run([just, "vocab", "explicit revision"], cwd=self.root, capture_output=True, check=True)
+        self.assertEqual(revision.read_text(), "explicit revision")
+        self.assertFalse(receipt.exists())
+        subprocess.run([just, "vocab"], cwd=self.root, capture_output=True, check=True)
+        self.assertEqual(revision.read_text(), "pinned")
+        self.assertTrue(receipt.exists())
 
     def test_shell_tokenization_and_rust_writes(self):
         for command in ("echo x > war''den.toml", "echo x > " + str(self.root / "warden.toml"),

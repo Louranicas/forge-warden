@@ -4,4 +4,9 @@
 # failure to CI, where it is public.
 set -euo pipefail
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-exec "$(git rev-parse --show-toplevel)/scripts/ci_fast.sh"
+root="$(git rev-parse --show-toplevel)"
+if [[ -L "$root/scripts" || -L "$root/scripts/ci_fast.sh" || ! -f "$root/scripts/ci_fast.sh" ]]; then
+  echo "Gate input refused: scripts/ci_fast.sh" >&2
+  exit 2
+fi
+exec "$root/scripts/ci_fast.sh"

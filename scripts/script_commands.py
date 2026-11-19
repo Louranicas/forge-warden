@@ -146,8 +146,8 @@ ENV_ASSIGNMENT = re.compile(r'["\']?(?:[A-Za-z_][A-Za-z0-9_]*|\$\{?[A-Za-z_][A-Z
 # this repository builds, fetches or tracks, or a function's own arguments.
 DYNAMIC = {
     # The versioned hooks run the repository's own gate scripts (read here as tracked files).
-    '.githooks/pre-commit': {'"$(git rev-parse --show-toplevel)/scripts/ci_fast.sh"'},
-    '.githooks/pre-push': {'"$(git rev-parse --show-toplevel)/scripts/ci_local.sh"'},
+    '.githooks/pre-commit': {'"$root/scripts/ci_fast.sh"'},
+    '.githooks/pre-push': {'"$root/scripts/ci_local.sh"'},
     # The dogfood driver runs the ranker it fetched (sha256-pinned) and the judge it built.
     'scripts/dogfood.sh': {'"$out/ranker/bin/deep-diff-forge"', '"$out/target/release/forge-warden"'},
     # The guest bootstrap runs the rustup-init it downloaded (sha256-pinned).
