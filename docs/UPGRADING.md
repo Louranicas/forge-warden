@@ -223,6 +223,7 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
   repositories' whole history (Q63's set), it holds no commit there. A binary edit's mode is read from its
   `index` line, which is Git's own only in bound mode (`--repo`); without `--repo` a falsely stated
   `100644` is not caught. 0.3.0 also reads a binary section's header lines only up to `GIT binary patch`.
-- **Starter rule `ci-is-owned` to copy by hand** (ledger Q85): the starter now also holds `.gitlab-ci.yml`, `.gitlab`,
-  `.gitea` and `.forgejo` in any letter case, root or nested. A `warden.toml` adopted from an older starter keeps its
-  own list: copy the seven `**/.[gG]…` and `**/.[fF]…` globs from `examples/starter.warden.toml` if your CI runs there.
+- **Update the starter rule `ci-is-owned`.** In its `paths` list, keep `.github/**` and add
+  `.github` to cover the directory entry itself. Copy the seven root patterns for `.gitlab-ci.yml`,
+  `.gitlab`, `.gitea` and `.forgejo` from `examples/starter.warden.toml`. Their letter classes
+  cover case variants, and their directory patterns cover both the entry and its descendants.

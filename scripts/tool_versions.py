@@ -104,8 +104,8 @@ STEP_TOOLS = ("cargo-deny", "cargo-mutants")
 REQUIRED_STEP_LINES = (
     "step deny; cargo deny check",
     "step mutation",
-    'if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true '
-    '--in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi',
+    'if [ -s "$mutation_diff" ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true '
+    '--in-diff "$mutation_diff" --workspace; else echo "no source changes to mutate"; fi',
 )
 
 

@@ -29,11 +29,19 @@ case "$1" in
  run)
   [[ " $* " == *" --ranker ${TEST_ROOT%/*}/bin/deep-diff-forge "* ]] || exit 97
   [[ " $* " == *" --repo $TEST_ROOT/.git --base $BASE_ID --head $HEAD_ID "* ]] || exit 96
-  [[ " $* " == *' --patch target/change.patch '* && " $* " != *' --advisory '* ]] || exit 95
+  [[ " $* " != *' --advisory '* ]] || exit 95
+  while [ "$1" != --patch ]; do shift; done
+  grep -qxF '+fixture' "$2" || exit 95
+  printf '%s\n' "$2" > "$TEST_ROOT/judged-patch"
   [[ "$(cat "$TEST_ROOT/patch-inputs")" == "$(printf '%s\n' "$BASE_ID" "$HEAD_ID")" ]] || exit 94
   exit "${JUDGE_EXIT:-0}" ;;
  deny) exit "${DENY_EXIT:-0}" ;;
- mutants) exit "${MUTANTS_EXIT:-0}" ;;
+ mutants)
+  [[ " $* " == *' --workspace '* && " $* " == *' --no-config '* ]] || exit 93
+  while [ "$1" != --in-diff ]; do shift; done
+  grep -qxF '+fixture' "$2" || exit 93
+  printf '%s\n' "$2" > "$TEST_ROOT/mutated-diff"
+  exit "${MUTANTS_EXIT:-0}" ;;
 esac
 exit 0
 STUB
@@ -61,6 +69,7 @@ tree="$(git rev-parse 'HEAD^{tree}')"
 BASE_ID="$(git commit-tree "$tree" -p "$root_id" -m upstream)"
 export BASE_ID HEAD_ID
 git update-ref refs/remotes/origin/main "$BASE_ID"
+git pack-refs --all
 
 run_gate() {
  local entry="$1" expected="$2" actual=0
@@ -68,21 +77,28 @@ run_gate() {
  bash "$entry" > "$sandbox/output" 2>&1 || actual=$?
  if [ "$actual" -ne "$expected" ] || { [ "$actual" -ne 0 ] && grep -qE 'ci_local: (all gates passed|offline gates passed)' "$sandbox/output"; }; then
   cat "$sandbox/output" >&2
-  echo "FAIL $entry: expected exit $expected, got $actual" >&2
+  echo "FAIL ${entry##*/}: expected exit $expected, got $actual" >&2
   exit 1
  fi
 }
 gate="$TEST_ROOT/scripts/ci_local.sh"
 for entry in "$gate" "$sandbox/pre-push"; do
  rm -rf "$TEST_ROOT/target"
+ previous_patch=""
+ previous_diff=""
  for JUDGE_EXIT in 0 3 4 7 8 9; do
   export JUDGE_EXIT
+  rm -f "$TEST_ROOT/judged-patch" "$TEST_ROOT/mutated-diff"
   run_gate "$entry" "$JUDGE_EXIT"
+  patch="$(cat "$TEST_ROOT/judged-patch")"
+  mutation_diff="$(cat "$TEST_ROOT/mutated-diff")"
+  [[ ! -e "$patch" && ! -e "$mutation_diff" && "$patch" != "$previous_patch" && "$mutation_diff" != "$previous_diff" ]]
+  previous_patch="$patch"
+  previous_diff="$mutation_diff"
   grep -q '^run ' "$TEST_ROOT/cargo-calls"
  done
  unset JUDGE_EXIT
  grep -qx 'deny check' "$TEST_ROOT/cargo-calls"
- grep -qx 'mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace' "$TEST_ROOT/cargo-calls"
  for row in 'DENY_EXIT 5' 'MUTANTS_EXIT 7' 'GUARDRAIL_EXIT 1' 'PLANTS_EXIT 23'; do
   read -r name code <<< "$row"
   export "$name=$code"
@@ -106,6 +122,19 @@ git update-ref HEAD "$HEAD_ID"
 git update-ref -d refs/remotes/origin/main
 BASE_ID="$root_id"
 run_gate "$gate" 0
+
+printf '%s\n' "$HEAD_ID" > .git/shallow
+run_gate "$gate" 1
+grep -qF 'root comparison requires complete history' "$sandbox/output"
+rm .git/shallow
+
+mkdir -p .git/refs/remotes/origin
+printf 'broken\n' > .git/refs/remotes/origin/main
+run_gate "$gate" 1
+rm .git/refs/remotes/origin/main
+git update-ref refs/remotes/origin/main/other "$HEAD_ID"
+run_gate "$gate" 0
+git update-ref -d refs/remotes/origin/main/other
 
 mv "$sandbox/bin/deep-diff-forge" "$sandbox/ranker"
 run_gate "$gate" 1

@@ -28,7 +28,7 @@ just ci              # the full local gate (everything it can run offline)
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
 `scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
-(G-18). The local comparison uses Git 2.43 or later. A nonempty patch requires `deep-diff-forge` on
+(G-18). The local comparison uses Git 2.40 or later. A nonempty patch requires `deep-diff-forge` on
 `PATH` and a binary hash enrolled in the policy. When `zizmor` is absent, the gate's last line names
 the skipped workflow audit. See [Where the gate runs](#where-the-gate-runs).
 

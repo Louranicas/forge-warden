@@ -484,13 +484,13 @@
       "id": "swallowed-judge-exit",
       "guardrail": "G-17",
       "path": "scripts/ci_local.sh",
-      "diagnostic": "FAIL ci_local.sh fail: expected 7, got 0",
+      "diagnostic": "FAIL ci_local.sh: expected exit 3, got 0",
       "command": [
         "bash",
         "scripts/tests/ci_local.sh"
       ],
-      "old": "        --advisory --rank target/rank.json --patch target/change.patch",
-      "new": "        --advisory --rank target/rank.json --patch target/change.patch || true",
+      "old": "    --repo \"$repo_git\" --base \"$base\" --head \"$head\"",
+      "new": "    --repo \"$repo_git\" --base \"$base\" --head \"$head\" || true",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {
@@ -862,15 +862,14 @@
     {
       "id": "swallowed-authority-judge-exit",
       "guardrail": "G-17",
-      "path": "scripts/ci_local.sh",
-      "diagnostic": "AUTHORITY_JUDGE_EXIT_MISMATCH expected=4 actual=0",
+      "path": ".githooks/pre-push",
+      "diagnostic": "FAIL pre-push: expected exit 3, got 0",
       "command": [
-        "python3",
-        "-I",
-        "plants/authority_script.py"
+        "bash",
+        "scripts/tests/ci_local.sh"
       ],
-      "old": "        --ranker \"$ranker\" --patch target/change.patch",
-      "new": "        --ranker \"$ranker\" --patch target/change.patch || true",
+      "old": "exec \"$(git rev-parse --show-toplevel)/scripts/ci_local.sh\"",
+      "new": "\"$(git rev-parse --show-toplevel)/scripts/ci_local.sh\" || true",
       "required_tools": ["bash", "cargo", "coreutils", "git", "python3", "rustc", "rustup", "sh"]
     },
     {

@@ -866,13 +866,18 @@ fn a_policy_requiring_verified_claims_passes_a_bound_run_and_holds_the_same_chan
     // change can pass; the same patch and ids without --repo hold with `claims_unverified` and nothing
     // else, so a gate that leaves out --repo can never pass.
     let (dir, admitting, ranker) = setup("bound-required");
-    let v0 = std::fs::read_to_string(&admitting).unwrap();
-    assert_eq!(v0.matches("forge-warden.policy.v0").count(), 1);
-    let v1 = format!(
-        "{}[claims]\nrequire_verified = true\n",
-        v0.replace("forge-warden.policy.v0", "forge-warden.policy.v1")
+    let mut fields: toml::Table =
+        toml::from_str(&std::fs::read_to_string(admitting).unwrap()).unwrap();
+    fields.insert("schema".into(), "forge-warden.policy.v1".into());
+    fields.insert(
+        "claims".into(),
+        toml::toml! { require_verified = true }.into(),
     );
-    let policy = write(&dir, "policy-v1.toml", v1.as_bytes());
+    let policy = write(
+        &dir,
+        "policy-v1.toml",
+        toml::to_string(&fields).unwrap().as_bytes(),
+    );
     let (repo, base, head) = bound_repo("bound-required-repo");
     let made = write(&dir, "made.patch", &make_patch(&repo, &base, &head));
     let ids = ["--base", base.as_str(), "--head", head.as_str()];

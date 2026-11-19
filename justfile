@@ -24,8 +24,12 @@ bless:
 # and is counted "unviable", hiding survivors (main c44c00e: 3 missed, 59 more viable when capped).
 # CARGO_TARGET_DIR unset: each worker builds in its own copy; a shared target dir mixes binaries.
 mutants:
-    git diff "$(git merge-base HEAD origin/main)" -- 'crates/*/src/**.rs' > target/pr.diff
-    env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mutation_diff="$(mktemp)"
+    trap 'rm -f -- "$mutation_diff"' EXIT
+    git diff "$(git merge-base HEAD origin/main)" -- 'crates/*/src/**.rs' > "$mutation_diff"
+    env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace
 
 # Check the signal vocabulary against a deep-diff-forge checkout or commit.
 ddf_rev := `python3 -I scripts/tool_versions.py ddf_rev`
@@ -36,5 +40,9 @@ vocab rev=ddf_rev:
 # Advisory mode: the ranking is supplied, so the verdict is at best hold. Committed changes only:
 # the patch-maker diffs commits, not the work tree.
 judge:
-    scripts/make_patch.sh origin/main HEAD > target/change.patch
-    deep-diff-forge --stdin-patch --rank --json < target/change.patch | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch --advisory --rank -
+    #!/usr/bin/env bash
+    set -euo pipefail
+    patch="$(mktemp)"
+    trap 'rm -f -- "$patch"' EXIT
+    scripts/make_patch.sh origin/main HEAD > "$patch"
+    deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -

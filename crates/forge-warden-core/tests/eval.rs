@@ -293,8 +293,8 @@ fn one_rule(
 }
 
 /// CI that runs on GitLab, Gitea or Forgejo is owned like `.github` (ledger Q85): the starter holds
-/// `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the entry and everything under it, root or
-/// nested, in any letter case) with `ci-is-owned`.
+/// `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the root entry and everything under it,
+/// in any letter case) with `ci-is-owned`.
 #[test]
 fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
@@ -302,7 +302,6 @@ fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
         ".github",
         ".github/workflows/ci.yml",
         ".gitlab-ci.yml",
-        "services/api/.gitlab-ci.yml",
         ".GitLab-CI.yml",
         ".gitlab",
         ".gitlab/CODEOWNERS",
@@ -313,7 +312,6 @@ fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
         ".Gitea/workflows/ci.yaml",
         ".forgejo",
         ".forgejo/workflows/ci.yml",
-        "tools/.FORGEJO/workflows/ci.yml",
     ] {
         assert_eq!(
             one_rule(&starter, "ci-is-owned", path, "added", &[]),
@@ -322,6 +320,15 @@ fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
         );
     }
     for path in [
+        "services/api/.gitlab-ci.yml",
+        "docs/.gitlab",
+        "docs/.gitlab/ci/release.yml",
+        "docs/.gitea",
+        "docs/.gitea/workflows/ci.yml",
+        "docs/.forgejo",
+        "tools/.FORGEJO/workflows/ci.yml",
+        "docs/.github",
+        "docs/.github/workflows/ci.yml",
         ".gitlab-ci.yml.bak",
         ".gitlab-ci",
         "docs/gitea.md",

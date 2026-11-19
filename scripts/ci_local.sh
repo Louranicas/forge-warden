@@ -9,8 +9,6 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 # Hook-exported Git state must not redirect scratch-repository commands.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-# Gate artifacts stay local even when cargo builds in an external target directory.
-mkdir -p target
 export RUSTDOCFLAGS="-D warnings"
 step() { printf '\n== %s\n' "$*"; }
 step tool-versions; python3 -I scripts/tool_versions.py --check
@@ -31,24 +29,38 @@ step deny; cargo deny check
 if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else hosted_only_not_run+=" zizmor"; fi
 head="$(git rev-parse --verify 'HEAD^{commit}')"
 comparison_ref=refs/remotes/origin/main
-if git show-ref --exists "$comparison_ref"; then
-  base="$(git rev-parse --verify "$comparison_ref^{commit}")"
-elif [ "$?" -eq 2 ]; then
+if git show-ref --verify --quiet "$comparison_ref"; then
+  tip="$(git show-ref --verify --hash "$comparison_ref")"
+  base="$(git rev-parse --verify "$tip^{commit}")"
+elif [ "$?" -eq 1 ]; then
+  ref_path="$(git rev-parse --git-path "$comparison_ref")"
+  if [ -f "$ref_path" ] || [ -L "$ref_path" ]; then
+    echo "ci_local: cannot resolve $comparison_ref" >&2
+    exit 1
+  fi
+  if [ "$(git rev-parse --is-shallow-repository)" != false ]; then
+    echo 'ci_local: root comparison requires complete history' >&2
+    exit 1
+  fi
   base="$(git rev-list --max-parents=0 "$head")"
 else
   exit 1
 fi
-bash scripts/make_patch.sh "$base" "$head" > target/change.patch
+scratch="$(mktemp -d)"
+trap 'rm -rf -- "$scratch"' EXIT
+patch="$scratch/change.patch"
+mutation_diff="$scratch/pr.diff"
+bash scripts/make_patch.sh "$base" "$head" > "$patch"
 step mutation
 mutation_base="$(git merge-base "$base" "$head")"
-git diff "$mutation_base" -- 'crates/*/src/**.rs' > target/pr.diff
-if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
+git diff "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
+if [ -s "$mutation_diff" ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace; else echo "no source changes to mutate"; fi
 step dogfood
-if [ -s target/change.patch ]; then
+if [ -s "$patch" ]; then
   ranker="$(type -P deep-diff-forge)" || { echo 'ci_local: required tool missing: deep-diff-forge' >&2; exit 1; }
   repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"
   cargo run --quiet --bin forge-warden -- check --policy warden.toml \
-    --ranker "$ranker" --patch target/change.patch \
+    --ranker "$ranker" --patch "$patch" \
     --repo "$repo_git" --base "$base" --head "$head"
 fi
 step plants; python3 -I scripts/check_plants.py

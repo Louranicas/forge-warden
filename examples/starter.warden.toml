@@ -83,8 +83,7 @@ require = ["tests/**", "crates/*/tests/**", "**/*_test.*", "**/test_*.*"]
 # the entry itself (a `.claude` symlink to another directory); the letter classes hold `.Claude` and
 # `.CLAUDE`, which a case-insensitive checkout (macOS, Windows) reads as `.claude`.
 # CI on GitLab, Gitea and Forgejo is owned the same way: `.gitlab-ci.yml`, `.gitlab` (CI includes and
-# CODEOWNERS), `.gitea` and `.forgejo` (workflows), the entry and everything under it, root or
-# nested, in any letter case.
+# CODEOWNERS), `.gitea` and `.forgejo` (workflows), each root entry and everything under it, in any letter case.
 [[rule]]
 id = "ci-is-owned"
 why = "CI and supply-chain configuration decide what every other check means."
@@ -98,13 +97,13 @@ paths = [
     "warden.toml",
     "**/.[cC][lL][aA][uU][dD][eE]",
     "**/.[cC][lL][aA][uU][dD][eE]/**",
-    "**/.[gG][iI][tT][lL][aA][bB]-[cC][iI].[yY][mM][lL]",
-    "**/.[gG][iI][tT][lL][aA][bB]",
-    "**/.[gG][iI][tT][lL][aA][bB]/**",
-    "**/.[gG][iI][tT][eE][aA]",
-    "**/.[gG][iI][tT][eE][aA]/**",
-    "**/.[fF][oO][rR][gG][eE][jJ][oO]",
-    "**/.[fF][oO][rR][gG][eE][jJ][oO]/**",
+    ".[gG][iI][tT][lL][aA][bB]-[cC][iI].[yY][mM][lL]",
+    ".[gG][iI][tT][lL][aA][bB]",
+    ".[gG][iI][tT][lL][aA][bB]/**",
+    ".[gG][iI][tT][eE][aA]",
+    ".[gG][iI][tT][eE][aA]/**",
+    ".[fF][oO][rR][gG][eE][jJ][oO]",
+    ".[fF][oO][rR][gG][eE][jJ][oO]/**",
 ]
 
 [[rule]]

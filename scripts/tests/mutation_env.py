@@ -3,26 +3,43 @@
 import hashlib
 import json
 import os
+import runpy
+import shlex
+import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def mutation_step(workflow):
+    model = runpy.run_path(str(ROOT / "scripts/tests/runner_routing.py"))
+    job = model["job_bodies"]((ROOT / ".github/workflows" / workflow).read_text())["mutation-shards"]
+    commands = []
+    for step in model["steps_of"](job):
+        lines = textwrap.dedent(step.replace("      - ", "        ", 1)).splitlines()
+        fields = dict(line.split(": ", 1) for line in lines if ": " in line and not line.startswith(" "))
+        if fields.get("name") == "Verify inventory and test every mutant assigned to this shard":
+            commands.append(shlex.split(fields["run"], comments=True))
+    command, = commands
+    return command
+
+
 class MutationEnvironment(unittest.TestCase):
     def test_both_entrypoints_drop_inherited_target(self):
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertEqual(workflow.count('run: python3 -I scripts/mutation_ci.py run diff'), 1)
-        baseline = (ROOT / ".github/workflows/mutation-baseline.yml").read_text()
-        self.assertEqual(baseline.count('run: python3 -I scripts/mutation_ci.py run full'), 1)
+        commands = {"ci_local": ["bash", str(ROOT / "scripts/ci_local.sh")],
+                    "workflow": mutation_step("ci.yml"),
+                    "baseline": mutation_step("mutation-baseline.yml")}
         with tempfile.TemporaryDirectory(prefix="mutation-env-") as directory:
             root = Path(directory)
             (root / "bin").mkdir()
             (root / "target").mkdir()
             (root / "scripts/tests").mkdir(parents=True)
             (root / "plants").mkdir()
+            shutil.copyfile(ROOT / "scripts/mutation_ci.py", root / "scripts/mutation_ci.py")
             for name in ("scripts/tool_versions.py", "scripts/tests/perimeter.py",
                          "scripts/tests/runner_routing.py", "plants/test_runner.py"):
                 (root / name).write_text("# explicit unrelated-gate fixture stub\n")
@@ -38,7 +55,7 @@ class MutationEnvironment(unittest.TestCase):
                 path = root / "bin" / name
                 path.write_text(text)
                 path.chmod(0o700)
-            for entry in ("ci_local", "workflow", "baseline"):
+            for entry, command in commands.items():
                 for inherited in (False, True):
                     with self.subTest(entry=entry, inherited=inherited):
                         receipt = root / "receipt.json"
@@ -52,16 +69,13 @@ class MutationEnvironment(unittest.TestCase):
                         env.pop("CARGO_TARGET_DIR", None)
                         if inherited:
                             env["CARGO_TARGET_DIR"] = "/sentinel/must-not-reach-mutants"
-                        command = (["bash", str(ROOT / "scripts/ci_local.sh")] if entry == "ci_local"
-                                   else ["python3", "-I", str(ROOT / "scripts/mutation_ci.py"), "run",
-                                         "full" if entry == "baseline" else "diff"])
                         result = subprocess.run(command, cwd=root, env=env, capture_output=True)
                         self.assertEqual(result.returncode, 2 if entry == "ci_local" else 1, result.stderr)
                         actual = json.loads(receipt.read_text())
+                        self.assertEqual("--in-diff" in actual["args"], entry != "baseline")
                         if entry == "baseline":
                             self.assertIn("--workspace", actual["args"])
                             self.assertIn("--no-config", actual["args"])
-                            self.assertNotIn("--in-diff", actual["args"])
                             self.assertNotIn("--test-workspace", actual["args"])
                         self.assertIsNone(actual["target"], "shared target leaked into mutation child")
                         index = actual["args"].index("--cap-lints")
