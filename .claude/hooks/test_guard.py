@@ -593,7 +593,7 @@ class Guard(unittest.TestCase):
         command = [shutil.which("just"), "--justfile", self.root / "justfile"]
         env = {k: v for k, v in os.environ.items() if not k.startswith(("JUST_", "GIT_"))}
 
-        def run(*args):
+        def run_recipe(*args):
             return subprocess.run([*command, *args], cwd=self.root, env=env, capture_output=True)
 
         repo = GUARD.parents[2]
@@ -612,23 +612,23 @@ class Guard(unittest.TestCase):
             script = scripts / gate
             script.write_text("#!/bin/sh\nexit 0\n")
             script.chmod(0o755)
-            run(recipe).check_returncode()
+            run_recipe(recipe).check_returncode()
             self.assertFalse(receipt.exists())
         revision = self.root / "revision"
         for state in ("symlink", "missing"):
             with self.subTest(lookup=state):
                 if state == "missing":
                     lookup.unlink()
-                result = run("vocab")
+                result = run_recipe("vocab")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b"scripts/tool_versions.py", result.stderr)
                 self.assertFalse(revision.exists())
-                run("vocab", "explicit revision").check_returncode()
+                run_recipe("vocab", "explicit revision").check_returncode()
                 self.assertEqual(revision.read_text(), "explicit revision")
                 self.assertFalse(receipt.exists())
                 revision.unlink()
         target.rename(lookup)
-        run("vocab").check_returncode()
+        run_recipe("vocab").check_returncode()
         self.assertEqual(revision.read_text(), "pinned")
         self.assertTrue(receipt.exists())
 
