@@ -146,8 +146,9 @@ def check_index_flags(env, scope):
             sys.exit(f"Working-tree comparison unverified. Git marks {str(path)!r} {flag}.")
 
 
-def check_untracked_markdown(env):
+def check_stop_inventory(env):
     tracked = set(git("ls-files", "-z", "--", ":(top,icase,glob)**/*.md", env=env).split(b"\0"))
+    reviewed_clippy = (b"clippy.toml", b"crates/forge-warden-core/clippy.toml")
     directories = [b"."]
     while directories:
         directory = directories.pop()
@@ -156,6 +157,14 @@ def check_untracked_markdown(env):
                 if entry.name == b".git" or (directory == b"." and entry.name in
                                              (b"target", b"mutants.out", b"mutants.out.old")):
                     continue
+                if entry.is_symlink():
+                    sys.exit(f"Working-tree comparison unverified. Source symlink: {os.fsdecode(entry.path)!r}.")
+                if entry.name in (b"config", b"config.toml") and os.path.basename(directory) == b".cargo":
+                    sys.exit(f"Working-tree comparison unverified. Cargo configuration: {os.fsdecode(entry.path)!r}.")
+                if entry.name in (b"clippy.toml", b".clippy.toml"):
+                    path = os.path.relpath(entry.path)
+                    if path not in reviewed_clippy or not entry.is_file(follow_symlinks=False):
+                        sys.exit(f"Working-tree comparison unverified. Clippy configuration: {os.fsdecode(path)!r}.")
                 if entry.is_dir(follow_symlinks=False):
                     directories.append(entry.path)
                 elif entry.name.lower().endswith(b".md") and len(entry.name) > 3:
@@ -199,7 +208,7 @@ def mutation_diff(base):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--clean"]:
         with checked_snapshot(ALL_FILES) as env:
-            check_untracked_markdown(env)
+            check_stop_inventory(env)
             check_conversions(env, ALL_FILES)
             sys.exit(bool(git("status", "--porcelain=v1", "-z", "--untracked-files=normal",
                               "--ignore-submodules=none", env=env)))

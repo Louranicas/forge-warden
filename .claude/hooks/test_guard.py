@@ -71,6 +71,10 @@ class Guard(unittest.TestCase):
             template = self.root / "crates/core/src/template.txt"
             template.parent.mkdir()
             template.write_bytes(b"embedded\n")
+            for reviewed in ("clippy.toml", "crates/forge-warden-core/clippy.toml"):
+                config = self.root / reviewed
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.touch()
             git("add", ".")
             git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                 "commit", "-qm", "base")
@@ -79,21 +83,36 @@ class Guard(unittest.TestCase):
             self.assertFalse(ran.exists())
             attributes = self.root / ".git/info/attributes"
             attributes.parent.mkdir(exist_ok=True)
-            (attributes.parent / "exclude").write_text("/crates/core/**/*.rs\n*.[mM][dD]\n")
+            (attributes.parent / "exclude").write_text(
+                "/crates/core/**/*.rs\n*.[mM][dD]\ncurrent\nconfig\nconfig.toml\nclippy.toml\n.clippy.toml\n")
             for directory in ("target", "mutants.out", "mutants.out.old", ".git", "docs/.git"):
                 generated = self.root / directory / "report.md"
                 generated.parent.mkdir(parents=True, exist_ok=True)
                 generated.touch()
+                (generated.parent / ".clippy.toml").touch()
+                (generated.parent / "current").symlink_to(".")
+            (self.root / "docs/config.toml").touch()
             self.run_guard(event, mode="stop", expected=0)
-            self.assertFalse(ran.exists(), "generated Markdown")
-            for document in ("docs/local-review.md", "docs/target/source.MD", "mutants.out.backup/source.Md"):
-                with self.subTest(document=document):
-                    ignored = self.root / document
+            self.assertFalse(ran.exists(), "excluded outputs and ordinary configuration files")
+            link = self.root / "docs/current"
+            for destination in (".", "../Cargo.toml", "missing"):
+                with self.subTest(destination=destination):
+                    link.symlink_to(destination)
+                    git("check-ignore", "-q", "--", str(link))
+                    self.run_guard(event, mode="stop", expected=0)
+                    self.assertTrue(ran.exists(), destination)
+                    ran.unlink()
+                    link.unlink()
+            for path in ("docs/local-review.md", "docs/target/source.MD", "mutants.out.backup/source.Md",
+                         ".cargo/config", "crates/core/.cargo/config.toml", "crates/core/clippy.toml",
+                         "docs/target/.clippy.toml"):
+                with self.subTest(path=path):
+                    ignored = self.root / path
                     ignored.parent.mkdir(parents=True, exist_ok=True)
                     ignored.touch()
                     git("check-ignore", "-q", "--", str(ignored))
                     self.run_guard(event, mode="stop", expected=0)
-                    self.assertTrue(ran.exists(), document)
+                    self.assertTrue(ran.exists(), path)
                     ran.unlink()
                     ignored.unlink()
             for target in ("src/bin/probe.rs", "tests/regression.rs", "examples/demo/main.rs",
