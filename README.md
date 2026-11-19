@@ -4,6 +4,8 @@
 does and where its risk is. forge-warden takes that sealed ranking and answers the next question:
 *does this change meet the standards this repository wrote down?*
 
+This bound-mode example requires a build of the unreleased 0.3.0 code.
+
 ```bash
 unset "${!GIT_@}"
 base="$(git rev-parse refs/remotes/origin/main)" head="$(git rev-parse HEAD)"
@@ -172,7 +174,7 @@ editors that read JSON Schema (taplo, Even Better TOML) flag most of these as yo
   authority mode is compared with the produced ranking, and any difference holds the verdict
   (`rank_mismatch`).
 
-  With `--repo DIR --base B --head H` (bound mode, [ADR 0012](docs/adr/0012-bound-mode.md)),
+  With `--repo DIR --base B --head H` (bound mode in unreleased 0.3.0, [ADR 0012](docs/adr/0012-bound-mode.md)),
   forge-warden makes `git diff merge-base..head` itself from a verified copy of the repository's
   objects and refuses a patch that is not byte-equal to it, so the verdict's claims are verified. The
   starter policy (`forge-warden init`) sets `[claims] require_verified = true`
@@ -200,8 +202,8 @@ repository root. Outside bound mode forge-warden does not check that the patch i
 between two commits, so whoever makes the patch is part of the trust boundary; in bound mode
 (`--repo`) it makes that diff itself and refuses any other patch. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
-To verify an empty comparison, run `forge-warden empty --repo DIR --base BASE --head HEAD`
-with full commit IDs. In a linked worktree, run `unset "${!GIT_@}"` in Bash before taking the directory from
+The unreleased 0.3.0 command `forge-warden empty --repo DIR --base BASE --head HEAD`
+verifies an empty comparison using full commit IDs. In a linked worktree, run `unset "${!GIT_@}"` in Bash before taking the directory from
 `git rev-parse --git-common-dir`. The command uses the enrolled `/usr/bin/git` to compare the
 merge base to the supplied head commit from verified objects. It exits silently with 0 for an
 empty diff or exits with 4 if the comparison contains changes. Its machine interface uses the
@@ -262,6 +264,8 @@ inject terminal escapes or reorder text with bidi controls.
 as JSON, and a test fails if this table drifts from it.
 
 ## In CI
+
+This bound-mode workflow requires the unreleased 0.3.0 binary and its matching patch helper.
 
 ```yaml
 - run: evidence="$(mktemp -d "$RUNNER_TEMP/warden-XXXXXXXX")" && printf 'WARDEN_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"

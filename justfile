@@ -4,8 +4,15 @@ default:
 
 # One-time setup: use the versioned git hooks.
 install-hooks:
-    git config core.hooksPath .githooks
-    @echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unset "${!GIT_@}"
+    [[ ! -L .git && -d .githooks && ! -L .githooks ]]
+    for hook in pre-commit commit-msg pre-push; do
+        [[ -f ".githooks/$hook" && ! -L ".githooks/$hook" && -x ".githooks/$hook" ]]
+    done
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git --git-dir="$PWD/.git" config --local core.hooksPath .githooks
+    echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
 
 # fmt + clippy + tests: seconds. The pre-commit hook and Claude Code's Stop hook run this.
 fast: (_check-script "ci_fast.sh")
@@ -16,14 +23,14 @@ ci: (_check-script "ci_local.sh")
     scripts/ci_local.sh
 
 # Regenerate golden verdicts after an intended change; review the diff before committing.
-bless:
+bless: (_check-script "bless.sh") (_check-script "golden_output.py")
     scripts/bless.sh
 
 # Mutation-test the lines changed since main. A surviving mutant is a missing test.
 # --cap-lints: with `warnings = "deny"`, a mutant that leaves an unused binding fails to compile
 # and is counted "unviable", hiding survivors (main c44c00e: 3 missed, 59 more viable when capped).
 # CARGO_TARGET_DIR unset: each worker builds in its own copy; a shared target dir mixes binaries.
-mutants:
+mutants: (_check-script "make_patch.sh") (_check-script "worktree_diff.py")
     #!/usr/bin/env bash
     set -euo pipefail
     while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
@@ -53,7 +60,7 @@ _check-script $script:
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
 # Advisory mode: the ranking is supplied, so the verdict is at best hold. Committed changes only:
 # the patch-maker diffs commits, not the work tree.
-judge:
+judge: (_check-script "make_patch.sh")
     #!/usr/bin/env bash
     set -euo pipefail
     patch="$(mktemp)"
@@ -61,7 +68,7 @@ judge:
     scripts/make_patch.sh refs/remotes/origin/main HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
 
-judge-bound:
+judge-bound: (_check-script "make_patch.sh")
     #!/usr/bin/env bash
     set -euo pipefail
     unset "${!GIT_@}"
@@ -75,7 +82,7 @@ judge-bound:
     cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$scratch/change.patch" \
         --ranker "$ranker" --repo "$repo" --base "$base" --head "$head"
 
-review:
+review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh")
     #!/usr/bin/env bash
     set -euo pipefail
     umask 077

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 unset "${!GIT_@}"
+if [[ -L scripts || -L scripts/make_patch.sh || ! -f scripts/make_patch.sh ]]; then
+  echo "Gate input refused: scripts/make_patch.sh" >&2
+  exit 2
+fi
 comparison_ref=refs/remotes/origin/main
 ref_path="$(git rev-parse --git-path "$comparison_ref")"
 loose="$(python3 -I - "$ref_path" <<'PYREF'

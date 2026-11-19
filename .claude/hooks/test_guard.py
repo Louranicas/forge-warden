@@ -2,7 +2,6 @@
 """Hook protocol and known M3 bypass regressions; never executes proposed commands."""
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -12,11 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 GUARD = Path(__file__).with_name("guard.py")
-
-
-def just_launcher(recipe):
-    return ["bash", "-c", 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && '
-            'exec just --justfile ./justfile -- "$@"', "--", recipe]
+CHECKOUT_JUST = GUARD.parents[2] / "scripts/checkout_just.py"
 
 
 class Guard(unittest.TestCase):
@@ -300,7 +295,7 @@ class Guard(unittest.TestCase):
             shutil.copy2(repo / ".githooks" / hook, hooks / hook)
             launchers = [(["git", "-c", "core.hooksPath=.githooks", "hook", "run", hook], {})]
             if shutil.which("just"):
-                launcher = just_launcher(recipe)
+                launcher = [sys.executable, "-I", CHECKOUT_JUST, recipe]
                 launchers.append((launcher, {"JUST_DRY_RUN": "true", "JUST_JUSTFILE": str(self.root / "other")}))
             for command, overrides in launchers:
                 with self.subTest(command=command):
@@ -326,29 +321,85 @@ class Guard(unittest.TestCase):
                     self.assertFalse(ran.exists())
                     script.unlink()
 
-    def test_documented_just_launchers_bind_recipes_and_arguments(self):
-        repo = GUARD.parents[2]
-        guide = (repo / "CONTRIBUTING.md").read_text()
+    def test_fixed_just_recipes_select_checkout(self):
         recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review")
-        examples = [shlex.split(line) for line in guide.splitlines()
-                    if line.startswith("bash -c ") and line.split()[-1] in recipes]
-        self.assertCountEqual(examples, [just_launcher(recipe) for recipe in recipes])
-        rules = json.loads((repo / ".claude/settings.json").read_bytes())["permissions"]["allow"]
         justfile = self.root / "justfile"
-        justfile.write_text("\n".join(f'{name} $arg:\n    @printf "%s\\n" {name} "$arg" > receipt\n'
-                                     for name in recipes))
+        justfile.write_text("\n".join(f'{name}:\n    @echo {name} > receipt\n' for name in recipes))
         receipt = self.root / "receipt"
-        env = {k: v for k, v in os.environ.items() if not k.startswith("JUST_")}
-        env.update(JUST_DRY_RUN="true", JUST_JUSTFILE=str(self.root / "other"))
-        for command in examples:
-            recipe = command[-1]
+        env = {**os.environ, "JUST_DRY_RUN": "true", "JUST_JUSTFILE": str(self.root / "other")}
+        command = [sys.executable, "-I", CHECKOUT_JUST]
+        for recipe in recipes:
             with self.subTest(recipe=recipe):
-                self.assertNotIn(f"Bash(just {recipe})", rules)
-                if recipe in ("fast", "ci", "mutants", "judge"):
-                    self.assertIn(f"Bash({shlex.join(command)})", rules)
-                subprocess.run([*command, "one argument"], cwd=self.root, env=env, check=True)
-                self.assertEqual(receipt.read_text().splitlines(), [recipe, "one argument"])
+                subprocess.run([*command, recipe], cwd=self.root, env=env, check=True)
+                self.assertEqual(receipt.read_text().strip(), recipe)
                 receipt.unlink()
+        for args in ([], ["fast", "ci"], ["--list"]):
+            self.assertNotEqual(subprocess.run([*command, *args], cwd=self.root, capture_output=True).returncode, 0)
+            self.assertFalse(receipt.exists())
+        justfile.rename(self.root / "other")
+        justfile.symlink_to(self.root / "other")
+        self.assertNotEqual(subprocess.run([*command, "fast"], cwd=self.root, env=env, capture_output=True).returncode, 0)
+        self.assertFalse(receipt.exists())
+
+    def test_hook_installation_only_writes_selected_repository(self):
+        repo = GUARD.parents[2]
+        shutil.copyfile(repo / "justfile", self.root / "justfile")
+        shutil.copytree(repo / ".githooks", self.root / ".githooks")
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("JUST_", "GIT_"))}
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        other = self.root / "other"
+        for root in (self.root, other):
+            subprocess.run(["git", "init", "-q", "--template=", root], env=env, check=True)
+        config = other / ".git/config"
+        before = config.read_bytes()
+        redirects = {**env, "GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other),
+                     "GIT_CONFIG": str(config), "GIT_CONFIG_COUNT": "1",
+                     "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "elsewhere"}
+        subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=self.root, env=redirects,
+                       capture_output=True, check=True)
+        actual = subprocess.check_output(["git", "config", "--local", "--get", "core.hooksPath"],
+                                         cwd=self.root, env=env)
+        self.assertEqual(actual, b".githooks\n")
+        self.assertEqual(config.read_bytes(), before)
+
+    def test_recipe_helpers_are_checked_before_execution(self):
+        repo = GUARD.parents[2]
+        shutil.copyfile(repo / "justfile", self.root / "justfile")
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        marker = self.root / "ran"
+        recorder = self.root / "record"
+        recorder.write_text("#!/bin/sh\ntouch ran\nexit 77\n")
+        recorder.chmod(0o755)
+        helpers = {
+            "review": ("review_comparison.sh", "make_patch.sh"),
+            "mutants": ("make_patch.sh", "worktree_diff.py"),
+            "judge": ("make_patch.sh",),
+            "judge-bound": ("make_patch.sh",),
+        }
+        for recipe, names in helpers.items():
+            for name in names:
+                shutil.copy2(recorder, scripts / name)
+            for name in names:
+                with self.subTest(recipe=recipe, helper=name):
+                    helper = scripts / name
+                    helper.unlink()
+                    helper.symlink_to(recorder)
+                    result = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, recipe], cwd=self.root,
+                                            capture_output=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"scripts/{name}".encode(), result.stderr)
+                    self.assertFalse(marker.exists())
+                    helper.unlink()
+                    shutil.copy2(recorder, helper)
+        helper = scripts / "make_patch.sh"
+        helper.unlink()
+        helper.symlink_to(recorder)
+        result = subprocess.run(["bash", repo / "scripts/review_comparison.sh", "HEAD"],
+                                cwd=self.root, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"scripts/make_patch.sh", result.stderr)
+        self.assertFalse(marker.exists())
 
     @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
     def test_just_defers_vocabulary_lookup(self):

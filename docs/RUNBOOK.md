@@ -151,7 +151,7 @@ forge-warden does not check that the patch is the whole change between two commi
 and `--head` are recorded as your claims, unverified. Whoever makes the patch is part of the
 trust boundary, so make it with `make_patch.sh` or with `scripts/dogfood.sh`, not by hand.
 
-Bound mode (ADR 0012, unreleased): add `--repo DIR --base BASE --head HEAD` (full commit ids) to
+For bound mode in unreleased 0.3.0 (ADR 0012), add `--repo DIR --base BASE --head HEAD` (full commit ids) to
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
 (exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). In a

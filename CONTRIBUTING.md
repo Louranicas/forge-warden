@@ -24,19 +24,19 @@ cargo fetch --locked
 Run the installation command from the checkout root.
 
 ```bash
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- install-hooks
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py install-hooks'
 ```
 
 ## Local gate commands
 
 Run these commands from the root of the checkout being validated. Each clears inherited
-Just options and selects that checkout’s justfile.
+Just options and selects that checkout’s justfile. The launcher accepts one recipe name.
 
 ```bash
 # Fast gate
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- fast
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py fast'
 # Full local gate
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- ci
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py ci'
 ```
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
@@ -45,7 +45,7 @@ The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned i
 If that ref is absent, HEAD must have complete history with a single root, which serves as the base.
 Both paths require Git 2.41 or later and an [owner-enrolled Git](docs/GIT_RUNTIME.md).
 A nonempty patch requires `deep-diff-forge` on `PATH` with its binary hash enrolled in the policy.
-For an empty patch the gate runs [`forge-warden empty`](README.md#authority-and-advisory-mode).
+For an empty patch the gate runs the unreleased 0.3.0 [`forge-warden empty` command](README.md#authority-and-advisory-mode).
 When `zizmor` is absent, the gate's last line names the skipped workflow audit.
 See [Where the gate runs](#where-the-gate-runs).
 
@@ -55,6 +55,10 @@ machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` 
 script calls that is not in its declared list; adding a command to that list means first seeing it
 in the gate image.
 
+The fast gate requires Just to check launcher behavior and review evidence permissions.
+The measured `localhost/ddf-council-gate:20261026c` image (`8f4ea620d021`) lacks Just on
+its PATH. An image with Just installed and measured is required to pass those checks offline.
+
 ### Mutation, judgment, and review
 
 Run the command for the check you need from the checkout root.
@@ -62,25 +66,25 @@ Run the command for the check you need from the checkout root.
 Mutation testing
 
 ```bash
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- mutants
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py mutants'
 ```
 
 Advisory judgment
 
 ```bash
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- judge
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py judge'
 ```
 
 Bound judgment
 
 ```bash
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- judge-bound
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py judge-bound'
 ```
 
 Review evidence
 
 ```bash
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- review
+bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py review'
 ```
 
 ## Where the gate runs
