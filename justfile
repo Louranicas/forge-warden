@@ -54,8 +54,19 @@ stash-source:
     #!/usr/bin/env bash
     set -eu
     unset "${!GIT_@}"
+    sources=':(glob)crates/*/src/**'
+    untracked="$(git ls-files --others -- "$sources")"
+    if [[ -n $untracked ]]; then
+        printf 'Failing-first check unverified. Stage the new source before saving:\n%s\n' "$untracked" >&2
+        exit 1
+    fi
+    tracked="$(git status --porcelain=v1 --no-renames --untracked-files=no -- "$sources")"
+    if grep -q '^AD ' <<< "$tracked"; then
+        echo 'Failing-first check unverified. Git stash cannot preserve a newly staged file missing from the working tree.' >&2
+        exit 1
+    fi
     marker="forge-warden-source-$(python3 -I -c 'import uuid; print(uuid.uuid4())')"
-    git stash push --message "$marker" -- ':(glob)crates/*/src/**'
+    git stash push --message "$marker" -- "$sources"
     git stash list --fixed-strings --grep-reflog="$marker" --format=%H
 
 [positional-arguments]
@@ -66,12 +77,28 @@ restore-source object:
     [[ $1 =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || { echo 'expected a full stash object ID' >&2; exit 2; }
     scratch="$(mktemp -d)"
     trap 'rm -rf -- "$scratch"' EXIT
-    diff=(git --no-replace-objects diff-tree -p --binary --no-renames --no-color --src-prefix=a/ --dst-prefix=b/ "$1^1")
-    "${diff[@]}" "$1^2" -- ':(glob)crates/*/src/**' > "$scratch/index.diff"
-    "${diff[@]}" "$1" -- ':(glob)crates/*/src/**' > "$scratch/worktree.diff"
-    for mode in --check --apply; do
-        git apply --allow-empty --whitespace=nowarn "$mode" --cached "$scratch/index.diff"
-        git apply --allow-empty --whitespace=nowarn "$mode" "$scratch/worktree.diff"
+    sources=(':(glob)crates/*/src/**')
+    staged="$(git --no-replace-objects rev-parse --verify "$1^2^{tree}")"
+    worktree="$(git --no-replace-objects rev-parse --verify "$1^{tree}")"
+    git diff --name-only --no-renames -z "$1^1" -- "${sources[@]}" > "$scratch/changed"
+    git diff --cached --name-only --no-renames -z "$1^1" -- "${sources[@]}" >> "$scratch/changed"
+    git ls-files --others -z -- "${sources[@]}" >> "$scratch/changed"
+    while IFS= read -r -d '' path; do
+        original="$(git --literal-pathspecs ls-tree -r "$1^1" -- "$path")"
+        saved_index="$(git --no-replace-objects --literal-pathspecs ls-tree -r "$staged" -- "$path")"
+        saved_worktree="$(git --no-replace-objects --literal-pathspecs ls-tree -r "$worktree" -- "$path")"
+        if [[ $original != "$saved_index" || $original != "$saved_worktree" ]]; then
+            echo 'Source changed since the stash was saved. Resolve the overlapping edits before restoring.' >&2
+            exit 1
+        fi
+        sources+=(":(exclude,literal)$path")
+    done < "$scratch/changed"
+    for layer in worktree staged; do
+        tree="${!layer}"
+        git --no-replace-objects ls-files --with-tree="$tree" -z -- "${sources[@]}" > "$scratch/paths"
+        if [[ -s $scratch/paths ]]; then
+            git --no-replace-objects --literal-pathspecs restore --source="$tree" "--$layer" --pathspec-from-file="$scratch/paths" --pathspec-file-nul
+        fi
     done
 
 judge-bound:

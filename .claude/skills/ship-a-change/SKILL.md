@@ -14,8 +14,9 @@ could not run as **not verified**.
 2. **Docs build**: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`.
 3. **New behaviour has a failing-first test.** For each behaviour change, name the test and
    confirm it fails without the change: stash the source change
-   with `just stash-source`. If it prints a stash object ID, record it, run the test, and
-   record the failure. Run `just restore-source OBJECT_ID` with that exact ID to restore the
+   with `just stash-source`. If it reports untracked source, mark the failing-first check
+   **not verified** until that source is included and the save succeeds. When the save prints a stash object ID,
+   record it, run the test, and record the failure. Run `just restore-source OBJECT_ID` with that exact ID to restore the
    source and its staged changes. The saved entry remains in the stash list for recovery.
 4. **Mutation** (if `cargo-mutants` is installed): run `just mutants`.
    Every surviving mutant is a missing test: add it, or explain why the mutant is equivalent.

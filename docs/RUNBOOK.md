@@ -152,7 +152,7 @@ linked worktree run `unset "${!GIT_@}"` in Bash before passing `--repo "$(git re
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.
 
 Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a refusal with its
-next step on stderr, and `$evidence/verdict.json` is then empty. `forge-warden schema exit-codes` lists them all.
+next step on stderr. An authority refusal leaves `$evidence/verdict.json` empty. `forge-warden schema exit-codes` lists them all.
 
 Advisory mode instead (no allowlist needed; the best result is `hold`, exit 8): rank the patch
 yourself and hand the ranking over. Use the same evidence directory and Bash session as above.
@@ -195,7 +195,7 @@ authority verdict, whatever it says.
 | exit 3, `executable digest is not enrolled` | Git changed (step 8) | add the new digest, new revision |
 | exit 4, the ranker's digest `does not list` | the binary is not the one the policy pins | use the pinned binary, or change the policy in review |
 | exit 4, `pinning …` | the ranker file is a symlink, a FIFO, or writable by others | install it as a plain file only you can write |
-| exit 8 | a rule or note holds: a person must decide | read `$evidence/verdict.json`; the binary has no acknowledgement path, so the hold stands until the change or the policy changes in review (the signed acknowledgement of ADR 0007 exists only in this repository's own driver, `scripts/dogfood.sh`); a `claims_unverified` hold (the policy's `[claims] require_verified`, which `init` sets) cannot be acknowledged; re-run in bound mode: `--repo` with full `--base`/`--head` and a patch from `scripts/make_patch.sh` |
+| exit 8 | a rule or note holds: a person must decide | read `$evidence/advisory-verdict.json` for an advisory hold or `$evidence/verdict.json` for an authority hold; the binary has no acknowledgement path, so the hold stands until the change or the policy changes in review (the signed acknowledgement of ADR 0007 exists only in this repository's own driver, `scripts/dogfood.sh`); a `claims_unverified` hold (the policy's `[claims] require_verified`, which `init` sets) cannot be acknowledged; re-run in bound mode: `--repo` with full `--base`/`--head` and a patch from `scripts/make_patch.sh` |
 
 **Roll back** by removing `/etc/forge-warden/git-allowlist.toml` (authority mode then refuses; advisory
 mode still runs and records `unpinned`), or by reinstalling the previous forge-warden revision.
