@@ -484,7 +484,15 @@ fn run(command: Command) -> Result<Exit, Failure> {
             let (base, head) = full_ids(&base, &head)?;
             let git = doors::child::admit_git_pinned(Path::new(DEFAULT_GIT))
                 .map_err(Failure::from_door)?;
-            bind(git.admitted(), &repo, base, head, &[]).map(|_| Exit::Pass)
+            let comparison = verified_diff(git.admitted(), &repo, base, head)?;
+            if comparison.patch.is_empty() {
+                Ok(Exit::Pass)
+            } else {
+                Err(Failure::new(
+                    Exit::InvalidInput,
+                    "the repository comparison contains changes",
+                ))
+            }
         }
         Command::Lint { policy, json } => lint(&policy, json),
         Command::Explain { code } => explain(&code),
@@ -639,18 +647,12 @@ fn full_ids<'a>(base: &'a str, head: &'a str) -> Result<(&'a str, &'a str), Fail
     }
 }
 
-/// Bound mode's comparison (ADR 0012 D4): the patch must be byte-equal to the diff forge-warden
-/// made from a verified copy of the repository's objects. A difference is a wrong input (exit 4);
-/// a store that does not hold what its ids name, or Git out of bounds, gives no verdict (exit 3).
-/// The core's `BoundClaims::from_comparison` is the only way to verified claims, and this is its one
-/// call (`tests/repo_invariants.rs` holds it).
-fn bind(
+fn verified_diff(
     git: &doors::child::AdmittedGit,
     repo: &Path,
     base: &str,
     head: &str,
-    patch: &[u8],
-) -> Result<BoundClaims, Failure> {
+) -> Result<doors::child::BoundDiff, Failure> {
     use doors::child::BoundFailure;
     // Every bound-mode refusal by its variant (REFUSAL_MAP): a repository bound mode cannot read and
     // a store that does not hold what its ids name give no verdict (exit 3); ids that name no
@@ -673,7 +675,20 @@ fn bind(
         | BoundFailure::Unavailable(_)) => Failure::new(Exit::Io, format!("bound mode: {why}")),
     };
     let objects = doors::child::admit_repository(repo).map_err(fail)?;
-    let made = doors::child::bound_diff(git, &objects, base, head).map_err(fail)?;
+    doors::child::bound_diff(git, &objects, base, head).map_err(fail)
+}
+
+/// Bound mode's comparison (ADR 0012 D4): the patch must be byte-equal to the diff forge-warden
+/// made from a verified copy of the repository's objects. A difference is a wrong input (exit 4);
+/// a store that does not hold what its ids name, or Git out of bounds, gives no verdict (exit 3).
+fn bind(
+    git: &doors::child::AdmittedGit,
+    repo: &Path,
+    base: &str,
+    head: &str,
+    patch: &[u8],
+) -> Result<BoundClaims, Failure> {
+    let made = verified_diff(git, repo, base, head)?;
     let ids = BoundIds::new(base, head, &made.merge_base).map_err(|why| {
         Failure::new(
             Exit::Io,

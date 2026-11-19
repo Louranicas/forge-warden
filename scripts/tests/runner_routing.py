@@ -24,6 +24,7 @@ boundary is repository write access plus runner-up's fork guard (docs/runner-up.
 import hashlib
 import os
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -558,8 +559,14 @@ TABLE = [
 
 
 class Routing(unittest.TestCase):
+    def reviewed_workflow(self, path):
+        data = (ROOT / path).read_bytes()
+        self.assertEqual(hashlib.sha256(data).hexdigest(), WORKFLOW_SHA256[path],
+                         f"{path} changed: review it, then update WORKFLOW_SHA256")
+        return data.decode("utf-8")
+
     def workflows(self):
-        return {path: (ROOT / path).read_text() for path in ROUTED}
+        return {path: self.reviewed_workflow(path) for path in ROUTED}
 
     def test_every_job_is_hosted_or_routed_through_the_route_job(self):
         for path, text in self.workflows().items():
@@ -653,7 +660,7 @@ class Routing(unittest.TestCase):
                          ["full-workspace: an unrouted job must run on ubuntu-latest"])
 
     def test_the_route_runner_refuses_a_script_that_writes_other_than_one_runner_line(self):
-        text = (ROOT / BASELINE).read_text()
+        text = self.reviewed_workflow(BASELINE)
         line = "printf 'runner=%s\\n' \"$runner\" >> \"$GITHUB_OUTPUT\""
         self.assertEqual(text.count(line), 1)
         for name, edited in {"twice": text.replace(line, line + "\n          " + line, 1),
@@ -679,9 +686,7 @@ class Routing(unittest.TestCase):
         self.assertEqual(names, sorted(WORKFLOW_SHA256), "every workflow file has a pin")
         for name in names:
             with self.subTest(path=name):
-                digest = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                self.assertEqual(digest, WORKFLOW_SHA256[name],
-                                 "a workflow changed: review it, then update WORKFLOW_SHA256")
+                self.reviewed_workflow(name)
 
     def test_each_shape_edit_is_refused(self):
         self.assertTrue(listed_workflow_problems([".github/workflows/new.yml"]))
@@ -755,31 +760,45 @@ class Routing(unittest.TestCase):
             return fields.get("if", "success()").removeprefix("${{").removesuffix("}}").strip()
 
         active = {"true", "success()", "always()"}
-        for path, scope, job_condition in (
-            (CI, "diff", "success()"),
-            (BASELINE, "full", "!cancelled() && needs.mutation-plan.result == 'success'"),
+        matrix = runpy.run_path(str(ROOT / "scripts/mutation_ci.py"))["matrix"]
+        shard = matrix(21, "d" * 64)["include"][1]
+        for path, scope, job_condition, pr_base, merge_base in (
+            (CI, "diff", "success()", "a" * 40, ""),
+            (CI, "diff", "success()", "", "b" * 40),
+            (BASELINE, "full", "!cancelled() && needs.mutation-plan.result == 'success'", "", ""),
         ):
-            with self.subTest(path=path):
-                workflow = yaml.load((ROOT / path).read_text(), Loader=yaml.BaseLoader)
+            with self.subTest(path=path, pr_base=pr_base, merge_base=merge_base):
+                workflow = yaml.load(self.reviewed_workflow(path), Loader=yaml.BaseLoader)
                 job = workflow["jobs"]["mutation-shards"]
                 self.assertIn(condition(job), active | {job_condition})
                 workers = [step for step in job["steps"] if "SHARD_INDEX" in step.get("env", {})]
                 self.assertEqual(len(workers), 1)
                 (worker,) = workers
                 self.assertIn(condition(worker), active)
+                context = {f"matrix.{name}": str(value) for name, value in shard.items()}
+                context.update({"github.event.pull_request.base.sha": pr_base,
+                                "github.event.merge_group.base_sha": merge_base})
+                worker_env = {name: evaluate(value, context) if value.startswith("${{") else value
+                              for name, value in worker["env"].items()}
                 with tempfile.TemporaryDirectory() as directory:
                     receipt = Path(directory) / "argv"
                     script = Path(directory) / "step.sh"
                     script.write_text(worker["run"])
                     python = Path(directory) / "python3"
-                    python.write_text("#!/bin/sh\nprintf '%s\\0' python3 \"$@\" >> \"$RECEIPT\"\n")
+                    python.write_text(
+                        "#!/bin/sh\n"
+                        "printf '%s\\0' python3 \"$@\" \"$SHARD_INDEX\" \"$SHARD_COUNT\" \"$MUTANT_TOTAL\" "
+                        "\"$INVENTORY_DIGEST\" \"$SHARD_MINUTES\" \"${BASE_SHA-}\" >> \"$RECEIPT\"\n"
+                    )
                     python.chmod(0o700)
                     result = subprocess.run(["/bin/bash", "-eo", "pipefail", str(script)],
-                                            cwd=directory, env={"PATH": directory, "RECEIPT": str(receipt)},
+                                            cwd=directory, env={**worker_env, "PATH": directory, "RECEIPT": str(receipt)},
                                             stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(receipt.read_bytes().split(b"\0"),
-                                     [b"python3", b"-I", b"scripts/mutation_ci.py", b"run", scope.encode(), b""])
+                    expected = ["python3", "-I", "scripts/mutation_ci.py", "run", scope,
+                                str(shard["index"]), str(shard["shards"]), str(shard["total"]),
+                                shard["digest"], str(shard["minutes"]), pr_base or merge_base, ""]
+                    self.assertEqual(receipt.read_bytes(), "\0".join(expected).encode())
 
     def test_the_aggregate_check_stays_hosted_and_needs_plan_and_shards(self):
         body = job_bodies((ROOT / ".github/workflows/mutation-baseline.yml").read_text())["full-workspace"]

@@ -660,17 +660,15 @@
       "id": "bound-claims-second-call",
       "guardrail": "G-12",
       "path": "crates/forge-warden-cli/src/main.rs",
-      "diagnostic": "only_bound_mode_verifies_claims.*FAILED",
+      "diagnostic": "bound_mode_verifies_the_claims_only_through_the_comparison.*FAILED",
       "cargo": [
         "test",
         "-p",
         "forge-warden-cli",
         "--locked",
         "--offline",
-        "--test",
-        "repo_invariants",
         "--",
-        "only_bound_mode_verifies_claims"
+        "bound_mode_verifies_the_claims_only_through_the_comparison"
       ],
       "old": "            _ => claims,\n",
       "new": "            _ => claims.or_else(|| { let same = BoundIds::new(&\"a\".repeat(40), &\"a\".repeat(40), &\"a\".repeat(40)).ok()?; BoundClaims::from_comparison(same, &patch, &patch).ok().map(Claims::bound) }),\n",

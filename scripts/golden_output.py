@@ -18,11 +18,11 @@ GOLDENS = ("fixtures/demo.verdict.json", "fixtures/cli-stderr/io.txt",
 # USAGE_SURFACE; each command's exit code, stdout and stderr in one text, the version replaced.
 SURFACE = {
     "fixtures/cli-surface/help.txt": (
-        ("--help",), ("check", "--help"), ("lint", "--help"), ("explain", "--help"),
+        ("--help",), ("check", "--help"), ("empty", "--help"), ("lint", "--help"), ("explain", "--help"),
         ("schema", "--help"), ("init", "--help"), ("help",), ("help", "check"),
     ),
     "fixtures/cli-surface/usage-errors.txt": (
-        (), ("frobnicate",), ("check",), ("check", "--policy", "examples/starter.warden.toml"),
+        (), ("frobnicate",), ("empty",), ("check",), ("check", "--policy", "examples/starter.warden.toml"),
         ("check", "--policy", "examples/starter.warden.toml", "--patch", "fixtures/demo.patch", "--advisory"),
         ("check", "--policy", "examples/starter.warden.toml", "--patch", "fixtures/demo.patch", "--advisory",
          "--rank", "fixtures/demo.rank.json", "--today", "2026-13-01"),

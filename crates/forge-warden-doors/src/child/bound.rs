@@ -63,7 +63,7 @@ pub struct BoundDiff {
 }
 
 /// Why bound mode could not make the diff. Each refusal is its own variant with a row in
-/// `docs/REFUSAL_MAP.md` (ADR 0012; ruling P1.5). How each reaches the user (`main.rs`, `bind`): the
+/// `docs/REFUSAL_MAP.md` (ADR 0012; ruling P1.5). How each reaches the user (`main.rs`, `verified_diff`): the
 /// repository and the store give no verdict (exit 3), the ids are a wrong input (exit 4).
 #[derive(Debug, PartialEq, Eq)]
 pub enum BoundFailure {

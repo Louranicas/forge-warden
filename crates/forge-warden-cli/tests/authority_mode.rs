@@ -702,6 +702,14 @@ fn empty_verifies_the_merge_base_to_head_diff() {
             b"",
         );
         assert_eq!(out.code, expected, "{}", out.stderr);
+        if expected == 4 {
+            assert!(
+                out.stderr
+                    .contains("repository comparison contains changes"),
+                "{}",
+                out.stderr
+            );
+        }
     }
 }
 

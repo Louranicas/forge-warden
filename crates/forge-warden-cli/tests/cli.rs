@@ -844,6 +844,7 @@ fn golden_stderr_over_budget() {
 const HELP_SURFACE: &[&[&str]] = &[
     &["--help"],
     &["check", "--help"],
+    &["empty", "--help"],
     &["lint", "--help"],
     &["explain", "--help"],
     &["schema", "--help"],
@@ -856,6 +857,7 @@ const HELP_SURFACE: &[&[&str]] = &[
 const USAGE_SURFACE: &[&[&str]] = &[
     &[],
     &["frobnicate"],
+    &["empty"],
     &["check"],
     &["check", "--policy", "examples/starter.warden.toml"],
     &[

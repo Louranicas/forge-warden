@@ -1336,52 +1336,6 @@ fn scratch_helpers_require_per_call_identity_and_exclusive_creation() {
 }
 
 #[test]
-fn only_bound_mode_verifies_claims() {
-    use syn::visit::Visit as _;
-
-    fn constructor_refs(tokens: proc_macro2::TokenStream) -> usize {
-        use proc_macro2::TokenTree;
-        let mut declaration = false;
-        let mut count = 0_usize;
-        for token in tokens {
-            match &token {
-                TokenTree::Group(group) => {
-                    count = count.saturating_add(constructor_refs(group.stream()));
-                }
-                TokenTree::Ident(name) if !declaration && name.unraw() == "from_comparison" => {
-                    count = count.saturating_add(1);
-                }
-                TokenTree::Ident(_) | TokenTree::Literal(_) | TokenTree::Punct(_) => {}
-            }
-            declaration = matches!(token, TokenTree::Ident(name) if name == "fn");
-        }
-        count
-    }
-
-    let mut references = Vec::new();
-    for (path, text) in rust_sources() {
-        if is_production(&path) {
-            let count = constructor_refs(text.parse().unwrap());
-            if count > 0 {
-                references.push((path, count));
-            }
-        }
-    }
-    let main = "crates/forge-warden-cli/src/main.rs";
-    assert_eq!(references, [(main.to_owned(), 1)]);
-    let cli = syn::parse_file(&read(main)).unwrap();
-    let mut binding = ScratchOperations::default();
-    for item in &cli.items {
-        if let syn::Item::Fn(function) = item
-            && function.sig.ident == "bind"
-        {
-            binding.visit_block(&function.block);
-        }
-    }
-    assert!(binding.calls.iter().any(|name| name == "from_comparison"));
-}
-
-#[test]
 fn the_core_is_no_std_unconditionally() {
     // EFFECT-WALL step 2c (DESIGN 3.1, Bastion's R3): the core cannot name `std`, so no effect of
     // any spelling compiles there. What keeps it so is exact: `#![no_std]` is the one unconditional
