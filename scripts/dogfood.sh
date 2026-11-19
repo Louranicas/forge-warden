@@ -54,12 +54,21 @@ fi
 # The runner and this script must be trusted independently of the candidate workflow.
 trusted="$(cd "$(dirname "$0")/.." && pwd -P)"
 candidate="$(cd "$candidate" && pwd -P)"
+while [[ "$candidate" != / && ! -e "$candidate/.git" && ! -L "$candidate/.git" ]]; do
+  candidate="$(dirname -- "$candidate")"
+done
 # Nothing about Git comes from the caller's environment: GIT_CONFIG_COUNT/KEY_n/VALUE_n and
 # GIT_CONFIG_PARAMETERS carry configuration (diff.noprefix alone makes the judge read
 # `scripts/x` as `x`, so no path rule matches), GIT_DIFF_OPTS changes the hunks, GIT_DIR and
 # its relatives move the repository. Unset every GIT_ variable, then set the fixed ones.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+for checkout in "$trusted" "$candidate"; do
+  if [[ -L "$checkout/.git" || ( ! -d "$checkout/.git" && ! -f "$checkout/.git" ) ]]; then
+    echo "dogfood: invalid checkout .git entry in $checkout" >&2
+    exit 2
+  fi
+done
 if [ "$trusted" = "$candidate" ] || [ "$(git -C "$trusted" rev-parse HEAD)" != "$base" ]; then
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2
   exit 2

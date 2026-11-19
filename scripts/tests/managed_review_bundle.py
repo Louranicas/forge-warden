@@ -74,7 +74,7 @@ class ReviewBundle(unittest.TestCase):
         (self.candidate / ".cargo/config.toml").touch()
         tools = self.root / "bin"
         tools.mkdir()
-        for name in ("bash", "git", "grep", "mktemp", "python3", "rm", "sh"):
+        for name in ("bash", "git", "grep", "mktemp", "mv", "python3", "rm", "sh"):
             (tools / name).symlink_to(shutil.which(name))
         env = {**self.env, "PATH": str(tools)}
         expected = self.git(self.candidate, "diff", "--full-index", self.base, self.head).encode()
@@ -138,6 +138,33 @@ class ReviewBundle(unittest.TestCase):
                 self.assertEqual((copy / name).read_bytes(), source.read_bytes())
                 for path in (source, copy / name):
                     self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_review_publishes_only_completed_outputs(self):
+        command = self.review_command()
+        patcher = self.candidate / "scripts/make_patch.sh"
+        original = patcher.with_name("make_patch.sh.original")
+        patcher.rename(original)
+        patcher.write_text('#!/bin/sh\nif [ "$1" = --resolve-comparison ]; then exec bash "$0".original "$@"; fi\n'
+                           'echo partial\ntest ! -e .review-*/review.patch || exit 1\nexit 31\n')
+        patcher.chmod(0o755)
+        result = subprocess.run(command, cwd=self.candidate, env=self.env, capture_output=True)
+        self.assertEqual(result.returncode, 31, result.stderr)
+        evidence, = self.candidate.glob(".review-*")
+        self.assertEqual(list(evidence.iterdir()), [])
+        evidence.rmdir()
+
+        original.replace(patcher)
+        ranker = self.root / "deep-diff-forge"
+        ranker.write_text('#!/bin/sh\nif [ "$2" = --outline ]; then exit 0; fi\n'
+                          'echo partial\ntest ! -e .review-*/review.rank.json || exit 1\nexit 32\n')
+        ranker.chmod(0o755)
+        env = {**self.env, "PATH": str(self.root) + os.pathsep + self.env["PATH"]}
+        result = subprocess.run(command, cwd=self.candidate, env=env, capture_output=True)
+        self.assertEqual(result.returncode, 32, result.stderr)
+        evidence, = self.candidate.glob(".review-*")
+        patch, = evidence.iterdir()
+        self.assertEqual(patch.name, "review.patch")
+        self.assertEqual(patch.read_bytes(), self.git(self.candidate, "diff", "--full-index", self.base, self.head).encode())
 
     def test_candidate_cannot_supply_instructions_or_policy(self):
         result = self.run_bundle()

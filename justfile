@@ -7,7 +7,7 @@ install-hooks:
     #!/usr/bin/env bash
     set -euo pipefail
     unset "${!GIT_@}"
-    [[ ! -L .git && -d .githooks && ! -L .githooks ]]
+    [[ ! -L .git && ( -d .git || -f .git ) && -d .githooks && ! -L .githooks ]]
     for hook in pre-commit commit-msg pre-push; do
         [[ -f ".githooks/$hook" && ! -L ".githooks/$hook" && -x ".githooks/$hook" ]]
     done
@@ -133,11 +133,16 @@ review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh")
     read -r base _ <<< "$comparison"
     scratch="$(mktemp -d .review-XXXXXXXX)"
     printf 'Review directory: %s\n' "$scratch"
-    create_evidence() {
-        python3 -I -c 'import sys; from pathlib import Path; Path(sys.argv[1]).touch(mode=0o600, exist_ok=False)' "$1"
-    }
-    create_evidence "$scratch/review.patch"
-    scripts/make_patch.sh "$base" "$head" > "$scratch/review.patch"
+    publish_evidence() (
+        name="$1"
+        shift
+        pending="$(mktemp "$scratch/.pending-XXXXXXXX")"
+        trap 'rm -f -- "$pending"' EXIT
+        "$@" > "$pending"
+        python3 -I -c 'import os; os.fsync(0)' <> "$pending"
+        mv -- "$pending" "$scratch/$name"
+    )
+    publish_evidence review.patch scripts/make_patch.sh "$base" "$head"
     if command -v deep-diff-forge >/dev/null; then
         if [[ -L scripts || -L scripts/worktree_diff.py || ! -f scripts/worktree_diff.py ]]; then
             echo "Gate input refused: scripts/worktree_diff.py" >&2
@@ -145,7 +150,6 @@ review: (_check-script "review_comparison.sh") (_check-script "make_patch.sh")
         fi
         python3 -I scripts/worktree_diff.py --check-inputs
         deep-diff-forge --stdin-patch --outline < "$scratch/review.patch"
-        create_evidence "$scratch/review.rank.json"
-        deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch" > "$scratch/review.rank.json"
+        publish_evidence review.rank.json deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch"
         cargo run -q --bin forge-warden -- check --policy warden.toml --advisory --rank "$scratch/review.rank.json" --patch "$scratch/review.patch"
     fi

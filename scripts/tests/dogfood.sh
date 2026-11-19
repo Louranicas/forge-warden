@@ -350,8 +350,10 @@ named_patch="$sandbox/main-to-head.patch"
 bash "$maker" main HEAD "$sub" > "$named_patch"
 git -C "$sub" replace "$sub_base^{tree}" "$sub_head^{tree}"
 git -C "$sub" replace "$base^{tree}" 'HEAD^{tree}'
+mkdir -p "$sub/.git/info"
+printf '%s\n' "$sub_head" > "$sub/.git/info/grafts"
 (
-unset GIT_ATTR_NOSYSTEM
+unset GIT_ATTR_NOSYSTEM GIT_GRAFT_FILE GIT_NO_REPLACE_OBJECTS
 git() {
  if [[ " $* " == *" diff "* && ${GIT_ATTR_NOSYSTEM:-} != 1 ]]; then
   echo 'documented diff enabled system attributes' >&2
@@ -380,8 +382,9 @@ read_only = {
 for document, revision_range, patch in (('README.md', base + '...' + head, supplied_patch),
                                         ('docs/RUNBOOK.md', 'main...HEAD', named_patch)):
     expected = Path(patch).read_bytes()
-    spans = re.findall(r'`GIT_ATTR_NOSYSTEM=([01])[ \t]+git[ \t]+([^`]+)`', (Path(source) / document).read_text())
-    (nosystem, arguments), = [(value, span) for value, span in spans if '...' in span and 'diff' in shlex.split(span)]
+    spans = re.findall(r'`(GIT_ATTR_NOSYSTEM=[01](?:[ \t]+GIT_GRAFT_FILE=)?)[ \t]+git[ \t]+([^`]+)`',
+                       (Path(source) / document).read_text())
+    (prefix, arguments), = [(value, span) for value, span in spans if '...' in span and 'diff' in shlex.split(span)]
     arguments = arguments.replace('<base>', base).replace('<head>', head)
     if not re.fullmatch(shell_syntax, arguments) or set(shlex.split(arguments)) - (read_only | {revision_range}):
         sys.exit(f'{document}: unsupported argument in documented Git diff')
@@ -390,7 +393,7 @@ for document, revision_range, patch in (('README.md', base + '...' + head, suppl
         if setting:
             key, value = setting.split('=', 1)
             env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0=key, GIT_CONFIG_VALUE_0=value)
-        actual = subprocess.check_output(f'GIT_ATTR_NOSYSTEM={nosystem} git {arguments}', shell=True, executable='bash', cwd=repo, env=env)
+        actual = subprocess.check_output(f'{prefix} git {arguments}', shell=True, executable='bash', cwd=repo, env=env)
         if actual != expected:
             sys.exit(f'FAIL {document}: patch differs from make_patch with {setting or "default configuration"}')
     print(f'PASS {document} produces the same attribute and submodule patch as make_patch')
@@ -550,6 +553,13 @@ export EXPECTED_TRUSTED="$trusted"
 # Q58 S3 (third read): the trusted checkout given as the candidate, by its path and through a
 # symbolic link, and an ignored file in the trusted checkout, each refuse before any effect.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
+mkdir -p "$sandbox/redirected/sub"
+ln -s "$candidate/.git" "$sandbox/redirected/.git"
+if bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$sandbox/redirected/sub" "$sandbox/redirected-out" > "$sandbox/output" 2>&1; then
+ exit 1
+fi
+grep -q 'invalid checkout .git entry' "$sandbox/output"
+test ! -e "$sandbox/redirected-out"
 ln -s "$trusted" "$sandbox/trusted-link"
 for row in "same-path $trusted" "same-through-link $sandbox/trusted-link"; do
  read -r name given <<< "$row"

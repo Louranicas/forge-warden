@@ -149,7 +149,7 @@ Git and forge-warden's own binary are trusted) is unchanged.
 - Refuses several merge bases (D3 step 2) with the same message.
 - Writes `--full-index`, like the door (D3.5), and so do the documented by-hand commands. A patch made by a 0.2.x
   `make_patch.sh` then differs from the bound diff in its `index` lines: UPGRADING says to make it again.
-- Stays the one documented way to make the patch; RUNBOOK step 6 and README show `forge-warden check ... --repo
+- Stays the one documented way to make the patch; RUNBOOK step 6 and README validate that the checkout’s root `.git` is a directory or regular pointer file before using `forge-warden check ... --repo
   "$(git rev-parse --git-common-dir)" --base B --head H` with the patch from the script.
 
 ### D8. A gate can require bound mode (review S1)

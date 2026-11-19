@@ -25,6 +25,7 @@ class MutationEnvironment(unittest.TestCase):
             (root / "target").mkdir()
             (root / "scripts/tests").mkdir(parents=True)
             (root / "plants").mkdir()
+            (root / ".git").mkdir()
             shutil.copyfile(ROOT / "scripts/ci_local.sh", root / "scripts/ci_local.sh")
             shutil.copyfile(ROOT / "scripts/review_comparison.sh", root / "scripts/review_comparison.sh")
             shutil.copyfile(ROOT / "scripts/worktree_diff.py", root / "scripts/worktree_diff.py")

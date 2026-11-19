@@ -379,6 +379,33 @@ class Guard(unittest.TestCase):
                         self.assertTrue((root / "ran").exists(), result.stderr)
                         (root / "ran").unlink()
 
+    def test_checkout_git_symlink_is_refused_before_git_discovery(self):
+        source = GUARD.parents[2]
+        for name in ("justfile", ".githooks/pre-commit", ".githooks/pre-push", "scripts/worktree_diff.py",
+                     "scripts/make_patch.sh", "scripts/ci_fast.sh", "scripts/ci_local.sh"):
+            path = self.root / name
+            path.parent.mkdir(exist_ok=True)
+            shutil.copy2(source / name, path)
+        other = self.root / "other"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        subprocess.run(["git", "init", "-q", "--template=", other], env=env, check=True)
+        (self.root / ".git").symlink_to(other / ".git")
+        tools = self.root / "bin"
+        tools.mkdir()
+        git = tools / "git"
+        git.write_text("#!/bin/sh\necho called > git-called\nexit 91\n")
+        git.chmod(0o755)
+        env["PATH"] = str(tools) + os.pathsep + env["PATH"]
+        for command in ([sys.executable, "-I", "scripts/worktree_diff.py", "--clean"],
+                        [sys.executable, "-I", CHECKOUT_JUST, "judge-bound"],
+                        ["bash", "scripts/ci_fast.sh"], ["bash", "scripts/ci_local.sh"],
+                        ["bash", ".githooks/pre-commit"], ["bash", ".githooks/pre-push"]):
+            with self.subTest(command=command):
+                result = subprocess.run(command, cwd=self.root, env=env, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b".git", result.stderr)
+                self.assertFalse((self.root / "git-called").exists())
+
     def test_fixed_just_recipes_select_checkout(self):
         recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review")
         justfile = self.root / "justfile"

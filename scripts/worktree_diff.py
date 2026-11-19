@@ -214,6 +214,9 @@ if __name__ == "__main__":
     if sys.argv[1:] in (["--check-inputs"], ["--clean"]):
         try:
             checkout = Path.cwd()
+            mode = (checkout / ".git").lstat().st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise ValueError(".git must be a directory or a regular worktree pointer.")
             resolved = run_git("-C", checkout, "rev-parse", "--show-toplevel", env=worktree_env(), capture_output=True)
             if resolved.returncode or resolved.stdout != os.fsencode(checkout) + b"\n":
                 raise ValueError(f"Git worktree differs from the selected checkout {checkout!s}.")
