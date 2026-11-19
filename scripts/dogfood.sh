@@ -63,17 +63,12 @@ done
 # its relatives move the repository. Unset every GIT_ variable, then set the fixed ones.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+if [[ -L "$trusted/scripts" || -L "$trusted/scripts/make_patch.sh" || ! -f "$trusted/scripts/make_patch.sh" ]]; then
+  echo "dogfood: invalid trusted patch-maker" >&2
+  exit 2
+fi
 for checkout in "$trusted" "$candidate"; do
-  if [[ -L "$checkout/.git" || ( ! -d "$checkout/.git" && ! -f "$checkout/.git" ) ]]; then
-    echo "dogfood: invalid checkout .git entry in $checkout" >&2
-    exit 2
-  fi
-done
-for checkout in "$trusted" "$candidate"; do
-  if [[ "$(git -C "$checkout" rev-parse --show-toplevel && printf .)" != "$checkout"$'\n.' ]]; then
-    echo "dogfood: Git worktree differs from the selected checkout $checkout" >&2
-    exit 2
-  fi
+  (cd -- "$checkout" && bash "$trusted/scripts/make_patch.sh" --check-worktree)
 done
 if [ "$trusted" = "$candidate" ] || [ "$(git -C "$trusted" rev-parse HEAD)" != "$base" ]; then
   echo 'dogfood: judge checkout must be the distinct trusted base' >&2

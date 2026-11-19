@@ -3,11 +3,12 @@ default:
     @just --list
 
 # One-time setup: use the versioned git hooks.
-install-hooks:
+install-hooks: (_check-script "make_patch.sh")
     #!/usr/bin/env bash
     set -euo pipefail
     unset "${!GIT_@}"
-    [[ ! -L .git && ( -d .git || -f .git ) && -d .githooks && ! -L .githooks ]]
+    bash scripts/make_patch.sh --check-worktree
+    [[ -d .githooks && ! -L .githooks ]]
     for hook in pre-commit commit-msg pre-push; do
         [[ -f ".githooks/$hook" && ! -L ".githooks/$hook" && -x ".githooks/$hook" ]]
     done
@@ -28,10 +29,6 @@ install-hooks:
     }
     (set -C; : > "$local_config.lock")
     trap 'rm -f -- "$local_config.lock"; rm -rf -- "$scratch"' EXIT
-    if [[ "$(git rev-parse --show-toplevel && printf .)" != "$(pwd -P && printf .)" ]]; then
-        echo "Hook installation refused: Git worktree differs from the selected checkout" >&2
-        exit 1
-    fi
     value=""
     if read_setting; then
         if [[ "$value" != .githooks && ( "$origin" != file:* || ! "${origin#file:}" -ef "$local_config" ) ]]; then

@@ -7,7 +7,7 @@ if [[ -L "$root/.git" || ( ! -d "$root/.git" && ! -f "$root/.git" ) ]]; then
   echo "Gate input refused: invalid checkout .git entry" >&2
   exit 2
 fi
-if [[ ! "$root" -ef . || ! "$root" -ef "$(git -C "$root" rev-parse --show-toplevel)" ]]; then
+if [[ ! "$root" -ef . ]]; then
   echo "Gate input refused: Git worktree differs from the hook checkout" >&2
   exit 2
 fi

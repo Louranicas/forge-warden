@@ -192,7 +192,7 @@ the pin is the owner's decision (ledger Q22), planned as 0.3.0 work (M7-RANKER-P
   ```
 
   For a bound authority run, start at the checkout root in Bash. Run `unset "${!GIT_@}"` and
-  `[[ ! -L .git && ( -d .git || -f .git ) ]] || exit 2`, then make the patch with `scripts/make_patch.sh BASE HEAD` and pass
+  `bash scripts/make_patch.sh --check-worktree || exit 2`, then make the patch with `scripts/make_patch.sh BASE HEAD` and pass
   `--repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base BASE --head HEAD` (full ids).
 
 - **The verdict document is `forge-warden.verdict.v3`.** Only `seals.claims` changed. Without `--repo`

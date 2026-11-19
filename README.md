@@ -8,7 +8,7 @@ This bound-mode example requires a build of the unreleased 0.3.0 code.
 
 ```bash
 unset "${!GIT_@}"
-[[ ! -L .git && ( -d .git || -f .git ) ]] || exit 2
+bash make_patch.sh --check-worktree || exit 2
 base="$(git rev-parse refs/remotes/origin/main)" head="$(git rev-parse HEAD)"
 evidence="$(mktemp -d)" || exit 1
 bash make_patch.sh "$base" "$head" > "$evidence/change.patch"   # scripts/make_patch.sh from the revision you installed
@@ -205,7 +205,7 @@ between two commits, so whoever makes the patch is part of the trust boundary; i
 
 The unreleased 0.3.0 command `forge-warden empty --repo DIR --base BASE --head HEAD`
 verifies an empty comparison using full commit IDs. At the checkout root, run `unset "${!GIT_@}"` and
-`[[ ! -L .git && ( -d .git || -f .git ) ]] || exit 2` in Bash before taking the directory from
+`bash make_patch.sh --check-worktree || exit 2` in Bash before taking the directory from
 `git rev-parse --git-common-dir`. The command uses the enrolled `/usr/bin/git` to compare the
 merge base to the supplied head commit from verified objects. It exits silently with 0 for an
 empty diff or exits with 4 if the comparison contains changes. Its machine interface uses the
@@ -271,9 +271,9 @@ This bound-mode workflow requires the unreleased 0.3.0 binary and its matching p
 
 ```yaml
 - run: evidence="$(mktemp -d "$RUNNER_TEMP/warden-XXXXXXXX")" && printf 'WARDEN_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
-- run: unset "${!GIT_@}" && [[ ! -L .git && ( -d .git || -f .git ) ]] && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > "${WARDEN_EVIDENCE:?}/change.patch"
+- run: unset "${!GIT_@}" && bash make_patch.sh --check-worktree && bash make_patch.sh "$BASE_SHA" "$HEAD_SHA" > "${WARDEN_EVIDENCE:?}/change.patch"
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
-- run: unset "${!GIT_@}" && [[ ! -L .git && ( -d .git || -f .git ) ]] && forge-warden check --policy base/warden.toml --patch "${WARDEN_EVIDENCE:?}/change.patch" --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > "${WARDEN_EVIDENCE:?}/verdict.json"
+- run: unset "${!GIT_@}" && bash make_patch.sh --check-worktree && forge-warden check --policy base/warden.toml --patch "${WARDEN_EVIDENCE:?}/change.patch" --ranker "$RANKER" --repo "$(git rev-parse --path-format=absolute --git-common-dir)" --base "$BASE_SHA" --head "$HEAD_SHA" --json > "${WARDEN_EVIDENCE:?}/verdict.json"
   env: { BASE_SHA: "${{ github.event.pull_request.base.sha }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}" }
 ```
 

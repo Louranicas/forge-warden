@@ -64,6 +64,7 @@ class Guard(unittest.TestCase):
         guard = self.root / ".claude/hooks/guard.py"
         guard.parent.mkdir(parents=True)
         shutil.copyfile(GUARD, guard)
+        shutil.copy2(GUARD.parents[2] / "scripts/make_patch.sh", scripts)
         (scripts / "worktree_diff.py").write_bytes((GUARD.parents[2] / "scripts/worktree_diff.py").read_bytes())
         (scripts / "tests").mkdir()
         direct = self.root / "direct"
@@ -335,7 +336,7 @@ class Guard(unittest.TestCase):
         for root in (main, other):
             subprocess.run(["git", "init", "-q", "--template=", root], check=True, env=env)
         for name in ("justfile", ".githooks/pre-commit", ".githooks/pre-push", ".githooks/commit-msg", "scripts/ci_fast.sh",
-                     "scripts/ci_local.sh", "scripts/worktree_diff.py"):
+                     "scripts/ci_local.sh", "scripts/worktree_diff.py", "scripts/make_patch.sh"):
             path = main / name
             path.parent.mkdir(exist_ok=True)
             shutil.copy2(source / name, path)
@@ -346,14 +347,16 @@ class Guard(unittest.TestCase):
         subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                         "commit", "-qm", "base"], cwd=main, env=env, check=True)
         subprocess.run(["git", "worktree", "add", "-q", "--detach", linked], cwd=main, env=env, check=True)
-        for root in (linked, main):
+        copied = self.root / "copied"
+        shutil.copytree(linked, copied)
+        for root in (copied, linked, main):
             if root == main:
                 subprocess.run(["git", "config", "core.worktree", str(other)], cwd=main, env=env, check=True)
             config = main / ".git/config"
             original = config.read_bytes()
             install = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=root,
                                      env=env, capture_output=True)
-            if root == main:
+            if root != linked:
                 self.assertNotEqual(install.returncode, 0)
                 self.assertIn(b"worktree differs", install.stderr)
                 self.assertEqual(config.read_bytes(), original)
@@ -365,13 +368,18 @@ class Guard(unittest.TestCase):
                 hook_command = ["git", "hook", "run", hook] if root == linked else [root / ".githooks" / hook]
                 commands.extend(([sys.executable, "-I", CHECKOUT_JUST, recipe], ["bash", root / "scripts" / gate],
                                  hook_command))
+            if root == copied:
+                commands.extend((["bash", "scripts/make_patch.sh", "HEAD", "HEAD"],
+                                 [sys.executable, "-I", CHECKOUT_JUST, "review"],
+                                 [sys.executable, "-I", "scripts/worktree_diff.py", "a" * 40]))
             commands.append([sys.executable, "-I", GUARD, "stop"])
             for command in commands:
                 with self.subTest(root=root, command=command):
                     result = subprocess.run(command, cwd=root, env={**env, "CLAUDE_PROJECT_DIR": str(root)},
                                             input=b'{"session_id":"binding"}', capture_output=True)
                     self.assertNotEqual(result.returncode, 0)
-                    if root == main:
+                    if root != linked:
+                        self.assertFalse(list(root.glob(".review-*")))
                         self.assertIn(b"worktree differs", result.stderr)
                         self.assertFalse((other / "ran").exists())
                         self.assertFalse((root / "ran").exists())
@@ -431,6 +439,8 @@ class Guard(unittest.TestCase):
 
     def test_hook_installation_only_writes_selected_repository(self):
         repo = GUARD.parents[2]
+        (self.root / "scripts").mkdir()
+        shutil.copy2(repo / "scripts/make_patch.sh", self.root / "scripts")
         shutil.copyfile(repo / "justfile", self.root / "justfile")
         shutil.copytree(repo / ".githooks", self.root / ".githooks")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("JUST_", "GIT_"))}
@@ -536,6 +546,7 @@ class Guard(unittest.TestCase):
                     self.assertFalse(marker.exists())
                     helper.unlink()
                     shutil.copy2(recorder, helper)
+        shutil.copy2(repo / "scripts/make_patch.sh", scripts)
         shutil.copy2(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
         (self.root / ".cargo").mkdir()
         (self.root / ".cargo/config.toml").write_text("[build]\n")

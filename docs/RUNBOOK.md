@@ -155,7 +155,7 @@ For bound mode in unreleased 0.3.0 (ADR 0012), add `--repo DIR --base BASE --hea
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
 (exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). At the
-checkout root, run `unset "${!GIT_@}"` and `[[ ! -L .git && ( -d .git || -f .git ) ]] || exit 2` in Bash
+checkout root, run `unset "${!GIT_@}"` and `bash make_patch.sh --check-worktree || exit 2` in Bash
 before passing `--repo "$(git rev-parse --git-common-dir)"`. It needs `/usr/bin/prlimit`
 (util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. A match records the
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.

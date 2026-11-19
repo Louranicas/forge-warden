@@ -211,15 +211,17 @@ def mutation_diff(base):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] in (["--check-inputs"], ["--clean"]):
+    inventory_mode = sys.argv[1:] in (["--check-inputs"], ["--clean"])
+    if not inventory_mode and (len(sys.argv) != 2 or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sys.argv[1])):
+        sys.exit("expected a full mutation base object ID")
+    patcher = Path(__file__).with_name("make_patch.sh")
+    if patcher.parent.is_symlink() or patcher.is_symlink() or not patcher.is_file():
+        print("Gate input refused: invalid scripts/make_patch.sh", file=sys.stderr)
+        sys.exit(2)
+    if subprocess.run(["bash", patcher, "--check-worktree"], env=worktree_env()).returncode:
+        sys.exit(2)
+    if inventory_mode:
         try:
-            checkout = Path.cwd()
-            mode = (checkout / ".git").lstat().st_mode
-            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-                raise ValueError(".git must be a directory or a regular worktree pointer.")
-            resolved = run_git("-C", checkout, "rev-parse", "--show-toplevel", env=worktree_env(), capture_output=True)
-            if resolved.returncode or resolved.stdout != os.fsencode(checkout) + b"\n":
-                raise ValueError(f"Git worktree differs from the selected checkout {checkout!s}.")
             inventory = gate_inventory()
         except (ValueError, OSError) as error:
             print(f"Gate input refused: {error}", file=sys.stderr)
@@ -233,6 +235,4 @@ if __name__ == "__main__":
             check_conversions(env, ALL_FILES)
             sys.exit(bool(git("status", "--porcelain=v1", "-z", "--untracked-files=normal",
                               "--ignore-submodules=none", env=env)))
-    if len(sys.argv) != 2 or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sys.argv[1]):
-        sys.exit("expected a full mutation base object ID")
     mutation_diff(sys.argv[1])

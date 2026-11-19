@@ -3,7 +3,6 @@
 # make_patch.sh [--resolve-comparison] <base> <head> [<repository>]
 # By default, stdout contains the patch from the merge base to the supplied head commit.
 # With --resolve-comparison, stdout contains the base tip and merge-base IDs, in that order.
-# An empty base argument in this mode selects the single root of HEAD's complete history.
 # The repository argument defaults to the current directory.
 #
 # The patch is the same bytes whatever the caller's Git configuration, environment or current
@@ -17,7 +16,10 @@
 # This does not prove to anyone else that the patch is that change; it makes it hard to get wrong.
 set -euo pipefail
 mode=patch
-if [[ "${1:-}" = --review-comparison && "$#" = 1 ]]; then
+if [[ "$#" = 1 && "$1" = --check-worktree ]]; then
+  mode=check
+  repository=.
+elif [[ "${1:-}" = --review-comparison && "$#" = 1 ]]; then
   mode=review
   repository=.
   head_ref=HEAD
@@ -27,30 +29,68 @@ else
     shift
   fi
   if [[ "$#" != 2 && "$#" != 3 ]]; then
-    echo 'usage: make_patch.sh [--resolve-comparison] <base> <head> [<repository>] | --review-comparison' >&2
+    echo 'usage: make_patch.sh [--resolve-comparison] <base> <head> [<repository>] | --review-comparison | --check-worktree' >&2
     exit 2
   fi
   repository="${3:-.}"
   base_ref="$1"
   head_ref="$2"
+  [[ -n "$base_ref" ]] || { echo "make_patch: an explicit base is required" >&2; exit 2; }
 fi
-# Nothing about Git comes from the caller's environment.
-while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+while IFS= read -r name; do
+  case "$mode/$name" in
+    check/GIT_CONFIG_NOSYSTEM|check/GIT_CONFIG_SYSTEM|check/GIT_CONFIG_GLOBAL) continue ;;
+  esac
+  unset "$name"
+done < <(compgen -v GIT_)
+if [[ "$mode" != check ]]; then
+  export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+fi
 CDPATH= cd -P -- "$repository"
 start="$PWD"
-while [[ "$mode" != review && "$PWD" != / && ! -L .git && ! -e .git && -x . ]]; do
-  cd -P ..
-done
-if [[ -L .git || ( ! -d .git && ! -f .git ) ]]; then
-  echo "make_patch: invalid checkout .git entry in $PWD" >&2
-  exit 2
+repo_args=()
+if [[ "$mode" = patch && -n "${3:-}" && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; then
+  repo_args=(--git-dir="$PWD")
+  [[ "$(git "${repo_args[@]}" rev-parse --is-bare-repository)" = true ]] || exit 2
+else
+  while [[ "$mode" != review && "$mode" != check && "$PWD" != / && ! -L .git && ! -e .git && -x . ]]; do
+    cd -P ..
+  done
+  if [[ -L .git || ( ! -d .git && ! -f .git ) ]]; then
+    echo "make_patch: invalid checkout .git entry in $PWD" >&2
+    exit 2
+  fi
+  if [[ -f .git ]]; then
+    python3 -I - <<'PYLINK'
+import os
+import stat
+import sys
+from pathlib import Path
+
+entry = Path.cwd() / ".git"
+try:
+    pointer = entry.read_bytes().rstrip(b"\r\n")
+    if not pointer.startswith(b"gitdir: "):
+        raise ValueError("invalid .git pointer")
+    admin = entry.parent / os.fsdecode(pointer[len(b"gitdir: "):])
+    backlink = admin / "gitdir"
+    if not stat.S_ISREG(backlink.lstat().st_mode):
+        raise ValueError("invalid administrative gitdir")
+    target = os.fsdecode(backlink.read_bytes().rstrip(b"\r\n"))
+    if (admin / target).resolve(strict=True) != entry:
+        raise ValueError("administrative gitdir points to a different checkout")
+except (OSError, RuntimeError, ValueError) as error:
+    print(f"Git worktree differs from the selected checkout {entry.parent}: {error}", file=sys.stderr)
+    sys.exit(2)
+PYLINK
+  fi
+  if [[ "$(git -C "$start" rev-parse --show-toplevel && printf .)" != "$PWD"$'\n.' ]]; then
+    echo "make_patch: Git worktree differs from the selected checkout $PWD" >&2
+    exit 2
+  fi
+  if [[ "$mode" = check ]]; then exit 0; fi
 fi
-if [[ "$(git -C "$start" rev-parse --show-toplevel && printf .)" != "$PWD"$'\n.' ]]; then
-  echo "make_patch: Git worktree differs from the selected checkout $PWD" >&2
-  exit 2
-fi
-head="$(git rev-parse --verify --quiet --end-of-options "$head_ref^{commit}")" || {
+head="$(git "${repo_args[@]}" rev-parse --verify --quiet --end-of-options "$head_ref^{commit}")" || {
   echo "make_patch: head is not a commit in $PWD: $head_ref" >&2
   exit 2
 }
@@ -80,7 +120,7 @@ PYREF
     exit 1
   fi
 fi
-objects="$(git rev-parse --path-format=absolute --git-path objects)"
+objects="$(git "${repo_args[@]}" rev-parse --path-format=absolute --git-path objects)"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
 # The private repository has the store's object format (40 hex digits: SHA-1, 64: SHA-256), as the
@@ -96,7 +136,7 @@ printf '%s\n' "$objects" > "$scratch/diff.git/objects/info/alternates"
 # staging does the same, ADR 0012 D3.1), and several merge bases are refused as bound mode refuses
 # them (D7): `git diff A...B` would pick one with only a warning.
 nograph=(-c core.commitGraph=false -c core.multiPackIndex=false)
-if [[ "$mode" != patch && -z "$base_ref" ]]; then
+if [[ "$mode" = review && -z "$base_ref" ]]; then
   if [ "$(git rev-parse --is-shallow-repository)" != false ]; then
     echo 'make_patch: root comparison requires complete history' >&2
     exit 1
@@ -107,7 +147,7 @@ if [[ "$mode" != patch && -z "$base_ref" ]]; then
     exit 2
   fi
 else
-  base="$(git rev-parse --verify --quiet --end-of-options "$base_ref^{commit}")" || {
+  base="$(git "${repo_args[@]}" rev-parse --verify --quiet --end-of-options "$base_ref^{commit}")" || {
     echo "make_patch: base is not a commit in $PWD: $base_ref" >&2
     exit 2
   }

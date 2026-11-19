@@ -34,7 +34,11 @@ class MutationEnvironment(unittest.TestCase):
                          "scripts/tests/runner_routing.py", "plants/test_runner.py"):
                 (root / name).write_text("# explicit unrelated-gate fixture stub\n")
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
-            (root / "scripts/make_patch.sh").write_text('if [ "$1" = --review-comparison ]; then echo "$BASE_SHA $BASE_SHA $BASE_SHA"; fi\n')
+            shutil.copyfile(ROOT / "scripts/make_patch.sh", root / "scripts/real_make_patch.sh")
+            (root / "scripts/make_patch.sh").write_text(
+                'if [ "$1" = --check-worktree ]; then exec bash scripts/real_make_patch.sh "$@"; fi\n'
+                'if [ "$1" = --review-comparison ]; then echo "$BASE_SHA $BASE_SHA $BASE_SHA"; fi\n'
+            )
             scripts = {
                 "git": """#!/bin/sh
 if [ "$1" = --no-replace-objects ]; then shift; fi

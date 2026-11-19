@@ -252,6 +252,27 @@ made with-branch-names bash "$maker" maker-base maker-head "$attr"
 made from-a-subdirectory-with-relative bash -c 'cd "$1/sub" && env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$2" bash "$3" "$4" "$5"' _ "$attr" "$sandbox/user-home" "$maker" "$base" "$attr_head"
 git -C "$attr" worktree add -q --detach "$sandbox/linked" "$attr_head"
 made linked-worktree bash "$maker" "$base" HEAD "$sandbox/linked"
+cp -R "$sandbox/linked" "$sandbox/copied"
+for role in candidate trusted; do
+ driver="$trusted/scripts/dogfood.sh"
+ subject="$sandbox/copied"
+ if [[ "$role" = trusted ]]; then
+  driver="$sandbox/copied/scripts/dogfood.sh"
+  subject="$attr"
+ fi
+ if bash "$driver" "${LOCAL[@]}" "$base" "$attr_head" "$subject" "$sandbox/refused" > "$sandbox/output" 2>&1; then
+  echo "FAIL dogfood accepted a copied $role checkout"
+  exit 1
+ fi
+ grep -q 'administrative gitdir points to a different checkout' "$sandbox/output"
+ [[ ! -e "$sandbox/refused" ]]
+done
+git clone -q --bare "$attr" "$sandbox/mirror.git"
+made explicit-bare bash "$maker" "$base" "$attr_head" "$sandbox/mirror.git"
+if bash "$maker" --resolve-comparison "" HEAD "$attr" > "$sandbox/made.patch" || [[ -s "$sandbox/made.patch" ]]; then
+ echo 'FAIL explicit comparison accepted an empty base'
+ exit 1
+fi
 # Q58 S1: no repository at the caller's current directory is read; a SHA-256 one there once
 # made the empty-tree id the wrong length for the SHA-1 scratch repository.
 git init -q --object-format=sha256 "$sandbox/cwd-sha256"
@@ -365,10 +386,11 @@ import subprocess
 import sys
 
 source, repo, base, head, supplied_patch, named_patch = sys.argv[1:]
-tree_lookup = '$(git hash-object -t tree /dev/null)'
-shell_syntax = rf"""(?:{re.escape(tree_lookup)}|[-a-zA-Z0-9./= '"\t])+"""
+tree_option = '--attr-source="$(git hash-object -t tree /dev/null)"'
+plain = r"[-a-zA-Z0-9./=]+"
+word = rf"""(?:{re.escape(tree_option)}|{plain}|'{plain}'|"{plain}")"""
 read_only = {
-    '--attr-source=' + tree_lookup, '-c', 'core.attributesFile=/dev/null', '--no-replace-objects',
+    '-c', 'core.attributesFile=/dev/null', '--no-replace-objects',
     'diff', '--no-ext-diff',
     '--no-textconv', '--no-color', '--no-relative', '--binary', '--no-renames', '--full-index',
     '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '--ignore-submodules=none',
@@ -378,16 +400,18 @@ for document, revision_range, patch in (('README.md', base + '...' + head, suppl
     expected = Path(patch).read_bytes()
     spans = re.findall(r'`(GIT_ATTR_NOSYSTEM=[01](?:[ \t]+GIT_GRAFT_FILE=)?)[ \t]+git[ \t]+([^`]+)`',
                        (Path(source) / document).read_text())
-    (prefix, arguments), = [(value, span) for value, span in spans if '...' in span and 'diff' in shlex.split(span)]
+    (prefix, arguments), = [(value, span) for value, span in spans if '...' in span]
     arguments = arguments.replace('<base>', base).replace('<head>', head)
-    argv = shlex.split(arguments)
-    if not re.fullmatch(shell_syntax, arguments) or set(argv) - (read_only | {revision_range}):
-        sys.exit(f'{document}: unsupported argument in documented Git diff')
+    if arguments.count(tree_option) != 1 or not re.fullmatch(rf"{word}(?:[ \t]+{word})*", arguments):
+        sys.exit(f'{document}: unsupported syntax in documented Git diff')
     assignments = dict(word.split('=', 1) for word in shlex.split(prefix))
     if assignments.get('GIT_ATTR_NOSYSTEM') != '1':
         sys.exit(f'{document}: documented diff enabled system attributes')
     empty_tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, text=True).strip()
-    argv = ['--attr-source=' + empty_tree if arg == '--attr-source=' + tree_lookup else arg for arg in argv]
+    attr_option = '--attr-source=' + empty_tree
+    argv = shlex.split(arguments.replace(tree_option, attr_option))
+    if set(argv) - (read_only | {revision_range, attr_option}):
+        sys.exit(f'{document}: unsupported argument in documented Git diff')
     for setting in (None, 'diff.ignoreSubmodules=all', 'diff.submodule=log', 'diff.submodule=diff'):
         env = {**os.environ, **assignments}
         if setting:
