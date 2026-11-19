@@ -10,9 +10,12 @@ import subprocess
 import sys
 sys.dont_write_bytecode = True
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 from unittest.mock import patch
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -273,7 +276,7 @@ class Contracts(unittest.TestCase):
             original = workflow.read_text()
             versions = TOOLS.versions(ROOT)
             pins = [name.replace("_", "-") + "@" + versions[name]
-                    for name in ("zizmor", "cargo_mutants", "cargo_deny", "just")]
+                    for name in ("zizmor", "cargo_mutants", "cargo_deny")]
             for pin in [*pins, versions["rust"], versions["ddf_rev"]]:
                 with self.subTest(pin=pin):
                     self.assertIn(pin, original)
@@ -299,32 +302,59 @@ class Contracts(unittest.TestCase):
             self.copy_ci_fixture(root)
             path = root / ".github/workflows/ci.yml"
             original = path.read_text()
-            install = ("      - uses: taiki-e/install-action@" + TOOLS.versions(ROOT)['install_action']
-                       + " # v2.90.1\n        with:\n          tool: cargo-mutants@"
-                       + TOOLS.versions(ROOT)['cargo_mutants'] + "\n")
-            self.assertIn(install, original)
-            gate_only_removed = original.replace(install, '', 1)
-            changed = [gate_only_removed,
-                       original.replace(install, install.replace('27.1.0', '0.0.0'), 1),
-                       original.replace(install, install.replace(TOOLS.versions(ROOT)['install_action'], '0'*40), 1),
-                       gate_only_removed.replace('      - run: python3 -I scripts/check_plants.py',
-                                                '      - run: python3 -I scripts/check_plants.py\n'+install, 1)]
-            for extra in ("        if: false\n", "        if: github.event_name == 'push'\n",
-                          "        continue-on-error: true\n", "        env:\n          PATH: /missing\n",
-                          "        timeout-minutes: 1\n"):
-                changed.append(original.replace(install, install + extra, 1))
-            changed.append(original.replace(install, install.replace('      - uses:',
-                '      - if: false\n        uses:'), 1))
-            for command in ('      - run: python3 -I scripts/check_plants.py',
-                            '      - run: rustup toolchain install ' + TOOLS.versions(ROOT)['rust']
-                            + ' --profile minimal --component rustfmt,clippy && rustup default '
-                            + TOOLS.versions(ROOT)['rust']):
-                changed.append(original.replace(command, command + '\n        if: false', 1))
-            for text in changed:
-                with self.subTest(text=text[:60]):
-                    path.write_text(text)
-                    with self.assertRaises(ValueError):
-                        CAPS.check_ci(root)
+            for name in ('scripts/plant_tools.py', 'rust-toolchain.toml', 'Cargo.toml'):
+                shutil.copyfile(ROOT / name, root / name)
+            steps = CAPS.workflow_jobs(original)['gate']['steps']
+            node = yaml.compose(original, Loader=yaml.BaseLoader)
+            for field in ('jobs', 'gate', 'steps'):
+                node = next(value for key, value in node.value if key.value == field)
+            start = node.start_mark.index - node.start_mark.column
+            end = node.end_mark.index - node.end_mark.column
+            versions = TOOLS.versions(ROOT)
+            action = 'taiki-e/install-action@' + versions['install_action']
+            plant = {'run': 'python3 -I scripts/check_plants.py'}
+            compiler = next(step for step in steps if '--component rustfmt,clippy' in step.get('run', ''))
+
+            def write_steps(blocks):
+                body = ''.join(block if isinstance(block, str) else
+                               yaml.safe_dump([block], sort_keys=False, width=1000) for block in blocks)
+                path.write_text(original[:start] + textwrap.indent(body, ' ' * node.start_mark.column) + original[end:])
+
+            for name in ('just', 'cargo-mutants'):
+                tool = name + '@' + versions[name.replace('-', '_')]
+                install = {'uses': action, 'with': {'tool': tool}}
+                index = steps.index(install)
+                before, after = steps[:index], steps[index + 1:]
+                quoted = f"- uses: '{action}'\n  with:\n    tool: \"{tool}\"\n"
+                write_steps([*before, quoted, *after])
+                TOOLS.check(root)
+                changes = {
+                    'missing': [],
+                    'action': [dict(install, uses='another/install@' + versions['install_action'])],
+                    'revision': [dict(install, uses='taiki-e/install-action@' + '0' * 40)],
+                    'tool': [dict(install, **{'with': {'tool': name + '@0.0.0'}})],
+                    'conditional': [dict(install, **{'if': 'false'})],
+                    'ignored failure': [dict(install, **{'continue-on-error': True})],
+                    'environment': [dict(install, env={'PATH': '/missing'})],
+                    'timeout': [dict(install, **{'timeout-minutes': 1})],
+                }
+                for change, replacement in changes.items():
+                    with self.subTest(tool=name, change=change):
+                        write_steps([*before, *replacement, *after])
+                        with self.assertRaises(ValueError):
+                            CAPS.check_ci(root)
+                reordered = [*before, *after]
+                reordered.insert(reordered.index(plant) + 1, install)
+                write_steps(reordered)
+                with self.assertRaises(ValueError):
+                    CAPS.check_ci(root)
+            for target in (compiler, plant):
+                write_steps([dict(step, **{'if': 'false'}) if step == target else step for step in steps])
+                with self.assertRaises(ValueError):
+                    CAPS.check_ci(root)
+            path.write_text(original.replace('  gate:\n', '  gate:\n    if: false\n', 1))
+            with self.assertRaises(ValueError):
+                CAPS.check_ci(root)
 
     def test_catalog_tool_declarations_are_closed_and_match_direct_commands(self):
         for case in ({'id': 'missing'}, {'id': 'empty', 'required_tools': []},

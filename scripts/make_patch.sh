@@ -47,7 +47,10 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 selected = Path(os.path.normpath(path))
-for entry in (path, *path.parents):
+if not path.is_dir() or not selected.is_dir() or not selected.samefile(path):
+    print(f"make_patch: invalid repository directory: {path}", file=sys.stderr)
+    sys.exit(2)
+for entry in (selected, *selected.parents):
     metadata = entry / ".git"
     if entry.is_symlink():
         print(f"make_patch: symlinked repository path: {entry}", file=sys.stderr)
@@ -55,8 +58,6 @@ for entry in (path, *path.parents):
     if metadata.is_symlink():
         print(f"make_patch: invalid checkout .git entry in {entry}", file=sys.stderr)
         sys.exit(2)
-    if entry.name == "..":
-        continue
     if metadata.exists():
         break
     if (sys.argv[2] == "patch" and entry == selected and entry.name != ".git"

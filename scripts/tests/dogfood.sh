@@ -303,6 +303,14 @@ touch "$PROBE_RECEIPT"
 exit 91
 SH
 chmod +x "$sandbox/git-probe/git"
+mkdir -p "$sandbox/other/build"
+git clone -q --no-local "$candidate" "$sandbox/other/attr-candidate"
+git -C "$sandbox/other/attr-candidate" branch maker-base "$base"
+git -C "$sandbox/other/attr-candidate" branch maker-head "$head"
+ln -s "$sandbox/other/build" "$sandbox/checkouts/build"
+ambiguous="$sandbox/checkouts/build/../attr-candidate"
+[[ "$head" != "$attr_head" && "$(git -C "$ambiguous" rev-parse maker-head)" = "$head" ]]
+[[ "$(git -C "$attr" rev-parse maker-head)" = "$attr_head" ]]
 (
  cd "$sandbox/redirected-bare"
  export PATH="$sandbox/git-probe:$PATH" PROBE_RECEIPT="$sandbox/git-called"
@@ -311,6 +319,8 @@ chmod +x "$sandbox/git-probe/git"
   bash "$maker" "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || actual=$?
   [[ "$actual" = 2 && ! -s "$sandbox/made.patch" && ! -e "$PROBE_RECEIPT" ]]
  }
+ refuse_before_git maker-base maker-head "$ambiguous"
+ refuse_before_git --resolve-comparison maker-head HEAD "$ambiguous"
  for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. repository repository/objects/..; do
   refuse_before_git "$base" "$attr_head" "$entry"
   refuse_before_git --resolve-comparison "$base" "$attr_head" "$entry"

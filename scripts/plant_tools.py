@@ -207,6 +207,41 @@ def check_mutation_contract(root):
         raise ValueError('mutation inventory/budget driver requires review')
 
 
+def workflow_jobs(text):
+    import yaml
+
+    class WorkflowLoader(yaml.BaseLoader):
+        def construct_mapping(self, node, deep=False):
+            mapping = super().construct_mapping(node, deep=deep)
+            if len(mapping) != len(node.value):
+                raise ValueError("duplicate workflow mapping key")
+            return mapping
+
+    try:
+        jobs = yaml.load(text, Loader=WorkflowLoader)['jobs']
+        if not isinstance(jobs, dict) or not all(
+                isinstance(job['steps'], list) and all(isinstance(step, dict) for step in job['steps'])
+                for job in jobs.values()):
+            raise ValueError('invalid workflow steps')
+        return jobs
+    except (yaml.YAMLError, KeyError, TypeError) as error:
+        raise ValueError('invalid workflow jobs') from error
+
+
+def installed_tool(step, values):
+    uses = step.get('uses', '')
+    if not isinstance(uses, str):
+        raise ValueError('workflow step uses must be an action reference')
+    if uses.partition('@')[0] != 'taiki-e/install-action':
+        return None
+    if uses != 'taiki-e/install-action@' + values['install_action']:
+        raise ValueError('CI install-action pin drift')
+    inputs = step.get('with')
+    if not isinstance(inputs, dict) or not isinstance(inputs.get('tool'), str):
+        raise ValueError('CI install-action needs a tool')
+    return inputs['tool']
+
+
 def check_ci(root):
     """Conservative check of this repository's owned workflow shape, not a general YAML parser."""
     check_timeouts(root)
@@ -214,57 +249,39 @@ def check_ci(root):
     check_mutation_contract(root)
     cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
     required = requirements(cases)
-    workflow = (root / '.github/workflows/ci.yml').read_text()
-    match = re.search(r'^  gate:\n(.*?)(?=^  [A-Za-z_][\w-]*:\n|\Z)', workflow, re.M | re.S)
-    if not match:
-        raise ValueError('plant CI gate job missing')
-    body = match[1]
-    # The preflight checks these hosted-image assumptions at runtime, too.
-    if '    runs-on: ubuntu-latest\n' not in body:
-        raise ValueError('plant CI tool provisioning needs review for a new runner image')
-    steps = re.split(r'(?=^      - )', body, flags=re.M)[1:]
-    entrypoints = [i for i, step in enumerate(steps) if 'scripts/check_plants.py' in step]
+    gate = workflow_jobs((root / '.github/workflows/ci.yml').read_text())['gate']
+    if gate.get('runs-on') != 'ubuntu-latest' or 'if' in gate:
+        raise ValueError('plant CI requires the unconditional hosted gate')
+    steps = gate['steps']
+    command = 'python3 -I scripts/check_plants.py'
+    entrypoints = [i for i, step in enumerate(steps) if 'scripts/check_plants.py' in step.get('run', '')]
     if len(entrypoints) != 1:
         raise ValueError('plant CI clean-tree entrypoint must occur exactly once')
-    # Cleanliness is checked at the entrypoint, after every gate command. Only the
-    # reviewed evidence upload may follow; later commands could dirty the subject unseen.
-    for raw in steps[entrypoints[0] + 1:]:
-        if not re.fullmatch(
-                r'      - if: always\(\)\n'
-                r'        uses: actions/upload-artifact@[0-9a-f]{40}(?: #[^\n]*)?\n'
-                r'        with:\n          name: guardrail-plants\n          path: target/plants-\*\n',
-                raw.rstrip() + '\n'):
+    entry = entrypoints[0]
+    if steps[entry] != {'run': command}:
+        raise ValueError('plant CI entrypoint must be unconditional with reviewed fields')
+    for step in steps[entry + 1:]:
+        if (not re.fullmatch(r'actions/upload-artifact@[0-9a-f]{40}', step.get('uses', ''))
+                or step != {'if': 'always()', 'uses': step['uses'],
+                            'with': {'name': 'guardrail-plants', 'path': 'target/plants-*'}}):
             raise ValueError('plant CI clean-tree entrypoint must follow every gate command')
     available = set(HOSTED)
     values = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
-    found_entrypoint = False
-    for raw in steps:
-        step = raw.rstrip() + '\n'
-        if 'scripts/check_plants.py' in step:
-            if step != '      - run: python3 -I scripts/check_plants.py\n':
-                raise ValueError('plant CI entrypoint must be unconditional with reviewed fields')
-            found_entrypoint = True
-            break
-        if 'rustup toolchain install' in step and '--component' in step:
-            compiler = re.fullmatch(
-                r'      - run: rustup toolchain install ([0-9.]+) --profile minimal '
-                r'--component rustfmt,clippy && rustup default \1\n', step)
-            if not compiler:
+    for step in steps[:entry]:
+        run = step.get('run', '')
+        if 'rustup toolchain install' in run and '--component' in run:
+            if (step != {'run': run} or not re.fullmatch(
+                    r'rustup toolchain install ([0-9.]+) --profile minimal '
+                    r'--component rustfmt,clippy && rustup default \1', run)):
                 raise ValueError('plant CI compiler install must be unconditional with reviewed fields')
             available.update(('rustup', 'rustc', 'cargo', 'cargo-clippy'))
-        if 'taiki-e/install-action' in step:
-            install = re.fullmatch(
-                r'      - uses: taiki-e/install-action@([0-9a-f]{40})(?: #[^\n]*)?\n'
-                r'        with:\n          tool: (cargo-mutants|just)@([^\s]+)\n', step)
-            if not install:
+        tool = installed_tool(step, values)
+        if tool is not None:
+            name = tool.partition('@')[0]
+            if (name not in ('cargo-mutants', 'just') or tool != name + '@' + values[name.replace('-', '_')]
+                    or step != {'uses': step['uses'], 'with': {'tool': tool}}):
                 raise ValueError('plant CI tool install must be unconditional with reviewed fields')
-            action, tool, version = install.groups()
-            if action != values['install_action']:
-                raise ValueError('plant CI install-action pin drift')
-            if version == values[tool.replace('-', '_')]:
-                available.add(tool)
-    if not found_entrypoint:
-        raise ValueError('plant CI entrypoint missing')
+            available.add(name)
     if required - available:
         raise ValueError('plant CI gate lacks required tools: ' + ', '.join(sorted(required - available)))
     return required
