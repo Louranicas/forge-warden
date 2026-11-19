@@ -24,13 +24,12 @@ could not run as **not verified**.
    and its test artifacts after use. If the baseline, isolation, or expected failure and pass
    cannot be established, mark the check **not verified**. Keep the developer’s working files
    and index untouched throughout.
-4. **Mutation** (if `cargo-mutants` is installed): run `just mutants`.
+4. **Mutation** (if `cargo-mutants` is installed): run the [mutation test command](../../../CONTRIBUTING.md#mutation-judgment-and-review).
    Every surviving mutant is a missing test: add it, or explain why the mutant is equivalent.
-5. **Judge the change with its own policy** (if `deep-diff-forge` is installed): `just judge`.
-   Fail means fix. Hold means the summary must explain each held rule to the human. `just judge` is
-   advisory: it can never pass. `warden.toml` requires verified claims (`[claims] require_verified`),
+5. **Judge the change with its own policy** (if `deep-diff-forge` is installed): run the [advisory judgment command](../../../CONTRIBUTING.md#mutation-judgment-and-review).
+   Fail means fix. Hold means the summary must explain each held rule to the human. The advisory judgment can never pass. `warden.toml` requires verified claims (`[claims] require_verified`),
    so only a bound authority run can pass; with the pinned deep-diff-forge release binary and an
-   owner-enrolled Git allowlist ([GIT_RUNTIME](../../../docs/GIT_RUNTIME.md)), run `just judge-bound` beside the advisory check.
+   owner-enrolled Git allowlist ([GIT_RUNTIME](../../../docs/GIT_RUNTIME.md)), run the [bound judgment command](../../../CONTRIBUTING.md#mutation-judgment-and-review) beside the advisory check.
    A `claims_unverified` hold means the run was not bound: re-run with `--repo`; it cannot be acknowledged.
 6. **Contracts**: if `schemas/`, `exit.rs`, `verdict.rs` or `vocab.rs` changed, confirm
    `CHANGELOG.md` has an entry and ask the human to run `scripts/bless.sh` if goldens moved.

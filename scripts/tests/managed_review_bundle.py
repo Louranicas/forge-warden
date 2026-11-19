@@ -61,8 +61,9 @@ class ReviewBundle(unittest.TestCase):
                                str(self.candidate), str(out or self.root / "bundle")],
                               env=self.env, capture_output=True)
 
-    @unittest.skipUnless(shutil.which("just"), "just is required for the review recipe")
     def test_copied_review_evidence_is_owner_only(self):
+        just = shutil.which("just")
+        self.assertIsNotNone(just, "Just is required on PATH to verify review evidence permissions")
         for name in ("justfile", "scripts/review_comparison.sh", "scripts/make_patch.sh"):
             shutil.copy2(ROOT / name, self.candidate / name)
         tools = self.root / "bin"
@@ -86,7 +87,7 @@ class ReviewBundle(unittest.TestCase):
                     raise
             else:
                 has_default_acl = True
-        subprocess.run([shutil.which("just"), "--justfile", self.candidate / "justfile", "review"],
+        subprocess.run([just, "--justfile", self.candidate / "justfile", "review"],
                        cwd=self.candidate, env=env, umask=0o022, capture_output=True, check=True)
         evidence, = self.candidate.glob(".review-*")
         if has_default_acl:

@@ -19,8 +19,13 @@ rustup toolchain install 1.88.0 --profile minimal
 cargo fetch --locked
 ```
 
+### Install the hooks
 
-Install the hooks with `just install-hooks`.
+Run the installation command from the checkout root.
+
+```bash
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- install-hooks
+```
 
 ## Local gate commands
 
@@ -29,9 +34,9 @@ Just options and selects that checkout’s justfile.
 
 ```bash
 # Fast gate
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile fast'
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- fast
 # Full local gate
-bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile ci'
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- ci
 ```
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
@@ -49,6 +54,34 @@ machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` 
 `GateImageCommands` in `scripts/tests/perimeter.py`) names every command a tracked shell or Python
 script calls that is not in its declared list; adding a command to that list means first seeing it
 in the gate image.
+
+### Mutation, judgment, and review
+
+Run the command for the check you need from the checkout root.
+
+Mutation testing
+
+```bash
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- mutants
+```
+
+Advisory judgment
+
+```bash
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- judge
+```
+
+Bound judgment
+
+```bash
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- judge-bound
+```
+
+Review evidence
+
+```bash
+bash -c 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && exec just --justfile ./justfile -- "$@"' -- review
+```
 
 ## Where the gate runs
 

@@ -14,6 +14,11 @@ from unittest.mock import patch
 GUARD = Path(__file__).with_name("guard.py")
 
 
+def just_launcher(recipe):
+    return ["bash", "-c", 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && '
+            'exec just --justfile ./justfile -- "$@"', "--", recipe]
+
+
 class Guard(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="guard-test-")
@@ -291,14 +296,11 @@ class Guard(unittest.TestCase):
         recorder = self.root / ".git/record"
         recorder.write_text("#!/bin/sh\ntouch .git/ran\n")
         recorder.chmod(0o755)
-        allowed = json.loads((repo / ".claude/settings.json").read_bytes())["permissions"]["allow"]
         for hook, recipe, gate in (("pre-commit", "fast", "ci_fast.sh"), ("pre-push", "ci", "ci_local.sh")):
             shutil.copy2(repo / ".githooks" / hook, hooks / hook)
             launchers = [(["git", "-c", "core.hooksPath=.githooks", "hook", "run", hook], {})]
             if shutil.which("just"):
-                launcher = ["bash", "-c", 'unset "${!JUST_@}" && [[ -f justfile && ! -L justfile ]] && '
-                            f'exec just --justfile ./justfile {recipe}']
-                self.assertIn(f"Bash({shlex.join(launcher)})", allowed)
+                launcher = just_launcher(recipe)
                 launchers.append((launcher, {"JUST_DRY_RUN": "true", "JUST_JUSTFILE": str(self.root / "other")}))
             for command, overrides in launchers:
                 with self.subTest(command=command):
@@ -323,6 +325,30 @@ class Guard(unittest.TestCase):
                     self.assertIn(gate.encode(), result.stderr)
                     self.assertFalse(ran.exists())
                     script.unlink()
+
+    def test_documented_just_launchers_bind_recipes_and_arguments(self):
+        repo = GUARD.parents[2]
+        guide = (repo / "CONTRIBUTING.md").read_text()
+        recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review")
+        examples = [shlex.split(line) for line in guide.splitlines()
+                    if line.startswith("bash -c ") and line.split()[-1] in recipes]
+        self.assertCountEqual(examples, [just_launcher(recipe) for recipe in recipes])
+        rules = json.loads((repo / ".claude/settings.json").read_bytes())["permissions"]["allow"]
+        justfile = self.root / "justfile"
+        justfile.write_text("\n".join(f'{name} $arg:\n    @printf "%s\\n" {name} "$arg" > receipt\n'
+                                     for name in recipes))
+        receipt = self.root / "receipt"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("JUST_")}
+        env.update(JUST_DRY_RUN="true", JUST_JUSTFILE=str(self.root / "other"))
+        for command in examples:
+            recipe = command[-1]
+            with self.subTest(recipe=recipe):
+                self.assertNotIn(f"Bash(just {recipe})", rules)
+                if recipe in ("fast", "ci", "mutants", "judge"):
+                    self.assertIn(f"Bash({shlex.join(command)})", rules)
+                subprocess.run([*command, "one argument"], cwd=self.root, env=env, check=True)
+                self.assertEqual(receipt.read_text().splitlines(), [recipe, "one argument"])
+                receipt.unlink()
 
     @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
     def test_just_defers_vocabulary_lookup(self):

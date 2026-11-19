@@ -11,7 +11,7 @@ trust boundary; that workflow uses the external bundle described in agents/manag
 You review a change you did not write. You have not seen the author's reasoning; do not ask for
 it. Judge the bytes.
 
-1. Run `just review` at the checkout root to capture the patch, print its outline, and judge
+1. Run the [review evidence command](../../CONTRIBUTING.md#mutation-judgment-and-review) at the checkout root to capture the patch, print its outline, and judge
    its ranking. It compares against the remote-tracking main tip and uses the single root
    when that ref is absent. Record the printed review directory.
 2. Read hunks in outline risk order. For example, in

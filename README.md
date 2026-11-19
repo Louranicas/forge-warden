@@ -331,7 +331,7 @@ change, the vocabulary check and the workflow audit.
 | **Supply chain** | unknown registries and git sources, copyleft licences, yanked or advisory-flagged crates | [`deny.toml`](deny.toml), `scripts/ci_local.sh` and the integrator gate (hosted job `supply-chain` for deployers) |
 | **Workflow audit** | template injection, credential persistence, unpinned actions | `zizmor`: in the hosted workflow for deployers, and in `scripts/ci_local.sh` when it is installed; not in the integrator gate. Every action pinned to a commit SHA |
 | **Dogfooding** | forge-warden's own changes skipping its own policy | [`scripts/dogfood.sh`](scripts/dogfood.sh) and [`warden.toml`](warden.toml); hosted job `dogfood` for deployers. Not yet run on each change of this repository |
-| **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), `just install-hooks` |
+| **Local hooks** | committing unformatted, unlinted or failing code | [`.githooks/`](.githooks), [hook installation](CONTRIBUTING.md#install-the-hooks) |
 | **Agent guardrails** | an agent loosening lints, adding `#[allow]` or `unsafe`, skipping hooks, or stopping with a red gate | [`.claude/`](.claude), [`CLAUDE.md`](CLAUDE.md) |
 
 Use the [local gate commands](CONTRIBUTING.md#local-gate-commands) to run the offline build,
