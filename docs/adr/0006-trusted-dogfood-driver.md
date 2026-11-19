@@ -50,8 +50,8 @@ records the actual producer digest in the verdict and hashes the binary in prove
 Base/head are passed as unverified claims; the separate signed receipt still binds the external
 subject and exact verdict digest.
 
-`ci_local` requires bound authority for each nonempty comparison. It uses the working policy and
-candidate-built judge. Both drivers propagate admission and ranking failures.
+The local developer gate uses the candidate's policy and judge. Its comparison and tool
+requirements are in [Contributing](../../CONTRIBUTING.md#setup).
 
 ## Amendment (DOGFOOD-ATTR, 2026-11-11): the candidate's attributes do not shape the patch
 

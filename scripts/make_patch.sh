@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # forge-warden patch-maker v2
-# Write, on stdout, the patch forge-warden should judge for the change from BASE to HEAD.
-# Usage: make_patch.sh <base> <head> [<repository>]      (repository: default, the current directory)
+# make_patch.sh [--resolve-comparison] <base> <head> [<repository>]
+# By default, stdout contains the patch from the merge base to the supplied head commit.
+# With --resolve-comparison, stdout contains the base tip and merge-base IDs, in that order.
+# An empty base argument in this mode selects the single root of HEAD's complete history.
+# The repository argument defaults to the current directory.
 #
 # The patch is the same bytes whatever the caller's Git configuration, environment or current
 # directory are. A plain `git diff` is not: `diff.noprefix` drops the `a/` `b/` prefixes (the

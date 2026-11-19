@@ -9,18 +9,16 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
-- The local gate requires a bound judgment for each nonempty committed comparison (ledger Q79).
-  Patch generation and judgment use the same commit IDs for the comparison tip and HEAD.
-  The root commit supplies the comparison tip when `origin/main` is absent and history is complete.
+- The local gate binds each committed comparison to verified repository objects (ledger Q79).
+  The new `forge-warden empty` command verifies an empty diff. See the [local gate setup](CONTRIBUTING.md#setup).
 - CI on GitLab, Gitea and Forgejo is owned like `.github` (ledger Q85): the starter policy's `ci-is-owned` holds
   `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the root entry and its descendants in any letter
   case), and this repository's `warden.toml` (`quality-config-is-owned`), `protected-paths.txt`, CODEOWNERS and the
   agent hooks protect the root CI files, directory entries and descendants on all four forges. A test pins that a workflow change
   deep-diff-forge does not label `ci_privilege` (a quoted grant such as `contents: 'write'`, ledger Q84) is still held
   by its path.
-- The text report names a superseded waiver (ledger Q80): a live waiver whose paths matched only violations an
-  earlier waiver of the same rule already covered reads `matched only what an earlier waiver already covers`
-  instead of `matched nothing in this change`. The verdict document is unchanged: it is still in `unused_waivers`.
+- The text report identifies [superseded waivers](docs/POLICY_REFERENCE.md#waivers) (ledger Q80).
+- Release builds now check integer arithmetic for overflow.
 - The effect doors are their own crate, `forge-warden-doors` (EFFECT-WALL step 3): the ten door modules moved
   unchanged from `crates/forge-warden-cli/src/doors/` to `crates/forge-warden-doors/src/`, and the binary's `main.rs`
   forbids `clippy::disallowed_methods` and `clippy::disallowed_types`, so no attribute, macro or included file in the

@@ -1,9 +1,6 @@
 //! `forge-warden`: change policy as code for deep-diff-forge reviews.
 //!
-//! ```text
-//! git diff --binary --no-renames main... > change.patch
-//! forge-warden check --policy warden.toml --patch change.patch --ranker /path/to/deep-diff-forge
-//! ```
+//! The repository README shows how to make a patch and judge it in bound mode.
 //!
 //! Authority mode (`--ranker`, ADR 0005) runs the pinned ranker on the patch itself and is the only
 //! mode that can pass. Advisory mode (`--advisory --rank FILE`) judges a supplied ranking and can at

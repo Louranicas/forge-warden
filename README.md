@@ -196,6 +196,12 @@ repository root. Outside bound mode forge-warden does not check that the patch i
 between two commits, so whoever makes the patch is part of the trust boundary; in bound mode
 (`--repo`) it makes that diff itself and refuses any other patch. See the [known costs of failing closed](docs/POLICY_REFERENCE.md#known-costs-of-failing-closed).
 
+To verify an empty comparison, run `forge-warden empty --repo DIR --base BASE --head HEAD`
+with full commit IDs. In a linked worktree, use the directory printed by
+`git rev-parse --git-common-dir`. The command uses the enrolled `/usr/bin/git` to compare the
+merge base to the supplied head commit from verified objects. It exits silently with 0 for an
+empty diff or exits with 4 if the comparison contains changes. It needs no policy or ranker.
+
 ## Verdicts
 
 `forge-warden check --json` prints a `forge-warden.verdict.v3` document

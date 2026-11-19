@@ -142,7 +142,9 @@ escapes. `src/*.rs` matches `src/lib.rs` but not `src/a/lib.rs`.
 A violation is covered by the first active waiver (today on or before `expires`) for its rule
 whose `paths` match. Change-wide violations (`max_score` per change, `max_files`) have no path
 and cannot be waived. From the day after `expires`, the waiver fails the verdict until it is
-renewed or deleted. An active waiver that covered nothing is listed in `unused_waivers`.
+renewed or deleted. The verdict lists every active waiver that covered no violation in
+`unused_waivers`. The text report distinguishes a waiver with no matches from one whose
+matches were all covered by earlier waivers.
 
 ## How `check` runs: authority and advisory
 

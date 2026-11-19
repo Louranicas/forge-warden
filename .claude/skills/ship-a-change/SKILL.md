@@ -14,9 +14,7 @@ Run each step. Record the command and its result; a step you could not run is re
 3. **New behaviour has a failing-first test.** For each behaviour change, name the test and
    confirm it fails without the change: stash the source change
    (`git stash push -- crates/*/src`), run the test, see it fail, `git stash pop`.
-4. **Mutation** (if `cargo-mutants` is installed):
-   `git diff "$(git merge-base HEAD origin/main)" -- 'crates/*/src/**.rs' > target/pr.diff &&
-   cargo mutants --no-config --in-diff target/pr.diff --workspace`.
+4. **Mutation** (if `cargo-mutants` is installed): run `just mutants`.
    Every surviving mutant is a missing test: add it, or explain why the mutant is equivalent.
 5. **Judge the change with its own policy** (if `deep-diff-forge` is installed): `just judge`.
    Fail means fix. Hold means the summary must explain each held rule to the human. `just judge` is
@@ -24,7 +22,9 @@ Run each step. Record the command and its result; a step you could not run is re
    so only a bound authority run can pass; with the pinned deep-diff-forge release binary and an
    owner-enrolled Git allowlist ([GIT_RUNTIME](../../../docs/GIT_RUNTIME.md)), run it beside the advisory one:
    ```bash
-   base="$(git merge-base HEAD origin/main)" head="$(git rev-parse HEAD)"
+   set -e
+   base="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+   head="$(git rev-parse --verify 'HEAD^{commit}')"
    scripts/make_patch.sh "$base" "$head" > target/change.patch
    cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch target/change.patch \
      --ranker "$(command -v deep-diff-forge)" \

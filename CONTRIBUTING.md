@@ -28,11 +28,13 @@ just ci              # the full local gate (everything it can run offline)
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
 `scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
-(G-18). The local comparison uses Git 2.40 or later. A nonempty patch requires `deep-diff-forge` on
-`PATH` and a binary hash enrolled in the policy. For an empty patch the gate runs
-`forge-warden empty --repo DIR --base BASE --head HEAD` to confirm the comparison with the same
-enrolled Git and verified repository objects. When `zizmor` is absent, the gate's last line names
-the skipped workflow audit. See [Where the gate runs](#where-the-gate-runs).
+(G-18). The gate judges committed changes from the merge base of `refs/remotes/origin/main` and HEAD to HEAD.
+If that ref is absent, HEAD must have complete history with a single root, which serves as the base.
+Both paths require Git 2.40 or later and an [owner-enrolled Git](docs/GIT_RUNTIME.md).
+A nonempty patch requires `deep-diff-forge` on `PATH` with its binary hash enrolled in the policy.
+For an empty patch the gate runs [`forge-warden empty`](README.md#authority-and-advisory-mode).
+When `zizmor` is absent, the gate's last line names the skipped workflow audit.
+See [Where the gate runs](#where-the-gate-runs).
 
 Scripts and their tests run in an offline gate image that has fewer commands than a developer's
 machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` (fast gate, and

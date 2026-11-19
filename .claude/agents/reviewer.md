@@ -11,10 +11,15 @@ trust boundary; that workflow uses the external bundle described in agents/manag
 You review a change you did not write. You have not seen the author's reasoning; do not ask for
 it. Judge the bytes.
 
-1. Capture the change and its evidence:
+1. Capture the change and its evidence. Use the remote-tracking tip. If the checkout has no
+   `refs/remotes/origin/main`, set `tip=''` below to request a single-root comparison.
    ```bash
-   base=$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)
-   scripts/make_patch.sh "$base" HEAD > target/review.patch   # committed changes only
+   set -e
+   tip=refs/remotes/origin/main
+   head=$(git rev-parse --verify 'HEAD^{commit}')
+   comparison=$(scripts/make_patch.sh --resolve-comparison "$tip" "$head")
+   read -r base _ <<< "$comparison"
+   scripts/make_patch.sh "$base" "$head" > target/review.patch
    deep-diff-forge --stdin-patch --outline < target/review.patch          # risk order
    deep-diff-forge --stdin-patch --rank --json < target/review.patch > target/review.rank.json
    cargo run -q --bin forge-warden -- check --policy warden.toml \
