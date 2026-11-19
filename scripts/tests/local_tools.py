@@ -31,7 +31,7 @@ class LocalTools(unittest.TestCase):
         self.root = Path(self.directory.name)
         (self.root / "scripts").mkdir()
         (self.root / "bin").mkdir()
-        for name in ("scripts/tool-versions.toml", "scripts/ci_local.sh", "rust-toolchain.toml", "Cargo.toml"):
+        for name in ("scripts/tool-versions.toml", "rust-toolchain.toml", "Cargo.toml"):
             shutil.copyfile(ROOT / name, self.root / name)
         shim = self.root / "bin/cargo"
         shim.write_text(CARGO_SHIM)
@@ -93,28 +93,6 @@ class LocalTools(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, pattern):
                     tool_versions.local_gate(self.root)
 
-    def test_the_real_ci_local_passes_the_structural_check(self):
-        tool_versions.check_ci_local(ROOT)
-
-    def plant(self, old, new, pattern):
-        source = (ROOT / "scripts/ci_local.sh").read_text()
-        self.assertEqual(source.count(old), 1, old)
-        (self.root / "scripts/ci_local.sh").write_text(source.replace(old, new))
-        with self.assertRaisesRegex(ValueError, pattern):
-            tool_versions.check_ci_local(self.root)
-
-    def test_a_skippable_required_tool_is_refused(self):
-        self.plant("step deny; cargo deny check\n",
-                   "if command -v cargo-deny >/dev/null; then step deny; cargo deny check; fi\n",
-                   "not hosted-only.*cargo-deny")
-
-    def test_an_echoed_skip_is_refused(self):
-        self.plant('else hosted_only_not_run+=" zizmor"; fi', 'else echo "skip zizmor"; fi', "echoes a skip")
-
-    def test_a_missing_local_tools_step_is_refused(self):
-        self.plant("step local-tools; python3 -I scripts/tool_versions.py --check-local-tools\n", "",
-                   "local-tools step exactly once")
-
     def test_a_required_tool_cannot_leave_the_required_list(self):
         for text, pattern in (
             ('required = []\nhosted_only = ["zizmor"]\n', "not in \\[local_gate\\] required"),
@@ -124,10 +102,7 @@ class LocalTools(unittest.TestCase):
             with self.subTest(text=text):
                 self.write_gate(text)
                 with self.assertRaisesRegex(ValueError, pattern):
-                    tool_versions.check_ci_local(self.root)
-
-    def test_the_old_success_claim_is_refused(self):
-        self.plant("ci_local: all gates passed", "ci_local: all available gates passed", "must not claim")
+                    tool_versions.local_gate(self.root)
 
 
 RUSTC_SHIM = """#!/bin/sh

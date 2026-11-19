@@ -3,36 +3,20 @@
 import hashlib
 import json
 import os
-import runpy
-import shlex
 import shutil
 import subprocess
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def mutation_step(workflow):
-    model = runpy.run_path(str(ROOT / "scripts/tests/runner_routing.py"))
-    job = model["job_bodies"]((ROOT / ".github/workflows" / workflow).read_text())["mutation-shards"]
-    commands = []
-    for step in model["steps_of"](job):
-        lines = textwrap.dedent(step.replace("      - ", "        ", 1)).splitlines()
-        fields = dict(line.split(": ", 1) for line in lines if ": " in line and not line.startswith(" "))
-        if fields.get("name") == "Verify inventory and test every mutant assigned to this shard":
-            commands.append(shlex.split(fields["run"], comments=True))
-    command, = commands
-    return command
-
-
 class MutationEnvironment(unittest.TestCase):
     def test_both_entrypoints_drop_inherited_target(self):
         commands = {"ci_local": ["bash", str(ROOT / "scripts/ci_local.sh")],
-                    "workflow": mutation_step("ci.yml"),
-                    "baseline": mutation_step("mutation-baseline.yml")}
+                    "workflow": ["python3", "-I", "scripts/mutation_ci.py", "run", "diff"],
+                    "baseline": ["python3", "-I", "scripts/mutation_ci.py", "run", "full"]}
         with tempfile.TemporaryDirectory(prefix="mutation-env-") as directory:
             root = Path(directory)
             (root / "bin").mkdir()
@@ -44,9 +28,9 @@ class MutationEnvironment(unittest.TestCase):
                          "scripts/tests/runner_routing.py", "plants/test_runner.py"):
                 (root / name).write_text("# explicit unrelated-gate fixture stub\n")
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
-            (root / "scripts/make_patch.sh").write_text("exit 0\n")
+            (root / "scripts/make_patch.sh").write_text('if [ "$1" = --resolve-comparison ]; then echo "base base"; fi\n')
             scripts = {
-                "git": '#!/bin/sh\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nshow-ref) exit 0;;\nmerge-base) echo base;;\ndiff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',
+                "git": '#!/bin/sh\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nshow-ref) echo tip;;\n--no-replace-objects|diff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',
                 "cargo": '#!/usr/bin/env python3\nimport json,os,sys\nif sys.argv[1] == "mutants":\n if "--list" in sys.argv:\n  print("[]"); sys.exit(0)\n with open(os.environ["RECEIPT"],"w") as f: json.dump({"target":os.environ.get("CARGO_TARGET_DIR"),"args":sys.argv[2:]},f)\n sys.exit(2)\n',
             }
             for name in ("cargo-deny", "cargo-mutants", "zizmor"):

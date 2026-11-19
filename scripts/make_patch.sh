@@ -13,18 +13,19 @@
 # The change is `base...head`: from the merge base of the two commits to HEAD, as on a pull request.
 # This does not prove to anyone else that the patch is that change; it makes it hard to get wrong.
 set -euo pipefail
+resolve=false
+if [ "${1:-}" = --resolve-comparison ]; then
+  resolve=true
+  shift
+fi
 if [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; then
-  echo 'usage: make_patch.sh <base> <head> [<repository>]' >&2
+  echo 'usage: make_patch.sh [--resolve-comparison] <base> <head> [<repository>]' >&2
   exit 2
 fi
 repository="${3:-.}"
 # Nothing about Git comes from the caller's environment.
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-base="$(git -C "$repository" rev-parse --verify --quiet --end-of-options "$1^{commit}")" || {
-  echo "make_patch: base is not a commit in $repository: $1" >&2
-  exit 2
-}
 head="$(git -C "$repository" rev-parse --verify --quiet --end-of-options "$2^{commit}")" || {
   echo "make_patch: head is not a commit in $repository: $2" >&2
   exit 2
@@ -34,17 +35,33 @@ scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
 # The private repository has the store's object format (40 hex digits: SHA-1, 64: SHA-256), as the
 # door's bound mode does; a SHA-1 repository cannot read a SHA-256 store's objects (H18).
-case "${#base}" in
+case "${#head}" in
   40) format=sha1 ;;
   64) format=sha256 ;;
-  *) echo "make_patch: unexpected object id length ${#base}: $base" >&2; exit 2 ;;
+  *) echo "make_patch: unexpected object id length ${#head}: $head" >&2; exit 2 ;;
 esac
-git init --quiet --bare --object-format="$format" "$scratch/diff.git"
+git init --quiet --bare --template= --object-format="$format" "$scratch/diff.git"
 printf '%s\n' "$objects" > "$scratch/diff.git/objects/info/alternates"
 # The caller's commit-graph and multi-pack index are not read (they can lie about parents; bound mode's
 # staging does the same, ADR 0012 D3.1), and several merge bases are refused as bound mode refuses
 # them (D7): `git diff A...B` would pick one with only a warning.
 nograph=(-c core.commitGraph=false -c core.multiPackIndex=false)
+if [ "$resolve" = true ] && [ -z "$1" ]; then
+  if [ "$(git -C "$repository" rev-parse --is-shallow-repository)" != false ]; then
+    echo 'make_patch: root comparison requires complete history' >&2
+    exit 1
+  fi
+  base="$(git --git-dir="$scratch/diff.git" "${nograph[@]}" rev-list --max-parents=0 "$head")"
+  if [[ -z "$base" || "$base" == *$'\n'* ]]; then
+    echo 'make_patch: root comparison requires a single root' >&2
+    exit 2
+  fi
+else
+  base="$(git -C "$repository" rev-parse --verify --quiet --end-of-options "$1^{commit}")" || {
+    echo "make_patch: base is not a commit in $repository: $1" >&2
+    exit 2
+  }
+fi
 # `merge-base` exits 1 and says nothing when the two have no common history; any other failure is
 # Git's (most often a shallow or partial clone missing commits between them: this private repository
 # borrows the object store, not the clone's shallow list), and its first line is shown, not renamed.
@@ -63,6 +80,10 @@ count="$(printf '%s\n' "$bases" | grep -c .)"
 if [ "$count" -ne 1 ]; then
   echo "make_patch: base and head have $count merge bases; name the merge base as --base" >&2
   exit 2
+fi
+if [ "$resolve" = true ]; then
+  printf '%s %s\n' "$base" "$bases"
+  exit 0
 fi
 # Attributes come from the empty tree, not from any work tree: a `.gitattributes` saying `-diff`
 # or `binary` would otherwise turn added text into a binary patch the judge cannot read.

@@ -29,31 +29,38 @@ step deny; cargo deny check
 if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else hosted_only_not_run+=" zizmor"; fi
 head="$(git rev-parse --verify 'HEAD^{commit}')"
 comparison_ref=refs/remotes/origin/main
-if git show-ref --verify --quiet "$comparison_ref"; then
-  tip="$(git show-ref --verify --hash "$comparison_ref")"
-  base="$(git rev-parse --verify "$tip^{commit}")"
+ref_path="$(git rev-parse --git-path "$comparison_ref")"
+loose="$(python3 -I - "$ref_path" <<'PYREF'
+import os
+import stat
+import sys
+
+try:
+    mode = os.lstat(sys.argv[1]).st_mode
+except (FileNotFoundError, NotADirectoryError):
+    print("absent")
+except OSError as error:
+    sys.exit(f"ci_local: cannot inspect comparison ref: {error}")
+else:
+    print("absent" if stat.S_ISDIR(mode) else "present")
+PYREF
+)"
+if [ "$loose" = present ] || git show-ref --verify --quiet "$comparison_ref"; then
+  tip="$(git show-ref --verify --hash "$comparison_ref")" || exit 1
 elif [ "$?" -eq 1 ]; then
-  ref_path="$(git rev-parse --git-path "$comparison_ref")"
-  if [ -f "$ref_path" ] || [ -L "$ref_path" ]; then
-    echo "ci_local: cannot resolve $comparison_ref" >&2
-    exit 1
-  fi
-  if [ "$(git rev-parse --is-shallow-repository)" != false ]; then
-    echo 'ci_local: root comparison requires complete history' >&2
-    exit 1
-  fi
-  base="$(git rev-list --max-parents=0 "$head")"
+  tip=""
 else
   exit 1
 fi
+comparison="$(bash scripts/make_patch.sh --resolve-comparison "$tip" "$head")"
+read -r base mutation_base <<< "$comparison"
 scratch="$(mktemp -d)"
 trap 'rm -rf -- "$scratch"' EXIT
 patch="$scratch/change.patch"
 mutation_diff="$scratch/pr.diff"
 bash scripts/make_patch.sh "$base" "$head" > "$patch"
 step mutation
-mutation_base="$(git merge-base "$base" "$head")"
-git diff "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
+git --no-replace-objects diff "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
 if [ -s "$mutation_diff" ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace; else echo "no source changes to mutate"; fi
 step dogfood
 if [ -s "$patch" ]; then

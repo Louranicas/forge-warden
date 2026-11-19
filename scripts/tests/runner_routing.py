@@ -24,6 +24,8 @@ boundary is repository write access plus runner-up's fork guard (docs/runner-up.
 import hashlib
 import os
 import re
+import runpy
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -748,6 +750,29 @@ class Routing(unittest.TestCase):
                         self.assertNotEqual(mutated, body)
                         self.assertTrue(
                             routed_job_problems(text.replace(body, mutated, 1), ROUTED[path]))
+
+    def test_successful_plans_run_the_matching_mutation_scope(self):
+        workflow_lines = runpy.run_path(str(ROOT / "scripts/plant_tools.py"))["workflow_lines"]
+        def condition(fields):
+            return fields.get("if", "success()").removeprefix("${{").removesuffix("}}").strip()
+
+        active = {"true", "success()", "always()"}
+        for path, scope, job_condition in (
+            (CI, "diff", "success()"),
+            (BASELINE, "full", "!cancelled() && needs.mutation-plan.result == 'success'"),
+        ):
+            with self.subTest(path=path):
+                text = "\n".join(workflow_lines((ROOT / path).read_text())) + "\n"
+                job = job_bodies(text)["mutation-shards"]
+                fields = dict(re.findall(r"^    ([\w-]+): (.+)$", job, re.M))
+                self.assertIn(condition(fields), active | {job_condition})
+                expected = ["python3", "-I", "scripts/mutation_ci.py", "run", scope]
+                guards = []
+                for step in steps_of(job):
+                    fields = dict(re.findall(r"^(?:      - |        )([\w-]+): (.+)$", step, re.M))
+                    if shlex.split(fields.get("run", ""), comments=True) == expected:
+                        guards.append(condition(fields) in active)
+                self.assertEqual(guards, [True])
 
     def test_the_aggregate_check_stays_hosted_and_needs_plan_and_shards(self):
         body = job_bodies((ROOT / ".github/workflows/mutation-baseline.yml").read_text())["full-workspace"]

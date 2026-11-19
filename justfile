@@ -28,7 +28,9 @@ mutants:
     set -euo pipefail
     mutation_diff="$(mktemp)"
     trap 'rm -f -- "$mutation_diff"' EXIT
-    git diff "$(git merge-base HEAD origin/main)" -- 'crates/*/src/**.rs' > "$mutation_diff"
+    comparison="$(bash scripts/make_patch.sh --resolve-comparison origin/main HEAD)"
+    read -r _ mutation_base <<< "$comparison"
+    git --no-replace-objects diff "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
     env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace
 
 # Check the signal vocabulary against a deep-diff-forge checkout or commit.

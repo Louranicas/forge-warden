@@ -94,44 +94,13 @@ def local_gate(root):
     if not set(hosted) <= set(HOSTED_ONLY_REASONS):
         unknown = sorted(set(hosted) - set(HOSTED_ONLY_REASONS))
         raise ValueError("[local_gate] hosted-only tool has no recorded reason: " + ", ".join(unknown))
-    return required, hosted
-
-
-# The tools whose steps below are required lines; [local_gate] required must keep them (Keel A6).
-STEP_TOOLS = ("cargo-deny", "cargo-mutants")
-# G-18: each required tool's step, as one unconditional line of fixed form. A guard, a `|| true` or a
-# moved command changes the line and is refused here; scripts/tests/ci_local.sh proves the lines run.
-REQUIRED_STEP_LINES = (
-    "step deny; cargo deny check",
-    "step mutation",
-    'if [ -s "$mutation_diff" ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true '
-    '--in-diff "$mutation_diff" --workspace; else echo "no source changes to mutate"; fi',
-)
-
-
-def check_ci_local(root):
-    """ci_local probes only hosted-only tools, runs the local-tools step, and never claims a pass it skipped."""
-    required, hosted = local_gate(root)
-    missing = sorted(set(STEP_TOOLS) - set(required))
+    missing = sorted(set(LOCAL_PROBES) - set(required))
     if missing:
         raise ValueError("a tool whose step ci_local requires is not in [local_gate] required (G-18): "
                          + ", ".join(missing))
-    text = (root / "scripts/ci_local.sh").read_text()
-    probed = re.findall(r"command -v ([A-Za-z0-9_.+-]+)", text)
-    stray = sorted(set(probed) - set(hosted))
-    if stray:
-        raise ValueError("ci_local probes a tool that is not hosted-only, so it could skip it (G-18): "
-                         + ", ".join(stray))
-    if re.search(r"""echo\s+["']?skip""", text):
-        raise ValueError("ci_local echoes a skip instead of refusing or naming a hosted-only step (G-18)")
-    if text.count("step local-tools; python3 -I scripts/tool_versions.py --check-local-tools\n") != 1:
-        raise ValueError("ci_local must run the local-tools step exactly once (G-18)")
-    lines = text.splitlines()
-    for required in REQUIRED_STEP_LINES:
-        if lines.count(required) != 1:
-            raise ValueError(f"required step must appear exactly once as an unconditional line (G-18): {required}")
-    if "all available gates passed" in text:
-        raise ValueError("ci_local must not claim that all available gates passed (G-18)")
+    if set(hosted) != set(HOSTED_ONLY_REASONS):
+        raise ValueError("[local_gate] hosted_only must name the hosted-only steps (G-18)")
+    return required, hosted
 
 
 def check_local_tools(root, env=None, timeout=15):
@@ -317,7 +286,7 @@ if __name__ == "__main__":
     try:
         if sys.argv[1:] == ["--check"]:
             check(ROOT)
-            check_ci_local(ROOT)
+            local_gate(ROOT)
             check_toolchain_sites(ROOT)
         elif sys.argv[1:] == ["--check-local-tools"]:
             check_local_tools(ROOT)

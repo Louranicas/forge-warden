@@ -15,9 +15,16 @@ if [ -n "${NEXT_HEAD:-}" ]; then
   git update-ref refs/remotes/origin/main "$NEXT_HEAD"
 fi
 STUB
-for script in scripts/tool_versions.py plants/test_runner.py scripts/tests/perimeter.py scripts/tests/runner_routing.py; do
+for script in plants/test_runner.py scripts/tests/perimeter.py scripts/tests/runner_routing.py; do
  : > "$TEST_ROOT/$script"
 done
+cat > "$TEST_ROOT/scripts/tool_versions.py" <<'STUB'
+import os
+import sys
+
+statuses = {"--check": "VERSIONS_EXIT", "--check-local-tools": "LOCAL_TOOLS_EXIT"}
+sys.exit(int(os.environ.get(statuses[sys.argv[1]], "0")))
+STUB
 printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$TEST_ROOT/scripts/check_plants.py"
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$TEST_ROOT/scripts/check_guardrails.py"
 cp "$source_root/warden.toml" "$TEST_ROOT/warden.toml"
@@ -48,12 +55,13 @@ STUB
 printf '#!/usr/bin/env bash\nexit 98\n' > "$sandbox/bin/deep-diff-forge"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/zizmor"
 chmod +x "$sandbox/bin/"*
-for tool in git bash env python3 mkdir mktemp rm head grep cat mv cp; do
+for tool in git bash env python3 mkdir mktemp rm head grep cat mv cp chmod; do
  ln -s "$(type -P "$tool")" "$sandbox/bin/$tool"
 done
 export PATH="$sandbox/bin"
 while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 command git "$@"; }
+export -f git
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 cd "$TEST_ROOT"
@@ -96,10 +104,11 @@ for entry in "$gate" "$sandbox/pre-push"; do
   previous_patch="$patch"
   previous_diff="$mutation_diff"
   grep -q '^run ' "$TEST_ROOT/cargo-calls"
+  if [ "$JUDGE_EXIT" -eq 0 ]; then grep -qxF 'ci_local: all gates passed' "$sandbox/output"; fi
  done
  unset JUDGE_EXIT
  grep -qx 'deny check' "$TEST_ROOT/cargo-calls"
- for row in 'DENY_EXIT 5' 'MUTANTS_EXIT 7' 'GUARDRAIL_EXIT 1' 'PLANTS_EXIT 23'; do
+ for row in 'VERSIONS_EXIT 10' 'LOCAL_TOOLS_EXIT 11' 'DENY_EXIT 5' 'MUTANTS_EXIT 7' 'GUARDRAIL_EXIT 1' 'PLANTS_EXIT 23'; do
   read -r name code <<< "$row"
   export "$name=$code"
   run_gate "$entry" "$code"
@@ -118,10 +127,32 @@ export NEXT_HEAD
 run_gate "$gate" 0
 unset NEXT_HEAD
 git update-ref HEAD "$HEAD_ID"
+git update-ref refs/remotes/origin/main "$BASE_ID"
 
+mkdir -p .git/refs/remotes/origin
+(
+ trap 'chmod 700 .git/refs/remotes/origin' EXIT
+ chmod 600 .git/refs/remotes/origin
+ if [ ! -x .git/refs/remotes/origin ]; then
+  run_gate "$gate" 1
+  grep -qF 'ci_local: cannot inspect comparison ref' "$sandbox/output"
+ fi
+)
+
+mkdir -p .git/info
+printf '%s\n' "$HEAD_ID" > .git/info/grafts
+git replace "$root_id" "$(git commit-tree "$tree" -m replacement)"
+run_gate "$gate" 0
+grep -q '^mutants ' "$TEST_ROOT/cargo-calls"
+grep -q '^run ' "$TEST_ROOT/cargo-calls"
 git update-ref -d refs/remotes/origin/main
 BASE_ID="$root_id"
 run_gate "$gate" 0
+
+grep -q '^mutants ' "$TEST_ROOT/cargo-calls"
+grep -q '^run ' "$TEST_ROOT/cargo-calls"
+rm .git/info/grafts
+git replace -d "$root_id"
 
 printf '%s\n' "$HEAD_ID" > .git/shallow
 run_gate "$gate" 1
