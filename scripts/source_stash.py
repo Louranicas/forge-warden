@@ -1,23 +1,24 @@
 """Save and restore crate source changes under the Git index lock."""
+import importlib.util
 import os
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("worktree_diff", Path(__file__).with_name("worktree_diff.py"))
+worktree_diff = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(worktree_diff)
+
+git = worktree_diff.git
 
 SOURCE_GLOB = "crates/*/src/**"
 SOURCES = ":(glob)" + SOURCE_GLOB
 CANCEL_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
-
-
-def git(*args, env, data=None):
-    return subprocess.run(["git", *args], env=env, input=data, stdout=subprocess.PIPE,
-                          check=True).stdout
 
 
 def cancel(signum, _frame):
@@ -29,8 +30,7 @@ def cancel(signum, _frame):
 def locked_index():
     for sig in CANCEL_SIGNALS:
         signal.signal(sig, cancel)
-    env = {key: value for key, value in os.environ.items()
-           if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
+    env = worktree_diff.worktree_env()
     index = Path(os.fsdecode(git("rev-parse", "--path-format=absolute", "--git-path", "index", env=env)[:-1]))
     lock = index.with_name(index.name + ".lock")
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
@@ -46,7 +46,9 @@ def locked_index():
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous)
                     pending = scratch / "index"
                     shutil.copy2(index, pending)
-                    yield {**env, "GIT_INDEX_FILE": str(pending)}, scratch
+                    live = {**env, "GIT_INDEX_FILE": str(pending)}
+                    worktree_diff.check_index_flags(live, SOURCES)
+                    yield live, scratch
                     os.replace(pending, index)
                 finally:
                     signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
@@ -90,14 +92,20 @@ def save(live, scratch):
     private = {**live, "GIT_INDEX_FILE": str(private_index)}
     git("reset", "-q", "HEAD", "--", ":(exclude,glob)" + SOURCE_GLOB, env=private)
     marker = "forge-warden-source-" + str(uuid.uuid4())
-    result = subprocess.run(["git", "-c", "apply.whitespace=nowarn", "stash", "push",
-                             "--message", marker, "--", SOURCES], env=private)
-    stored = git("stash", "list", "--fixed-strings", "--grep-reflog=" + marker,
-                 "--format=%H", env=live).decode().strip()
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    try:
+        result = worktree_diff.run_git("-c", "apply.whitespace=nowarn", "stash", "push", "--message",
+                                       marker, "--", SOURCES, env=private,
+                                       preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, previous))
+        stored = git("stash", "list", "--fixed-strings", "--grep-reflog=" + marker,
+                     "--format=%H", env=live).decode().strip()
+        if stored:
+            print(stored, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
     if not stored:
         print("Failing-first check unverified. No crate source stash was recorded.", file=sys.stderr)
         sys.exit(result.returncode or 1)
-    print(stored, flush=True)
     if result.returncode:
         sys.exit(result.returncode)
     git("reset", "-q", stored + "^1", "--", SOURCES, env=live)

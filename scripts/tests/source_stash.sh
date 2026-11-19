@@ -11,7 +11,7 @@ git init -q --template=
 git config user.name Fixture
 git config user.email fixture@example.invalid
 mkdir -p scripts crates/x/src
-cp "$root"/scripts/{stash_source.sh,source_stash.py,restore_source.py} scripts/
+cp "$root"/scripts/{source_stash.py,restore_source.py,worktree_diff.py} scripts/
 src=crates/x/src
 printf '*.swp\nignored.rs\n' > .gitignore
 for file in lib.rs unrelated.rs removed.rs staged-only.rs; do
@@ -29,8 +29,8 @@ git commit -qm base
 refuse_save() {
     local index
     index="$(git write-tree)"
-    if bash scripts/stash_source.sh > log 2>&1; then exit 1; fi
-    grep -Fq 'Failing-first check unverified' log
+    if python3 -I scripts/source_stash.py > log 2>&1; then exit 1; fi
+    grep -Fq "${1:-Failing-first check unverified}" log
     [[ $(git write-tree) == "$index" && -z $(git stash list) ]]
 }
 refuse_save
@@ -40,6 +40,24 @@ git add notes
 refuse_save
 [[ $(git show :notes) == draft && $(cat notes) == draft ]]
 git restore --source=HEAD --staged --worktree -- notes
+
+echo hidden > "$src/lib.rs"
+echo visible > "$src/unrelated.rs"
+base="$(git rev-parse HEAD)"
+for flag in assume-unchanged skip-worktree; do
+    git update-index "--$flag" -- "$src/lib.rs"
+    refuse_save "$flag"
+    if python3 -I scripts/worktree_diff.py "$base" > diff.out 2> log; then exit 1; fi
+    grep -Fq "$flag" log
+    [[ ! -s diff.out && $(cat "$src/lib.rs") == hidden && $(cat "$src/unrelated.rs") == visible ]]
+    git update-index "--no-$flag" -- "$src/lib.rs"
+done
+git update-index --assume-unchanged -- notes
+python3 -I scripts/worktree_diff.py "$base" > diff.out
+grep -Fxq '+hidden' diff.out
+grep -Fxq '+visible' diff.out
+git update-index --no-assume-unchanged -- notes
+git restore -- "$src"
 
 for kind in file symlink; do
     mv "$src/tree" "$src/moved"
@@ -91,7 +109,7 @@ echo working > "$src/lib.rs"
 touch "$src/editor.swp"
 for new in new.rs ignored.rs; do
     touch "$src/$new"
-    if bash scripts/stash_source.sh > log 2>&1; then exit 1; fi
+    if python3 -I scripts/source_stash.py > log 2>&1; then exit 1; fi
     grep -Fq "$new" log
     rm "$src/$new"
 done
@@ -100,7 +118,7 @@ echo staged > notes
 git rm -q obsolete
 git add advisory notes
 echo working > notes
-stash="$(bash scripts/stash_source.sh | tail -n 1)"
+stash="$(python3 -I scripts/source_stash.py | tail -n 1)"
 for snapshot in "$stash" "$stash^2"; do
     git diff --exit-code "$stash^1" "$snapshot" -- ':(exclude,glob)crates/*/src/**'
 done
@@ -108,6 +126,14 @@ done
 if git ls-files --error-unmatch obsolete >/dev/null 2>&1; then exit 1; fi
 git diff --cached --exit-code HEAD -- "$src"
 [[ -f "$src/editor.swp" && $(cat "$src/lib.rs") == base ]]
+
+for flag in assume-unchanged skip-worktree; do
+    git update-index "--$flag" -- "$src/lib.rs"
+    if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
+    grep -Fq "$flag" log
+    [[ $(cat "$src/lib.rs") == base && $(git show ":$src/lib.rs") == base ]]
+    git update-index "--no-$flag" -- "$src/lib.rs"
+done
 
 echo later > "$src/staged-only.rs"
 echo later > "$src/unrelated.rs"
@@ -150,7 +176,7 @@ for whitespace in fix error; do
     printf '        fn staged() {}\n' > "$src/indented.rs"
     git add "$src/indented.rs"
     printf '        fn working() {}\n' > "$src/indented.rs"
-    stash="$(bash scripts/stash_source.sh | tail -n 1)"
+    stash="$(python3 -I scripts/source_stash.py | tail -n 1)"
     git diff --exit-code HEAD -- "$src/indented.rs"
     git diff --cached --exit-code HEAD -- "$src/indented.rs"
     python3 -I scripts/restore_source.py "$stash"
@@ -169,7 +195,11 @@ if [[ -n ${CANCEL_WITH:-} && -f .git/index.lock ]]; then
 fi
 case " $* " in
     *' stash push '*|*' restore '*' --staged '*)
-        if [[ -n ${FAIL_AFTER_STASH:-} ]]; then
+        if [[ -n ${CANCEL_AFTER_STASH:-} ]]; then
+            git "$@" || exit $?
+            kill -s "$CANCEL_AFTER_STASH" "$PPID"
+            exit 0
+        elif [[ -n ${FAIL_AFTER_STASH:-} ]]; then
             git "$@" || exit $?
             exit 17
         fi
@@ -183,7 +213,7 @@ exec git "$@"
 SH
 chmod +x "$scratch/bin/git"
 result=0
-FAIL_AFTER_STASH=1 PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh > log || result=$?
+FAIL_AFTER_STASH=1 PATH="$scratch/bin:$PATH" python3 -I scripts/source_stash.py > log || result=$?
 [[ $result == 17 ]]
 [[ $(tail -n 1 log) == "$(git rev-parse refs/stash)" ]]
 python3 -I scripts/restore_source.py "$(tail -n 1 log)"
@@ -192,7 +222,7 @@ python3 -I scripts/restore_source.py "$(tail -n 1 log)"
 
 lock="$(git rev-parse --git-path index).lock"
 printf 'busy\n' > "$lock"
-if bash scripts/stash_source.sh > log 2>&1; then exit 1; fi
+if python3 -I scripts/source_stash.py > log 2>&1; then exit 1; fi
 if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
 [[ $(cat "$lock") == busy && $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
 rm "$lock"
@@ -202,17 +232,26 @@ for signal in HUP INT TERM; do
     for action in save restore; do
         result=0
         if [[ $action == save ]]; then
-            CANCEL_WITH="$signal" PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh || result=$?
+            CANCEL_WITH="$signal" PATH="$scratch/bin:$PATH" python3 -I scripts/source_stash.py || result=$?
         else
             CANCEL_WITH="$signal" PATH="$scratch/bin:$PATH" python3 -I scripts/restore_source.py "$stash" || result=$?
         fi
         [[ $result == $((128 + $(kill -l "$signal"))) && ! -e $lock ]]
         [[ $(git write-tree) == "$before" && $(cat "$RACE_PATH") == '        fn working() {}' ]]
     done
+    previous="$(git rev-parse refs/stash)"
+    result=0
+    CANCEL_AFTER_STASH="$signal" PATH="$scratch/bin:$PATH" python3 -I scripts/source_stash.py > log || result=$?
+    stored="$(tail -n 1 log)"
+    [[ $result == $((128 + $(kill -l "$signal"))) && ! -e $lock ]]
+    [[ $stored != "$previous" && $stored == "$(git rev-parse refs/stash)" ]]
+    [[ $(cat "$RACE_PATH") == '        fn baseline() {}' ]]
+    python3 -I scripts/restore_source.py "$stored"
+    [[ $(git write-tree) == "$before" && $(cat "$RACE_PATH") == '        fn working() {}' ]]
 done
 export RACE_BLOB
 RACE_BLOB="$(printf 'concurrent selection\n' | git hash-object -w --stdin)"
-stash="$(PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh | tail -n 1)"
+stash="$(PATH="$scratch/bin:$PATH" python3 -I scripts/source_stash.py | tail -n 1)"
 [[ $(cat "$RACE_LOG") == blocked ]]
 rm "$RACE_LOG"
 PATH="$scratch/bin:$PATH" python3 -I scripts/restore_source.py "$stash"

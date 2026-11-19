@@ -27,14 +27,30 @@ class MutationEnvironment(unittest.TestCase):
             (root / "scripts/tests").mkdir(parents=True)
             (root / "plants").mkdir()
             shutil.copyfile(ROOT / "scripts/review_comparison.sh", root / "scripts/review_comparison.sh")
+            shutil.copyfile(ROOT / "scripts/worktree_diff.py", root / "scripts/worktree_diff.py")
+            (root / "index").touch()
             shutil.copyfile(ROOT / "scripts/mutation_ci.py", root / "scripts/mutation_ci.py")
             for name in ("scripts/tool_versions.py", "scripts/tests/perimeter.py",
                          "scripts/tests/runner_routing.py", "plants/test_runner.py"):
                 (root / name).write_text("# explicit unrelated-gate fixture stub\n")
             (root / "scripts/check_guardrails.py").write_text("# fixture admission stub\n")
-            (root / "scripts/make_patch.sh").write_text('if [ "$1" = --resolve-comparison ]; then echo "base base"; fi\n')
+            (root / "scripts/make_patch.sh").write_text('if [ "$1" = --resolve-comparison ]; then echo "$BASE_SHA $BASE_SHA"; fi\n')
             scripts = {
-                "git": '#!/bin/sh\nif [ "$1" = --no-replace-objects ]; then shift; fi\nwhile [ "$1" = -c ]; do shift 2; done\ncase "$1" in\nrev-parse) printf "%s\\n" "$TEST_ROOT";;\nshow-ref) echo tip;;\ndiff) echo mutation-fixture;;\n*) exit 90;;\nesac\n',
+                "git": """#!/bin/sh
+if [ "$1" = --no-replace-objects ]; then shift; fi
+while [ "$1" = -c ]; do shift 2; done
+case "$1" in
+    rev-parse)
+        if [ "$4" = index ]; then echo "$TEST_ROOT/index"; else echo "$TEST_ROOT"; fi
+        ;;
+    ls-files) exit 0;;
+    show-ref)
+        if [ "$3" = --hash ]; then echo "$BASE_SHA"; fi
+        ;;
+    diff) echo mutation-fixture;;
+    *) exit 90;;
+esac
+""",
                 "cargo": '''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
