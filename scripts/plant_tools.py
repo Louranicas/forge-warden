@@ -37,7 +37,6 @@ JUST_CONSUMERS = {
 }
 JUST_TESTS = {
     '.claude/hooks/test_guard.py': {
-        'Guard.test_stop_runs_gate_for_hidden_and_untracked_changes',
         'Guard.test_gate_launchers_validate_script_paths', 'Guard.test_gate_checkout_identity',
         'Guard.test_checkout_git_symlink_is_refused_before_git_discovery', 'Guard.test_fixed_just_recipes_select_checkout',
         'Guard.test_hook_installation_only_writes_selected_repository', 'Guard.test_recipe_helpers_are_checked_before_execution',
@@ -50,6 +49,7 @@ JUST_TESTS = {
     },
 }
 INDEPENDENT_TESTS = {
+    'Guard.test_stop_runs_gate_for_hidden_and_untracked_changes',
     'Guard.test_malformed_events_fail_closed',
     'Guard.test_protected_paths_all_spellings',
     'Guard.test_shell_tokenization_and_rust_writes',
@@ -366,7 +366,17 @@ def just_consumer(step, commands, cases):
         raise ValueError('cannot resolve gate working-directory before Just installation')
     directory = lexer.location(lexer.workspace, directory)
     run = step.get('run', '')
-    for _, word, _, arguments, cwd in commands['shell_calls'](run, lexer=lexer, directory=directory):
+    shell = step.get('shell', 'bash')
+    if not isinstance(run, str) or not isinstance(shell, str):
+        raise ValueError('gate run and shell must be strings before Just installation')
+    program, _, arguments_format = shell.partition(' ')
+    if shell in ('sh', 'bash') or (program in commands['SHELLS'] and arguments_format == '{0}'):
+        reader = commands['shell_calls']
+    elif shell == 'python' or (commands['PYTHONS'].fullmatch(program) and arguments_format in ('{0}', '-I {0}')):
+        reader = commands['python_calls']
+    else:
+        raise ValueError('unsupported gate shell before Just installation')
+    for _, word, _, arguments, cwd in reader(run, lexer=lexer, directory=directory):
         marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
         if word.startswith('(module)'):
             module = word.removeprefix('(module)')

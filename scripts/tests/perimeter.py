@@ -328,13 +328,16 @@ class Contracts(unittest.TestCase):
 
             StepDumper.add_representer(LiteralRun, lambda dumper, run:
                                        dumper.represent_scalar('tag:yaml.org,2002:str', run, style='|'))
+            StepDumper.add_representer(str, lambda dumper, value:
+                                       dumper.represent_scalar('tag:yaml.org,2002:str', value,
+                                                               style='"' if '\n' in value else None))
 
             def step_yaml(step):
                 if isinstance(step, str):
                     return step
                 if '\n' in step.get('run', ''):
                     step = dict(step, run=LiteralRun(step['run']))
-                return yaml.dump([step], Dumper=StepDumper, sort_keys=False, width=1000).removesuffix('...\n')
+                return yaml.dump([step], Dumper=StepDumper, sort_keys=False, width=float('inf')).removesuffix('...\n')
 
             def write_steps(blocks):
                 body = ''.join(step_yaml(block) for block in blocks)
@@ -381,15 +384,26 @@ class Contracts(unittest.TestCase):
                                  dict(dogfood, run='true\n' + dogfood['run']),
                                  dict(dogfood, run=dogfood['run'] + '\n\n'),
                                  {'run': "bash '${{ github.workspace }}/scripts/tests/dogfood.sh'\n",
-                                  'name': 'Run dogfood', 'if': 'success()', 'env': {'MODE': 'local'},
-                                  'shell': 'bash', 'working-directory': 'scripts'}):
-                        with self.subTest(multiline=step):
+                                  'name': 'Run dogfood\nfixture', 'if': 'success()', 'env': {'MODE': 'local\nfixture\n'},
+                                  'shell': 'bash', 'working-directory': 'scripts'},
+                                 {'run': "import subprocess\nsubprocess.check_call(['bash', 'dogfood.sh'])",
+                                  'shell': 'python', 'working-directory': 'scripts/tests'}):
+                        with self.subTest(step=step):
                             write_steps([*before, install, step, *after])
                             decoded = CAPS.workflow_jobs(path.read_text())['gate']['steps']
                             self.assertEqual(decoded[len(before) + 1], step)
                             check_ci(root)
                             write_steps([*before, step, install, *after])
                             with self.assertRaisesRegex(ValueError, 'install Just before running scripts/tests/dogfood.sh'):
+                                check_ci(root)
+                    for shell in ('python', 'python3 {0}', 'python3 -I {0}'):
+                        with self.subTest(independent_shell=shell):
+                            write_steps([*before, {'shell': shell, 'run': 'print("ready")'}, install, *after])
+                            check_ci(root)
+                    for shell in ('pwsh', 'python -m unittest {0}'):
+                        with self.subTest(unsupported_shell=shell):
+                            write_steps([*before, {'shell': shell, 'run': 'true'}, install, *after])
+                            with self.assertRaisesRegex(ValueError, 'unsupported gate shell'):
                                 check_ci(root)
                     python_source = "import subprocess; subprocess.run(['bash', '$GITHUB_WORKSPACE/scripts/tests/dogfood.sh'])"
                     for directory, run, expected in (
@@ -420,7 +434,7 @@ class Contracts(unittest.TestCase):
                         ('scripts', 'python3 -I tests/managed_review_bundle.py ReviewBundle.test_review_publishes_only_completed_outputs',
                          'scripts/tests/managed_review_bundle.py'),
                         ('scripts', 'python3 -I ../.claude/hooks/test_guard.py Guard.test_shell_tokenization_and_rust_writes'
-                                    ' Guard.test_stop_runs_gate_for_hidden_and_untracked_changes', '.claude/hooks/test_guard.py'),
+                                    ' Guard.test_fixed_just_recipes_select_checkout', '.claude/hooks/test_guard.py'),
                         ('scripts/tests', 'python3 managed_review_bundle.py ReviewBundle.test_review_publishes_only_completed_outputs -k isolation',
                          'scripts/tests/managed_review_bundle.py'),
                         ('.claude/hooks', 'python3 -m unittest test_guard.Guard.test_fixed_just_recipes_select_checkout -k unrelated',
@@ -489,6 +503,9 @@ class Contracts(unittest.TestCase):
                                 'python3 -I "${GITHUB_WORKSPACE}/.claude/hooks/guard.py" post',
                                 'env -C tests python3 -m unittest managed_review_bundle.ReviewBundle.test_candidate_cannot_supply_instructions_or_policy -k other',
                                 'env -C ../.claude/hooks python3 -munittest test_guard.Guard.test_shell_tokenization_and_rust_writes',
+                                'python3 ../.claude/hooks/test_guard.py Guard.test_shell_tokenization_and_rust_writes'
+                                ' Guard.test_stop_runs_gate_for_hidden_and_untracked_changes',
+                                'env -C ../.claude/hooks python3 -m unittest test_guard.Guard -k stop_runs_gate_for_hidden',
                                 'env -C tests python3 -m unittest managed_review_bundle.ReviewBundle -k candidate_cannot',
                                 'env -C tests true && bash dogfood.sh',
                                 'python3 -c "print(\'$GITHUB_WORKSPACE\')"',
