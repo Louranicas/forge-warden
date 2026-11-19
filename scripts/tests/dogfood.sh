@@ -244,7 +244,14 @@ made() {
  fi
  echo "PASS make_patch $name gives the clean patch"
 }
-made with-ids bash "$maker" "$base" "$attr_head" "$attr"
+made explicit-checkout bash "$maker" "$base" "$attr_head" "$attr"
+made explicit-git-directory bash "$maker" "$base" "$attr_head" "$attr/.git"
+git -C "$attr" config core.worktree "$candidate"
+if bash "$maker" "$base" "$attr_head" "$attr/.git" > "$sandbox/made.patch" || [[ -s "$sandbox/made.patch" ]]; then
+ echo 'FAIL make_patch accepted a Git directory configured for another checkout'
+ exit 1
+fi
+git --git-dir="$attr/.git" config --unset core.worktree
 made hostile-user-config env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM HOME="$sandbox/user-home" bash "$maker" "$base" "$attr_head" "$attr"
 made hostile-environment env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_DIFF_OPTS=--unified=0 GIT_EXTERNAL_DIFF=false bash "$maker" "$base" "$attr_head" "$attr"
 git -C "$attr" branch maker-base "$base"
@@ -429,7 +436,8 @@ if arguments.count(tree_option) != 1 or not re.fullmatch(rf"{word}(?:[ \t]+{word
 assignments = dict(word.split('=', 1) for word in shlex.split(prefix))
 if assignments.get('GIT_ATTR_NOSYSTEM') != '1':
     sys.exit(f'{document}: documented diff enabled system attributes')
-env = {**os.environ, **dict(item.split('=', 1) for item in shlex.split(exports))}
+env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+env.update(item.split('=', 1) for item in shlex.split(exports))
 empty_tree = subprocess.check_output(['git', 'hash-object', '-t', 'tree', '/dev/null'], cwd=repo, env=env, text=True).strip()
 attr_option = '--attr-source=' + empty_tree
 argv = shlex.split(arguments.replace(tree_option, attr_option))
@@ -439,17 +447,16 @@ if (not re.fullmatch(r'[a-zA-Z0-9][\w./-]*\.\.\.[a-zA-Z0-9][\w./-]*', argv[-1])
 sys.exit(subprocess.run(['git', *argv], cwd=repo, env={**env, **assignments}).returncode)
 PYDOC
 (
- unset GIT_ATTR_NOSYSTEM GIT_GRAFT_FILE GIT_NO_REPLACE_OBJECTS
  for document in README.md docs/RUNBOOK.md; do
   expected="$sub_patch"
   if [[ "$document" = docs/RUNBOOK.md ]]; then expected="$named_patch"; fi
   for setting in default diff.ignoreSubmodules=all diff.submodule=log diff.submodule=diff; do
    if [[ "$setting" != default ]]; then
-    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="${setting%%=*}" GIT_CONFIG_VALUE_0="${setting#*=}"
+    git -C "$sub" config "${setting%%=*}" "${setting#*=}"
    fi
-   python3 -I "$sandbox/document_diff.py" "$source_root" "$document" "$sub" "$sub_base" "$sub_head" > "$sandbox/made.patch"
+   GIT_DIR="$sandbox/cwd-sha256/.git" python3 -I "$sandbox/document_diff.py" "$source_root" "$document" "$sub" "$sub_base" "$sub_head" > "$sandbox/made.patch"
    same_bytes "$expected" "$sandbox/made.patch"
-   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+   if [[ "$setting" != default ]]; then git -C "$sub" config --unset "${setting%%=*}"; fi
   done
   echo "PASS $document produces the same attribute and submodule patch as make_patch"
  done
@@ -747,8 +754,7 @@ import sys
 root, sandbox = map(Path, sys.argv[1:])
 for document, marker, script, digest in (
     ("README.md", None, "quickstart.sh", "905c18adcfb720f427f6fd50709e5b96552a961a9be0075c0539d7f6b595f76b"),
-    ("docs/RUNBOOK.md", b'--repo "$repo"', "runbook.sh", "a63ddf958bd650f3abc68f4828cff691f2a04965e039c7c007bd9810e17daeb5"),
-    ("CLAUDE.md", b"--advisory --rank -", "advisory.sh", "8b69e54e6cd5e04f958b5d4e2905c100f685017e2a161566dc73ec5ace42429a"),
+    ("docs/RUNBOOK.md", b'--repo "$repo"', "runbook.sh", "31c5bc8304ae9db8beedb54314edf0c4ea41fcbe7e597f951f0480b33293993e"),
 ):
     blocks = re.findall(rb'^```bash\n(.*?)^```$', (root / document).read_bytes(), re.M | re.S)
     block, = blocks[:1] if marker is None else [body for body in blocks if marker in body]
@@ -767,20 +773,8 @@ SH
  cp -- "$sandbox/archive/$ddf_name/deep-diff-forge" "$sandbox/bin/deep-diff-forge"
  export QUICKSTART_RECEIPT="$sandbox/quickstart-args" GIT_NO_LAZY_FETCH=0 TMPDIR="$sandbox/doc-tmp"
  export evidence="$sandbox/doc-evidence" DOC_EXIT=0
- mkdir "$TMPDIR" "$evidence" target
+ mkdir "$TMPDIR" "$evidence"
  bash "$maker" "$before" "$tip" > "$evidence/change.patch"
- printf 'keep\n' > "$sandbox/sentinel"
- ln -s "$sandbox/sentinel" target/change.patch
- advisory() (
-  deep-diff-forge() { cat; }
-  cargo() {
-   while [[ "$#" -gt 1 && "$1" != --patch ]]; do shift; done
-   [[ "$1" = --patch && "$2" = "$TMPDIR"/*/* ]] || exit 93
-   same_bytes /dev/stdin "$2" && same_bytes "$2" "$evidence/change.patch" || exit 94
-   return "$DOC_EXIT"
-  }
-  source "$sandbox/advisory.sh"
- )
  quickstart() {
   local status=0
   source "$sandbox/quickstart.sh" || status=$?
@@ -790,26 +784,20 @@ SH
   fi
   return "$status"
  }
- check_cleanup() {
-  local actual=0
-  "$@" || actual=$?
-  [[ "$actual" = "$DOC_EXIT" && -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ]]
-  [[ "$(cat "$sandbox/sentinel")" = keep ]]
- }
  for DOC_EXIT in 0 8; do
-  check_cleanup quickstart
-  check_cleanup advisory
+  actual=0
+  quickstart || actual=$?
+  [[ "$actual" = "$DOC_EXIT" && -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ]]
   grep -Fxq "$before" "$QUICKSTART_RECEIPT"
   grep -Fxq "$tip" "$QUICKSTART_RECEIPT"
  done
  DOC_EXIT=0
- rm -- target/change.patch
- rmdir target
- bash "$sandbox/runbook.sh"
+ printf 'previous verdict\n' > "$evidence/verdict.json"
+ bash -C "$sandbox/runbook.sh"
  [[ "$(cat "$evidence/verdict.json")" = '{}' ]]
  rm -- "$QUICKSTART_RECEIPT"
  actual=0
- (cd scripts && bash "$sandbox/runbook.sh") 2> "$sandbox/output" || actual=$?
+ (cd scripts && bash -C "$sandbox/runbook.sh") 2> "$sandbox/output" || actual=$?
  [[ "$actual" = 2 && -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" && ! -e "$QUICKSTART_RECEIPT" ]]
  snapshot() { find . -type f -print0 | sort -z | xargs -0 sha256sum; }
  offline_refusal() {
@@ -841,15 +829,14 @@ SH
   offline_refusal "$tip" bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$tip" "$partial" "$sandbox/offline-evidence"
   offline_refusal "$before" bash "$maker" "$before" "$tip" "$partial"
   offline_refusal "$tip" bash "$maker" "$before" "$tip" "$partial"
-  for example in quickstart advisory; do
-   offline_refusal "$old_blob" "$example"
-   [[ ! -e "$QUICKSTART_RECEIPT" && -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ]]
-  done
+  offline_refusal "$old_blob" quickstart
+  [[ ! -e "$QUICKSTART_RECEIPT" && -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ]]
   for oid in "$before" "$tip"; do
+   offline_refusal "$oid" bash "$maker" "$before" "$tip" "$partial/.git"
    offline_refusal "$oid" python3 -I "$source_root/scripts/checkout_just.py" judge-bound
    offline_refusal "$oid" quickstart
    printf 'previous verdict\n' > "$evidence/verdict.json"
-   offline_refusal "$oid" bash "$sandbox/runbook.sh"
+   offline_refusal "$oid" bash -C "$sandbox/runbook.sh"
    [[ -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" ]]
    test ! -e "$QUICKSTART_RECEIPT"
   done

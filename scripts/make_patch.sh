@@ -52,7 +52,15 @@ start="$PWD"
 repo_args=()
 if [[ "$mode" = patch && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; then
   repo_args=(--git-dir="$PWD")
-  [[ "$(git "${repo_args[@]}" rev-parse --is-bare-repository)" = true ]] || exit 2
+  bare="$(git "${repo_args[@]}" rev-parse --is-bare-repository)" || exit 2
+  if [[ "$bare" != true ]]; then
+    [[ "$#" = 3 && "$bare" = false ]] || exit 2
+    cd -P -- "$OLDPWD"
+    CDPATH= cd -L -- "$repository"
+    [[ "${PWD##*/}" = .git && ! -L "$PWD" ]] || exit 2
+    cd -P -- "${PWD%/*}/"
+    [[ "$(git rev-parse --absolute-git-dir --show-toplevel && printf .)" = "$start"$'\n'"$PWD"$'\n.' ]] || exit 2
+  fi
 else
   while [[ "$mode" != review && "$mode" != check && "$PWD" != / && ! -L .git && ! -e .git && -x . ]]; do
     cd -P ..

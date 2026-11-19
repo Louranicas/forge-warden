@@ -71,20 +71,8 @@ cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
 ```
 
-This advisory check ranks committed changes. Its best result is a hold.
-
-```bash
-(
-  set -o pipefail
-  scratch="$(mktemp -d)" || exit 1
-  trap 'rm -rf -- "$scratch"' EXIT
-  patch="$scratch/change.patch"
-  scripts/make_patch.sh refs/heads/main HEAD > "$patch" || exit 1
-  deep-diff-forge --stdin-patch --rank --json < "$patch" \
-    | cargo run -q --bin forge-warden -- check --policy warden.toml \
-        --patch "$patch" --advisory --rank -
-)
-```
+For an advisory check, use the `judge` launcher in [Claude settings](.claude/settings.json#L16).
+It ranks committed changes from the merge base of `refs/remotes/origin/main` and `HEAD` to `HEAD`. Its best result is a hold.
 
 ## Subagents and skills
 

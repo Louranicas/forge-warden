@@ -125,7 +125,7 @@ For authority mode, run the following in the same Bash session.
 
 ```bash
 forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
-  --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json > "${evidence:?}/verdict.json"
+  --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json >| "${evidence:?}/verdict.json"
 echo "exit $?"
 ```
 
@@ -166,7 +166,7 @@ of the repository's objects that Git re-hashes, and refuses the run unless `--pa
   forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
     --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --repo "$repo" \
     --base "$base" --head "$head" --json
-) > "${evidence:?}/verdict.json"
+) >| "${evidence:?}/verdict.json"
 ```
 
 It needs `/usr/bin/prlimit`
@@ -180,8 +180,8 @@ Advisory mode instead (no allowlist needed; the best result is `hold`, exit 8): 
 yourself and hand the ranking over. Run the shared patch setup above first, then run these commands in that Bash session.
 
 ```bash
-"$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < "${evidence:?}/change.patch" > "${evidence:?}/rank.json"
-forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" --advisory --rank "${evidence:?}/rank.json" --json > "${evidence:?}/advisory-verdict.json"
+"$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < "${evidence:?}/change.patch" >| "${evidence:?}/rank.json"
+forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" --advisory --rank "${evidence:?}/rank.json" --json >| "${evidence:?}/advisory-verdict.json"
 ```
 
 ## 7. Check that the verdict is an authority verdict
