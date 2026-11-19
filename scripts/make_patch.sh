@@ -32,7 +32,8 @@ else
     echo 'usage: make_patch.sh [--resolve-comparison] <base> <head> [<repository>] | --review-comparison | --check-worktree' >&2
     exit 2
   fi
-  repository="${3:-.}"
+  repository="${3-.}"
+  [[ -n "$repository" ]] || { echo "make_patch: repository path is empty" >&2; exit 2; }
   base_ref="$1"
   head_ref="$2"
   [[ -n "$base_ref" ]] || { echo "make_patch: an explicit base is required" >&2; exit 2; }

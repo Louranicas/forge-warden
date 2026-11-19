@@ -2,9 +2,14 @@
 """Reviewed plant capabilities and fail-closed runtime/hosted provisioning checks."""
 import hashlib
 import json
+from pathlib import Path
 import re
+import runpy
 import subprocess
+import sys
 import tomllib
+
+sys.dont_write_bytecode = True
 
 PROBES = {
     'bash': ['bash', '--version'],
@@ -22,6 +27,7 @@ PROBES = {
     'ssh-keygen': ['ssh-keygen', '-Y', 'find-principals', '-f', '/dev/null', '-s', '/dev/null'],
 }
 HOSTED = {'bash', 'coreutils', 'git', 'python3', 'sh', 'ssh-keygen'}
+JUST_FIXTURES = {'scripts/tests/dogfood.sh', '.claude/hooks/test_guard.py', 'scripts/tests/managed_review_bundle.py'}
 
 
 def requirements(cases):
@@ -267,8 +273,15 @@ def check_ci(root):
             raise ValueError('plant CI clean-tree entrypoint must follow every gate command')
     available = set(HOSTED)
     values = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
+    commands = runpy.run_path(str(Path(__file__).with_name('script_commands.py')))
     for step in steps[:entry]:
         run = step.get('run', '')
+        if 'just' not in available:
+            for _, word, _ in commands['shell_calls'](run):
+                marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
+                target = word.removeprefix(marker)
+                if Path(target).name == 'just' or commands['repo_path'](target) in JUST_FIXTURES:
+                    raise ValueError('gate must install Just before running ' + target)
         if 'rustup toolchain install' in run and '--component' in run:
             if (step != {'run': run} or not re.fullmatch(
                     r'rustup toolchain install ([0-9.]+) --profile minimal '

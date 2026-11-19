@@ -321,6 +321,11 @@ ambiguous="$sandbox/checkouts/build/../attr-candidate"
  }
  refuse_before_git maker-base maker-head "$ambiguous"
  refuse_before_git --resolve-comparison maker-head HEAD "$ambiguous"
+ (
+  cd "$sandbox/other/attr-candidate"
+  refuse_before_git maker-base maker-head ""
+  refuse_before_git --resolve-comparison maker-base maker-head ""
+ )
  for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. repository repository/objects/..; do
   refuse_before_git "$base" "$attr_head" "$entry"
   refuse_before_git --resolve-comparison "$base" "$attr_head" "$entry"

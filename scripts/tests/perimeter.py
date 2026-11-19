@@ -153,6 +153,7 @@ class Contracts(unittest.TestCase):
 
     def copy_ci_fixture(self, root):
         for file in ("plants/catalog.json", "scripts/tool-versions.toml", "scripts/mutation_ci.py",
+                     "scripts/plant_tools.py", "scripts/script_commands.py", "rust-toolchain.toml", "Cargo.toml",
                      ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
             (root / file).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / file, root / file)
@@ -269,9 +270,7 @@ class Contracts(unittest.TestCase):
     def test_each_tool_or_compiler_drift_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for file in ("scripts/tool-versions.toml", "scripts/plant_tools.py", "scripts/mutation_ci.py", "plants/catalog.json", "rust-toolchain.toml", "Cargo.toml", ".github/workflows/ci.yml", ".github/workflows/mutation-baseline.yml"):
-                (root / file).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(ROOT / file, root / file)
+            self.copy_ci_fixture(root)
             workflow = root / ".github/workflows/ci.yml"
             original = workflow.read_text()
             versions = TOOLS.versions(ROOT)
@@ -302,8 +301,6 @@ class Contracts(unittest.TestCase):
             self.copy_ci_fixture(root)
             path = root / ".github/workflows/ci.yml"
             original = path.read_text()
-            for name in ('scripts/plant_tools.py', 'rust-toolchain.toml', 'Cargo.toml'):
-                shutil.copyfile(ROOT / name, root / name)
             steps = CAPS.workflow_jobs(original)['gate']['steps']
             node = yaml.compose(original, Loader=yaml.BaseLoader)
             for field in ('jobs', 'gate', 'steps'):
@@ -343,11 +340,23 @@ class Contracts(unittest.TestCase):
                         write_steps([*before, *replacement, *after])
                         with self.assertRaises(ValueError):
                             CAPS.check_ci(root)
-                reordered = [*before, *after]
-                reordered.insert(reordered.index(plant) + 1, install)
-                write_steps(reordered)
-                with self.assertRaises(ValueError):
-                    CAPS.check_ci(root)
+                remaining = [*before, *after]
+                last = remaining.index(plant)
+                first = remaining.index({'run': 'bash scripts/tests/dogfood.sh'}) if name == 'just' else last
+                write_steps([*remaining[:first], install, *remaining[first:]])
+                CAPS.check_ci(root)
+                for position in range(first + 1, last + 2):
+                    with self.subTest(tool=name, after=remaining[position - 1]):
+                        write_steps([*remaining[:position], install, *remaining[position:]])
+                        with self.assertRaises(ValueError):
+                            CAPS.check_ci(root)
+                if name == 'just':
+                    for run in ('just --version', 'python3 -I .claude/hooks/test_guard.py',
+                                'python3 -I scripts/tests/managed_review_bundle.py'):
+                        with self.subTest(first_consumer=run):
+                            write_steps([*before, {'run': run}, install, *after])
+                            with self.assertRaisesRegex(ValueError, 'install Just before'):
+                                CAPS.check_ci(root)
             for target in (compiler, plant):
                 write_steps([dict(step, **{'if': 'false'}) if step == target else step for step in steps])
                 with self.assertRaises(ValueError):
