@@ -27,7 +27,11 @@ PROBES = {
     'ssh-keygen': ['ssh-keygen', '-Y', 'find-principals', '-f', '/dev/null', '-s', '/dev/null'],
 }
 HOSTED = {'bash', 'coreutils', 'git', 'python3', 'sh', 'ssh-keygen'}
-JUST_FIXTURES = {'scripts/tests/dogfood.sh', '.claude/hooks/test_guard.py', 'scripts/tests/managed_review_bundle.py'}
+JUST_CONSUMERS = {
+    'scripts/tests/dogfood.sh', '.claude/hooks/test_guard.py', 'scripts/tests/managed_review_bundle.py',
+    'scripts/checkout_just.py', 'scripts/ci_fast.sh', 'scripts/ci_local.sh', 'scripts/check_plants.py',
+    '.githooks/pre-commit', '.githooks/pre-push', '.claude/hooks/guard.py', 'plants/run.py',
+}
 
 
 def requirements(cases):
@@ -248,6 +252,22 @@ def installed_tool(step, values):
     return inputs['tool']
 
 
+def just_consumer(step, commands):
+    directory = step.get('working-directory', '.')
+    if (not isinstance(directory, str) or not directory or '${{' in directory
+            or commands['repo_path'](directory) is None):
+        raise ValueError('cannot resolve gate working-directory before Just installation')
+    for _, word, _ in commands['shell_calls'](step.get('run', '')):
+        marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
+        target = Path(word.removeprefix(marker))
+        if target.name == 'just':
+            return 'just'
+        path = commands['repo_path'](str(Path(directory) / target))
+        if path in JUST_CONSUMERS:
+            return path
+    return None
+
+
 def check_ci(root):
     """Conservative check of this repository's owned workflow shape, not a general YAML parser."""
     check_timeouts(root)
@@ -277,11 +297,9 @@ def check_ci(root):
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
-            for _, word, _ in commands['shell_calls'](run):
-                marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
-                target = word.removeprefix(marker)
-                if Path(target).name == 'just' or commands['repo_path'](target) in JUST_FIXTURES:
-                    raise ValueError('gate must install Just before running ' + target)
+            consumer = just_consumer(step, commands)
+            if consumer:
+                raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
             if (step != {'run': run} or not re.fullmatch(
                     r'rustup toolchain install ([0-9.]+) --profile minimal '

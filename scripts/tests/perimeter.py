@@ -342,7 +342,9 @@ class Contracts(unittest.TestCase):
                             CAPS.check_ci(root)
                 remaining = [*before, *after]
                 last = remaining.index(plant)
-                first = remaining.index({'run': 'bash scripts/tests/dogfood.sh'}) if name == 'just' else last
+                first = last
+                if name == 'just':
+                    first = next(i for i, step in enumerate(remaining) if CAPS.just_consumer(step, vars(COMMANDS)))
                 write_steps([*remaining[:first], install, *remaining[first:]])
                 CAPS.check_ci(root)
                 for position in range(first + 1, last + 2):
@@ -351,12 +353,38 @@ class Contracts(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             CAPS.check_ci(root)
                 if name == 'just':
-                    for run in ('just --version', 'python3 -I .claude/hooks/test_guard.py',
-                                'python3 -I scripts/tests/managed_review_bundle.py'):
-                        with self.subTest(first_consumer=run):
-                            write_steps([*before, {'run': run}, install, *after])
-                            with self.assertRaisesRegex(ValueError, 'install Just before'):
+                    for directory, run, expected in (
+                        ('scripts/tests', 'just --version', 'just'),
+                        ('scripts/tests', 'bash dogfood.sh', 'scripts/tests/dogfood.sh'),
+                        ('scripts', 'bash ./tests/../tests/dogfood.sh', 'scripts/tests/dogfood.sh'),
+                        ('scripts/tests', 'python3 -I ../../.claude/hooks/test_guard.py', '.claude/hooks/test_guard.py'),
+                        ('scripts/tests', 'python3 -I ./managed_review_bundle.py', 'scripts/tests/managed_review_bundle.py'),
+                        ('scripts/..', 'python3 -I ./scripts/checkout_just.py fast', 'scripts/checkout_just.py'),
+                        ('scripts/tests', 'env bash ../ci_fast.sh', 'scripts/ci_fast.sh'),
+                        ('scripts', './ci_local.sh', 'scripts/ci_local.sh'),
+                        ('.', './.githooks/pre-commit', '.githooks/pre-commit'),
+                        ('.', 'bash .githooks/pre-push', '.githooks/pre-push'),
+                        ('.claude/hooks', 'python3 guard.py stop', '.claude/hooks/guard.py'),
+                        ('plants', 'python3 -I run.py --source .. --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/plants"'
+                                   ' --case candidate-judge-build', 'plants/run.py'),
+                    ):
+                        with self.subTest(directory=directory, first_consumer=run):
+                            consumer = {'working-directory': directory, 'run': run}
+                            later = [step for step in after if CAPS.just_consumer(step, vars(COMMANDS)) != expected]
+                            write_steps([*before, install, consumer, *later])
+                            CAPS.check_ci(root)
+                            write_steps([*before, consumer, install, *later])
+                            with self.assertRaises(ValueError) as refused:
                                 CAPS.check_ci(root)
+                            self.assertEqual(str(refused.exception), 'gate must install Just before running ' + expected)
+                    write_steps([*before, {'working-directory': 'scripts', 'run': 'bash dogfood.sh'}, install, *after])
+                    CAPS.check_ci(root)
+                    independent = [step for step in remaining[:last] if not CAPS.just_consumer(step, vars(COMMANDS))]
+                    write_steps([*independent, install, plant, *remaining[last + 1:]])
+                    CAPS.check_ci(root)
+                    write_steps([*independent, plant, install, *remaining[last + 1:]])
+                    with self.assertRaises(ValueError):
+                        CAPS.check_ci(root)
             for target in (compiler, plant):
                 write_steps([dict(step, **{'if': 'false'}) if step == target else step for step in steps])
                 with self.assertRaises(ValueError):
