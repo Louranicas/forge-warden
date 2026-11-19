@@ -48,7 +48,8 @@ def restore_paths(layer, revision, paths, env):
 def restore(stash, scratch):
     if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", stash):
         sys.exit("expected a full stash object ID")
-    local = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    local = {key: value for key, value in os.environ.items()
+             if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
     raw = {**local, "GIT_NO_REPLACE_OBJECTS": "1"}
     parent = git("rev-parse", "--verify", stash + "^1", env=raw).decode().strip()
     baseline = {**local, "GIT_INDEX_FILE": str(scratch / "base")}

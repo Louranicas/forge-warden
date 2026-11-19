@@ -15,7 +15,9 @@ could not run as **not verified**.
 3. **New behaviour has a failing-first test.** For each behaviour change, name the test and
    confirm it fails without the change: stash the source change
    with `just stash-source`. If it lists untracked files, stage the listed source before retrying.
-   Ignored Rust source also needs to be included. Mark the failing-first check **not verified** until the save succeeds. When the save prints a stash object ID,
+   Ignored Rust source also needs to be included. If a file or symlink replaces a directory, or a
+   directory replaces either, the save refuses and leaves the changes in place. Mark the failing-first check
+   **not verified** until the save succeeds. When the save prints a stash object ID,
    record it, run the test, and record the failure. Run `just restore-source OBJECT_ID` with that exact ID to restore the
    source and its staged changes. The saved entry remains in the stash list for recovery.
 4. **Mutation** (if `cargo-mutants` is installed): run `just mutants`.

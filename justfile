@@ -51,25 +51,7 @@ judge:
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
 
 stash-source:
-    #!/usr/bin/env bash
-    set -eu
-    unset "${!GIT_@}"
-    sources=':(glob)crates/*/src/**'
-    untracked="$(git ls-files --others --exclude-standard -- "$sources")"
-    ignored_rust="$(git ls-files --others --ignored --exclude-standard -- ':(glob)crates/*/src/**/*.rs')"
-    if [[ -n $untracked || -n $ignored_rust ]]; then
-        echo 'Failing-first check unverified. Stage the new source before saving:' >&2
-        printf '%s\n' ${untracked:+"$untracked"} ${ignored_rust:+"$ignored_rust"} >&2
-        exit 1
-    fi
-    tracked="$(git status --porcelain=v1 --no-renames --untracked-files=no -- "$sources")"
-    if grep -q '^AD ' <<< "$tracked"; then
-        echo 'Failing-first check unverified. Git stash cannot preserve a newly staged file missing from the working tree.' >&2
-        exit 1
-    fi
-    marker="forge-warden-source-$(python3 -I -c 'import uuid; print(uuid.uuid4())')"
-    git stash push --message "$marker" -- "$sources"
-    git stash list --fixed-strings --grep-reflog="$marker" --format=%H
+    bash scripts/stash_source.sh
 
 [positional-arguments]
 restore-source object:
