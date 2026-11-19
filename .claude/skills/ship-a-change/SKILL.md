@@ -14,7 +14,7 @@ could not run as **not verified**.
 2. **Docs build**: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`.
 3. **New behaviour has a failing-first test.** Identify the full commit ID of the intended
    pre-change baseline. Create a fresh disposable worktree at that commit with
-   `git -c core.hooksPath=/dev/null --no-replace-objects worktree add --detach "$isolated" "$baseline"`.
+   `git --no-replace-objects worktree add --detach "$isolated" "$baseline"`.
    Use an authorized scratch location. In that worktree, bring over only the named regression
    test and its required test fixtures. For an inline test, apply only the test hunks.
    Verify the checkout and test inputs represent that baseline plus the test, including the

@@ -63,3 +63,24 @@ for path in "$src/parser/new.rs" "$src/parser/ignored.rs"; do
     python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
     grep -Fxq "+++ b/$path" "$scratch/diff"
 done
+
+printf 'id.rs ident\n' > .git/info/attributes
+echo 'pub fn id() -> String { "$Id$".to_owned() }' > "$src/id.rs"
+git add -- "$src/id.rs"
+git commit -qm 'add identifier'
+base="$(git rev-parse HEAD)"
+printf 'notes ident\nid.rs filter=local\n' > .git/info/attributes
+git config filter.local.required false
+git config filter.local.clean ''
+python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff"
+grep -Fxq '+hidden' "$scratch/diff"
+printf 'id.rs ident\n' > .git/info/attributes
+echo 'pub fn id() -> String { "$Id: edited $".to_owned() }' > "$src/id.rs"
+git add -- "$src/id.rs"
+git diff --quiet "$base" -- "$src/id.rs"
+index_before="$(git hash-object --no-filters .git/index)"
+bytes_before="$(git hash-object --no-filters "$src/id.rs")"
+if python3 -I "$root/scripts/worktree_diff.py" "$base" > "$scratch/diff" 2> "$scratch/log"; then exit 1; fi
+grep -Fq "$src/id.rs" "$scratch/log"
+[[ ! -s "$scratch/diff" && $(git hash-object --no-filters .git/index) == "$index_before" ]]
+[[ $(git hash-object --no-filters "$src/id.rs") == "$bytes_before" ]]
