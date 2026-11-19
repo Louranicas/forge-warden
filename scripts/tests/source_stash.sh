@@ -20,7 +20,10 @@ done
 mkdir "$src/tree"
 echo leaf > "$src/tree/leaf"
 ln -s lib.rs "$src/link"
-git add .gitignore "$src"
+printf '        fn baseline() {}\n' > "$src/indented.rs"
+echo original > notes
+echo original > obsolete
+git add .gitignore notes obsolete "$src"
 git commit -qm base
 
 refuse_save() {
@@ -84,7 +87,18 @@ for new in new.rs ignored.rs; do
     grep -Fq "$new" log
     rm "$src/$new"
 done
+echo draft > advisory
+echo staged > notes
+git rm -q obsolete
+git add advisory notes
+echo working > notes
 stash="$(bash scripts/stash_source.sh | tail -n 1)"
+for snapshot in "$stash" "$stash^2"; do
+    git diff --exit-code "$stash^1" "$snapshot" -- ':(exclude,glob)crates/*/src/**'
+done
+[[ $(git show :advisory) == draft && $(git show :notes) == staged && $(cat notes) == working ]]
+if git ls-files --error-unmatch obsolete >/dev/null 2>&1; then exit 1; fi
+git diff --cached --exit-code HEAD -- "$src"
 [[ -f "$src/editor.swp" && $(cat "$src/lib.rs") == base ]]
 
 echo later > "$src/staged-only.rs"
@@ -120,3 +134,33 @@ for attempt in 1 2; do
     [[ ! -e "$src/removed.rs" ]]
     if git ls-files --error-unmatch -- "$src/removed.rs" >/dev/null 2>&1; then exit 1; fi
 done
+
+git restore --source=HEAD --staged --worktree -- "$src"
+git config core.whitespace indent-with-non-tab
+for whitespace in fix error; do
+    git config apply.whitespace "$whitespace"
+    printf '        fn staged() {}\n' > "$src/indented.rs"
+    git add "$src/indented.rs"
+    printf '        fn working() {}\n' > "$src/indented.rs"
+    stash="$(bash scripts/stash_source.sh | tail -n 1)"
+    git diff --exit-code HEAD -- "$src/indented.rs"
+    git diff --cached --exit-code HEAD -- "$src/indented.rs"
+    python3 -I scripts/restore_source.py "$stash"
+    [[ $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
+    [[ $(cat "$src/indented.rs") == '        fn working() {}' ]]
+done
+
+(
+    git() {
+        command git "$@" || return $?
+        if [[ " $* " == *' stash push '* ]]; then return 17; fi
+    }
+    export -f git
+    result=0
+    bash scripts/stash_source.sh > log || result=$?
+    [[ $result == 17 ]]
+)
+[[ $(tail -n 1 log) == "$(git rev-parse refs/stash)" ]]
+python3 -I scripts/restore_source.py "$(tail -n 1 log)"
+[[ $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
+[[ $(cat "$src/indented.rs") == '        fn working() {}' ]]

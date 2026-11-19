@@ -18,9 +18,10 @@ could not run as **not verified**.
    Ignored Rust source also needs to be included. If a file or symlink replaces a directory, or a
    directory replaces either, the save refuses and leaves the changes in place. It also refuses when
    source edits are staged but the working source matches HEAD. Mark the failing-first check
-   **not verified** until the save succeeds. When the save prints a stash object ID,
-   record it, run the test, and record the failure. Run `just restore-source OBJECT_ID` with that exact ID to restore the
-   source and its staged changes. The saved entry remains in the stash list for recovery.
+   **not verified** until the save succeeds. Record any printed stash object ID, including on a failed save.
+   After a successful save, run the test and record the failure. Run `just restore-source OBJECT_ID`
+   with the recorded ID to recover the working and staged source changes. The stash retains those
+   changes for recovery. Unrelated staged edits stay in the live index.
 4. **Mutation** (if `cargo-mutants` is installed): run `just mutants`.
    Every surviving mutant is a missing test: add it, or explain why the mutant is equivalent.
 5. **Judge the change with its own policy** (if `deep-diff-forge` is installed): `just judge`.

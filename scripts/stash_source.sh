@@ -3,7 +3,8 @@ set -euo pipefail
 for name in "${!GIT_@}"; do
     if [[ $name != GIT_CONFIG_NOSYSTEM ]]; then unset "$name"; fi
 done
-sources=':(glob)crates/*/src/**'
+scope='crates/*/src/**'
+sources=":(glob)$scope"
 untracked="$(git ls-files --others --exclude-standard -- "$sources")"
 ignored_rust="$(git ls-files --others --ignored --exclude-standard -- ':(glob)crates/*/src/**/*.rs')"
 if [[ -n $untracked || -n $ignored_rust ]]; then
@@ -35,5 +36,18 @@ if staged_source and not subprocess.check_output(
     sys.exit("Failing-first check unverified. Source edits are staged, but the working source matches HEAD.")
 ' "$sources"
 marker="forge-warden-source-$(python3 -I -c 'import uuid; print(uuid.uuid4())')"
-git stash push --message "$marker" -- "$sources"
-git stash list --fixed-strings --grep-reflog="$marker" --format=%H
+scratch="$(mktemp -d)"
+trap 'rm -rf -- "$scratch"' EXIT
+index="$scratch/index"
+cp -- "$(git rev-parse --git-path index)" "$index"
+GIT_INDEX_FILE="$index" git reset -q HEAD -- ":(exclude,glob)$scope"
+status=0
+GIT_INDEX_FILE="$index" git -c apply.whitespace=nowarn stash push --message "$marker" -- "$sources" || status=$?
+stored="$(git stash list --fixed-strings --grep-reflog="$marker" --format=%H)"
+if [[ -n $stored ]]; then
+    printf '%s\n' "$stored"
+    if [[ $status == 0 ]]; then
+        git reset -q "$stored^1" -- "$sources"
+    fi
+fi
+exit "$status"
