@@ -191,9 +191,11 @@ editors that read JSON Schema (taplo, Even Better TOML) flag most of these as yo
 
 In both modes Git reads the patch independently. Its facts can only add change kinds to what
 the ranking reports, never remove them. Make the patch with
-[`scripts/make_patch.sh`](scripts/make_patch.sh) `<base> <head>`, taken from the revision you
-installed: it writes the same bytes whatever your Git configuration, environment and current
-directory are. A plain `git diff` does not: `diff.noprefix` drops the `a/` `b/` prefixes (such a
+[`scripts/make_patch.sh`](scripts/make_patch.sh) `<base> <head> [<repository>]` from the revision you
+installed. The unreleased helper accepts a directory in the checkout or the bare repository
+directory itself. If a symlink followed by `..` makes the repository selection ambiguous,
+pass the physical path to the intended repository. The helper generates the patch in an isolated
+repository. A plain `git diff` uses the caller’s settings: `diff.noprefix` drops the `a/` `b/` prefixes (such a
 patch is refused), `diff.relative` in a subdirectory leaves out every change outside it, and
 `ignore = all` in `.gitmodules` or `diff.ignoreSubmodules` leaves out a submodule change, and a
 `.gitattributes` the change commits (`*.rs -diff`) turns its text into binary sections the ranker

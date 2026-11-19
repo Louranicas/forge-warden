@@ -30,7 +30,7 @@ python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else "Python
 
 **Run for v0.2.0** (2026-11-16) with `--tag v0.2.0` in place of `--rev`: from the GitLab tag into a scratch root
 with a fresh `CARGO_HOME`, then that binary in a container without network or Git allowlist, where it
-printed every line of the README's advisory sample, byte for byte and in order (`…` skips lines). For 0.2.1 the same run is a release step after the
+printed every displayed line of the v0.2.0 README's advisory sample in order. For 0.2.1 the same run is a release step after the
 owner's tag (`docs/RELEASE-0.2.1.md`); until it is recorded there, 0.2.1 has not been installed this way.
 
 Pin what you deploy: a release tag, or a commit you have reviewed.
@@ -135,9 +135,8 @@ forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
 echo "exit $?"
 ```
 
-`make_patch.sh` writes the change from the merge base of `refs/heads/main` and `HEAD` to `HEAD`, committed
-changes only, and the same bytes whatever your Git configuration, environment and current
-directory are. A plain `git diff` is not safe here: with `diff.noprefix` it drops the `a/` `b/`
+`make_patch.sh` writes committed changes from the merge base of `refs/heads/main` and `HEAD`
+to `HEAD`. A plain `git diff` is not safe here: with `diff.noprefix` it drops the `a/` `b/`
 every path starts with (forge-warden refuses such a patch as unverifiable, exit 8, because Git
 would read `scripts/x` as `x`), and with `diff.relative` in a subdirectory it writes a well-formed
 patch that leaves out every change outside that directory, which nothing can check for you. The
@@ -152,10 +151,9 @@ from the checkout root. Git still reads `info/attributes` in the common Git dire
 `*.rs -diff` rule can hide the changed Rust lines. Use the isolated `make_patch.sh` from step 2
 for canonical patch bytes.
 
-What a verdict is about: these patch bytes, with paths read from the repository root.
-forge-warden does not check that the patch is the whole change between two commits; `--base`
-and `--head` are recorded as your claims, unverified. Whoever makes the patch is part of the
-trust boundary, so make it with `make_patch.sh` or with `scripts/dogfood.sh`, not by hand.
+Without repository binding, the verdict covers the supplied patch bytes, with paths read
+from the repository root. Any base and head IDs remain the caller’s unverified claims.
+The patch producer is therefore part of the trust boundary.
 
 For bound mode in unreleased 0.3.0 (ADR 0012), add `--repo DIR --base BASE --head HEAD` (full commit ids) to
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy

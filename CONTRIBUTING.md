@@ -65,7 +65,9 @@ in that image. A passing local toolbox run certifies only the toolbox.
 
 Run the command for the check you need from the checkout root.
 
-Mutation testing
+Mutation testing compares tracked Rust files under each crate’s `src/` directory, including
+staged and unstaged edits, with the merge base of `refs/remotes/origin/main` and HEAD.
+Stage new Rust source files before running the command so they enter the comparison.
 
 ```bash
 bash -c '[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py mutants'

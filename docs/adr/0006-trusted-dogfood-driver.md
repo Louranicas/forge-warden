@@ -47,8 +47,9 @@ Without a producer section the driver explicitly uses `--advisory --rank`, repor
 cannot PASS, and preserves HOLD/FAIL. Advisory HOLD cannot enter the signed-acknowledgement path.
 Evidence records the selected mode; rank.json exists only for advisory runs. Authority evidence
 records the actual producer digest in the verdict and hashes the binary in provenance.txt.
-Base/head are passed as unverified claims; the separate signed receipt still binds the external
-subject and exact verdict digest.
+In v1, base and head were unverified claims. For the current authority-mode binding, see
+[ADR 0012, D8](0012-bound-mode.md#d8-a-gate-can-require-bound-mode-review-s1). The separate signed receipt
+binds the external subject and exact verdict digest.
 
 The local developer gate uses the candidate's policy and judge. Its comparison and tool
 requirements are in [Contributing](../../CONTRIBUTING.md#setup).
@@ -85,8 +86,10 @@ scratch candidate, one added secret-shaped line each):
 the caller's environment, the judge read `scripts/x` as `x` and an authority-mode run passed a
 change to a protected file (ledger Q54).
 
-**Decision.** `scripts/make_patch.sh` makes the patch, and the driver calls the trusted checkout's
-copy of it. The script unsets every `GIT_` variable, creates a new bare repository, names the
+**Decision.** After checking the trusted checkout against the base commit, the driver extracts
+`scripts/make_patch.sh` from that commit and verifies the copy against its Git blob ID before
+using it to check the candidate checkout and make the patch. The patch-maker clears inherited
+`GIT_` variables, creates a new bare repository, names the
 candidate's object directory in that repository's `objects/info/alternates`, and diffs there with
 attributes taken from the empty tree. So for the diff:
 
