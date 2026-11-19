@@ -5,7 +5,7 @@ import sys
 
 
 if len(sys.argv) != 2 or sys.argv[1] not in {
-    "install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review",
+    "install-hooks", "fast", "ci", "mutants", "judge", "judge-local", "judge-bound", "review",
 }:
     sys.exit("expected one fixed checkout recipe")
 justfile = Path.cwd() / "justfile"

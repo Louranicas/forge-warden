@@ -98,12 +98,16 @@ _check-inputs: (_check-script "worktree_diff.py")
 # Judge the current branch with this repository's own policy (needs deep-diff-forge on PATH).
 # Advisory mode: the ranking is supplied, so the verdict is at best hold. Committed changes only:
 # the patch-maker diffs commits, not the work tree.
-judge: (_check-script "make_patch.sh") _check-inputs
+judge: (_judge "refs/remotes/origin/main")
+
+judge-local: (_judge "refs/heads/main")
+
+_judge $comparison: (_check-script "make_patch.sh") _check-inputs
     #!/usr/bin/env bash
     set -euo pipefail
     patch="$(mktemp)"
     trap 'rm -f -- "$patch"' EXIT
-    scripts/make_patch.sh refs/heads/main HEAD > "$patch"
+    scripts/make_patch.sh "$comparison" HEAD > "$patch"
     deep-diff-forge --stdin-patch --rank --json < "$patch" | cargo run --quiet --bin forge-warden -- check --policy warden.toml --patch "$patch" --advisory --rank -
 
 judge-bound: (_check-script "make_patch.sh") _check-inputs

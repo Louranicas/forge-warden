@@ -71,7 +71,7 @@ cargo test -p forge-warden-core                      # the engine alone
 cargo run -q --bin forge-warden -- lint warden.toml  # validate a policy
 ```
 
-For an advisory check, use the `judge` launcher in [Claude settings](.claude/settings.json#L16).
+For an advisory check, use the `judge-local` launcher in [Claude settings](.claude/settings.json#L17).
 It ranks committed changes from the merge base of the local branch `refs/heads/main` and `HEAD` to `HEAD`. Its best result is a hold.
 
 ## Subagents and skills

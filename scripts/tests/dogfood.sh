@@ -191,6 +191,7 @@ echo 'PASS candidate .gitattributes (root -diff, subdirectory binary) do not hid
 clean_patch="$out/change.patch"
 # Byte equality with sha256sum, which the gate's tool set has; cmp and diff are not in it.
 same_bytes() { [ "$(sha256sum < "$1")" = "$(sha256sum < "$2")" ]; }
+snapshot() (cd -- "${1:-.}" && find . -type f -print0 | sort -z | xargs -0 sha256sum)
 grep -q '^diff --git a/sub/k.rs b/sub/k.rs$' "$clean_patch" || { echo 'FAIL git environment: the clean patch has no a/ b/ prefixes'; exit 1; }
 gitenv() {
  name="$1"; shift
@@ -276,8 +277,11 @@ for role in candidate trusted; do
  [[ ! -e "$sandbox/refused" ]]
 done
 git clone -q --bare "$attr" "$sandbox/mirror.git"
-mkdir "$sandbox/redirected" "$sandbox/git-probe"
-ln -s "$sandbox/mirror.git" "$sandbox/redirected/.git"
+mkdir "$sandbox/redirected-bare" "$sandbox/git-probe"
+snapshot "$sandbox/mirror.git/objects" > "$sandbox/bare-before"
+ln -s "$sandbox/mirror.git" "$sandbox/redirected-bare/.git"
+ln -s "$sandbox/mirror.git" "$sandbox/redirected-bare/repository"
+[[ "$(git --git-dir="$sandbox/mirror.git" rev-parse --is-bare-repository)" = true ]]
 cat > "$sandbox/git-probe/git" <<'SH'
 #!/bin/sh
 touch "$PROBE_RECEIPT"
@@ -285,15 +289,31 @@ exit 91
 SH
 chmod +x "$sandbox/git-probe/git"
 (
- cd "$sandbox/redirected"
+ cd "$sandbox/redirected-bare"
  export PATH="$sandbox/git-probe:$PATH" PROBE_RECEIPT="$sandbox/git-called"
- for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. .; do
-  if [[ "$entry" = . ]]; then cd -L .git; fi
-  actual=0
-  bash "$maker" "$base" "$attr_head" "$entry" > "$sandbox/made.patch" 2> "$sandbox/made.err" || actual=$?
+ refuse_before_git() {
+  local actual=0
+  bash "$maker" "$@" > "$sandbox/made.patch" 2> "$sandbox/made.err" || actual=$?
   [[ "$actual" = 2 && ! -s "$sandbox/made.patch" && ! -e "$PROBE_RECEIPT" ]]
+ }
+ for entry in "$PWD/.git" .git/ ./.git/. .git/objects/.. repository; do
+  refuse_before_git "$base" "$attr_head" "$entry"
+  refuse_before_git --resolve-comparison "$base" "$attr_head" "$entry"
+ done
+ for link in .git repository; do
+  [[ -L "$link" && "$link" -ef "$sandbox/mirror.git" ]]
+  (
+   cd -L -- "$link"
+   refuse_before_git "$base" "$attr_head"
+   refuse_before_git "$base" "$attr_head" .
+   refuse_before_git --resolve-comparison "$base" "$attr_head"
+   refuse_before_git --check-worktree
+   refuse_before_git --review-comparison
+  )
  done
 )
+snapshot "$sandbox/mirror.git/objects" > "$sandbox/bare-after"
+same_bytes "$sandbox/bare-before" "$sandbox/bare-after"
 made explicit-bare bash "$maker" "$base" "$attr_head" "$sandbox/mirror.git"
 (cd "$sandbox/mirror.git" && made default-bare bash "$maker" "$base" "$attr_head")
 git init -q "$sandbox/super"
@@ -633,13 +653,18 @@ export EXPECTED_TRUSTED="$trusted"
 # Q58 S3 (third read): the trusted checkout given as the candidate, by its path and through a
 # symbolic link, and an ignored file in the trusted checkout, each refuse before any effect.
 export BUILD_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
-mkdir -p "$sandbox/redirected/sub"
-ln -s "$candidate/.git" "$sandbox/redirected/.git"
-if bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$sandbox/redirected/sub" "$sandbox/redirected-out" > "$sandbox/output" 2>&1; then
+mkdir "$sandbox/redirected-checkout" "$sandbox/redirected-checkout/sub"
+ln -s "$candidate/.git" "$sandbox/redirected-checkout/.git"
+[[ -L "$sandbox/redirected-checkout/.git" && "$sandbox/redirected-checkout/.git" -ef "$candidate/.git" ]]
+[[ "$(git -C "$candidate" rev-parse --is-bare-repository)" = false ]]
+snapshot "$candidate/.git/objects" > "$sandbox/checkout-before"
+if bash "$trusted/scripts/dogfood.sh" "${LOCAL[@]}" "$base" "$head" "$sandbox/redirected-checkout/sub" "$sandbox/redirected-out" > "$sandbox/output" 2>&1; then
  exit 1
 fi
 grep -q 'invalid checkout .git entry' "$sandbox/output"
 test ! -e "$sandbox/redirected-out"
+snapshot "$candidate/.git/objects" > "$sandbox/checkout-after"
+same_bytes "$sandbox/checkout-before" "$sandbox/checkout-after"
 ln -s "$trusted" "$sandbox/trusted-link"
 git -C "$trusted" worktree add -q --detach "$candidate/nested-base" "$base"
 git -C "$candidate" worktree add -q --detach "$trusted/nested-candidate" "$head"
@@ -759,14 +784,11 @@ exit 8
 SH
  chmod +x "$sandbox/advisory-bin/"{cargo,deep-diff-forge}
  bash "$maker" "$before" "$tip" > "$sandbox/local-main.patch"
- for comparison in local-only remote-at-head; do
-  if [[ "$comparison" = remote-at-head ]]; then
-   git remote add origin "$trusted"
-   git update-ref refs/remotes/origin/main "$tip"
-  fi
-  export ADVISORY_RESULT="$sandbox/$comparison"
-  mkdir "$ADVISORY_RESULT"
-  CLAUDE_PROJECT_DIR="$PWD" PATH="$sandbox/advisory-bin:$PATH" python3 -I - "$source_root" <<'PYJUDGE'
+ check_advisory() {
+  local recipe="$1" expected_patch="$2"
+  export ADVISORY_RESULT
+  ADVISORY_RESULT="$(mktemp -d "$sandbox/advisory-XXXXXXXX")"
+  CLAUDE_PROJECT_DIR="$PWD" PATH="$sandbox/advisory-bin:$PATH" python3 -I - "$source_root" "$recipe" <<'PYJUDGE'
 import json
 from pathlib import Path
 import shlex
@@ -774,7 +796,8 @@ import subprocess
 import sys
 
 root = Path(sys.argv[1])
-launcher = ["bash", "-c", "[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && exec python3 -I scripts/checkout_just.py judge"]
+launcher = ["bash", "-c", "[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && "
+            "exec python3 -I scripts/checkout_just.py " + shlex.quote(sys.argv[2])]
 command = shlex.join(launcher)
 settings = json.loads((root / ".claude/settings.json").read_bytes())
 assert f"Bash({command})" in settings["permissions"]["allow"]
@@ -782,10 +805,18 @@ event = {"tool_name": "Bash", "tool_input": {"command": command}}
 subprocess.run([sys.executable, "-I", root / ".claude/hooks/guard.py", "pre"], input=json.dumps(event), text=True, check=True)
 assert subprocess.run(launcher).returncode == 8
 PYJUDGE
-  same_bytes "$sandbox/local-main.patch" "$ADVISORY_RESULT/ranked"
-  same_bytes "$sandbox/local-main.patch" "$ADVISORY_RESULT/judged"
+  same_bytes "$expected_patch" "$ADVISORY_RESULT/ranked"
+  same_bytes "$expected_patch" "$ADVISORY_RESULT/judged"
   [[ ! -e "$(cat "$ADVISORY_RESULT/path")" ]]
- done
+ }
+ check_advisory judge-local "$sandbox/local-main.patch"
+ git remote add origin "$trusted"
+ remote_tip="$(git -c user.name=Fixture -c user.email=fixture@example.invalid commit-tree "$base^{tree}" -p "$base" -m remote)"
+ git update-ref refs/remotes/origin/main "$remote_tip"
+ bash "$maker" "$base" "$tip" > "$sandbox/remote-main.patch"
+ if same_bytes "$sandbox/local-main.patch" "$sandbox/remote-main.patch"; then exit 1; fi
+ check_advisory judge "$sandbox/remote-main.patch"
+ check_advisory judge-local "$sandbox/local-main.patch"
  git update-ref refs/remotes/origin/main "$before"
  tree="$(git rev-parse HEAD:crates)"
  git -C "$candidate" fetch -q "$partial" "$tip"
@@ -860,7 +891,6 @@ SH
  actual=0
  (cd scripts && bash -C "$sandbox/runbook.sh") 2> "$sandbox/output" || actual=$?
  [[ "$actual" = 2 && -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" && ! -e "$QUICKSTART_RECEIPT" ]]
- snapshot() { find . -type f -print0 | sort -z | xargs -0 sha256sum; }
  offline_refusal() {
   local oid="$1" object
   shift

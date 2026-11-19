@@ -33,25 +33,23 @@ else
     exit 2
   fi
   repository="${3:-.}"
-  if [[ "$#" = 3 && "$repository" != /* ]]; then
-    repository="$PWD/$repository"
-  fi
-  if [[ "/$repository/" = */.git/* ]]; then
-    python3 -I - "$repository" <<'PYPATH'
+  base_ref="$1"
+  head_ref="$2"
+  [[ -n "$base_ref" ]] || { echo "make_patch: an explicit base is required" >&2; exit 2; }
+fi
+if [[ "$repository" != /* ]]; then
+  repository="$PWD/$repository"
+fi
+python3 -I - "$repository" <<'PYPATH'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 for entry in (*reversed(path.parents), path):
-    if entry.name == ".git" and entry.is_symlink():
-        print(f"make_patch: symlinked .git entry: {entry}", file=sys.stderr)
+    if entry.is_symlink():
+        print(f"make_patch: symlinked repository path: {entry}", file=sys.stderr)
         sys.exit(2)
 PYPATH
-  fi
-  base_ref="$1"
-  head_ref="$2"
-  [[ -n "$base_ref" ]] || { echo "make_patch: an explicit base is required" >&2; exit 2; }
-fi
 while IFS= read -r name; do
   case "$mode/$name" in
     check/GIT_CONFIG_NOSYSTEM|check/GIT_CONFIG_SYSTEM|check/GIT_CONFIG_GLOBAL) continue ;;
@@ -70,9 +68,8 @@ if [[ "$mode" = patch && ! -L .git && ! -e .git && -f HEAD && -d objects ]]; the
   bare="$(git "${repo_args[@]}" rev-parse --is-bare-repository)" || exit 2
   if [[ "$bare" != true ]]; then
     [[ "$#" = 3 && "$bare" = false ]] || exit 2
-    CDPATH= cd -L -- "$repository"
-    [[ "${PWD##*/}" = .git && ! -L "$PWD" ]] || exit 2
-    cd -P -- "${PWD%/*}/"
+    [[ "${PWD##*/}" = .git ]] || exit 2
+    cd -P ..
     [[ "$(git rev-parse --absolute-git-dir --show-toplevel && printf .)" = "$start"$'\n'"$PWD"$'\n.' ]] || exit 2
   fi
 else

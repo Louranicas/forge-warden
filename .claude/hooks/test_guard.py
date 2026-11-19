@@ -445,7 +445,7 @@ class Guard(unittest.TestCase):
                 self.assertFalse(list(self.root.glob(".review-*")))
 
     def test_fixed_just_recipes_select_checkout(self):
-        recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-bound", "review")
+        recipes = ("install-hooks", "fast", "ci", "mutants", "judge", "judge-local", "judge-bound", "review")
         justfile = self.root / "justfile"
         justfile.write_text("\n".join(f'{name}:\n    @echo {name} > receipt\n' for name in recipes))
         receipt = self.root / "receipt"
@@ -556,6 +556,7 @@ class Guard(unittest.TestCase):
             "review": ("make_patch.sh",),
             "mutants": ("make_patch.sh", "worktree_diff.py"),
             "judge": ("make_patch.sh", "worktree_diff.py"),
+            "judge-local": ("make_patch.sh", "worktree_diff.py"),
             "judge-bound": ("make_patch.sh", "worktree_diff.py"),
         }
         for recipe, names in helpers.items():
@@ -579,7 +580,7 @@ class Guard(unittest.TestCase):
         (self.root / ".cargo/config.toml").write_text("[build]\n")
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         subprocess.run(["git", "init", "-q", "--template=", self.root], env=env, check=True)
-        for recipe in ("mutants", "judge", "judge-bound"):
+        for recipe in ("mutants", "judge", "judge-local", "judge-bound"):
             with self.subTest(recipe=recipe, forbidden="Cargo configuration"):
                 result = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, recipe], cwd=self.root,
                                         capture_output=True)
