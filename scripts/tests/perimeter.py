@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -318,9 +319,16 @@ class Contracts(unittest.TestCase):
             def consumer_path(step):
                 return CAPS.just_consumer(step, vars(COMMANDS), cases)
 
+            def step_yaml(step):
+                if isinstance(step, str):
+                    return step
+                if '\n' in step.get('run', ''):
+                    return ('- working-directory: ' + step['working-directory'] + '\n  run: |\n'
+                            + textwrap.indent(step['run'], '    '))
+                return yaml.safe_dump([step], sort_keys=False, width=1000)
+
             def write_steps(blocks):
-                body = ''.join(block if isinstance(block, str) else
-                               yaml.safe_dump([block], sort_keys=False, width=1000) for block in blocks)
+                body = ''.join(step_yaml(block) for block in blocks)
                 path.write_text(original[:start] + textwrap.indent(body, ' ' * node.start_mark.column) + original[end:])
 
             for name in ('just', 'cargo-mutants'):
@@ -361,6 +369,29 @@ class Contracts(unittest.TestCase):
                 if name == 'just':
                     for directory, run, expected in (
                         ('scripts/tests', 'just --version', 'just'),
+                        ('.', 'env -C scripts/tests bash dogfood.sh', 'scripts/tests/dogfood.sh'),
+                        ('scripts', 'env --chdir=tests bash dogfood.sh', 'scripts/tests/dogfood.sh'),
+                        ('.', 'env -Cscripts env -Ctests python3 -I managed_review_bundle.py',
+                         'scripts/tests/managed_review_bundle.py'),
+                        ('scripts/tests', 'env -iC ../../.claude/hooks python3 test_guard.py Guard',
+                         '.claude/hooks/test_guard.py'),
+                        ('scripts', 'env --chdir tests bash -c "bash dogfood.sh"', 'scripts/tests/dogfood.sh'),
+                        ('scripts', "bash '${{ github.workspace }}/scripts/tests/dogfood.sh'", 'scripts/tests/dogfood.sh'),
+                        ('${{ github.workspace }}/scripts', 'env -C tests python3 managed_review_bundle.py',
+                         'scripts/tests/managed_review_bundle.py'),
+                        ('scripts', 'env -C "${{ github.workspace }}/.claude/hooks" python3 guard.py stop',
+                         '.claude/hooks/guard.py'),
+                        ('.', 'env -C plants python3 run.py --case candidate-judge-build', 'plants/run.py'),
+                        ('.', 'env -C scripts/tests python3 -c "import subprocess; subprocess.run([\'bash\', \'dogfood.sh\'])"',
+                         'scripts/tests/dogfood.sh'),
+                        ('scripts', 'python3 -c "import subprocess; subprocess.run([\'bash\', \'dogfood.sh\'], cwd=\'tests\')"',
+                         'scripts/tests/dogfood.sh'),
+                        ('.', 'env -C scripts/tests python3 - <<PY\nimport subprocess\nsubprocess.run(["bash", "dogfood.sh"])\nPY\n',
+                         'scripts/tests/dogfood.sh'),
+                        ('scripts', 'python3 -I tests/managed_review_bundle.py ReviewBundle.test_review_publishes_only_completed_outputs',
+                         'scripts/tests/managed_review_bundle.py'),
+                        ('scripts', 'python3 -I ../.claude/hooks/test_guard.py Guard.test_shell_tokenization_and_rust_writes'
+                                    ' Guard.test_stop_runs_gate_for_hidden_and_untracked_changes', '.claude/hooks/test_guard.py'),
                         ('scripts/tests', 'bash dogfood.sh', 'scripts/tests/dogfood.sh'),
                         ('scripts', 'bash ./tests/../tests/dogfood.sh', 'scripts/tests/dogfood.sh'),
                         ('scripts/tests', 'python3 -I ../../.claude/hooks/test_guard.py', '.claude/hooks/test_guard.py'),
@@ -396,8 +427,31 @@ class Contracts(unittest.TestCase):
                             with self.assertRaises(ValueError) as refused:
                                 CAPS.check_ci(root)
                             self.assertEqual(str(refused.exception), 'gate must install Just before running ' + expected)
+                    for case_id in ('hook-shell-spelling', 'hook-malformed-open', 'hook-unsupported-tool-open',
+                                    'candidate-review-policy'):
+                        case = next(case for case in cases if case['id'] == case_id)
+                        with self.subTest(catalog_selection=case_id):
+                            suite = {'run': shlex.join(case['command'][:-1])}
+                            selected = {'run': shlex.join(case['command'])}
+                            write_steps([*before, selected, install, *after])
+                            CAPS.check_ci(root)
+                            write_steps([*before, suite, install, *after])
+                            with self.assertRaisesRegex(ValueError, 'install Just before'):
+                                CAPS.check_ci(root)
+                    for run in ('env -C "$UNKNOWN_DIR" bash dogfood.sh', 'env --chdir=../../.. python3 run.py',
+                                'bash "$UNKNOWN_SCRIPT"'):
+                        with self.subTest(unresolved_location=run):
+                            write_steps([*before, {'run': run}, install, *after])
+                            with self.assertRaisesRegex(ValueError, 'cannot resolve|outside the workspace'):
+                                CAPS.check_ci(root)
                     for run in ('bash dogfood.sh', 'python3 -I ../.claude/hooks/guard.py pre',
                                 'python3 -I "${GITHUB_WORKSPACE}/.claude/hooks/guard.py" post',
+                                'env -C tests true && bash dogfood.sh',
+                                'python3 -c "print(\'$GITHUB_WORKSPACE\')"',
+                                'python3 -c"print(\'${GITHUB_WORKSPACE}\')"',
+                                'python3 - <<< "print(\'$GITHUB_WORKSPACE\')"',
+                                "python3 - <<PY\nprint('${{ github.workspace }}', '$GITHUB_WORKSPACE')\nPY\n",
+                                "python3 - <<'PY'\nprint('$GITHUB_WORKSPACE')\nPY\n",
                                 "bash '$GITHUB_WORKSPACE/scripts/tests/dogfood.sh'",
                                 plant_run + ' --case core-read', plant_run + ' --case=core-read --case unchecked-add',
                                 plant_run + ' --case=core-read --output="$RUNNER_TEMP/other"',
@@ -406,7 +460,7 @@ class Contracts(unittest.TestCase):
                         with self.subTest(independent=run):
                             write_steps([*before, {'working-directory': 'scripts', 'run': run}, install, *after])
                             CAPS.check_ci(root)
-                    independent = [step for step in remaining[:last] if not consumer_path(step)]
+                    independent = remaining[:first]
                     write_steps([*independent, install, plant, *remaining[last + 1:]])
                     CAPS.check_ci(root)
                     write_steps([*independent, plant, install, *remaining[last + 1:]])

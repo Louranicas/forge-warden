@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Reviewed plant capabilities and fail-closed runtime/hosted provisioning checks."""
 import argparse
+import fnmatch
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import runpy
@@ -29,9 +31,23 @@ PROBES = {
 }
 HOSTED = {'bash', 'coreutils', 'git', 'python3', 'sh', 'ssh-keygen'}
 JUST_CONSUMERS = {
-    'scripts/tests/dogfood.sh', '.claude/hooks/test_guard.py', 'scripts/tests/managed_review_bundle.py',
+    'scripts/tests/dogfood.sh',
     'scripts/checkout_just.py', 'scripts/ci_fast.sh', 'scripts/ci_local.sh', 'scripts/check_plants.py',
     '.githooks/pre-commit', '.githooks/pre-push',
+}
+JUST_TESTS = {
+    '.claude/hooks/test_guard.py': {
+        'Guard.test_stop_runs_gate_for_hidden_and_untracked_changes',
+        'Guard.test_gate_launchers_validate_script_paths', 'Guard.test_gate_checkout_identity',
+        'Guard.test_checkout_git_symlink_is_refused_before_git_discovery', 'Guard.test_fixed_just_recipes_select_checkout',
+        'Guard.test_hook_installation_only_writes_selected_repository', 'Guard.test_recipe_helpers_are_checked_before_execution',
+        'Guard.test_just_defers_vocabulary_lookup',
+    },
+    'scripts/tests/managed_review_bundle.py': {
+        'ReviewBundle.test_review_captures_patch_before_optional_ranking',
+        'ReviewBundle.test_review_and_patch_refuse_redirected_worktree', 'ReviewBundle.test_copied_review_evidence_is_owner_only',
+        'ReviewBundle.test_review_publishes_only_completed_outputs',
+    },
 }
 
 
@@ -269,19 +285,51 @@ def plant_needs_just(arguments, cases, unknown):
                and (options.runner is None or 'cargo' in case) for case in cases)
 
 
+def fixture_needs_just(arguments, dependent, unknown):
+    if arguments is None or any(arg is None or unknown in arg for arg in arguments):
+        return True
+    parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
+    parser.add_argument('-k', action='append', default=[])
+    parser.add_argument('-h', '--help', action='store_true')
+    parser.add_argument('-v', '-q', '-f', '-b', '-c', '--verbose', '--quiet', '--failfast',
+                        '--buffer', '--catch', '--locals', action='store_true')
+    parser.add_argument('--durations')
+    parser.add_argument('names', nargs='*')
+    try:
+        options, extra = parser.parse_known_intermixed_args(arguments)
+    except (argparse.ArgumentError, SystemExit) as error:
+        raise ValueError('cannot resolve unittest selection before Just installation') from error
+    if options.help:
+        return False
+    if extra or 'discover' in options.names:
+        return True
+    names = {name.removeprefix('__main__.') for name in options.names}
+    patterns = [pattern if '*' in pattern else '*' + pattern + '*' for pattern in options.k]
+    return any((not names or test in names or test.partition('.')[0] in names)
+               and (not patterns or any(fnmatch.fnmatchcase('__main__.' + test, pattern) for pattern in patterns))
+               for test in dependent)
+
+
 def just_consumer(step, commands, cases):
-    directory = step.get('working-directory', '.')
-    if (not isinstance(directory, str) or not directory or '${{' in directory
-            or commands['repo_path'](directory) is None):
-        raise ValueError('cannot resolve gate working-directory before Just installation')
     lexer = commands['WorkflowLexer']
-    for _, word, _, arguments in commands['shell_calls'](step.get('run', ''), lexer=lexer):
+    directory = step.get('working-directory', '.')
+    if not isinstance(directory, str):
+        raise ValueError('cannot resolve gate working-directory before Just installation')
+    directory = lexer.location(lexer.workspace, lexer.actions_text(directory))
+    run = lexer.actions_text(step.get('run', ''))
+    for _, word, _, arguments, cwd in commands['shell_calls'](run, lexer=lexer, directory=directory):
         marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
         target = Path(word.removeprefix(marker))
         if target.name == 'just':
             return 'just'
-        path = str(Path(directory) / target).removeprefix(lexer.workspace + '/')
-        path = commands['repo_path'](path)
+        path = Path(os.path.normpath(cwd / target))
+        if not path.is_relative_to(lexer.workspace):
+            if marker:
+                raise ValueError('cannot resolve gate script outside the workspace before Just installation')
+            continue
+        path = path.relative_to(lexer.workspace).as_posix()
+        if path in JUST_TESTS and fixture_needs_just(arguments, JUST_TESTS[path], lexer.unknown):
+            return path
         if path == '.claude/hooks/guard.py':
             if arguments is None or (len(arguments) == 1 and
                     (arguments[0] in ('stop', None) or lexer.unknown in arguments[0])):
