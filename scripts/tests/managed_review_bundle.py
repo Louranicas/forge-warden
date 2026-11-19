@@ -58,6 +58,32 @@ class ReviewBundle(unittest.TestCase):
                                str(self.candidate), str(out or self.root / "bundle")],
                               env=self.env, capture_output=True)
 
+    @unittest.skipUnless(shutil.which("just"), "just is required for the review recipe")
+    def test_copied_review_evidence_is_owner_only(self):
+        for name in ("justfile", "scripts/review_comparison.sh", "scripts/make_patch.sh"):
+            shutil.copy2(ROOT / name, self.candidate / name)
+        tools = self.root / "bin"
+        tools.mkdir()
+        for name, body in (("deep-diff-forge", "echo '{}'"), ("cargo", "exit 0")):
+            tool = tools / name
+            tool.write_text("#!/bin/sh\n" + body + "\n")
+            tool.chmod(0o755)
+        env = {**self.env, "PATH": str(tools) + os.pathsep + self.env["PATH"]}
+        subprocess.run([shutil.which("just"), "review"], cwd=self.candidate, env=env, umask=0o022,
+                       capture_output=True, check=True)
+        evidence, = self.candidate.glob(".review-*")
+        copy = self.root / "tutorial-copy"
+        copy.mkdir()
+        copy.chmod(0o755)
+        for name in ("review.patch", "review.rank.json"):
+            with self.subTest(name=name):
+                source = evidence / name
+                subprocess.run(["cp", source, copy], check=True, umask=0o022)
+                self.assertGreater(source.stat().st_size, 0)
+                self.assertEqual((copy / name).read_bytes(), source.read_bytes())
+                for path in (source, copy / name):
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
     def test_candidate_cannot_supply_instructions_or_policy(self):
         result = self.run_bundle()
         self.assertEqual(result.returncode, 0, result.stderr)

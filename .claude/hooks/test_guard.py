@@ -341,15 +341,20 @@ class Guard(unittest.TestCase):
             script.chmod(0o755)
             subprocess.run([just, recipe], cwd=self.root, capture_output=True, check=True)
             self.assertFalse(receipt.exists())
-        result = subprocess.run([just, "vocab"], cwd=self.root, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(receipt.exists())
-        lookup.unlink()
-        target.rename(lookup)
         revision = self.root / "revision"
-        subprocess.run([just, "vocab", "explicit revision"], cwd=self.root, capture_output=True, check=True)
-        self.assertEqual(revision.read_text(), "explicit revision")
-        self.assertFalse(receipt.exists())
+        for state in ("symlink", "missing"):
+            with self.subTest(lookup=state):
+                if state == "missing":
+                    lookup.unlink()
+                result = subprocess.run([just, "vocab"], cwd=self.root, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"scripts/tool_versions.py", result.stderr)
+                self.assertFalse(revision.exists())
+                subprocess.run([just, "vocab", "explicit revision"], cwd=self.root, capture_output=True, check=True)
+                self.assertEqual(revision.read_text(), "explicit revision")
+                self.assertFalse(receipt.exists())
+                revision.unlink()
+        target.rename(lookup)
         subprocess.run([just, "vocab"], cwd=self.root, capture_output=True, check=True)
         self.assertEqual(revision.read_text(), "pinned")
         self.assertTrue(receipt.exists())

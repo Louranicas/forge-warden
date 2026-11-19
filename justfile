@@ -35,10 +35,16 @@ mutants:
     env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace
 
 # Check the signal vocabulary against a deep-diff-forge checkout or commit.
-vocab $rev="": (_check-script "tool_versions.py") (_check-script "check_vocab.sh")
+vocab $rev="": (_check-script "check_vocab.sh")
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -z "$rev" ]]; then rev="$(python3 -I scripts/tool_versions.py ddf_rev)"; fi
+    if [[ -z "$rev" ]]; then
+        if [[ -L scripts/tool_versions.py || ! -f scripts/tool_versions.py ]]; then
+            echo "Gate input refused: scripts/tool_versions.py" >&2
+            exit 2
+        fi
+        rev="$(python3 -I scripts/tool_versions.py ddf_rev)"
+    fi
     scripts/check_vocab.sh "$rev"
 
 _check-script $script:
@@ -72,6 +78,7 @@ judge-bound:
 review:
     #!/usr/bin/env bash
     set -euo pipefail
+    umask 077
     unset "${!GIT_@}"
     head="$(git rev-parse --verify 'HEAD^{commit}')"
     comparison="$(bash scripts/review_comparison.sh "$head")"
