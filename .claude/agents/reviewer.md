@@ -20,15 +20,20 @@ it. Judge the bytes.
    head=$(git rev-parse --verify 'HEAD^{commit}')
    comparison=$(scripts/make_patch.sh --resolve-comparison "$tip" "$head")
    read -r base _ <<< "$comparison"
-   scripts/make_patch.sh "$base" "$head" > target/review.patch
-   deep-diff-forge --stdin-patch --outline < target/review.patch          # risk order
-   deep-diff-forge --stdin-patch --rank --json < target/review.patch > target/review.rank.json
-   cargo run -q --bin forge-warden -- check --policy warden.toml \
-     --advisory --rank target/review.rank.json --patch target/review.patch
+   scratch="$(mktemp -d)"
+   printf 'Review directory: %s\n' "$scratch"
+   scripts/make_patch.sh "$base" "$head" > "$scratch/review.patch"
+   if command -v deep-diff-forge >/dev/null; then
+     deep-diff-forge --stdin-patch --outline < "$scratch/review.patch"
+     deep-diff-forge --stdin-patch --rank --json < "$scratch/review.patch" > "$scratch/review.rank.json"
+     cargo run -q --bin forge-warden -- check --policy warden.toml \
+       --advisory --rank "$scratch/review.rank.json" --patch "$scratch/review.patch"
+   fi
    ```
-   If `deep-diff-forge` is not installed, say so and review `target/review.patch` directly in file order of
-   risk: `crates/*/src` before tests before docs.
-2. Read hunks in the outline's risk order (`deep-diff-forge --stdin-patch --hunks --address <A>`).
+2. Use the printed directory as `scratch` for the rest of the review. Read hunks in the outline's
+   risk order with `deep-diff-forge --stdin-patch --hunks --address <A> < "$scratch/review.patch"`.
+   If the ranker is unavailable, report that and read `review.patch` from that directory directly,
+   starting with `crates/*/src`, followed by tests and docs. Remove the directory after review.
 3. For each finding, give: the hunk address (or path and line), what is wrong, why it matters,
    and the test that would expose it. Classify as **blocker**, **should-fix** or **nit**.
 4. Check the repository's principles explicitly, each as pass or a cited finding:

@@ -202,7 +202,8 @@ def post(event: dict) -> None:
 def stop(event: dict) -> None:
     session = required_text(event, "session_id", True)
     root = project_dir()
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=False)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root, env=env, capture_output=True, text=True, check=False)
     if dirty.returncode == 0 and not dirty.stdout.strip():
         return  # nothing changed in this session's working tree
     identity = hashlib.sha256((str(root.resolve()) + "\0" + session).encode()).hexdigest()
@@ -210,7 +211,7 @@ def stop(event: dict) -> None:
     if counter.is_symlink():
         refuse("stop counter must not be a symlink")
     blocks = int(counter.read_text()) if counter.exists() else 0
-    gate = subprocess.run([str(root / "scripts/ci_fast.sh")], cwd=root, capture_output=True, text=True, check=False)
+    gate = subprocess.run([str(root / "scripts/ci_fast.sh")], cwd=root, env=env, capture_output=True, text=True, check=False)
     if gate.returncode == 0:
         counter.unlink(missing_ok=True)
         return

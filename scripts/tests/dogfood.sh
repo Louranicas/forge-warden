@@ -342,8 +342,15 @@ if grep -q '^+fn beside_the_bump() {}$' "$sandbox/made.patch"; then
  exit 1
 fi
 git -C "$sub" checkout --quiet --detach "$sub_head"
-git -C "$sub" branch -f main "$sub_base"
-python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" <<'PYDOC'
+git -C "$sub" branch -f main "$base"
+printf 'fn only_at_head() {}\n' >> "$sub/build.rs"
+git -C "$sub" add -- build.rs
+fixture_commit later
+named_patch="$sandbox/main-to-head.patch"
+bash "$maker" main HEAD "$sub" > "$named_patch"
+git -C "$sub" replace "$sub_base^{tree}" "$sub_head^{tree}"
+git -C "$sub" replace "$base^{tree}" 'HEAD^{tree}'
+python3 -I - "$source_root" "$sub" "$sub_base" "$sub_head" "$sub_patch" "$named_patch" <<'PYDOC'
 from pathlib import Path
 import os
 import re
@@ -351,21 +358,22 @@ import shlex
 import subprocess
 import sys
 
-source, repo, base, head, patch = sys.argv[1:]
-expected = Path(patch).read_bytes()
+source, repo, base, head, supplied_patch, named_patch = sys.argv[1:]
 tree_lookup = '$(git hash-object -t tree /dev/null)'
 shell_syntax = rf"""(?:{re.escape(tree_lookup)}|[-a-zA-Z0-9./= '"\t])+"""
 read_only = {
-    '--attr-source=' + tree_lookup, '-c', 'core.attributesFile=/dev/null', 'diff', '--no-ext-diff',
+    '--attr-source=' + tree_lookup, '-c', 'core.attributesFile=/dev/null', '--no-replace-objects',
+    'diff', '--no-ext-diff',
     '--no-textconv', '--no-color', '--no-relative', '--binary', '--no-renames', '--full-index',
     '--src-prefix=a/', '--dst-prefix=b/', '--submodule=short', '--ignore-submodules=none',
-    base + '...' + head, 'main...HEAD',
 }
-for document in ('README.md', 'docs/RUNBOOK.md'):
+for document, revision_range, patch in (('README.md', base + '...' + head, supplied_patch),
+                                        ('docs/RUNBOOK.md', 'main...HEAD', named_patch)):
+    expected = Path(patch).read_bytes()
     spans = re.findall(r'`git[ \t]+([^`]+)`', (Path(source) / document).read_text())
     arguments, = [span for span in spans if '...' in span and 'diff' in shlex.split(span)]
     arguments = arguments.replace('<base>', base).replace('<head>', head)
-    if not re.fullmatch(shell_syntax, arguments) or set(shlex.split(arguments)) - read_only:
+    if not re.fullmatch(shell_syntax, arguments) or set(shlex.split(arguments)) - (read_only | {revision_range}):
         sys.exit(f'{document}: unsupported argument in documented Git diff')
     for setting in (None, 'diff.ignoreSubmodules=all', 'diff.submodule=log', 'diff.submodule=diff'):
         env = os.environ.copy()

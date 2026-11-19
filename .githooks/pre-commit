@@ -3,4 +3,5 @@
 # Refuses a commit that would fail the fast gate. Bypassing it with --no-verify only moves the
 # failure to CI, where it is public.
 set -euo pipefail
+while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
 exec "$(git rev-parse --show-toplevel)/scripts/ci_fast.sh"

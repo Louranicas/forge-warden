@@ -46,7 +46,7 @@ def inventory(scope):
         base = env.get('BASE_SHA', '')
         if not re.fullmatch('[0-9a-f]{40}', base):
             raise ValueError('BASE_SHA must be the full trusted base SHA')
-        diff = subprocess.check_output(['git', '-c', 'core.quotePath=false', 'diff',
+        diff = subprocess.check_output(['git', '--no-replace-objects', '-c', 'core.quotePath=false', 'diff',
                                         '--no-ext-diff', '--no-textconv', '--text',
                                         '--no-color', '--src-prefix=a/', '--dst-prefix=b/',
                                         base + '...HEAD', '--', 'crates/*/src/**.rs'], env=env)
