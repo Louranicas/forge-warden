@@ -6,7 +6,7 @@ you find out in seconds, not in review.
 ## Setup
 
 Use Linux with `/proc` mounted (including `/proc/self/fd`), Git, Bash, coreutils,
-Python 3.11 or newer, Rustup and `just` available.
+Python 3.11 or newer with PyYAML available to `python3 -I`, Rustup and `just` available.
 The checkout pins Rust 1.99.1 plus rustfmt/clippy in `rust-toolchain.toml`; Rustup may need
 network access to install that toolchain. Provision the dependency cache once with network
 access, and provision the separate Rust 1.88.0 MSRV compiler for `just ci`. The pinned
@@ -29,7 +29,9 @@ just ci              # the full local gate (everything it can run offline)
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
 `scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
 (G-18). The local comparison uses Git 2.40 or later. A nonempty patch requires `deep-diff-forge` on
-`PATH` and a binary hash enrolled in the policy. When `zizmor` is absent, the gate's last line names
+`PATH` and a binary hash enrolled in the policy. For an empty patch the gate runs
+`forge-warden empty --repo DIR --base BASE --head HEAD` to confirm the comparison with the same
+enrolled Git and verified repository objects. When `zizmor` is absent, the gate's last line names
 the skipped workflow audit. See [Where the gate runs](#where-the-gate-runs).
 
 Scripts and their tests run in an offline gate image that has fewer commands than a developer's

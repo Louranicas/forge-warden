@@ -73,17 +73,20 @@ fn judge_rule(
         let Some(path) = violation.path.as_deref() else {
             continue;
         };
-        let mut covering = waivers
+        let mut live = waivers
             .iter()
             .enumerate()
-            .filter(|(_, w)| w.rule == rule.id && w.expires >= today && w.paths.matches(path))
-            .map(|(index, _)| index);
-        // The first live waiver covers it; any later one matched too, and is superseded (Q80).
-        if let Some(index) = covering.next() {
+            .filter(|(_, waiver)| waiver.rule == rule.id && waiver.expires >= today);
+        if let Some((index, _)) = live.find(|(_, waiver)| waiver.paths.matches(path)) {
             violation.waived_by = Some(index);
             used.insert(index);
+            for (later, waiver) in live {
+                if !matched.contains(&later) && !used.contains(&later) && waiver.paths.matches(path)
+                {
+                    matched.insert(later);
+                }
+            }
         }
-        matched.extend(covering);
     }
     let outcome = if violations.is_empty() {
         RuleOutcome::Pass

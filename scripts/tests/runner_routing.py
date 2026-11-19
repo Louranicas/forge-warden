@@ -24,13 +24,14 @@ boundary is repository write access plus runner-up's fork guard (docs/runner-up.
 import hashlib
 import os
 import re
-import runpy
 import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 sys.dont_write_bytecode = True
 
@@ -452,8 +453,7 @@ def listed_workflow_problems(names):
 
 # RUNNER-ROUTING.1 v5 (Bastion's design note after v2-v4 each fell to a YAML spelling the line
 # checks read differently; Keel H1 on f14d9169, a repeated job id): line-level checks of YAML stay
-# open, and this repository's Python is standard-library only, so there is no YAML parser to
-# compare with. The control is therefore closed by content: every workflow file is pinned whole.
+# open. Every workflow file is pinned whole.
 # Editing a workflow means editing its pin here, in the same reviewed diff, and the truth table,
 # the hostile environment and the shape checks below then run on the new text. The shape checks
 # are kept as diagnostics that explain what a reviewer should look at, not as the control.
@@ -752,7 +752,6 @@ class Routing(unittest.TestCase):
                             routed_job_problems(text.replace(body, mutated, 1), ROUTED[path]))
 
     def test_successful_plans_run_the_matching_mutation_scope(self):
-        workflow_lines = runpy.run_path(str(ROOT / "scripts/plant_tools.py"))["workflow_lines"]
         def condition(fields):
             return fields.get("if", "success()").removeprefix("${{").removesuffix("}}").strip()
 
@@ -762,16 +761,15 @@ class Routing(unittest.TestCase):
             (BASELINE, "full", "!cancelled() && needs.mutation-plan.result == 'success'"),
         ):
             with self.subTest(path=path):
-                text = "\n".join(workflow_lines((ROOT / path).read_text())) + "\n"
-                job = job_bodies(text)["mutation-shards"]
-                fields = dict(re.findall(r"^    ([\w-]+): (.+)$", job, re.M))
-                self.assertIn(condition(fields), active | {job_condition})
+                workflow = yaml.load((ROOT / path).read_text(), Loader=yaml.BaseLoader)
+                job = workflow["jobs"]["mutation-shards"]
+                self.assertIn(condition(job), active | {job_condition})
                 expected = ["python3", "-I", "scripts/mutation_ci.py", "run", scope]
                 guards = []
-                for step in steps_of(job):
-                    fields = dict(re.findall(r"^(?:      - |        )([\w-]+): (.+)$", step, re.M))
-                    if shlex.split(fields.get("run", ""), comments=True) == expected:
-                        guards.append(condition(fields) in active)
+                for step in job["steps"]:
+                    command = step.get("run", "").strip().replace("\\\n", "")
+                    if "\n" not in command and shlex.split(command, comments=True) == expected:
+                        guards.append(condition(step) in active)
                 self.assertEqual(guards, [True])
 
     def test_the_aggregate_check_stays_hosted_and_needs_plan_and_shards(self):

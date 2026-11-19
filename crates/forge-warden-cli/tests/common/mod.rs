@@ -185,7 +185,7 @@ pub(crate) fn run(args: &[&str], stdin: &[u8]) -> Run {
 /// [`run`] with explicit extra environment variables after clearing the ambient environment.
 pub(crate) fn run_with_env(args: &[&str], stdin: &[u8], env: &[(&str, &str)]) -> Run {
     let directory = scratch("git-policy");
-    if args.contains(&"--ranker") {
+    if args.contains(&"--ranker") || args.first() == Some(&"empty") {
         let digest = forge_warden_core::seal::sha256_hex(&std::fs::read("/usr/bin/git").unwrap());
         write(&directory, "allowlist.toml", format!("schema = \"forge-warden.git-allowlist.v1\"\nrevision = 1\nsha256 = [\"{digest}\"]\n").as_bytes());
     }

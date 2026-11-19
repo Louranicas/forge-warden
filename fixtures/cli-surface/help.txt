@@ -6,6 +6,7 @@ Usage: forge-warden <COMMAND>
 
 Commands:
   check    Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+  empty    Verify that the bound repository comparison has an empty diff
   lint     Validate a policy without judging anything; lists every issue at once
   explain  Explain an exit code (by number or name) and the action it asks for
   schema   Print a JSON Schema or the exit-code registry
@@ -94,6 +95,7 @@ Usage: forge-warden <COMMAND>
 
 Commands:
   check    Judge a patch against a policy. Authority mode (`--ranker`) runs the ranker itself and is the only mode that can pass; advisory mode (`--advisory --rank`) can at best hold
+  empty    Verify that the bound repository comparison has an empty diff
   lint     Validate a policy without judging anything; lists every issue at once
   explain  Explain an exit code (by number or name) and the action it asks for
   schema   Print a JSON Schema or the exit-code registry

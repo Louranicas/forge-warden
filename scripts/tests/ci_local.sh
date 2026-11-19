@@ -29,28 +29,63 @@ printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "
 printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$TEST_ROOT/scripts/check_guardrails.py"
 cp "$source_root/warden.toml" "$TEST_ROOT/warden.toml"
 cat > "$sandbox/bin/cargo" <<'STUB'
-#!/usr/bin/env bash
-set -eu
-printf '%s\n' "$*" >> "$TEST_ROOT/cargo-calls"
-case "$1" in
- run)
-  [[ " $* " == *" --ranker ${TEST_ROOT%/*}/bin/deep-diff-forge "* ]] || exit 97
-  [[ " $* " == *" --repo $TEST_ROOT/.git --base $BASE_ID --head $HEAD_ID "* ]] || exit 96
-  [[ " $* " != *' --advisory '* ]] || exit 95
-  while [ "$1" != --patch ]; do shift; done
-  grep -qxF '+fixture' "$2" || exit 95
-  printf '%s\n' "$2" > "$TEST_ROOT/judged-patch"
-  [[ "$(cat "$TEST_ROOT/patch-inputs")" == "$(printf '%s\n' "$BASE_ID" "$HEAD_ID")" ]] || exit 94
-  exit "${JUDGE_EXIT:-0}" ;;
- deny) exit "${DENY_EXIT:-0}" ;;
- mutants)
-  [[ " $* " == *' --workspace '* && " $* " == *' --no-config '* ]] || exit 93
-  while [ "$1" != --in-diff ]; do shift; done
-  grep -qxF '+fixture' "$2" || exit 93
-  printf '%s\n' "$2" > "$TEST_ROOT/mutated-diff"
-  exit "${MUTANTS_EXIT:-0}" ;;
-esac
-exit 0
+#!/usr/bin/env python3
+import argparse
+import os
+from pathlib import Path
+import sys
+import tomllib
+
+root = Path(os.environ["TEST_ROOT"])
+command, *args = sys.argv[1:]
+with (root / "cargo-calls").open("a") as calls:
+    print(command, *args, file=calls)
+
+if command == "run":
+    split = args.index("--")
+    cargo = argparse.ArgumentParser(allow_abbrev=False)
+    cargo.add_argument("--quiet", action="store_true")
+    cargo.add_argument("--bin", required=True, choices=["forge-warden"])
+    cargo.parse_args(args[:split])
+    verb, *options = args[split + 1:]
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--repo", required=True, type=Path)
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--head", required=True)
+    if verb == "check":
+        for name in ("policy", "ranker", "patch"):
+            parser.add_argument("--" + name, required=True, type=Path)
+    elif verb != "empty":
+        sys.exit(95)
+    inputs = parser.parse_args(options)
+    expected = [os.environ["BASE_ID"], os.environ["HEAD_ID"]]
+    if (inputs.repo.resolve() != root / ".git" or [inputs.base, inputs.head] != expected
+            or (root / "patch-inputs").read_text().splitlines() != expected):
+        sys.exit(96)
+    if verb == "empty":
+        (root / "verified-empty").touch()
+        sys.exit(int(os.environ.get("EMPTY_EXIT", "0")))
+    if (inputs.policy.resolve() != root / "warden.toml"
+            or inputs.ranker.resolve() != root.parent / "bin/deep-diff-forge"
+            or "+fixture" not in inputs.patch.read_text().splitlines()):
+        sys.exit(95)
+    (root / "judged-patch").write_text(str(inputs.patch))
+    if not tomllib.loads(inputs.policy.read_text()).get("producer", {}).get("sha256"):
+        sys.exit(4)
+    sys.exit(int(os.environ.get("JUDGE_EXIT", "0")))
+if command == "deny":
+    sys.exit(int(os.environ.get("DENY_EXIT", "0")))
+if command == "mutants":
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--workspace", required=True, action="store_true")
+    parser.add_argument("--no-config", required=True, action="store_true")
+    parser.add_argument("--cap-lints", required=True, choices=["true"])
+    parser.add_argument("--in-diff", required=True, type=Path)
+    diff = parser.parse_args(args).in_diff
+    if "+fixture" not in diff.read_text().splitlines():
+        sys.exit(93)
+    (root / "mutated-diff").write_text(str(diff))
+    sys.exit(int(os.environ.get("MUTANTS_EXIT", "0")))
 STUB
 printf '#!/usr/bin/env bash\nexit 98\n' > "$sandbox/bin/deep-diff-forge"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/zizmor"
@@ -118,8 +153,9 @@ for entry in "$gate" "$sandbox/pre-push"; do
 done
 
 printf 'schema = "forge-warden.policy.v0"\n' > "$TEST_ROOT/warden.toml"
-JUDGE_EXIT=4 run_gate "$gate" 4
-grep -q '^run ' "$TEST_ROOT/cargo-calls"
+for entry in "$gate" "$sandbox/pre-push"; do
+ run_gate "$entry" 4
+done
 cp "$source_root/warden.toml" "$TEST_ROOT/warden.toml"
 
 NEXT_HEAD="$(git commit-tree "$tree" -p "$HEAD_ID" -m later)"
@@ -172,9 +208,14 @@ run_gate "$gate" 1
 grep -qF 'required tool missing: deep-diff-forge' "$sandbox/output"
 git update-ref refs/remotes/origin/main "$HEAD_ID"
 rm "$sandbox/bin/zizmor"
-run_gate "$gate" 0
-if grep -q '^run ' "$TEST_ROOT/cargo-calls"; then exit 1; fi
-grep -qxF 'ci_local: offline gates passed; hosted-only, not run here: zizmor' "$sandbox/output"
+BASE_ID="$HEAD_ID"
+for entry in "$gate" "$sandbox/pre-push"; do
+ rm -f "$TEST_ROOT/judged-patch" "$TEST_ROOT/verified-empty"
+ EMPTY_EXIT=3 run_gate "$entry" 3
+ run_gate "$entry" 0
+ [[ -e "$TEST_ROOT/verified-empty" && ! -e "$TEST_ROOT/judged-patch" ]]
+ grep -qxF 'ci_local: offline gates passed; hosted-only, not run here: zizmor' "$sandbox/output"
+done
 mv "$sandbox/ranker" "$sandbox/bin/deep-diff-forge"
 
 unrelated="$(git commit-tree "$tree" -m unrelated)"

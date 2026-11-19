@@ -684,6 +684,28 @@ fn bound_repo(name: &str) -> (common::Scratch, String, String) {
 }
 
 #[test]
+fn empty_verifies_the_merge_base_to_head_diff() {
+    let (repo, base, head) = bound_repo("bound-empty");
+    git_in(&repo, &["commit", "--allow-empty", "-qm", "same tree"]);
+    let same = git_in(&repo, &["rev-parse", "HEAD"]);
+    for (tip, expected) in [(&base, 4), (&head, 0)] {
+        let out = run(
+            &[
+                "empty",
+                "--repo",
+                text(&repo),
+                "--base",
+                tip,
+                "--head",
+                &same,
+            ],
+            b"",
+        );
+        assert_eq!(out.code, expected, "{}", out.stderr);
+    }
+}
+
+#[test]
 fn bound_mode_accepts_the_patch_make_patch_made_and_refuses_any_other() {
     let (dir, policy, ranker) = setup("bound-compare");
     let (repo, base, head) = bound_repo("bound-compare-repo");
@@ -1042,6 +1064,19 @@ fn bound_mode_gives_no_verdict_when_the_store_does_not_hold_what_its_ids_name() 
     let forged = std::fs::read(object(&evil)).unwrap();
     std::fs::set_permissions(object(&real), std::fs::Permissions::from_mode(0o644)).unwrap();
     std::fs::write(object(&real), forged).unwrap();
+    let empty = run(
+        &[
+            "empty",
+            "--repo",
+            text(&repo),
+            "--base",
+            &base,
+            "--head",
+            &head,
+        ],
+        b"",
+    );
+    assert_eq!(empty.code, 3, "{}", empty.stderr);
     let out = authority(
         &policy,
         &patch,

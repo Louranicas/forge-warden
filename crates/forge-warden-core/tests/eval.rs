@@ -677,6 +677,17 @@ expires = \"2099-01-01\"
         shown.contains("[UNUSED] waiver[2] for no-unsafe matched nothing in this change"),
         "{shown}"
     );
+
+    let r = rank(vec![
+        file("src/simd/k.rs", "modified", 9, &["unsafe_added"]),
+        file("src/z.rs", "modified", 8, &["unsafe_added"]),
+    ]);
+    let verdict = evaluate(&policy(&text), &r, seals(), today());
+    let violations = &verdict.rules()[0].violations;
+    assert_eq!(violations[0].waived_by, Some(0));
+    assert_eq!(violations[1].waived_by, Some(1));
+    let unused: Vec<_> = verdict.unused_waivers().iter().map(|w| w.index).collect();
+    assert_eq!(unused, [2]);
 }
 
 #[test]

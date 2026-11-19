@@ -78,6 +78,11 @@ enum Command {
         today: Option<String>,
         json: bool,
     },
+    Empty {
+        repo: PathBuf,
+        base: String,
+        head: String,
+    },
     /// `lint`: validate a policy.
     Lint { policy: PathBuf, json: bool },
     /// `explain`: explain an exit code.
@@ -87,6 +92,8 @@ enum Command {
     /// `init`: print a starter policy.
     Init,
 }
+
+const DEFAULT_GIT: &str = "/usr/bin/git";
 
 /// The help of `--json` on explain and schema.
 const JSON_RESULT: &str = "Keep the JSON result; also format failures as one JSON line on stderr";
@@ -137,6 +144,13 @@ fn cli() -> clap::Command {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(check_command())
+        .subcommand(
+            clap::Command::new("empty")
+                .about("Verify that the bound repository comparison has an empty diff")
+                .arg(file_option("repo", "The repository to verify").required(true))
+                .arg(text_option("base", "REV", "Full base commit ID").required(true))
+                .arg(text_option("head", "REV", "Full head commit ID").required(true)),
+        )
         .subcommand(
             clap::Command::new("lint")
                 .about("Validate a policy without judging anything; lists every issue at once")
@@ -222,7 +236,7 @@ fn check_command() -> clap::Command {
                 "git",
                 "The Git that reads the patch's facts (absolute; recorded in the verdict)",
             )
-            .default_value("/usr/bin/git"),
+            .default_value(DEFAULT_GIT),
         )
         .arg(text_option(
             "base",
@@ -281,6 +295,11 @@ fn command(matches: &ArgMatches) -> Option<Command> {
             repo: path(m, "repo"),
             today: text(m, "today"),
             json: m.get_flag("json"),
+        },
+        ("empty", m) => Command::Empty {
+            repo: path(m, "repo")?,
+            base: text(m, "base")?,
+            head: text(m, "head")?,
         },
         ("lint", m) => Command::Lint {
             policy: path(m, "policy")?,
@@ -461,6 +480,12 @@ fn run(command: Command) -> Result<Exit, Failure> {
             today,
             json,
         }),
+        Command::Empty { repo, base, head } => {
+            let (base, head) = full_ids(&base, &head)?;
+            let git = doors::child::admit_git_pinned(Path::new(DEFAULT_GIT))
+                .map_err(Failure::from_door)?;
+            bind(git.admitted(), &repo, base, head, &[]).map(|_| Exit::Pass)
+        }
         Command::Lint { policy, json } => lint(&policy, json),
         Command::Explain { code } => explain(&code),
         Command::Schema { what } => schema(&what),

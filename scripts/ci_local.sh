@@ -63,12 +63,14 @@ step mutation
 git --no-replace-objects diff "$mutation_base" -- 'crates/*/src/**.rs' > "$mutation_diff"
 if [ -s "$mutation_diff" ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff "$mutation_diff" --workspace; else echo "no source changes to mutate"; fi
 step dogfood
+repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"
 if [ -s "$patch" ]; then
   ranker="$(type -P deep-diff-forge)" || { echo 'ci_local: required tool missing: deep-diff-forge' >&2; exit 1; }
-  repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"
   cargo run --quiet --bin forge-warden -- check --policy warden.toml \
     --ranker "$ranker" --patch "$patch" \
     --repo "$repo_git" --base "$base" --head "$head"
+else
+  cargo run --quiet --bin forge-warden -- empty --repo "$repo_git" --base "$base" --head "$head"
 fi
 step plants; python3 -I scripts/check_plants.py
 if [ -n "$hosted_only_not_run" ]; then
