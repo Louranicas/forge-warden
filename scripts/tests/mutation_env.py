@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class MutationEnvironment(unittest.TestCase):
     def test_both_entrypoints_drop_inherited_target(self):
-        commands = {"ci_local": ["bash", str(ROOT / "scripts/ci_local.sh")],
+        commands = {"ci_local": ["bash", "scripts/ci_local.sh"],
                     "workflow": ["python3", "-I", "scripts/mutation_ci.py", "run", "diff"],
                     "baseline": ["python3", "-I", "scripts/mutation_ci.py", "run", "full"]}
         with tempfile.TemporaryDirectory(prefix="mutation-env-") as directory:
@@ -25,6 +25,7 @@ class MutationEnvironment(unittest.TestCase):
             (root / "target").mkdir()
             (root / "scripts/tests").mkdir(parents=True)
             (root / "plants").mkdir()
+            shutil.copyfile(ROOT / "scripts/ci_local.sh", root / "scripts/ci_local.sh")
             shutil.copyfile(ROOT / "scripts/review_comparison.sh", root / "scripts/review_comparison.sh")
             shutil.copyfile(ROOT / "scripts/worktree_diff.py", root / "scripts/worktree_diff.py")
             (root / "index").touch()
@@ -38,9 +39,20 @@ class MutationEnvironment(unittest.TestCase):
                 "git": """#!/bin/sh
 if [ "$1" = --no-replace-objects ]; then shift; fi
 while [ "$1" = -c ]; do shift 2; done
+if [ "$1" = -C ]; then
+    [ "$2" = "$TEST_ROOT" ] || exit 90
+    cd "$2" || exit 90
+    shift 2
+fi
 case "$1" in
     rev-parse)
-        if [ "$4" = index ]; then echo "$TEST_ROOT/index"; else echo "$TEST_ROOT"; fi
+        case "$2" in
+            --show-toplevel) pwd -P;;
+            --path-format=absolute) [ "$3" = --git-path ] && [ "$4" = index ] || exit 90; echo "$TEST_ROOT/index";;
+            --git-path) echo "$TEST_ROOT/$3";;
+            --verify) echo "$BASE_SHA";;
+            *) exit 90;;
+        esac
         ;;
     ls-files|diff-index) exit 0;;
     show-ref)

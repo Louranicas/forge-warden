@@ -11,8 +11,7 @@ install-hooks:
     for hook in pre-commit commit-msg pre-push; do
         [[ -f ".githooks/$hook" && ! -L ".githooks/$hook" && -x ".githooks/$hook" ]]
     done
-    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-    repo=(git --git-dir="$PWD/.git")
+    repo=(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git --git-dir="$PWD/.git")
     config=("${repo[@]}" config)
     local_config="$("${repo[@]}" rev-parse --path-format=absolute --git-path config)"
     [[ -f "$local_config" && ! -L "$local_config" ]]
@@ -23,11 +22,16 @@ install-hooks:
         { IFS= read -r -d '' origin && IFS= read -r -d '' value; } < "$scratch/setting"
     }
     refuse() {
+        if [[ -f "$scratch/prior" ]]; then mv -- "$scratch/prior" "$local_config"; fi
         echo "Hook installation refused: effective core.hooksPath must be .githooks in this worktree" >&2
         exit 1
     }
     (set -C; : > "$local_config.lock")
     trap 'rm -f -- "$local_config.lock"; rm -rf -- "$scratch"' EXIT
+    if [[ "$(git rev-parse --show-toplevel && printf .)" != "$(pwd -P && printf .)" ]]; then
+        echo "Hook installation refused: Git worktree differs from the selected checkout" >&2
+        exit 1
+    fi
     value=""
     if read_setting; then
         if [[ "$value" != .githooks && ( "$origin" != file:* || ! "${origin#file:}" -ef "$local_config" ) ]]; then
@@ -39,21 +43,21 @@ install-hooks:
     if [[ "$value" != .githooks ]]; then
         cp -p -- "$local_config" "$scratch/prior"
         cp -p -- "$local_config" "$scratch/new"
-        git config --file "$scratch/new" core.hooksPath .githooks
+        "${config[@]}" --file "$scratch/new" core.hooksPath .githooks
         mv -- "$scratch/new" "$local_config"
         if ! read_setting || [[ "$value" != .githooks || "$origin" != file:* || ! "${origin#file:}" -ef "$local_config" ]]; then
-            mv -- "$scratch/prior" "$local_config"
             refuse
         fi
     fi
+    [[ .githooks -ef "$(git rev-parse --path-format=absolute --git-path hooks)" ]] || refuse
     echo "hooks installed: pre-commit (fast gate), commit-msg, pre-push (full gate)"
 
 # fmt + clippy + tests: seconds. The pre-commit hook and Claude Code's Stop hook run this.
-fast: (_check-script "ci_fast.sh") _check-root
+fast: (_check-script "ci_fast.sh")
     scripts/ci_fast.sh
 
 # Every CI gate that can run locally.
-ci: (_check-script "ci_local.sh") _check-root
+ci: (_check-script "ci_local.sh")
     scripts/ci_local.sh
 
 # Regenerate golden verdicts after an intended change; review the diff before committing.
@@ -90,9 +94,6 @@ vocab $rev="": (_check-script "check_vocab.sh")
 
 _check-script $script:
     @test ! -L scripts && test ! -L "scripts/$script" && test -f "scripts/$script" || { echo "Gate input refused: scripts/$script" >&2; exit 2; }
-
-_check-root: (_check-script "worktree_diff.py")
-    @python3 -I scripts/worktree_diff.py --check-root
 
 _check-inputs: (_check-script "worktree_diff.py")
     @python3 -I scripts/worktree_diff.py --check-inputs

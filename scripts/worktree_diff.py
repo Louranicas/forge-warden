@@ -17,8 +17,10 @@ CARGO_INPUTS = (RUST_SOURCES, ":(top,glob)crates/*/build.rs",
 
 
 def worktree_env():
-    return {key: value for key, value in os.environ.items()
-            if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
+    env = {key: value for key, value in os.environ.items()
+           if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
+    env.update(GIT_GRAFT_FILE="", GIT_NO_REPLACE_OBJECTS="1")
+    return env
 
 
 def run_git(*args, env, **kwargs):
@@ -178,7 +180,7 @@ def gate_inventory():
 
 @contextmanager
 def checked_snapshot(scope):
-    env = {**worktree_env(), "GIT_NO_REPLACE_OBJECTS": "1", "GIT_OPTIONAL_LOCKS": "0"}
+    env = {**worktree_env(), "GIT_OPTIONAL_LOCKS": "0"}
     index = Path(os.fsdecode(git("rev-parse", "--path-format=absolute", "--git-path", "index", env=env)[:-1]))
     scratch_parent = Path(tempfile.gettempdir())
     if scratch_parent.is_relative_to(Path.cwd()):
@@ -209,14 +211,12 @@ def mutation_diff(base):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] in (["--check-root"], ["--check-inputs"], ["--clean"]):
+    if sys.argv[1:] in (["--check-inputs"], ["--clean"]):
         try:
             checkout = Path.cwd()
             resolved = run_git("-C", checkout, "rev-parse", "--show-toplevel", env=worktree_env(), capture_output=True)
             if resolved.returncode or resolved.stdout != os.fsencode(checkout) + b"\n":
                 raise ValueError(f"Git worktree differs from the selected checkout {checkout!s}.")
-            if sys.argv[1] == "--check-root":
-                sys.exit(0)
             inventory = gate_inventory()
         except (ValueError, OSError) as error:
             print(f"Gate input refused: {error}", file=sys.stderr)

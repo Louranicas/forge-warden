@@ -284,7 +284,6 @@ class Guard(unittest.TestCase):
         hooks = self.root / ".githooks"
         hooks.mkdir()
         shutil.copyfile(repo / "justfile", self.root / "justfile")
-        shutil.copyfile(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "JUST_"))}
         env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
@@ -335,7 +334,7 @@ class Guard(unittest.TestCase):
         env.update(HOME=str(self.root), TMPDIR=str(self.root), XDG_CONFIG_HOME=str(self.root / ".config"))
         for root in (main, other):
             subprocess.run(["git", "init", "-q", "--template=", root], check=True, env=env)
-        for name in ("justfile", ".githooks/pre-commit", ".githooks/pre-push", "scripts/ci_fast.sh",
+        for name in ("justfile", ".githooks/pre-commit", ".githooks/pre-push", ".githooks/commit-msg", "scripts/ci_fast.sh",
                      "scripts/ci_local.sh", "scripts/worktree_diff.py"):
             path = main / name
             path.parent.mkdir(exist_ok=True)
@@ -350,11 +349,22 @@ class Guard(unittest.TestCase):
         for root in (linked, main):
             if root == main:
                 subprocess.run(["git", "config", "core.worktree", str(other)], cwd=main, env=env, check=True)
+            config = main / ".git/config"
+            original = config.read_bytes()
+            install = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=root,
+                                     env=env, capture_output=True)
+            if root == main:
+                self.assertNotEqual(install.returncode, 0)
+                self.assertIn(b"worktree differs", install.stderr)
+                self.assertEqual(config.read_bytes(), original)
+            else:
+                self.assertEqual(install.returncode, 0, install.stderr)
             (root / "edit").touch()
             commands = []
             for recipe, hook, gate in (("fast", "pre-commit", "ci_fast.sh"), ("ci", "pre-push", "ci_local.sh")):
+                hook_command = ["git", "hook", "run", hook] if root == linked else [root / ".githooks" / hook]
                 commands.extend(([sys.executable, "-I", CHECKOUT_JUST, recipe], ["bash", root / "scripts" / gate],
-                                 ["git", "-c", f"core.hooksPath={root / '.githooks'}", "hook", "run", hook]))
+                                 hook_command))
             commands.append([sys.executable, "-I", GUARD, "stop"])
             for command in commands:
                 with self.subTest(root=root, command=command):
@@ -411,6 +421,15 @@ class Guard(unittest.TestCase):
             return subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "install-hooks"], cwd=self.root,
                                   env={**redirects, **overrides}, capture_output=True)
 
+        local = self.root / ".git/config"
+        git("config", "--local", "core.worktree", str(other)).check_returncode()
+        original = local.read_bytes()
+        refused = install()
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b"worktree differs", refused.stderr)
+        self.assertEqual(local.read_bytes(), original)
+        self.assertEqual(config.read_bytes(), before)
+        git("config", "--local", "--unset", "core.worktree").check_returncode()
         git("config", "extensions.worktreeConfig", "true").check_returncode()
         git("config", "--worktree", "core.hooksPath", "other-hooks").check_returncode()
         (self.root / "other-hooks").mkdir()
@@ -425,7 +444,6 @@ class Guard(unittest.TestCase):
         included = self.root / "included"
         included.write_text("[core]\n\thooksPath = other-hooks\n")
         git("config", "--local", "include.path", str(included)).check_returncode()
-        local = self.root / ".git/config"
         original = local.read_bytes()
         refused = install()
         self.assertNotEqual(refused.returncode, 0)
@@ -436,7 +454,8 @@ class Guard(unittest.TestCase):
         tools.mkdir()
         probe = tools / "git"
         probe.write_text('#!/bin/sh\n'
-                         'if [ "$("$REAL_GIT" --git-dir=.git config --local --get core.hooksPath)" = .githooks ]; then\n'
+                         'if { [ "$DISCOVERY_ONLY" = 0 ] || [ "$1" = rev-parse ]; } && '
+                         '[ "$("$REAL_GIT" --git-dir=.git config --local --get core.hooksPath)" = .githooks ]; then\n'
                          '    exec "$REAL_GIT" -c core.hooksPath=other-hooks "$@"\n'
                          'fi\nexec "$REAL_GIT" "$@"\n')
         probe.chmod(0o755)
@@ -444,7 +463,8 @@ class Guard(unittest.TestCase):
             if not existing:
                 git("config", "--local", "--unset", "core.hooksPath").check_returncode()
             original = local.read_bytes()
-            refused = install(REAL_GIT=shutil.which("git"), PATH=str(tools) + os.pathsep + env["PATH"])
+            refused = install(REAL_GIT=shutil.which("git"), PATH=str(tools) + os.pathsep + env["PATH"],
+                              DISCOVERY_ONLY="0" if existing else "1")
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn(b"effective core.hooksPath", refused.stderr)
             self.assertEqual(local.read_bytes(), original)
@@ -519,8 +539,6 @@ class Guard(unittest.TestCase):
         scripts = self.root / "scripts"
         scripts.mkdir()
         shutil.copyfile(repo / "justfile", self.root / "justfile")
-        shutil.copyfile(repo / "scripts/worktree_diff.py", scripts / "worktree_diff.py")
-        subprocess.run(["git", "init", "-q", "--template=", self.root], env=env, check=True)
         receipt = self.root / "lookup"
         lookup = scripts / "tool_versions.py"
         target = self.root / "version.py"
