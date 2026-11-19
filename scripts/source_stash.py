@@ -1,0 +1,108 @@
+"""Save and restore crate source changes under the Git index lock."""
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+
+
+SOURCE_GLOB = "crates/*/src/**"
+SOURCES = ":(glob)" + SOURCE_GLOB
+CANCEL_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+
+
+def git(*args, env, data=None):
+    return subprocess.run(["git", *args], env=env, input=data, stdout=subprocess.PIPE,
+                          check=True).stdout
+
+
+def cancel(signum, _frame):
+    signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    raise SystemExit(128 + signum)
+
+
+@contextmanager
+def locked_index():
+    for sig in CANCEL_SIGNALS:
+        signal.signal(sig, cancel)
+    env = {key: value for key, value in os.environ.items()
+           if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
+    index = Path(os.fsdecode(git("rev-parse", "--path-format=absolute", "--git-path", "index", env=env)[:-1]))
+    lock = index.with_name(index.name + ".lock")
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    try:
+        try:
+            lock.touch(exist_ok=False)
+        except FileExistsError:
+            sys.exit("Could not lock the Git index for source recovery.")
+        try:
+            with tempfile.TemporaryDirectory(dir=index.parent) as directory:
+                scratch = Path(directory)
+                try:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+                    pending = scratch / "index"
+                    shutil.copy2(index, pending)
+                    yield {**env, "GIT_INDEX_FILE": str(pending)}, scratch
+                    os.replace(pending, index)
+                finally:
+                    signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        finally:
+            lock.unlink()
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def check_source(env):
+    untracked = git("ls-files", "--others", "--exclude-standard", "--", SOURCES, env=env)
+    ignored = git("ls-files", "--others", "--ignored", "--exclude-standard", "--",
+                  ":(glob)crates/*/src/**/*.rs", env=env)
+    if untracked or ignored:
+        sys.exit("Failing-first check unverified. Stage the new source before saving:\n"
+                 + os.fsdecode(untracked + ignored).rstrip("\n"))
+    status_rows = git("status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=no",
+                      "--", "crates", env=env)
+    entries = {Path(os.fsdecode(row[3:])): row[:2] for row in status_rows.split(b"\0") if row}
+    staged_source = False
+    for path, status in entries.items():
+        if len(path.parts) < 4 or path.parts[2] != "src":
+            continue
+        if status[:1] != b" ":
+            staged_source = True
+        if status == b"AD":
+            sys.exit("Failing-first check unverified. Git stash cannot preserve a newly staged file missing from the working tree.")
+        blocked_parent = any(parent in entries or parent.is_symlink() or
+                             (parent.exists() and not parent.is_dir()) for parent in path.parents)
+        if blocked_parent or (not path.is_symlink() and path.is_dir()):
+            sys.exit(f"Failing-first check unverified. Source changes between a file and a directory at {str(path)!r}.")
+    if staged_source and not git(
+            "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--", SOURCES, env=env):
+        sys.exit("Failing-first check unverified. Source edits are staged, but the working source matches HEAD.")
+
+
+def save(live, scratch):
+    check_source(live)
+    private_index = scratch / "source"
+    shutil.copyfile(live["GIT_INDEX_FILE"], private_index)
+    private = {**live, "GIT_INDEX_FILE": str(private_index)}
+    git("reset", "-q", "HEAD", "--", ":(exclude,glob)" + SOURCE_GLOB, env=private)
+    marker = "forge-warden-source-" + str(uuid.uuid4())
+    result = subprocess.run(["git", "-c", "apply.whitespace=nowarn", "stash", "push",
+                             "--message", marker, "--", SOURCES], env=private)
+    stored = git("stash", "list", "--fixed-strings", "--grep-reflog=" + marker,
+                 "--format=%H", env=live).decode().strip()
+    if not stored:
+        print("Failing-first check unverified. No crate source stash was recorded.", file=sys.stderr)
+        sys.exit(result.returncode or 1)
+    print(stored, flush=True)
+    if result.returncode:
+        sys.exit(result.returncode)
+    git("reset", "-q", stored + "^1", "--", SOURCES, env=live)
+
+
+if __name__ == "__main__":
+    with locked_index() as (live, scratch):
+        save(live, scratch)

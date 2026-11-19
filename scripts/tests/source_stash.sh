@@ -11,7 +11,7 @@ git init -q --template=
 git config user.name Fixture
 git config user.email fixture@example.invalid
 mkdir -p scripts crates/x/src
-cp "$root"/scripts/{stash_source.sh,restore_source.py} scripts/
+cp "$root"/scripts/{stash_source.sh,source_stash.py,restore_source.py} scripts/
 src=crates/x/src
 printf '*.swp\nignored.rs\n' > .gitignore
 for file in lib.rs unrelated.rs removed.rs staged-only.rs; do
@@ -158,16 +158,33 @@ for whitespace in fix error; do
     [[ $(cat "$src/indented.rs") == '        fn working() {}' ]]
 done
 
-(
-    git() {
-        command git "$@" || return $?
-        if [[ " $* " == *' stash push '* ]]; then return 17; fi
-    }
-    export -f git
-    result=0
-    bash scripts/stash_source.sh > log || result=$?
-    [[ $result == 17 ]]
-)
+mkdir "$scratch/bin"
+export FIXTURE_PATH="$PATH" RACE_LOG="$scratch/race" RACE_PATH="$src/indented.rs"
+cat > "$scratch/bin/git" <<'SH'
+#!/usr/bin/env bash
+export PATH="$FIXTURE_PATH"
+if [[ -n ${CANCEL_WITH:-} && -f .git/index.lock ]]; then
+    kill -s "$CANCEL_WITH" "$PPID"
+    exit 0
+fi
+case " $* " in
+    *' stash push '*|*' restore '*' --staged '*)
+        if [[ -n ${FAIL_AFTER_STASH:-} ]]; then
+            git "$@" || exit $?
+            exit 17
+        fi
+        if env -u GIT_INDEX_FILE git update-index --cacheinfo "100644,$RACE_BLOB,$RACE_PATH"; then
+            exit 99
+        fi
+        echo blocked >> "$RACE_LOG"
+        ;;
+esac
+exec git "$@"
+SH
+chmod +x "$scratch/bin/git"
+result=0
+FAIL_AFTER_STASH=1 PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh > log || result=$?
+[[ $result == 17 ]]
 [[ $(tail -n 1 log) == "$(git rev-parse refs/stash)" ]]
 python3 -I scripts/restore_source.py "$(tail -n 1 log)"
 [[ $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
@@ -180,24 +197,21 @@ if python3 -I scripts/restore_source.py "$stash" > log 2>&1; then exit 1; fi
 [[ $(cat "$lock") == busy && $(git show ":$src/indented.rs") == '        fn staged() {}' ]]
 rm "$lock"
 
-mkdir "$scratch/bin"
-export FIXTURE_PATH="$PATH" RACE_LOG="$scratch/race" RACE_PATH="$src/indented.rs"
+before="$(git write-tree)"
+for signal in HUP INT TERM; do
+    for action in save restore; do
+        result=0
+        if [[ $action == save ]]; then
+            CANCEL_WITH="$signal" PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh || result=$?
+        else
+            CANCEL_WITH="$signal" PATH="$scratch/bin:$PATH" python3 -I scripts/restore_source.py "$stash" || result=$?
+        fi
+        [[ $result == $((128 + $(kill -l "$signal"))) && ! -e $lock ]]
+        [[ $(git write-tree) == "$before" && $(cat "$RACE_PATH") == '        fn working() {}' ]]
+    done
+done
 export RACE_BLOB
 RACE_BLOB="$(printf 'concurrent selection\n' | git hash-object -w --stdin)"
-cat > "$scratch/bin/git" <<'SH'
-#!/usr/bin/env bash
-export PATH="$FIXTURE_PATH"
-case " $* " in
-    *' stash push '*|*' restore '*' --staged '*)
-        if env -u GIT_INDEX_FILE git update-index --cacheinfo "100644,$RACE_BLOB,$RACE_PATH"; then
-            exit 99
-        fi
-        echo blocked >> "$RACE_LOG"
-        ;;
-esac
-exec git "$@"
-SH
-chmod +x "$scratch/bin/git"
 stash="$(PATH="$scratch/bin:$PATH" bash scripts/stash_source.sh | tail -n 1)"
 [[ $(cat "$RACE_LOG") == blocked ]]
 rm "$RACE_LOG"

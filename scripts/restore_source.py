@@ -1,20 +1,17 @@
 """Restore the source paths changed in each layer of a saved stash."""
+import importlib.util
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
-from contextlib import contextmanager
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("source_stash", Path(__file__).with_name("source_stash.py"))
+source_stash = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(source_stash)
 
-SOURCES = ":(glob)crates/*/src/**"
-
-
-def git(*args, env, data=None):
-    return subprocess.run(["git", *args], env=env, input=data, stdout=subprocess.PIPE,
-                          check=True).stdout
+git = source_stash.git
+SOURCES = source_stash.SOURCES
 
 
 def index_entries(env, *paths):
@@ -47,66 +44,46 @@ def restore_paths(layer, revision, paths, env):
             data=b"".join(os.fsencode(path) + b"\0" for path in paths))
 
 
-@contextmanager
-def locked_index(env):
-    index = Path(os.fsdecode(git("rev-parse", "--path-format=absolute", "--git-path", "index", env=env)[:-1]))
-    lock = index.with_name(index.name + ".lock")
-    try:
-        lock.touch(exist_ok=False)
-    except FileExistsError:
-        sys.exit("Could not lock the Git index for source recovery.")
-    try:
-        shutil.copy2(index, lock)
-        yield {**env, "GIT_INDEX_FILE": str(lock)}
-        os.replace(lock, index)
-    except BaseException:
-        lock.unlink()
-        raise
+def restore(stash, scratch, live):
+    baseline = {**live, "GIT_INDEX_FILE": str(scratch / "base")}
+    live = {**live, "GIT_NO_REPLACE_OBJECTS": "1"}
+    parent = git("rev-parse", "--verify", stash + "^1", env=live).decode().strip()
+    saved = {**live, "GIT_INDEX_FILE": str(scratch / "saved")}
+    base, base_dirty = snapshot(parent, baseline)
+    worktree, worktree_dirty = snapshot(stash, saved)
+    git("read-tree", stash + "^2", env=saved)
+    staged = index_entries(saved, SOURCES)
+    worktree_paths = []
+    for path in changed_paths(base, worktree):
+        if any(p.is_symlink() or (p.exists() and not p.is_dir()) for p in path.parents):
+            refuse(path)
+        exists = os.path.lexists(path)
+        if exists and not (path.is_symlink() or path.is_file()):
+            refuse(path)
+        if exists == (path in worktree) and path not in worktree_dirty:
+            continue
+        if exists != (path in base) or path in base_dirty:
+            refuse(path)
+        worktree_paths.append(path)
 
+    current = index_entries(live)
+    index_dirs = {directory for path in current for directory in path.parents}
+    staged_paths = []
+    for path in changed_paths(base, staged):
+        if path in index_dirs or any(p in current for p in path.parents):
+            refuse(path)
+        if current.get(path) == staged.get(path):
+            continue
+        if current.get(path) != base.get(path):
+            refuse(path)
+        staged_paths.append(path)
 
-def restore(stash, scratch):
-    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", stash):
-        sys.exit("expected a full stash object ID")
-    local = {key: value for key, value in os.environ.items()
-             if key == "GIT_CONFIG_NOSYSTEM" or not key.startswith("GIT_")}
-    raw = {**local, "GIT_NO_REPLACE_OBJECTS": "1"}
-    with locked_index(raw) as live:
-        parent = git("rev-parse", "--verify", stash + "^1", env=raw).decode().strip()
-        baseline = {**local, "GIT_INDEX_FILE": str(scratch / "base")}
-        saved = {**raw, "GIT_INDEX_FILE": str(scratch / "saved")}
-        base, base_dirty = snapshot(parent, baseline)
-        worktree, worktree_dirty = snapshot(stash, saved)
-        git("read-tree", stash + "^2", env=saved)
-        staged = index_entries(saved, SOURCES)
-        worktree_paths = []
-        for path in changed_paths(base, worktree):
-            if any(p.is_symlink() or (p.exists() and not p.is_dir()) for p in path.parents):
-                refuse(path)
-            exists = os.path.lexists(path)
-            if exists and not (path.is_symlink() or path.is_file()):
-                refuse(path)
-            if exists == (path in worktree) and path not in worktree_dirty:
-                continue
-            if exists != (path in base) or path in base_dirty:
-                refuse(path)
-            worktree_paths.append(path)
-
-        current = index_entries(live)
-        index_dirs = {directory for path in current for directory in path.parents}
-        staged_paths = []
-        for path in changed_paths(base, staged):
-            if path in index_dirs or any(p in current for p in path.parents):
-                refuse(path)
-            if current.get(path) == staged.get(path):
-                continue
-            if current.get(path) != base.get(path):
-                refuse(path)
-            staged_paths.append(path)
-
-        restore_paths("staged", stash + "^2", staged_paths, live)
-        restore_paths("worktree", stash, worktree_paths, {**baseline, "GIT_NO_REPLACE_OBJECTS": "1"})
+    restore_paths("staged", stash + "^2", staged_paths, live)
+    restore_paths("worktree", stash, worktree_paths, {**baseline, "GIT_NO_REPLACE_OBJECTS": "1"})
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as directory:
-        restore(sys.argv[1], Path(directory))
+    if len(sys.argv) != 2 or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sys.argv[1]):
+        sys.exit("expected a full stash object ID")
+    with source_stash.locked_index() as (live, scratch):
+        restore(sys.argv[1], scratch, live)

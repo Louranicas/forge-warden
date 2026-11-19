@@ -14,7 +14,11 @@ could not run as **not verified**.
 2. **Docs build**: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`.
 3. **New behaviour has a failing-first test.** For each behaviour change, name the test and
    confirm it fails without the change. For implementation changes under `crates/*/src/**`,
-   save the source with `just stash-source`. If it records no crate source stash, mark the check
+   save the source with `just stash-source`. Both save and restore require exclusive write access
+   to those working files. Pause editor autosave, formatters, and other writers before saving
+   and keep them paused through the test and restoration, including retries. If you cannot
+   ensure exclusive access, leave the files in place and mark the check **not verified**.
+   If save records no crate source stash, mark the check
    **not verified**. If it lists untracked files, stage the listed source before retrying.
    Ignored Rust source also needs to be included. If a file or symlink replaces a directory, or a
    directory replaces either, the save refuses and leaves the changes in place. It also refuses when
