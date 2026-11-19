@@ -4,186 +4,129 @@ set -euo pipefail
 source_root="$(cd "$(dirname "$0")/../.." && pwd)"
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/bin" "$sandbox/repo/scripts" "$sandbox/repo/plants" "$sandbox/repo/scripts/tests"
-cp "$source_root/scripts/ci_local.sh" "$sandbox/repo/scripts/ci_local.sh"
-cp "$source_root/scripts/judge_mode.py" "$sandbox/repo/scripts/judge_mode.py"
-# The judged patch comes from the patch-maker (H17); its own test is scripts/tests/dogfood.sh.
-printf '#!/usr/bin/env bash\nprintf "fixture patch\\n"\n' > "$sandbox/repo/scripts/make_patch.sh"
-printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tool_versions.py"
-printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/plants/test_runner.py"
-printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_plants.py"
-printf 'schema = "forge-warden.policy.v0"\n' > "$sandbox/repo/warden.toml"
-printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/perimeter.py"
-printf 'import sys\nsys.exit(0)\n' > "$sandbox/repo/scripts/tests/runner_routing.py"
+export TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target"
+mkdir -p "$sandbox/bin" "$TEST_ROOT/scripts/tests" "$TEST_ROOT/plants"
+cp "$source_root/scripts/ci_local.sh" "$source_root/scripts/make_patch.sh" "$TEST_ROOT/scripts/"
 cp "$source_root/.githooks/pre-push" "$sandbox/pre-push"
-printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$sandbox/repo/scripts/check_guardrails.py"
-# Full commit ids, distinct, so the authority judge's bound arguments can be checked exactly (Q79).
-export BASE_ID=1111111111111111111111111111111111111111 HEAD_ID=2222222222222222222222222222222222222222
-cat > "$sandbox/bin/git" <<'STUB'
-#!/usr/bin/env bash
-case "$1 ${2:-} ${3:-}" in
- 'rev-parse HEAD '*) echo "$HEAD_ID" ;;
- 'rev-parse --path-format=absolute --git-common-dir') echo "$TEST_ROOT/.git" ;;
- rev-parse*) echo "$TEST_ROOT" ;;
- merge-base*) echo "$BASE_ID" ;;
- diff*) if [[ "$*" == *--binary* ]]; then printf 'fixture patch\n'; else printf 'source fixture\n'; fi ;;
- *) exit 90 ;;
-esac
+cat >> "$TEST_ROOT/scripts/make_patch.sh" <<'STUB'
+printf '%s\n' "$1" "$2" > "$TEST_ROOT/patch-inputs"
+if [ -n "${NEXT_HEAD:-}" ]; then
+  git update-ref HEAD "$NEXT_HEAD"
+  git update-ref refs/remotes/origin/main "$NEXT_HEAD"
+fi
 STUB
+for script in scripts/tool_versions.py plants/test_runner.py scripts/tests/perimeter.py scripts/tests/runner_routing.py; do
+ : > "$TEST_ROOT/$script"
+done
+printf 'import os, sys\nsys.exit(int(os.environ.get("PLANTS_EXIT", "0")))\n' > "$TEST_ROOT/scripts/check_plants.py"
+printf 'import os, sys\nsys.exit(int(os.environ.get("GUARDRAIL_EXIT", "0")))\n' > "$TEST_ROOT/scripts/check_guardrails.py"
+cp "$source_root/warden.toml" "$TEST_ROOT/warden.toml"
 cat > "$sandbox/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
-# Every subcommand is recorded, so a test can require that a gate step actually ran (G-18 F1).
+set -eu
 printf '%s\n' "$*" >> "$TEST_ROOT/cargo-calls"
-if [ "$1" = run ]; then
- if [ "${EXPECTED_MODE:-advisory}" = authority ]; then
-  [[ " $* " == *' --ranker '* && " $* " != *' --advisory '* && " $* " != *' --rank '* ]] || exit 97
-  # Bound mode (ledger Q79): warden.toml requires verified claims, so the authority judge must make
-  # its own diff of this repository from the merge base to HEAD, with full ids.
-  [[ " $* " == *" --repo $TEST_ROOT/.git --base $BASE_ID --head $HEAD_ID "* ]] || { echo "ci_local test: the authority judge is not bound: $*" >&2; exit 96; }
- else
-  [[ " $* " == *' --advisory '* && " $* " == *' --rank '* ]] || exit 97
- fi
- echo judge >> "$TEST_ROOT/calls"
- # Emulate a judge which succeeds if fed an empty ranking: the ranker must stop it first.
- if [[ " $* " == *' --rank '* ]]; then
-   test -s "$TEST_ROOT/target/rank.json" || exit 0
- else
-   cat >/dev/null
- fi
- exit "$JUDGE_EXIT"
-fi
 case "$1" in
- deny) exit "${DENY_EXIT:-$GATE_EXIT}" ;;
- mutants) exit "${MUTANTS_EXIT:-$GATE_EXIT}" ;;
+ run)
+  [[ " $* " == *" --ranker ${TEST_ROOT%/*}/bin/deep-diff-forge "* ]] || exit 97
+  [[ " $* " == *" --repo $TEST_ROOT/.git --base $BASE_ID --head $HEAD_ID "* ]] || exit 96
+  [[ " $* " == *' --patch target/change.patch '* && " $* " != *' --advisory '* ]] || exit 95
+  [[ "$(cat "$TEST_ROOT/patch-inputs")" == "$(printf '%s\n' "$BASE_ID" "$HEAD_ID")" ]] || exit 94
+  exit "${JUDGE_EXIT:-0}" ;;
+ deny) exit "${DENY_EXIT:-0}" ;;
+ mutants) exit "${MUTANTS_EXIT:-0}" ;;
 esac
-exit "$GATE_EXIT"
+exit 0
 STUB
-cat > "$sandbox/bin/deep-diff-forge" <<'STUB'
-#!/usr/bin/env bash
-[ "${EXPECTED_MODE:-advisory}" = advisory ] || exit 98
-cat >/dev/null
-if [ "$RANK_EXIT" -ne 0 ]; then exit "$RANK_EXIT"; fi
-printf '{}\n'
-STUB
-for tool in cargo-deny cargo-mutants zizmor; do
- printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/$tool"
+printf '#!/usr/bin/env bash\nexit 98\n' > "$sandbox/bin/deep-diff-forge"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/zizmor"
+chmod +x "$sandbox/bin/"*
+for tool in git bash env python3 mkdir mktemp rm head grep cat mv cp; do
+ ln -s "$(type -P "$tool")" "$sandbox/bin/$tool"
 done
-chmod +x "$sandbox/bin/"* "$sandbox/repo/scripts/ci_local.sh"
-export PATH="$sandbox/bin:$PATH" TEST_ROOT="$sandbox/repo" CARGO_TARGET_DIR="$sandbox/external-target"
-failures=0
-for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
- # Each entrypoint starts with no local artifact directory and an external Cargo target.
- if [ -d "$TEST_ROOT/target" ]; then mv "$TEST_ROOT/target" "$sandbox/previous-artifacts"; fi
- for row in 'advisory-hold 0 0 8 8' 'fail 0 0 7 7' 'hold 0 0 8 8' 'rank-error 0 9 0 9' 'gate-error 6 0 0 6'; do
-  read -r name GATE_EXIT RANK_EXIT JUDGE_EXIT expected <<< "$row"
-  export GATE_EXIT RANK_EXIT JUDGE_EXIT
-  : > "$TEST_ROOT/calls"
-  set +e
-  bash "$entry" > "$sandbox/output" 2>&1
-  actual=$?
-  set -e
-  bad=0
-  if [ "$actual" -ne "$expected" ]; then bad=1; fi
-  if [ "$expected" -ne 0 ] && grep -q -E 'ci_local: (all gates passed|offline gates passed)' "$sandbox/output"; then bad=1; fi
-  if [ "$RANK_EXIT" -ne 0 ] && [ -s "$TEST_ROOT/calls" ]; then bad=1; fi
-  if [ "$bad" -eq 1 ]; then
-   printf 'FAIL %s %s: expected %s, got %s\n' "$(basename "$entry")" "$name" "$expected" "$actual"
-   cat "$sandbox/output"
-   failures=$((failures + 1))
-  else
-   printf 'PASS %s %s exit=%s\n' "$(basename "$entry")" "$name" "$actual"
-  fi
- done
-done
-[ "$failures" -eq 0 ]
+export PATH="$sandbox/bin"
+while IFS= read -r name; do unset "$name"; done < <(compgen -v GIT_)
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+cd "$TEST_ROOT"
+git init -q
+git commit --allow-empty -qm root
+root_id="$(git rev-parse HEAD)"
+mkdir -p crates/sample/src
+printf 'fixture\n' > crates/sample/src/lib.rs
+git add crates/sample/src/lib.rs
+git commit -qm head
+HEAD_ID="$(git rev-parse HEAD)"
+tree="$(git rev-parse 'HEAD^{tree}')"
+BASE_ID="$(git commit-tree "$tree" -p "$root_id" -m upstream)"
+export BASE_ID HEAD_ID
+git update-ref refs/remotes/origin/main "$BASE_ID"
 
-# Authority never pre-runs an unvalidated ranker or falls back after an admission refusal.
-printf '[producer]\nsha256 = ["%064d"]\n' 0 > "$TEST_ROOT/warden.toml"
-export EXPECTED_MODE=authority GATE_EXIT=0 RANK_EXIT=0 CARGO_TARGET_DIR="$sandbox/external-target"
-for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
- for JUDGE_EXIT in 0 4 3; do
+run_gate() {
+ local entry="$1" expected="$2" actual=0
+ : > "$TEST_ROOT/cargo-calls"
+ bash "$entry" > "$sandbox/output" 2>&1 || actual=$?
+ if [ "$actual" -ne "$expected" ] || { [ "$actual" -ne 0 ] && grep -qE 'ci_local: (all gates passed|offline gates passed)' "$sandbox/output"; }; then
+  cat "$sandbox/output" >&2
+  echo "FAIL $entry: expected exit $expected, got $actual" >&2
+  exit 1
+ fi
+}
+gate="$TEST_ROOT/scripts/ci_local.sh"
+for entry in "$gate" "$sandbox/pre-push"; do
+ rm -rf "$TEST_ROOT/target"
+ for JUDGE_EXIT in 0 3 4 7 8 9; do
   export JUDGE_EXIT
-  set +e
-  bash "$entry" > "$sandbox/output" 2>&1
-  actual=$?
-  set -e
-  [ "$actual" -eq "$JUDGE_EXIT" ] || { cat "$sandbox/output"; exit 1; }
-  echo "PASS authority exact judge exit=$actual"
+  run_gate "$entry" "$JUDGE_EXIT"
+  grep -q '^run ' "$TEST_ROOT/cargo-calls"
+ done
+ unset JUDGE_EXIT
+ grep -qx 'deny check' "$TEST_ROOT/cargo-calls"
+ grep -qx 'mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace' "$TEST_ROOT/cargo-calls"
+ for row in 'DENY_EXIT 5' 'MUTANTS_EXIT 7' 'GUARDRAIL_EXIT 1' 'PLANTS_EXIT 23'; do
+  read -r name code <<< "$row"
+  export "$name=$code"
+  run_gate "$entry" "$code"
+  if [ "$name" != PLANTS_EXIT ] && grep -q '^run ' "$TEST_ROOT/cargo-calls"; then exit 1; fi
+  unset "$name"
  done
 done
 
-# Invalid TOML refuses before any ranking/judge invocation; no implicit advisory fallback.
-printf '[broken\n' > "$TEST_ROOT/warden.toml"
-: > "$TEST_ROOT/calls"
-set +e
-bash "$sandbox/repo/scripts/ci_local.sh" > "$sandbox/output" 2>&1
-actual=$?
-set -e
-[ "$actual" -eq 4 ] && [ ! -s "$TEST_ROOT/calls" ]
-echo 'PASS malformed policy refuses mode selection'
-
-# Failure of the configuration admission checker must stop the gate before judge execution.
-export GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0 GUARDRAIL_EXIT=1
-for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
- : > "$TEST_ROOT/calls"
- set +e
- bash "$entry" > "$sandbox/output" 2>&1
- actual=$?
- set -e
- [ "$actual" -eq 1 ] && [ ! -s "$TEST_ROOT/calls" ]
- echo "PASS guardrail admission failure propagates exit=$actual"
-done
-
-# The planted-regression gate is mandatory and preserves its actual failure code.
-printf '[producer]\nsha256 = ["%064d"]\n' 0 > "$TEST_ROOT/warden.toml"
-export GUARDRAIL_EXIT=0 PLANTS_EXIT=23 GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0
-for entry in "$sandbox/repo/scripts/ci_local.sh" "$sandbox/pre-push"; do
- set +e
- bash "$entry" > "$sandbox/output" 2>&1
- actual=$?
- set -e
- [ "$actual" -eq 23 ] || { cat "$sandbox/output"; exit 1; }
- echo "PASS plant failure propagates exit=$actual"
-done
-
-# G-18: a hosted-only step that cannot run here is named in the final line, never read as passed.
 printf 'schema = "forge-warden.policy.v0"\n' > "$TEST_ROOT/warden.toml"
-export GUARDRAIL_EXIT=0 PLANTS_EXIT=0 GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0 EXPECTED_MODE=advisory
-rm -f "$sandbox/bin/zizmor" "$sandbox/bin/deep-diff-forge"
-absent=""
-for tool in zizmor deep-diff-forge; do command -v "$tool" >/dev/null || absent+=" $tool"; done
-if [ -n "$absent" ]; then
- set +e
- bash "$sandbox/repo/scripts/ci_local.sh" > "$sandbox/output" 2>&1
- actual=$?
- set -e
- [ "$actual" -eq 0 ] || { cat "$sandbox/output"; exit 1; }
- grep -qxF "ci_local: offline gates passed; hosted-only, not run here:$absent" "$sandbox/output" || { cat "$sandbox/output"; exit 1; }
- ! grep -q 'ci_local: all gates passed' "$sandbox/output" || { cat "$sandbox/output"; exit 1; }
- echo "PASS hosted-only steps are named, not passed:$absent"
-else
- echo "NOTE hosted-only naming not exercised: zizmor and deep-diff-forge are both installed on this machine"
-fi
+JUDGE_EXIT=4 run_gate "$gate" 4
+grep -q '^run ' "$TEST_ROOT/cargo-calls"
+cp "$source_root/warden.toml" "$TEST_ROOT/warden.toml"
 
-# G-18 F1: a required step must RUN, and its failure must reach ci_local's exit status. Static
-# checks refuse a skippable form; this proves the unconditional step is reached and not swallowed.
-printf 'schema = "forge-warden.policy.v0"\n' > "$TEST_ROOT/warden.toml"
-export GUARDRAIL_EXIT=0 PLANTS_EXIT=0 GATE_EXIT=0 RANK_EXIT=0 JUDGE_EXIT=0 EXPECTED_MODE=advisory
-: > "$TEST_ROOT/cargo-calls"
-set +e
-bash "$sandbox/repo/scripts/ci_local.sh" > "$sandbox/output" 2>&1
-actual=$?
-set -e
-[ "$actual" -eq 0 ] || { cat "$sandbox/output"; exit 1; }
-grep -qx 'deny check' "$TEST_ROOT/cargo-calls" || { echo 'FAIL required step did not run: cargo deny check'; cat "$TEST_ROOT/cargo-calls"; exit 1; }
-grep -qx 'mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace' "$TEST_ROOT/cargo-calls" || { echo 'FAIL required step did not run: cargo mutants --in-diff'; cat "$TEST_ROOT/cargo-calls"; exit 1; }
-echo 'PASS required steps ran: deny check, mutants --in-diff'
-for row in 'DENY_EXIT 5' 'MUTANTS_EXIT 7'; do
- read -r name code <<< "$row"
- set +e
- env "$name=$code" bash "$sandbox/repo/scripts/ci_local.sh" > "$sandbox/output" 2>&1
- actual=$?
- set -e
- [ "$actual" -eq "$code" ] || { echo "FAIL $name=$code was swallowed: ci_local exited $actual"; exit 1; }
- echo "PASS $name=$code propagates"
-done
+NEXT_HEAD="$(git commit-tree "$tree" -p "$HEAD_ID" -m later)"
+export NEXT_HEAD
+run_gate "$gate" 0
+unset NEXT_HEAD
+git update-ref HEAD "$HEAD_ID"
+
+git update-ref -d refs/remotes/origin/main
+BASE_ID="$root_id"
+run_gate "$gate" 0
+
+mv "$sandbox/bin/deep-diff-forge" "$sandbox/ranker"
+run_gate "$gate" 1
+grep -qF 'required tool missing: deep-diff-forge' "$sandbox/output"
+git update-ref refs/remotes/origin/main "$HEAD_ID"
+rm "$sandbox/bin/zizmor"
+run_gate "$gate" 0
+if grep -q '^run ' "$TEST_ROOT/cargo-calls"; then exit 1; fi
+grep -qxF 'ci_local: offline gates passed; hosted-only, not run here: zizmor' "$sandbox/output"
+mv "$sandbox/ranker" "$sandbox/bin/deep-diff-forge"
+
+unrelated="$(git commit-tree "$tree" -m unrelated)"
+git update-ref refs/remotes/origin/main "$unrelated"
+run_gate "$gate" 2
+grep -qF 'no common history' "$sandbox/output"
+
+sibling="$(git commit-tree "$tree" -p "$root_id" -m sibling)"
+left="$(git commit-tree "$tree" -p "$HEAD_ID" -p "$sibling" -m left)"
+right="$(git commit-tree "$tree" -p "$sibling" -p "$HEAD_ID" -m right)"
+git update-ref HEAD "$left"
+git update-ref refs/remotes/origin/main "$right"
+run_gate "$gate" 2
+grep -qF '2 merge bases' "$sandbox/output"
+echo 'PASS local gate and pre-push bound judgments and refusals'

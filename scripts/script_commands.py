@@ -92,7 +92,6 @@ IMAGE = frozenset("""
 ONLY_IN = {
     # ci_local runs these steps only after `command -v` finds the tool, and names them as not
     # run otherwise (tool-versions.toml [local_gate] hosted_only). Not in the gate image.
-    'deep-diff-forge': frozenset({'scripts/ci_local.sh'}),
     'zizmor': frozenset({'scripts/ci_local.sh'}),
     # The self-hosted runner guest's bootstrap (WP-RUNNER-UP) installs a toolchain on a fresh
     # Ubuntu guest; the gate never runs it. apt-get is not in the gate image.

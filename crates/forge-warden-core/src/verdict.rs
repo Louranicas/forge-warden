@@ -601,7 +601,7 @@ pub struct Citation {
     pub line: u64,
 }
 
-/// A waiver, reported because it expired or matched nothing.
+/// An expired waiver or a live waiver never selected to cover a violation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct WaiverNote {
@@ -868,7 +868,8 @@ impl Verdict {
         &self.expired_waivers
     }
 
-    /// Active waivers that matched no violation: candidates for deletion.
+    /// Live waivers never selected to cover a violation, including those whose matches
+    /// were all covered by earlier waivers.
     #[must_use]
     pub fn unused_waivers(&self) -> &[WaiverNote] {
         &self.unused_waivers

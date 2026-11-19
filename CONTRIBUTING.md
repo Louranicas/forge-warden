@@ -28,11 +28,9 @@ just ci              # the full local gate (everything it can run offline)
 
 The full gate requires `cargo-deny` and `cargo-mutants` at the versions pinned in
 `scripts/tool-versions.toml`; a missing or different one stops it with a named refusal, never a skip
-(G-18). `zizmor` and `deep-diff-forge` are hosted-only (the `[local_gate]` table says why). When they
-are absent, the gate's last line names them as not run here instead of claiming that everything passed.
-This repository's gate uses no hosted workflow (see [Where the gate runs](#where-the-gate-runs)). So
-for this repository a hosted-only tool runs only where `just ci` finds it on `PATH`, and nothing else runs
-it when it is absent. The table there says what that leaves out.
+(G-18). The local comparison uses Git 2.43 or later. A nonempty patch requires `deep-diff-forge` on
+`PATH` and a binary hash enrolled in the policy. When `zizmor` is absent, the gate's last line names
+the skipped workflow audit. See [Where the gate runs](#where-the-gate-runs).
 
 Scripts and their tests run in an offline gate image that has fewer commands than a developer's
 machine (no `cmp`, `diff`, `jq`, `xxd` or `file`). `scripts/script_commands.py` (fast gate, and
@@ -82,7 +80,7 @@ Where each check of the hosted workflows runs now:
 | `supply chain (cargo-deny)` | `scripts/ci_local.sh` step `deny`, and the integrator gate (`cargo deny --offline check`; the receipt records the advisory database's commit date) |
 | `diff mutation (cargo-mutants)` | `scripts/ci_local.sh` step `mutation`, and the integrator gate with `--mutants --parent <previous main>` (in-diff against that parent, `--cap-lints true`) |
 | `full workspace mutation baseline` | **not scheduled and not required.** It was run by hand once, for 0.2.0 on its final commit (command and result in [`EVIDENCE.md`](EVIDENCE.md): 2 missed mutants, each explained), and not rerun for 0.2.1 |
-| `dogfood (trusted base judges candidate data)` | **not run on each change.** No gate runs the trusted driver `scripts/dogfood.sh` for this repository. `scripts/ci_local.sh` has a `dogfood` step when `deep-diff-forge` is on `PATH`, but it is not this check: it judges the change with the candidate's own `warden.toml` and a `forge-warden` built from the candidate tree, so a change can loosen the policy that judges it. It is a preview for the developer, not a trusted verdict. Authority mode, in either, needs the owner-enrolled Git allowlist ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)). A local run of `scripts/dogfood.sh` reads a copy of the pinned deep-diff-forge release archive named with `--ranker-archive FILE` and checked against the pinned SHA-256; only the hosted job downloads it. Until the trusted driver is a step of the integrator gate, a merge into `main` is judged by the steps above and by review, not by forge-warden's own policy |
+| `dogfood (trusted base judges candidate data)` | **not run on each change.** No gate runs the trusted driver `scripts/dogfood.sh` for this repository. `scripts/ci_local.sh` requires a bound judgment for each nonempty comparison. It judges the change with the candidate's own `warden.toml` and a `forge-warden` built from the candidate tree, so a change can loosen the policy that judges it. It is a preview for the developer, not a trusted verdict. Authority mode, in either, needs the owner-enrolled Git allowlist ([`docs/GIT_RUNTIME.md`](docs/GIT_RUNTIME.md)). A local run of `scripts/dogfood.sh` reads a copy of the pinned deep-diff-forge release archive named with `--ranker-archive FILE` and checked against the pinned SHA-256; only the hosted job downloads it. Until the trusted driver is a step of the integrator gate, a merge into `main` is judged by the steps above and by review, not by forge-warden's own policy |
 | `vocabulary tracks deep-diff-forge` | **the comparison with the pinned deep-diff-forge commit is in no gate** (the script itself is tested by `check_vocab.rs`). It can be run by hand against a local deep-diff-forge checkout, with no network: `scripts/check_vocab.sh <commit> <checkout>` (with no checkout, as `just vocab` runs it, it fetches deep-diff-forge from github.com) |
 | `workflow audit (zizmor)` | **in no gate.** `scripts/ci_local.sh` runs it (step `zizmor`) only when `zizmor` is on `PATH`, and the integrator gate has no zizmor step. The workflow files are not run here, but the integrator gate reads them and deployers copy them, so an unaudited change to them reaches both |
 | runner routing (`mutation-baseline.yml` job `route`) | not run: it routes hosted jobs to a self-hosted pool ([`docs/runner-up.md`](docs/runner-up.md)), and the project triggers no hosted job |

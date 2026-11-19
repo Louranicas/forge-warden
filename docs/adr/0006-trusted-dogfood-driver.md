@@ -50,9 +50,8 @@ records the actual producer digest in the verdict and hashes the binary in prove
 Base/head are passed as unverified claims; the separate signed receipt still binds the external
 subject and exact verdict digest.
 
-ci_local uses the same explicit selection against its working policy; it is a local development
-check, not the independently trusted policy/driver authority described above. Both entrypoints
-propagate ranker/admission failures; neither retries a refusal in a weaker mode.
+`ci_local` requires bound authority for each nonempty comparison. It uses the working policy and
+candidate-built judge. Both drivers propagate admission and ranking failures.
 
 ## Amendment (DOGFOOD-ATTR, 2026-11-11): the candidate's attributes do not shape the patch
 

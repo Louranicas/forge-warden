@@ -236,26 +236,6 @@ paths = [".github/workflows/**"]
 #[test]
 fn the_starter_policy_holds_a_change_to_agent_configuration() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
-    let ci_rule = |path: &str, status: &str| {
-        let verdict = evaluate(
-            &starter,
-            &rank(vec![file(path, status, 1, &[])]),
-            seals(),
-            today(),
-        );
-        let rule = verdict
-            .rules()
-            .iter()
-            .find(|rule| rule.id == "ci-is-owned")
-            .unwrap()
-            .clone();
-        let paths: Vec<_> = rule
-            .violations
-            .iter()
-            .filter_map(|v| v.path.clone())
-            .collect();
-        (verdict.outcome(), rule.outcome, paths)
-    };
     for (path, status) in [
         (".claude/settings.json", "modified"),
         (".claude/settings.local.json", "added"),
@@ -269,7 +249,7 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
         (".CLAUDE/hooks/stop.sh", "modified"),
     ] {
         assert_eq!(
-            ci_rule(path, status),
+            one_rule(&starter, "ci-is-owned", path, status, &[]),
             (Outcome::Hold, RuleOutcome::Hold, vec![path.to_owned()]),
             "{path} ({status})"
         );
@@ -281,7 +261,7 @@ fn the_starter_policy_holds_a_change_to_agent_configuration() {
         "CLAUDE.md",
     ] {
         assert_eq!(
-            ci_rule(path, "modified"),
+            one_rule(&starter, "ci-is-owned", path, "modified", &[]),
             (Outcome::Pass, RuleOutcome::Pass, Vec::new()),
             "{path} is not agent configuration under .claude/"
         );
@@ -294,20 +274,16 @@ fn one_rule(
     policy: &forge_warden_core::Policy,
     id: &str,
     path: &str,
+    status: &str,
     signals: &[&str],
 ) -> (Outcome, RuleOutcome, Vec<String>) {
     let verdict = evaluate(
         policy,
-        &rank(vec![file(path, "modified", 1, signals)]),
+        &rank(vec![file(path, status, 1, signals)]),
         seals(),
         today(),
     );
-    let rule = verdict
-        .rules()
-        .iter()
-        .find(|rule| rule.id == id)
-        .unwrap()
-        .clone();
+    let rule = verdict.rules().iter().find(|rule| rule.id == id).unwrap();
     let paths = rule
         .violations
         .iter()
@@ -318,12 +294,13 @@ fn one_rule(
 
 /// CI that runs on GitLab, Gitea or Forgejo is owned like `.github` (ledger Q85): the starter holds
 /// `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the entry and everything under it, root or
-/// nested, in any letter case) with `ci-is-owned`. This repository's own policy is checked in
-/// `repo_invariants.rs` (read at run time: `warden.toml` is not a reviewed compiler input).
+/// nested, in any letter case) with `ci-is-owned`.
 #[test]
 fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
     for path in [
+        ".github",
+        ".github/workflows/ci.yml",
         ".gitlab-ci.yml",
         "services/api/.gitlab-ci.yml",
         ".GitLab-CI.yml",
@@ -339,7 +316,7 @@ fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
         "tools/.FORGEJO/workflows/ci.yml",
     ] {
         assert_eq!(
-            one_rule(&starter, "ci-is-owned", path, &[]),
+            one_rule(&starter, "ci-is-owned", path, "added", &[]),
             (Outcome::Hold, RuleOutcome::Hold, vec![path.to_owned()]),
             "starter: {path}"
         );
@@ -352,9 +329,37 @@ fn ci_on_gitlab_gitea_and_forgejo_is_owned_like_github() {
         "docs/gitlab/notes.md",
     ] {
         assert_eq!(
-            one_rule(&starter, "ci-is-owned", path, &[]),
+            one_rule(&starter, "ci-is-owned", path, "added", &[]),
             (Outcome::Pass, RuleOutcome::Pass, Vec::new()),
             "starter: {path} is not CI configuration"
+        );
+    }
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "test reads the repository policy"
+)]
+fn this_repository_owns_its_ci_on_every_forge() {
+    let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../warden.toml")).unwrap();
+    let policy = parse_policy(&bytes).unwrap();
+    for path in [
+        ".github",
+        ".github/workflows/ci.yml",
+        ".gitlab-ci.yml",
+        ".gitlab",
+        ".gitlab/ci/release.yml",
+        ".gitea",
+        ".gitea/workflows/ci.yml",
+        ".forgejo",
+        ".forgejo/workflows/ci.yml",
+    ] {
+        let (_, outcome, paths) = one_rule(&policy, "quality-config-is-owned", path, "added", &[]);
+        assert_eq!(
+            (outcome, paths),
+            (RuleOutcome::Hold, vec![path.to_owned()]),
+            "{path}"
         );
     }
 }
@@ -367,14 +372,20 @@ fn a_workflow_change_the_ranker_does_not_label_is_still_held() {
     let starter = parse_policy(include_bytes!("../../../examples/starter.warden.toml")).unwrap();
     let workflow = ".github/workflows/release.yml";
     assert_eq!(
-        one_rule(&starter, "ci-is-owned", workflow, &[]),
+        one_rule(&starter, "ci-is-owned", workflow, "modified", &[]),
         (Outcome::Hold, RuleOutcome::Hold, vec![workflow.to_owned()])
     );
     assert_eq!(
-        one_rule(&starter, "no-ci-privilege", workflow, &[]).1,
+        one_rule(&starter, "no-ci-privilege", workflow, "modified", &[]).1,
         RuleOutcome::Pass
     );
-    let labelled = one_rule(&starter, "no-ci-privilege", workflow, &["ci_privilege"]);
+    let labelled = one_rule(
+        &starter,
+        "no-ci-privilege",
+        workflow,
+        "modified",
+        &["ci_privilege"],
+    );
     assert_eq!((labelled.0, labelled.1), (Outcome::Fail, RuleOutcome::Fail));
 }
 

@@ -91,6 +91,7 @@ why = "CI and supply-chain configuration decide what every other check means."
 kind = "protect_paths"
 severity = "hold"
 paths = [
+    ".github",
     ".github/**",
     "deny.toml",
     "clippy.toml",

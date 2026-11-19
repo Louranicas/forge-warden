@@ -29,37 +29,27 @@ step doc;     cargo doc --workspace --no-deps --locked --quiet
 hosted_only_not_run=""
 step deny; cargo deny check
 if command -v zizmor >/dev/null; then step zizmor; zizmor --persona=pedantic .github/workflows; else hosted_only_not_run+=" zizmor"; fi
-step mutation
-base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
-git diff "$base" -- 'crates/*/src/**.rs' > target/pr.diff
-if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
-if command -v deep-diff-forge >/dev/null; then
-  step dogfood
-  base="$(git merge-base HEAD origin/main 2>/dev/null || git rev-list --max-parents=0 HEAD)"
-  # The judged patch comes from the patch-maker (committed changes only; no caller configuration: H17).
-  bash scripts/make_patch.sh "$base" HEAD > target/change.patch
-  if [ -s target/change.patch ]; then
-    mode="$(python3 -I scripts/judge_mode.py warden.toml)"
-    if [ "$mode" = authority ]; then
-      ranker="$(command -v deep-diff-forge)"
-      # Bound mode (ADR 0012; ledger Q79): warden.toml requires verified claims, so an authority run
-      # without --repo can only HOLD. The judge makes `git diff` of this repository from base to HEAD
-      # itself and compares it with the patch, with full commit ids.
-      head="$(git rev-parse HEAD)"
-      repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"
-      # The judge checks the binary's hash against the existing policy; never auto-enroll it.
-      cargo run --quiet --bin forge-warden -- check --policy warden.toml \
-        --ranker "$ranker" --patch target/change.patch \
-        --repo "$repo_git" --base "$base" --head "$head"
-    else
-      echo 'ci_local: explicit advisory mode (no producer pin); this result cannot PASS' >&2
-      deep-diff-forge --stdin-patch --rank --json < target/change.patch > target/rank.json
-      cargo run --quiet --bin forge-warden -- check --policy warden.toml \
-        --advisory --rank target/rank.json --patch target/change.patch
-    fi
-  fi
+head="$(git rev-parse --verify 'HEAD^{commit}')"
+comparison_ref=refs/remotes/origin/main
+if git show-ref --exists "$comparison_ref"; then
+  base="$(git rev-parse --verify "$comparison_ref^{commit}")"
+elif [ "$?" -eq 2 ]; then
+  base="$(git rev-list --max-parents=0 "$head")"
 else
-  hosted_only_not_run+=" deep-diff-forge"
+  exit 1
+fi
+bash scripts/make_patch.sh "$base" "$head" > target/change.patch
+step mutation
+mutation_base="$(git merge-base "$base" "$head")"
+git diff "$mutation_base" -- 'crates/*/src/**.rs' > target/pr.diff
+if [ -s target/pr.diff ]; then env -u CARGO_TARGET_DIR cargo mutants --no-config --cap-lints true --in-diff target/pr.diff --workspace; else echo "no source changes to mutate"; fi
+step dogfood
+if [ -s target/change.patch ]; then
+  ranker="$(type -P deep-diff-forge)" || { echo 'ci_local: required tool missing: deep-diff-forge' >&2; exit 1; }
+  repo_git="$(git rev-parse --path-format=absolute --git-common-dir)"
+  cargo run --quiet --bin forge-warden -- check --policy warden.toml \
+    --ranker "$ranker" --patch target/change.patch \
+    --repo "$repo_git" --base "$base" --head "$head"
 fi
 step plants; python3 -I scripts/check_plants.py
 if [ -n "$hosted_only_not_run" ]; then

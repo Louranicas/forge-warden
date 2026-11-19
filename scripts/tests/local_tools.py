@@ -85,6 +85,7 @@ class LocalTools(unittest.TestCase):
             ('required = ["cargo-deny", "cargo-deny"]\nhosted_only = []\n', "distinct"),
             ('required = ["rustfmt"]\nhosted_only = []\n', "no version probe: rustfmt"),
             ('required = []\nhosted_only = ["cargo-deny"]\n', "no recorded reason: cargo-deny"),
+            ('required = []\nhosted_only = ["deep-diff-forge"]\n', "no recorded reason: deep-diff-forge"),
             ('required = []\nhosted_only = []\nextra = 1\n', "exactly"),
         ]:
             with self.subTest(text=text):
@@ -116,8 +117,8 @@ class LocalTools(unittest.TestCase):
 
     def test_a_required_tool_cannot_leave_the_required_list(self):
         for text, pattern in (
-            ('required = []\nhosted_only = ["zizmor", "deep-diff-forge"]\n', "not in \\[local_gate\\] required"),
-            ('required = ["cargo-mutants"]\nhosted_only = ["zizmor", "deep-diff-forge", "cargo-deny"]\n',
+            ('required = []\nhosted_only = ["zizmor"]\n', "not in \\[local_gate\\] required"),
+            ('required = ["cargo-mutants"]\nhosted_only = ["zizmor", "cargo-deny"]\n',
              "no recorded reason: cargo-deny"),
         ):
             with self.subTest(text=text):

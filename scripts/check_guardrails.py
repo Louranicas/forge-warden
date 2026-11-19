@@ -36,8 +36,10 @@ def protected_paths(root):
 
 def check_paths(root):
     paths = protected_paths(root)
-    require({".cargo/**", "crates/*/tests/**", "fixtures/**", "plants/**"} <= set(paths),
-            "gate perimeter ownership missing")
+    perimeter = {".cargo/**", "crates/*/tests/**", "fixtures/**", "plants/**", ".gitlab-ci.yml"}
+    for forge in (".forgejo", ".gitea", ".github", ".gitlab"):
+        perimeter.update((forge, forge + "/**"))
+    require(perimeter <= set(paths), "gate perimeter ownership missing")
     policy = tomllib.loads((root / "warden.toml").read_text())
     rules = [rule for rule in policy["rule"] if rule["id"] == "quality-config-is-owned"]
     require(len(rules) == 1 and rules[0]["kind"] == "protect_paths" and rules[0]["severity"] in ("hold", "fail"),

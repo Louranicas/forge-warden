@@ -9,13 +9,13 @@ registry is always listed, because consumers parse them.
 
 ## [Unreleased]
 
-- The local gate (`scripts/ci_local.sh`) judges in bound mode (ledger Q79): its authority step passes `--repo`
-  (the Git common directory), `--base` (the merge base it computes) and `--head` (HEAD), so under this repository's
-  `warden.toml` (`[claims] require_verified = true`) it can pass; before, it could only hold with `claims_unverified`.
+- The local gate requires a bound judgment for each nonempty committed comparison (ledger Q79).
+  Patch generation and judgment use the same commit IDs for the comparison tip and HEAD.
+  The root commit supplies the comparison tip when the remote-tracking ref `origin/main` is absent.
 - CI on GitLab, Gitea and Forgejo is owned like `.github` (ledger Q85): the starter policy's `ci-is-owned` holds
   `.gitlab-ci.yml`, `.gitlab`, `.gitea` and `.forgejo` (the entry and everything under it, root or nested, any letter
   case), and this repository's `warden.toml` (`quality-config-is-owned`), `protected-paths.txt`, CODEOWNERS and the
-  agent hooks protect `.gitlab-ci.yml`, `.gitlab/**`, `.gitea/**` and `.forgejo/**`. A test pins that a workflow change
+  agent hooks protect the root CI files, directory entries and descendants on all four forges. A test pins that a workflow change
   deep-diff-forge does not label `ci_privilege` (a quoted grant such as `contents: 'write'`, ledger Q84) is still held
   by its path.
 - The text report names a superseded waiver (ledger Q80): a live waiver whose paths matched only violations an

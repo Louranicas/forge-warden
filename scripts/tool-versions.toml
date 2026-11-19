@@ -20,6 +20,7 @@ rustup_sha256 = "b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c5
 # missing or at another version stops ci_local with a named refusal. A `hosted-only` step that cannot
 # run here is named in ci_local's final line; it runs in hosted CI. Moving a tool between the lists is
 # a reviewed change to this protected file.
+# Nonempty comparisons also require deep-diff-forge, authenticated by the policy hash at judgment.
 [local_gate]
 required = ["cargo-deny", "cargo-mutants"]
-hosted_only = ["zizmor", "deep-diff-forge"]
+hosted_only = ["zizmor"]
