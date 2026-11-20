@@ -120,6 +120,7 @@ PREFIX_OPTIONS = {
     'env': frozenset({'-a', '--argv0', '-u', '--unset', '-C', '--chdir'}),
     'exec': frozenset({'-a'}),
     'command': frozenset(),
+    'builtin': frozenset(),
     'nice': frozenset({'-n', '--adjustment'}),
     'nohup': frozenset(),
     'timeout': frozenset({'-s', '--signal', '-k', '--kill-after'}),
@@ -202,6 +203,7 @@ class Word:
     def __init__(self, line, raw, value, literal, lexer):
         self.line, self.raw, self.value, self.literal = line, raw, value, literal
         self.substitutions = []
+        self.heredoc = None
         self.argument = value
         self.lexer = lexer
 
@@ -237,12 +239,12 @@ class Lexer:
                 out.append(('op', '\n', self.line))
                 self.i += 1
                 self.line += 1
-                for heredoc in pending:
-                    out.append(self.heredoc_body(*heredoc))
+                for word, strip_tabs in pending:
+                    word.heredoc = self.heredoc_body(word, strip_tabs)
                 pending = []
             elif c in '<>' and text[self.i + 1:self.i + 2] == '(':
                 self.i += 2
-                self.substitution()
+                self.substitution('process-substitution')
                 out.append(('word', Word(self.line, '<(...)', None, False, type(self))))
             elif FD_REDIRECT.match(text, self.i) or (
                     text.startswith(REDIRECTS, self.i) and not (c == '&' and text.startswith('&&', self.i))):
@@ -258,7 +260,7 @@ class Lexer:
                         self.i += 1
                     word = self.word()
                     out.append(('word', word))
-                    pending.append((word, op == '<<-', len(out)))
+                    pending.append((word, op == '<<-'))
             elif text.startswith(OPERATORS, self.i):
                 op = next(o for o in OPERATORS if text.startswith(o, self.i))
                 if closer and op == ')' and depth == 0:
@@ -280,7 +282,7 @@ class Lexer:
             self.error('unterminated here-document')
         return out
 
-    def heredoc_body(self, word, strip_tabs, index):
+    def heredoc_body(self, word, strip_tabs):
         if not word.literal and word.value is None:
             self.error('here-document delimiter is not literal')
         delimiter, start, lines = word.value, self.line, []
@@ -293,7 +295,7 @@ class Lexer:
             self.i, self.line = end + 1, self.line + 1
             if (raw.lstrip('\t') if strip_tabs else raw) == delimiter:
                 break
-            lines.append(raw)
+            lines.append(raw.lstrip('\t') if strip_tabs else raw)
         body = '\n'.join(lines) + '\n'
         quoted = any(q in word.raw for q in '\'"\\')
         body_lexer = type(self)
@@ -301,21 +303,21 @@ class Lexer:
             body, body_lexer = self.unquoted_heredoc(body, start)
             word.substitutions.extend(self.substitutions)
             self.substitutions.clear()
-        return ('heredoc', body, start, index, body_lexer)
+        return body, start, body_lexer
 
     def unquoted_heredoc(self, body, start):
         if '$(' in body or '`' in body:
             type(self)(body, start, self.substitutions).double_quoted(stop=None)
         return body, type(self)
 
-    def substitution(self):
+    def substitution(self, kind='subshell'):
         start = self.line
         nested = type(self)(self.text, self.line)
         nested.i = self.i
         tokens = nested.tokens(closer=')')
         if any(t[0] == 'word' and t[1].value == 'case' for t in tokens):
             raise Unsupported(f'line {start}: `case` inside a substitution')
-        self.substitutions.append(tokens)
+        self.substitutions.append((kind, tokens))
         self.i, self.line = nested.i, nested.line
 
     def backquote(self):
@@ -326,7 +328,7 @@ class Lexer:
         if end < 0:
             self.error('unterminated backquote')
         inner = self.text[self.i:end]
-        self.substitutions.append(type(self)(inner, start).tokens())
+        self.substitutions.append(('subshell', type(self)(inner, start).tokens()))
         self.line += inner.count('\n')
         self.i = end + 1
 
@@ -570,9 +572,11 @@ def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=UNSET_P
     return calls
 
 
-def external(calls, lexer, directory, scope='child'):
+def external(calls, lexer, directory, scope='child', owner=None):
     if AUDIT_CHECKOUT.get() is not None:
-        return [lexer.call(0, CheckoutScope(scope), True, directory=directory), *calls,
+        marker = CheckoutScope(scope)
+        marker.owner = owner
+        return [lexer.call(0, marker, True, directory=directory), *calls,
                 lexer.call(0, CheckoutScope('end'), True, directory=directory)]
     return [(line, word, True, *args) for line, word, _, *args in calls if not word.startswith('()')]
 
@@ -720,7 +724,7 @@ def stdin_key(stream):
         return stream
     operator, word, heredoc, opener = stream
     if heredoc:
-        return 'text', heredoc[1], heredoc[4]
+        return 'text', heredoc[0], heredoc[2]
     return operator, word.value if word.literal else word.raw, word.literal, word.lexer, opener
 
 
@@ -738,15 +742,27 @@ def checkout_destination(word, directory):
 
 
 class ShellDefinition(str):
-    def calls(self, invocation, lexer, directory):
+    def calls(self, invocation, lexer, directory, definitions):
         calls = []
         calls.extend(command_words(self.tokens, calls, lexer, directory, invocation.pythonpath,
-                                   invocation.shell_state, invocation.stdin))
+                                   invocation.shell_state, invocation.stdin, definitions))
         return calls
 
 
 class CheckoutScope(str):
     pass
+
+
+class ChildProcess:
+    def __init__(self, launcher):
+        self.launcher = launcher
+
+
+def joined_children(names):
+    if AUDIT_CHECKOUT.get() is None:
+        return frozenset()
+    return frozenset(key[0] for key, values in names.items()
+                     if isinstance(key, tuple) and isinstance(key[0], ChildProcess) and values == {True})
 
 
 class CheckoutRead(str):
@@ -778,7 +794,7 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
         return
     operator, word, heredoc, opener = inputs[0]
     if heredoc:
-        _, body, start, _, body_lexer = heredoc
+        body, start, body_lexer = heredoc
         if runner is None and body.startswith('#!'):
             runner = {'shell': '(sh)', 'python': '(py)'}.get(shebang(body.split('\n', 1)[0])[0])
             isolated = False
@@ -826,12 +842,32 @@ def check_pythonpath(value):
         raise Unsupported('cannot resolve explicit PYTHONPATH')
 
 
-def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_state=None, stdin=()):
+def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_state=None, stdin=(), definitions=None):
     isolated = safe_path = ignore_env = python = False
     if shell_state is None:
         shell_state = pythonpath, None if pythonpath is None else pythonpath is not UNSET_PATH, False
     shell_value, exported, allexport = shell_state
-    environment_functions = set()
+    environment_writes = 0
+    definitions = dict(definitions or {})
+    sourced = False
+
+    def changes_environment(name):
+        pending, seen = [name], set()
+        while pending:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            if name not in definitions:
+                if sourced and '/' not in name:
+                    return True
+                continue
+            definition = definitions[name]
+            if definition is None or definition.writes_environment:
+                return True
+            pending.extend(definition.dependencies)
+        return False
+
     ambient_path = pythonpath
     export_flag = auto_flag = set_option = None
     conditional_command = changes_path = False
@@ -859,7 +895,9 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         nonlocal list_start, pipeline_start, stage_start, pipeline, delayed, function_name
         definition = None
         if workflow and function_name is not None:
-            definition = (function_name, index, (shell_value, exported, allexport, ambient_path, stdin))
+            if allexport is not False:
+                raise Unsupported('cannot resolve shell function export')
+            definition = (function_name, index, environment_writes, (shell_value, exported, allexport, ambient_path, stdin))
         groups.append((end, uncertain, list_start, pipeline_start, stage_start, pipeline, delayed, definition, len(calls)))
         list_start = pipeline_start = stage_start = len(calls)
         pipeline = False
@@ -876,13 +914,16 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         elif end in ('fi', 'esac') or end == '}' and uncertain and definition is None:
             wrap(start, 'conditional')
         if definition:
-            name, opener, saved = definition
-            if saved[:4] != (shell_value, exported, allexport, ambient_path):
-                environment_functions.add(name)
+            name, opener, previous_writes, saved = definition
+            dependencies = {word for _, word, external_call, *_ in calls[start:]
+                            if isinstance(word, ScriptFile) and not external_call}
             shell_value, exported, allexport, ambient_path, stdin = saved
             pythonpath = ambient_path
             inputs = {} if stdin == () else {0: stdin}
             function = ShellDefinition(name)
+            function.writes_environment = environment_writes != previous_writes
+            function.dependencies = dependencies
+            definitions[name] = function
             function.tokens = tokens[opener:index + 1]
             calls[start:] = [lexer.call(0, function, False, directory=initial_directory)]
 
@@ -892,11 +933,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     pipe_outputs = {1: True}
     cat_arguments = False
     piped = may_consume = False
-    heredocs = {token[3]: token for token in tokens if token[0] == 'heredoc'}
     for index, token in enumerate((*tokens, ('op', ';'))):
         kind = token[0]
-        if kind == 'heredoc':
-            continue
         if kind == 'redirect':
             operator = token[1]
             descriptor = int(token[3]) if token[3] is not None else int(not operator.startswith('<'))
@@ -926,7 +964,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                                           pythonpath=pythonpath, ignore_env=ignore_env, stdin=stream)
                 else:
                     nested = shell_calls(body, number, parser, directory, pythonpath=pythonpath, stdin=stream)
-                calls.extend(external(nested, parser, directory) if event == 'shell' else nested)
+                calls.extend(external(nested, parser, directory) if event == 'shell' or workflow and event == 'inline-shell' else nested)
             inline.clear()
             if not defining:
                 flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
@@ -949,8 +987,10 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     list_start = pipeline_start
             conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
             if auto_flag is not None:
+                environment_writes += 1
                 allexport = None if conditional and allexport != auto_flag else auto_flag
             if changes_path and (expect and prefix is None or script in ('export', 'declare', 'typeset', 'local', 'readonly', 'unset')):
+                environment_writes += 1
                 new_export = export_flag
                 if new_export is None:
                     new_export = True if True in (exported, allexport) else None if None in (exported, allexport) else False
@@ -1011,11 +1051,11 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 mode = 'for-do'
             continue
         word = token[1]
-        for nested in word.substitutions:
+        for substitution_kind, nested in word.substitutions:
             may_consume = True
             start = len(calls)
-            calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path, (shell_value, exported, allexport), stdin))
-            wrap(start, 'subshell')
+            calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path, (shell_value, exported, allexport), stdin, definitions))
+            wrap(start, substitution_kind)
         if word.raw in (PY_SPREAD, PY_UNKNOWN) and (expect or finding or isinstance(script, tuple) or
                 script in OPERAND_STATES or script in ('next', 'next-python', 'rustup', 'rustup-toolchain') or
                 script and PYTHONS.fullmatch(script)):
@@ -1054,7 +1094,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     input_value = inputs.get(source_fd, None if descriptor == 0 else ())
                 elif closed or here:
                     connected = False
-                    input_value = () if closed else (operator, word, heredocs.get(index + 1), initial_directory)
+                    input_value = () if closed else (operator, word, word.heredoc, initial_directory)
                 else:
                     disconnected = word.literal and word.value == '/dev/null'
                     connected = False if disconnected else None
@@ -1109,6 +1149,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 export_flag = word.value.startswith('-') and 'n' not in word.value
         if script == 'set':
             if not word.literal:
+                environment_writes += 1
                 allexport = auto_flag = None
                 script = None
             elif set_option is not None:
@@ -1151,7 +1192,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                         raise Unsupported('cannot resolve inline gate command before Just installation')
                     found.append(lexer.call(word.line, word.raw, True, directory=directory))
                 else:
-                    inline.append(('python' if script == 'next-python' else 'inline-shell', word.value, word.line, word.lexer))
+                    event = 'python' if script == 'next-python' else 'trap' if delayed == 'trap' else 'inline-shell'
+                    inline.append((event, word.value, word.line, word.lexer))
                 script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
@@ -1190,6 +1232,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                             operand = ScriptFile(operand, pythonpath, ignore_env or isolated, safe_path)
                             operands.append(operand)
                         if event == '(src)':
+                            sourced = True
+                            environment_writes += 1
                             if directory is not None:
                                 operand.shell_state = (pythonpath, True, allexport) if changes_path else (shell_value, exported, allexport)
                             shell_value = ambient_path = exported = allexport = None
@@ -1285,7 +1329,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             command = ScriptFile(path, pythonpath, False, False)
             command.shell_state = shell_value, exported, allexport
             operands.append(command)
-        if workflow and not prefix and command in environment_functions:
+        if workflow and not prefix and changes_environment(command):
             shell_value = ambient_path = exported = allexport = None
         found.append(lexer.call(word.line, command, prefix is not None or by_find,
                                 tokens, index + 1, directory))
@@ -2122,6 +2166,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values.add('pathlib.Path.' + node.attr)
                 elif owner is UNKNOWN_PROVIDER:
                     values.add(UNKNOWN_PROVIDER)
+                elif isinstance(owner, ChildProcess) and node.attr in ('wait', 'communicate', 'close'):
+                    values.add(BoundCall(node.attr, owner))
                 elif isinstance(owner, PatchedProvider) and node.attr in ('start', 'stop'):
                     values.add(BoundCall(node.attr, owner))
                 elif isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) and (node.attr in LIST_MUTATIONS or node.attr == 'copy'):
@@ -2130,7 +2176,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values.add('unittest.TestCase.__init__')
                 elif owner in ('builtins.super()', 'unittest.TestCase.super()'):
                     values.add(BoundCall(UNKNOWN_CALLABLE))
-                elif isinstance(owner, DeferredGenerator) and node.attr in ('__next__', 'send', 'throw'):
+                elif isinstance(owner, ast.Constant) and isinstance(owner.value, (str, bytes)) and node.attr == 'join':
+                    values.add('builtins.' + type(owner.value).__name__ + '.join')
+                elif isinstance(owner, DeferredGenerator) and node.attr in ('__next__', 'send', 'throw', 'close'):
                     values.add(BoundCall('generator.' + node.attr, owner))
                 elif isinstance(owner, LocalModule):
                     members = owner.member(node.attr, names) or {UNKNOWN_CALLABLE}
@@ -2291,7 +2339,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     state, = states
                     if state.elements is not None:
                         return type(owner.origin)(elts=[CapturedArgument(items) for items in state.elements])
-            if isinstance(owner, (ast.Tuple, ast.List)):
+            if isinstance(owner, (ast.Constant, ast.Tuple, ast.List)):
                 return owner
         return node
 
@@ -2406,6 +2454,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if owners == {'unittest.mock.patch'} and target.attr == 'TEST_PREFIX' and values:
                 names[('unittest.mock.patch.TEST_PREFIX', 'provider')] = values
             for owner in owners:
+                if isinstance(owner, ChildProcess):
+                    raise Unsupported('cannot resolve modified Python child process handle')
                 if isinstance(owner, (PythonClass, PythonInstance, LocalModule)):
                     field = owner, target.attr
                     prior = names.get(field, {MISSING_FIELD}) if len(owners) > 1 else ()
@@ -2834,7 +2884,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(value, DeferredGenerator):
                 yield from inspect_generator(value, names, interrupted)
         if (UNREAD_STDIN in names and not isinstance(expression, (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
-                not all(isinstance(owner, (ast.Constant, SequenceBinding)) for owner in qualified(expression, names))):
+                not all(isinstance(owner, (ast.Constant, SequenceBinding, DeferredGenerator)) for owner in qualified(expression, names))):
             names[UNREAD_STDIN] = frozenset({False})
 
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
@@ -2845,6 +2895,31 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                                   keywords=list(keywords.values())), call)
             return (yield from invoke(target.target, call, names, target.receiver or receiver,
                                       wrapped or target.receiver is None, interrupted))
+        if isinstance(receiver, ChildProcess):
+            if ((receiver.launcher == 'os.popen' and target == 'close' or
+                 receiver.launcher == 'subprocess.Popen' and target in ('wait', 'communicate'))
+                    and not call.args and not call.keywords):
+                names[(receiver, 'joined')] = frozenset({True})
+                return {UNKNOWN_CALLABLE}
+            if receiver.launcher.startswith('asyncio.') and target in ('wait', 'communicate') and not call.args and not call.keywords:
+                return {('await-join', receiver)}
+        if target == 'os.waitpid' and len(call.args) == 2 and not call.keywords:
+            children = qualified(call.args[0], names)
+            flags = argument(call.args[1], names)
+            if len(children) == 1 and isinstance(flags, ast.Constant) and flags.value == 0:
+                child, = children
+                if isinstance(child, ChildProcess) and child.launcher.startswith(('os.spawn', 'os.posix_spawn')):
+                    names[(child, 'joined')] = frozenset({True})
+                    return {UNKNOWN_CALLABLE}
+        if target == 'asyncio.run' and len(call.args) == 1 and not call.keywords:
+            values = qualified(call.args[0], names)
+            if len(values) == 1:
+                value, = values
+                if isinstance(value, ChildProcess) and value.launcher.startswith('asyncio.'):
+                    return values
+                if isinstance(value, tuple) and value[:1] == ('await-join',):
+                    names[(value[1], 'joined')] = frozenset({True})
+                    return {UNKNOWN_CALLABLE}
         if isinstance(receiver, PatchedProvider) and target in ('start', 'stop'):
             patch_provider(receiver, names, target == 'start', saved_as='started')
             return {UNKNOWN_CALLABLE}
@@ -2852,23 +2927,44 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                       isinstance(target, (ast.arg, ImportedMember, PythonInstance))):
             names[UNREAD_STDIN] = frozenset({False})
         if isinstance(receiver, DeferredGenerator):
+            if target in ('generator.throw', 'generator.close'):
+                return {UNKNOWN_CALLABLE}
+            if target == 'generator.send' and (len(call.args) != 1 or call.keywords or
+                    not all(isinstance(arg, ast.Constant) and arg.value is None for arg in qualified(call.args[0], names))):
+                raise Unsupported('cannot resolve deferred Python generator send')
             return (yield from inspect_generator(receiver, names, interrupted))
         if not isinstance(target, PythonHelper):
-            for operand in (*call.args, *(kw.value for kw in call.keywords)):
+            for index, operand in enumerate((*call.args, *(kw.value for kw in call.keywords))):
                 values = qualified(operand, names)
                 generators = [value for value in values if isinstance(value, DeferredGenerator)]
-                if generators and len(values) == 1 and len(call.args) == 1 and not call.keywords:
-                    if target == 'builtins.iter':
-                        return values
-                    if target in ('builtins.bool', 'builtins.id', 'builtins.type', 'builtins.repr'):
-                        return {ast.Constant(True)} if target == 'builtins.bool' else {UNKNOWN_CALLABLE}
-                    if target == 'builtins.next':
-                        return (yield from inspect_generator(generators[0], names, interrupted))
-                for value in generators:
-                    yield from inspect_generator(value, names, interrupted)
+                if not generators:
+                    continue
+                if target == 'builtins.iter' and len(call.args) == 1 and not call.keywords:
+                    return values
+                if len(values) == 1 and len(call.args) == 1 and not call.keywords:
+                    if target in ('builtins.bool', 'builtins.callable'):
+                        return {ast.Constant(target == 'builtins.bool')}
+                    if target in ('builtins.id', 'builtins.type', 'builtins.repr', 'builtins.str'):
+                        return {UNKNOWN_CALLABLE}
+                if target in ('builtins.print', 'builtins.isinstance'):
+                    continue
+                if index == 0 and target == 'builtins.next':
+                    returned = set()
+                    for value in generators:
+                        returned.update((yield from inspect_generator(value, names, interrupted)))
+                    return returned | (qualified(call.args[1], names) if len(call.args) == 2 else set())
+                if target in ('builtins.min', 'builtins.max') and len(call.args) > 1:
+                    raise Unsupported('cannot resolve generator comparison')
+                if index == 0 and target in ('builtins.list', 'builtins.tuple', 'builtins.set', 'builtins.frozenset',
+                        'builtins.dict', 'builtins.sorted', 'builtins.sum', 'builtins.any', 'builtins.all',
+                        'builtins.min', 'builtins.max', 'builtins.str.join', 'builtins.bytes.join', 'builtins.list.extend'):
+                    for value in generators:
+                        yield from inspect_generator(value, names, interrupted)
+                else:
+                    raise Unsupported('cannot resolve deferred Python generator consumer')
         if target in ('builtins.list', 'builtins.tuple', 'builtins.sorted') and call.args and UNREAD_STDIN in names:
             if (not isinstance(call.args[0], (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
-                    any(not isinstance(value, (SequenceBinding, ast.Constant)) for value in qualified(call.args[0], names))):
+                    any(not isinstance(value, (SequenceBinding, ast.Constant, DeferredGenerator)) for value in qualified(call.args[0], names))):
                 names[UNREAD_STDIN] = frozenset({False})
         if target is UNKNOWN_PROVIDER:
             return {UNKNOWN_PROVIDER}
@@ -2988,7 +3084,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not cls.test_case:
                     continue
                 if cls in imports.class_paths:
-                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source, frozenset(), names.get(UNREAD_STDIN, {True}) == {True}
+                    yield (call, '(suite)' + str(imports.class_paths[cls]), False, source, frozenset(),
+                           names.get(UNREAD_STDIN, {True}) == {True}, joined_children(names))
                     continue
                 members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
                 members.update(name for owner, name in fields(names) if owner in cls.lineage)
@@ -3173,7 +3270,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
-            if target == 'builtins.print' and all(isinstance(argument(arg, names), ast.Constant) for arg in call.args):
+            if target == 'builtins.print' and all(isinstance(argument(arg, names), ast.Constant) or
+                    all(isinstance(value, DeferredGenerator) for value in qualified(arg, names)) for arg in call.args):
                 if all((kw.arg in ('sep', 'end', 'flush') and isinstance(argument(kw.value, names), ast.Constant)) or
                        (kw.arg == 'file' and all(owner in ('sys.stdout', 'sys.stderr', 'sys.__stdout__', 'sys.__stderr__')
                                                 or isinstance(owner, ast.Constant) and owner.value is None
@@ -3190,8 +3288,19 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     isinstance(stream, ast.Constant) and stream.value in (subprocess.DEVNULL, subprocess.PIPE))
                 if not independent:
                     names[UNREAD_STDIN] = frozenset({False})
-            yield call, target, wrapped or require_command, source, frozenset(
-                path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None) for path in names.get(CHILD_PATH, ())), unread
+            child = None
+            if AUDIT_CHECKOUT.get() is not None and (target in ('subprocess.Popen', 'os.popen',
+                    'asyncio.create_subprocess_exec', 'asyncio.create_subprocess_shell') or
+                    target.startswith(('os.posix_spawn', 'os.spawn')) and target in PY_ARGV):
+                child = ChildProcess(target)
+                names[(child, 'joined')] = frozenset({False})
+                call = ast.copy_location(ast.Call(func=call.func, args=call.args, keywords=call.keywords), call)
+                call._child_process = child
+            paths = frozenset(path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None)
+                              for path in names.get(CHILD_PATH, ()))
+            yield call, target, wrapped or require_command, source, paths, unread, joined_children(names)
+            if child is not None:
+                return {child}
             if target in PATH_CONSTRUCTORS:
                 return {FILESYSTEM_PATH}
             if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
@@ -3214,7 +3323,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if target.partition('.')[0] not in sys.stdlib_module_names:
                 return {UNRESOLVED_CONTEXT}
         elif AUDIT_CHECKOUT.get() is not None:
-            yield call, CheckoutWrite(''), False, source, frozenset(), False
+            yield call, CheckoutWrite(''), False, source, frozenset(), False, joined_children(names)
         return {UNKNOWN_CALLABLE}
 
     def record_exception(interrupted, names):
@@ -3244,6 +3353,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(manager, PatchedProvider):
                     patch_provider(manager, branch, method == entry, saved_as='entered')
                     values.add(UNKNOWN_CALLABLE if method == entry else ast.Constant(False))
+                elif isinstance(manager, ChildProcess) and manager.launcher in ('subprocess.Popen', 'os.popen') and prefix == '__':
+                    if method == exit_method:
+                        branch[(manager, 'joined')] = frozenset({True})
+                    values.add(manager if method == entry else ast.Constant(False))
                 elif isinstance(manager, GeneratorManager):
                     if (manager.helper.decorator == 'contextlib.asynccontextmanager') != isinstance(node, ast.AsyncWith):
                         raise Unsupported('cannot resolve Python generator context protocol')
@@ -3355,28 +3468,54 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             raise Unsupported('cannot resolve escaped Python generator')
         inspecting_generators.add(value)
         local = names.copy()
-        target_fields = set()
-        for index, generator in enumerate(value.node.generators):
+        node = value.node
+        targets = {module_field(part.id) for generator in node.generators
+                   for part in ast.walk(generator.target) if isinstance(part, ast.Name)}
+        elements = []
+        exact = True
+        iterations = 0
+
+        def level(index):
+            nonlocal exact, iterations
+            generator = node.generators[index]
+            iterable = CapturedArgument(value.iterable) if not index else generator.iter
             if index:
-                yield from visit(generator.iter, local, interrupted, allow_generator=True)
-            iterable = generator.iter if index else CapturedArgument(value.iterable)
+                yield from visit(iterable, local, interrupted, allow_generator=True)
             yield from iterate(iterable, local, interrupted)
             if not isinstance(generator.target, (ast.Name, ast.Tuple, ast.List)):
-                raise Unsupported('cannot resolve deferred Python generator target')
+                raise Unsupported('cannot resolve Python comprehension target')
             items = literal_elements(sequence_value(iterable, local))
-            if items == []:
-                inspecting_generators.remove(value)
-                return {UNKNOWN_CALLABLE}
-            choices = frozenset().union(*(qualified(item, local) for item in items)) if items else {None}
-            target_fields.update(module_field(part.id) for part in ast.walk(generator.target) if isinstance(part, ast.Name))
-            yield from bind_target(generator.target, CapturedArgument(choices), local, interrupted)
-            yield from suite(generator.ifs, local, interrupted)
-        yield from visit(value.node.elt, local, interrupted)
+            if items is None:
+                exact = False
+                items = [CapturedArgument({UNKNOWN_CALLABLE})]
+            for item in items:
+                iterations += 1
+                check_sequence_length(iterations)
+                if (yield from bind_target(generator.target, item, local, interrupted)) is False:
+                    continue
+                for test in generator.ifs:
+                    yield from visit(test, local, interrupted)
+                    values = qualified(test, local)
+                    if values and all(isinstance(v, ast.Constant) and not v.value for v in values):
+                        break
+                    if not all(isinstance(v, ast.Constant) and v.value for v in values):
+                        exact = False
+                else:
+                    if index + 1 < len(node.generators):
+                        yield from level(index + 1)
+                    else:
+                        item = node.key if isinstance(node, ast.DictComp) else node.elt
+                        yield from visit(item, local, interrupted)
+                        elements.append(CapturedArgument(qualified(item, local)))
+                        if isinstance(node, ast.DictComp):
+                            yield from visit(node.value, local, interrupted)
+
+        yield from level(0)
         if UNREAD_STDIN in local:
             names[UNREAD_STDIN] = local[UNREAD_STDIN]
         inspecting_generators.remove(value)
         for key in fields(local):
-            if key in target_fields or local[key] == names.get(key):
+            if key in targets or local[key] == names.get(key):
                 continue
             owner, field = key
             if isinstance(owner, SequenceBinding) and field == 'contents' and owner.states(local) == owner.states(names):
@@ -3384,18 +3523,40 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             raise Unsupported('cannot resolve deferred Python generator mutation')
         if any(isinstance(part, ast.NamedExpr) for part in ast.walk(value.node)):
             raise Unsupported('cannot resolve deferred Python generator mutation')
-        return qualified(value.node.elt, local)
+        if isinstance(node, ast.GeneratorExp):
+            return frozenset().union(*(item.owners for item in elements)) or {UNKNOWN_CALLABLE}
+        if not isinstance(node, ast.ListComp):
+            return {UNKNOWN_CALLABLE}
+        if not exact:
+            elements = [ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE}))]
+        return {SequenceBinding(ast.List(), tuple(elements))}
 
     def visit_node(node, names, interrupted):
-        if isinstance(node, ast.GeneratorExp):
+        if isinstance(node, ast.Await):
+            yield from visit(node.value, names, interrupted)
+            values = qualified(node.value, names)
+            if len(values) == 1:
+                value, = values
+                if isinstance(value, tuple) and value[:1] == ('await-join',):
+                    names[(value[1], 'joined')] = frozenset({True})
+                    values = {UNKNOWN_CALLABLE}
+            results[node] = values
+            return
+        if isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp, ast.DictComp)):
             outer = node.generators[0].iter
             yield from visit(outer, names, interrupted, allow_generator=True)
-            results[node] = frozenset({DeferredGenerator(node, frozenset(qualified(outer, names)), scope)})
+            iterable = qualified(outer, names)
+            if isinstance(outer, (ast.Set, ast.Dict)):
+                items = literal_elements(outer)
+                if items is not None:
+                    iterable = {ast.Tuple(elts=items)}
+            value = DeferredGenerator(node, frozenset(iterable), scope)
+            results[node] = {value} if isinstance(node, ast.GeneratorExp) else (yield from inspect_generator(value, names, interrupted))
             return
         if isinstance(node, ast.Expr):
             yield from visit(node.value, names, interrupted, allow_generator=True)
             return
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and node.attr in ('__next__', 'send', 'throw'):
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and node.attr in ('__next__', 'send', 'throw', 'close'):
             yield from visit(node.value, names, interrupted, allow_generator=True)
             return
         if isinstance(node, ast.Compare):
@@ -3405,16 +3566,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(operator, (ast.In, ast.NotIn)):
                     yield from iterate(operand, names, interrupted)
             return
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
-            for generator in node.generators:
-                yield from visit(generator.iter, names, interrupted, allow_generator=True)
-                yield from iterate(generator.iter, names, interrupted)
-                yield from visit(generator.target, names, interrupted)
-                yield from suite(generator.ifs, names, interrupted)
-            for item in (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,):
-                yield from visit(item, names, interrupted)
-            return
-        elif isinstance(node, (ast.Starred, ast.YieldFrom)):
+        if isinstance(node, (ast.Starred, ast.YieldFrom)):
             yield from visit(node.value, names, interrupted, allow_generator=True)
             yield from iterate(node.value, names, interrupted)
             return
@@ -3902,8 +4054,8 @@ def resolve_module_calls(calls, lexer):
         if isinstance(word, CheckoutScope):
             if word == 'end':
                 scopes.pop()
-            elif word != 'wait':
-                scopes.append(None if word in ('child', 'subshell', 'conditional') else object())
+            elif word not in ('wait', 'joined-child'):
+                scopes.append(None if word in ('child', 'subshell', 'conditional', 'after-join') else object())
         if not word.startswith(('(module)', '(isolated-module)', '(noenv-module)', '(cwdpath-module)')):
             yield call
             continue
@@ -3948,6 +4100,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     startup = {CHILD_PATH: frozenset({EnvironmentPath(pythonpath, pythonpath)})}
     if stdin:
         startup[UNREAD_STDIN] = frozenset({True})
+    bindings = startup.copy()
     if package_file:
         path = imports.root / filename
         imports.inventory_source = path
@@ -3959,7 +4112,6 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     elif module is None:
         tree = ast.parse(text)
         imports.register_fixture(tree.body, filename, text)
-        bindings = startup.copy()
         if temporary_script or filename and (directory is not None or imports.files and
                                               (Path(filename).parent / '__init__.py').as_posix() in imports.files):
             bindings.update({'__name__': {ast.Constant('__main__')}, '__package__': {ast.Constant(None)}})
@@ -3967,7 +4119,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     else:
         def entry_calls():
             name, context = module
-            entry = yield from imports.module(name, None, True, targets, startup.copy(), main=True)
+            entry = yield from imports.module(name, None, True, targets, bindings, main=True)
             path = entry.path.relative_to(imports.root)
             if directory is not None:
                 path = WorkflowLexer.workspace / path
@@ -4239,7 +4391,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                     mode = args[0] if args else keywords.get('mode')
                     pending = not isinstance(mode, ast.Constant) or mode.value != os.P_WAIT
                 child = shell_calls(shell_text, start, lexer, cwd, pythonpath=child_path, stdin=child_stdin)
-                yield from external(child, lexer, cwd, 'pending-child' if pending else 'child')
+                yield from external(child, lexer, cwd, 'pending-child' if pending else 'child', getattr(node, '_child_process', None))
             else:
                 raise Unsupported('cannot resolve Python process command')
 
@@ -4247,18 +4399,28 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         if isinstance(call, CheckoutRead):
             found.append(lexer.call(line, call, True, directory=directory))
             continue
-        node, name, wrapped, source, inherited_paths, unread = call
+        node, name, wrapped, source, inherited_paths, unread, joined = call
         start = node.lineno if source is not None else line + node.lineno - 1
         try:
+            if joined:
+                marker = CheckoutScope('after-join')
+                marker.owners = joined
+                found.append(lexer.call(start, marker, True, directory=directory))
             for number, *rest in read_call(node, name, wrapped, start, inherited_paths, unread):
                 if source is not None and isinstance(number, int):
                     number = source.relative_to(imports.root), number
                 found.append((number, *rest))
+            if joined:
+                found.append(lexer.call(start, CheckoutScope('end'), True, directory=directory))
         except Unsupported as error:
             error.lineno = start
             if source is not None and error.location is None:
                 error.location = source.relative_to(imports.root), start
             raise
+    for child in joined_children(bindings):
+        marker = CheckoutScope('joined-child')
+        marker.owner = child
+        found.append(lexer.call(0, marker, True, directory=directory))
     return found
 
 

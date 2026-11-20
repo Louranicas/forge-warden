@@ -1879,6 +1879,26 @@ class GateImageCommands(unittest.TestCase):
             self.assertEqual(CAPS.just_consumer({'run': 'use() { just; }; use'}, vars(COMMANDS), [], root), 'just')
             self.assertEqual(CAPS.just_consumer({'run': 'just() { true; }; unset -f just; just'}, vars(COMMANDS), [], root), 'just')
 
+    def test_function_replay_preserves_heredoc_and_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'END').write_text('true')
+            (root / 'reader').write_text('task')
+            for operator, indent in (('<<', ''), ('<<-', '\t')):
+                for program, body in (('bash', 'just'), ('python3', "import subprocess; subprocess.run(['just'])")):
+                    script = f"task() {{ {program} {operator}'END'\n{indent}{body}\n{indent}END\n}}; task"
+                    with self.subTest(operator=operator, program=program):
+                        self.assertEqual(CAPS.just_consumer({'run': script}, vars(COMMANDS), [], root), 'just')
+            for export in ('export -f', 'builtin export -f', 'declare -fx', 'typeset -x -f'):
+                script = f'task() {{ just; }}; {export} task; bash reader'
+                with self.subTest(export=export), self.assertRaisesRegex(ValueError, 'function export'):
+                    CAPS.just_consumer({'run': script}, vars(COMMANDS), [], root)
+            for definitions in ('restore() { export PYTHONPATH=.; }',
+                                'restore() { enable_path; }; enable_path() { export PYTHONPATH=.; }'):
+                run = f'export PYTHONPATH=.; {definitions}; unset PYTHONPATH; restore; python3 -Pc"import statistics"'
+                with self.subTest(definitions=definitions), self.assertRaisesRegex(ValueError, 'PYTHONPATH'):
+                    CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root)
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1889,7 +1909,9 @@ class GateImageCommands(unittest.TestCase):
                                  ('reader() { :; }; bash generated & wait', False), ('. ./jobs; wait', False),
                                  ('bash generated & . ./join', False), ('(bash generated &); wait', True),
                                  ('bash generated & (wait)', True), ('bash generated & false && . ./join', True),
-                                 ('bash generated & wait | cat', True), ('bash generated & bash join', True)):
+                                 ('bash generated & wait | cat', True), ('bash generated & bash join', True),
+                                 ('bash generated & bash -c wait', True), ('true <(bash generated)', True),
+                                 ('true >(bash generated)', True), ('true "$(bash generated)"', False)):
                 step = {'run': run + '; cp original generated'}
                 with self.subTest(run=run):
                     if refused:
@@ -1918,6 +1940,21 @@ class GateImageCommands(unittest.TestCase):
                     else:
                         self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root))
 
+            spawn = "subprocess.Popen(['bash', 'generated'])"
+            for actions, pending in ((f'with {spawn}: pass', False), (f'child = {spawn}\nchild.wait()', False),
+                                     (f'child = {spawn}\nalias = child\nalias.communicate()', False),
+                                     (f'child = {spawn}\nif flag: child.wait()', True),
+                                     (f"child = {spawn}\nother = subprocess.Popen(['true'])\nother.wait()", True)):
+                source = f"import subprocess\n{actions}\nsubprocess.run(['cp', 'original', 'generated'])"
+                with self.subTest(actions=actions):
+                    if pending:
+                        with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                            CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
+                    else:
+                        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root))
+
+            joined = f"with {spawn} as child:\n    child.wait()\n    subprocess.run(['cp', 'original', 'generated'])"
+            self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': 'import subprocess\n' + joined}, vars(COMMANDS), [], root))
             reads = set()
             child = {'shell': 'python', 'run': "import subprocess\nsubprocess.Popen(['bash', 'generated'])"}
             self.assertIsNone(CAPS.just_consumer(child, vars(COMMANDS), [], root, pending_reads=reads))
@@ -2329,6 +2366,21 @@ class GateImageCommands(unittest.TestCase):
         source = "import struct, subprocess\npairs = ((1, 7), (2, 5))\n"
         source += "b''.join(struct.pack('<BB', tag, mode) for tag, mode in pairs)\nsubprocess.run(['true'])"
         self.assertIn('true', [word for _, word, _ in COMMANDS.python_calls(source)])
+
+    def test_comprehension_targets_and_generator_consumers(self):
+        setup = "from subprocess import run\n"
+        for expression in ("[f(['just']) for f in (run,)]", "{f(['just']) for f in (run,)}",
+                           "{f(['just']): 1 for f in (run,)}", "{1: f(['just']) for f in (run,)}",
+                           "[1 for f in (run,) if f(['just'])]", "[f(['just']) for row in [(run,)] for f in row]"):
+            with self.subTest(expression=expression):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + expression}, vars(COMMANDS), []), 'just')
+        for expression in ("[run(['just']) for _ in ()]", "[run(['just']) for _ in [1] if False]",
+                           "g = (run(['just']) for _ in [1])\nprint(g)", "g = (run(['just']) for _ in [1])\ng.throw(ValueError)"):
+            with self.subTest(expression=expression):
+                self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': setup + expression}, vars(COMMANDS), []))
+        source = setup + "handlers = [print]\ng = (j for i in [1] if handlers.append(run) is None for j in [])\nlist(g)"
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'deferred Python generator mutation'):
+            COMMANDS.python_calls(source)
 
     def test_python_only_inherits_unconsumed_stdin(self):
         with tempfile.TemporaryDirectory() as directory:
