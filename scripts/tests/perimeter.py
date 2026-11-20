@@ -1434,7 +1434,7 @@ class GateImageCommands(unittest.TestCase):
                 exec(source, module.__dict__)
             except SystemExit as exc:
                 self.assertEqual(exc.code, 0)
-        return [call.args[0] for call in launch.call_args_list]
+        return [call.args[0] if call.args else call.kwargs['args'] for call in launch.call_args_list]
 
     async_manager = ("class Manager:\n    async def __aenter__(self): return self\n"
                      "    async def __aexit__(self, *exc): return True\nmanager = Manager()\n")
@@ -1725,6 +1725,27 @@ class GateImageCommands(unittest.TestCase):
                             'bash <generated', 'python3 <generated', './generated'):
                 with self.subTest(command=command), self.assertRaisesRegex(ValueError, 'cannot resolve.*generated'):
                     CAPS.just_consumer({'run': 'cp original generated\n' + command}, vars(COMMANDS), [], root)
+
+    def test_gate_reads_require_original_checkout_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'original').write_text('just --version')
+            (root / 'generated').write_text('true')
+            (root / 'worker.py').write_text('pass')
+            (root / 'pkg').mkdir()
+            (root / 'pkg/__init__.py').write_text('pass')
+            for path, command in (('generated', 'bash generated'), ('generated', './generated'),
+                                  ('generated', '. ./generated'), ('generated', 'bash <generated'),
+                                  ('worker.py', 'python3 worker.py'), ('pkg/__init__.py', "python3 -c 'import pkg'")):
+                writer = 'cp original ' + path
+                with self.subTest(command=command):
+                    with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                        CAPS.just_consumer({'run': writer + '\n' + command}, vars(COMMANDS), [], root)
+                    writes = set()
+                    CAPS.just_consumer({'run': writer}, vars(COMMANDS), [], root, checkout_writes=writes)
+                    with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                        CAPS.just_consumer({'run': command}, vars(COMMANDS), [], root, checkout_writes=writes)
+                    self.assertIsNone(CAPS.just_consumer({'run': command + '\n' + writer}, vars(COMMANDS), [], root))
 
     def test_sourced_state_precedes_python_lookup(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2102,6 +2123,73 @@ class GateImageCommands(unittest.TestCase):
                        "subprocess.run(['bash'], stdin=subprocess.DEVNULL)"):
             with self.subTest(launch=launch):
                 self.assertIsNone(CAPS.just_consumer({'run': setup + launch, 'shell': 'python'}, vars(COMMANDS), []))
+
+    def test_inventory_follows_stdin_across_tracked_operands(self):
+        for command in (['bash', 'reader.sh'], ['./reader.sh'], ['python3', 'reader.py'], ['python3', '-m', 'reader']):
+            source = f'import subprocess\nsubprocess.run({command!r}, input=b"cmp a b")'
+            files = {'launch.py': source, 'reader.sh': '#!/bin/bash\n# setup\n:\nbash -s',
+                     'reader.py': "import subprocess\nsubprocess.run(['bash', '-s'])"}
+            with self.subTest(command=command):
+                issues = self.problems(files, executables=('reader.sh',))
+                self.assertTrue(any('calls `cmp`' in issue for issue in issues), issues)
+                self.assertFalse(any('not read' in issue for issue in issues), issues)
+
+    def test_stdin_survives_commands_that_cannot_read_it(self):
+        for before in ('# setup\n', '\n', ':\n', 'true && ', 'printf done\n'):
+            step = "import subprocess\nsubprocess.run(['bash', '-c', " + repr(before + "bash -s") + "], input=b'true')"
+            with self.subTest(before=before):
+                self.assertIn('true', [word for _, word, _ in COMMANDS.python_calls(step)])
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'script input'):
+            COMMANDS.python_calls("import subprocess\nsubprocess.run(['bash', '-c', 'read x; bash -s'], input=b'true')")
+
+    def test_alternate_launchers_check_replaced_stdin(self):
+        for launch in ("os.posix_spawn('bash', ['bash'], {}, file_actions=[(os.POSIX_SPAWN_OPEN, 0, 'data', 0, 0)])",
+                       "os.posix_spawnp('python3', ['python3'], {}, file_actions=actions)",
+                       "os.popen('bash', 'w')", "os.popen('python3', mode=mode)",
+                       "pty.spawn(['bash'], read_output, read_input)", "pty.spawn(['python3'], stdin_read=read_input)"):
+            with self.subTest(launch=launch), self.assertRaisesRegex(COMMANDS.Unsupported, 'script input'):
+                COMMANDS.python_calls('import os, pty\n' + launch)
+        for launch in ("os.popen('bash', 'r')", "os.posix_spawnp('bash', ['bash'], {}, file_actions=[])",
+                       "os.posix_spawnp('bash', ['bash'], {}, file_actions=[(os.POSIX_SPAWN_CLOSE, 2)])",
+                       "pty.spawn(['bash'])", "os.popen('git --version', 'w')"):
+            with self.subTest(launch=launch):
+                self.assertTrue(COMMANDS.python_calls('import os, pty\n' + launch))
+
+    def test_module_replay_compares_stdin_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'worker.py').write_text("import sys, subprocess\nif len(sys.argv) == 1:\n"
+                                            "    subprocess.run(['python3', '-m', 'worker', 'child'], input=b'true')")
+            self.assertIsNone(CAPS.just_consumer({'run': 'python3 -m worker'}, vars(COMMANDS), [], root))
+
+            (root / 'worker.py').write_text('pass')
+            steps = '\n'.join(f'python3 -m worker {i}' for i in range(129))
+            with self.assertRaisesRegex(COMMANDS.Unsupported, 'context budget'):
+                CAPS.just_consumer({'run': steps}, vars(COMMANDS), [], root)
+
+    def test_call_arguments_capture_references_before_later_effects(self):
+        setup = ("from subprocess import run\nclass Job:\n    def take(self):\n        CHANGE\n        return b''\n"
+                 "job = Job()\njob.command = ['just']\n")
+        for call in ("run(job.command, input=job.take())", "run(args=job.command, input=job.take())",
+                     "def invoke(argv, data): run(argv)\ninvoke(job.command, job.take())"):
+            for change in ("self.command = ['true']", "self.command[0] = 'true'"):
+                source = setup.replace('CHANGE', change) + call
+                expected = self.recorded_commands(source)
+                with self.subTest(call=call, change=change):
+                    if change.startswith('self.command['):
+                        with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve'):
+                            COMMANDS.python_calls(source)
+                    else:
+                        self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], [argv[0] for argv in expected])
+
+    def test_signed_indices_use_captured_integers(self):
+        for body in ("handlers[-offset](['just'])", "handlers[+zero:][-offset](['just'])",
+                     "handlers.pop(-offset)(['just'])", "handlers[-offset] = run\nhandlers[0](['just'])",
+                     "del handlers[-offset:]\nhandlers.append(run)\nhandlers[0](['just'])"):
+            source = "from subprocess import run\noffset = 1\nzero = 0\nhandlers = [run]\n" + body
+            with self.subTest(body=body):
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)],
+                                 [argv[0] for argv in self.recorded_commands(source)])
 
     def test_augmented_writeback_uses_the_original_destination(self):
         for setup, change, invoke in (

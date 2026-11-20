@@ -678,6 +678,26 @@ def script_marker(marker, isolated, cwd_path):
     return marker
 
 
+def stdin_key(stream):
+    if stream is None or stream == ():
+        return stream
+    operator, word, heredoc, opener = stream
+    if heredoc:
+        return 'text', heredoc[1], heredoc[4]
+    return operator, word.value if word.literal else word.raw, word.literal, word.lexer, opener
+
+
+AUDIT_CHECKOUT = ContextVar('audit_checkout', default=None)
+
+
+class CheckoutRead(str):
+    pass
+
+
+class CheckoutWrite(str):
+    pass
+
+
 class ScriptFile(str):
     def __new__(cls, word, pythonpath, ignore_env, cwd_imports):
         result = super().__new__(cls, word)
@@ -755,12 +775,13 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     found, functions = [], set()
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
+    workflow = AUDIT_CHECKOUT.get() is not None
     inline = []
     operands = []
     inputs = {} if stdin == () else {0: stdin}
     pipe_outputs = {1: True}
     cat_arguments = False
-    piped = False
+    piped = may_consume = False
     heredocs = {token[3]: token for token in tokens if token[0] == 'heredoc'}
     for index, token in enumerate((*tokens, ('op', ';'))):
         kind = token[0]
@@ -779,6 +800,11 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 raise Unsupported('cannot resolve grouped pipe input')
             if python and not (isolated or ignore_env):
                 check_pythonpath(pythonpath)
+            if workflow and op == ')' and index and tokens[index - 1][:2] == ('op', '(') and found:
+                functions.add(found.pop()[1])
+            if workflow and not (op == '(' and tokens[index + 1:index + 2] and tokens[index + 1][:2] == ('op', ')')):
+                calls.extend(found)
+                found.clear()
             stream = inputs.get(0, ())
             for operand in operands:
                 operand.stdin = stream
@@ -791,7 +817,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     nested = shell_calls(body, number, parser, directory, pythonpath=pythonpath, stdin=stream)
                 calls.extend(external(nested) if event == 'shell' else nested)
             inline.clear()
-            flush_stdin(script, inputs, found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
+            flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
             conditional = any(uncertain for _, uncertain in groups) or conditional_command or piped or op in ('|', '|&', '&')
             if auto_flag is not None:
                 allexport = None if conditional and allexport != auto_flag else auto_flag
@@ -820,8 +846,9 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             elif (script != 'cat' or cat_arguments or not pipe_outputs.get(1) or 2 in pipe_outputs or
                     forwarded and forwarded[0] not in ('<<<', '<<', '<<-')):
                 forwarded = None
-            if stdin:
+            if stdin and may_consume and stdin in inputs.values():
                 stdin = None
+            may_consume = False
             inputs = {} if stdin == () else {0: stdin}
             if piped:
                 inputs[0] = forwarded
@@ -855,6 +882,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         word = token[1]
         for nested in word.substitutions:
+            may_consume = True
             calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path, (shell_value, exported, allexport), stdin))
         if word.raw in (PY_SPREAD, PY_UNKNOWN) and (expect or finding or isinstance(script, tuple) or
                 script in OPERAND_STATES or script in ('next', 'next-python', 'rustup', 'rustup-toolchain') or
@@ -901,6 +929,13 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     input_value = (operator, word, None, initial_directory) if operator.startswith('<') else ()
                     if duplicate and inputs and not word.literal:
                         raise Unsupported('cannot resolve script input descriptor')
+                if workflow and not (source_fd is not None or closed or here or operator == '<'):
+                    if word.literal:
+                        destination = word.lexer.path(initial_directory, word.value)
+                        if destination.is_relative_to(lexer.workspace):
+                            calls.append(lexer.call(word.line, CheckoutWrite(destination), True, directory=initial_directory))
+                    elif word.raw not in ('"$GITHUB_ENV"', '"${GITHUB_ENV}"'):
+                        calls.append(lexer.call(word.line, CheckoutWrite(''), True, directory=initial_directory))
                 for dest in destinations:
                     if connected is False:
                         pipe_outputs.pop(dest, None)
@@ -1021,7 +1056,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                         if marker == '(module)' and ignore_env and pythonpath not in DEFAULT_PYTHON_PATHS:
                             marker = '(noenv-module)'
                         operand = marker + text
-                        if directory is not None and (event in RUNS or event == '(module)'):
+                        if event in RUNS or event == '(module)':
                             operand = ScriptFile(operand, pythonpath, ignore_env or isolated, safe_path)
                             operands.append(operand)
                         if event == '(src)':
@@ -1115,14 +1150,17 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         if word.literal and value == 'eval':
             raise Unsupported(f'line {word.line}: eval')
         command = value if word.literal else word.raw
-        if directory is not None and '/' in command:
-            command = ScriptFile(str(word.lexer.path(directory, command)), pythonpath, False, False)
+        if '/' in command:
+            path = str(word.lexer.path(directory, command)) if directory is not None else command
+            command = ScriptFile(path, pythonpath, False, False)
             operands.append(command)
         found.append(lexer.call(word.line, command, prefix is not None or by_find,
                                 tokens, index + 1, directory))
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
         isolated = False
         owner = value.rsplit('/', 1)[-1] if word.literal else None
+        if owner not in ('env', 'exec', 'command', 'nice', 'timeout'):
+            may_consume |= value not in (':', 'true', 'false', 'echo', 'printf') or value in functions
         python = bool(owner and PYTHONS.fullmatch(owner))
         prefix = owner if owner in PREFIXES else None
         script = 'next' if owner == 'trap' else owner
@@ -1395,6 +1433,7 @@ class SuiteImports:
         self.directories = [self.directory]
         if extra_directory is not None and extra_directory != directory:
             self.directories.append(self.root / extra_directory.relative_to(WorkflowLexer.workspace))
+        self.reads = []
         self.origins = {}
         self.trees = {}
         self.inventory_source = None
@@ -1425,7 +1464,12 @@ class SuiteImports:
                     raise Unsupported('reviewed fixture verification operation changed')
                 setattr(self, field, definition)
 
+    def observe(self, path):
+        if AUDIT_CHECKOUT.get() is not None:
+            self.reads.append(CheckoutRead(WorkflowLexer.workspace / path.relative_to(self.root)))
+
     def load(self, path, origin, ordering, targets, names, *, main=False):
+        self.observe(path)
         if self.origins.setdefault(path, origin) != origin:
             raise Unsupported('cannot resolve overlapping Python import roots')
         reference = LocalModule(path, main)
@@ -1479,6 +1523,8 @@ class SuiteImports:
         namespace = None
         for directory in self.directories:
             stem = directory / root
+            self.observe(stem.with_suffix('.py'))
+            self.observe(stem / '__init__.py')
             if stem.with_suffix('.py').is_file() or (stem / '__init__.py').is_file():
                 return directory
             if namespace is None and root not in sys.stdlib_module_names and stem.is_dir():
@@ -1516,6 +1562,8 @@ class SuiteImports:
         paths = [stem / '__init__.py']
         if absolute:
             paths.append(stem.with_suffix('.py'))
+        for path in paths:
+            self.observe(path)
         candidates = [path for path in paths if path.relative_to(self.root).as_posix() in self.files]
         if len(candidates) != 1:
             raise Unsupported('cannot resolve unittest import ' + module)
@@ -1865,6 +1913,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return bound
 
     def qualified(node, names):
+        if node in results:
+            return results[node]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            owners = qualified(node.operand, names)
+            if len(owners) == 1:
+                item, = owners
+                if isinstance(item, ast.Constant) and type(item.value) is int:
+                    return frozenset({ast.Constant(-item.value if isinstance(node.op, ast.USub) else item.value)})
         if isinstance(node, CapturedArgument):
             return node.owners
         if isinstance(node, (ast.Constant, FixtureDescriptor, FixtureExecutable, LookupExecutable)):
@@ -1889,10 +1945,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 else:
                     return frozenset({None})
             return frozenset({ast.Constant(''.join(parts))})
-        if isinstance(node, (ast.BinOp, ast.Subscript)) and node in results:
-            return results[node]
         if isinstance(node, (ast.Call, ast.List, ast.Tuple)):
-            return results.get(node, frozenset({UNKNOWN_CALLABLE}))
+            return frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and qualified(node.left, names) == {FILESYSTEM_PATH}:
             parts = qualified(node.right, names)
             if parts and all(part is FILESYSTEM_PATH or isinstance(part, ast.Constant) and isinstance(part.value, str)
@@ -1921,6 +1975,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for owner in qualified(node.value, names):
                 if isinstance(owner, (PythonClass, PythonInstance)):
                     values.update(member(owner, node.attr, names))
+                elif owner is FILESYSTEM_PATH and node.attr in ('resolve', 'with_name'):
+                    values.add('pathlib.Path.' + node.attr)
                 elif owner is UNKNOWN_PROVIDER:
                     values.add(UNKNOWN_PROVIDER)
                 elif isinstance(owner, PatchedProvider) and node.attr in ('start', 'stop'):
@@ -1997,7 +2053,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return bool(outcomes)
 
     def argument(value, names):
-        if isinstance(value, (ast.Name, ast.Attribute)):
+        if isinstance(value, (ast.Name, ast.Attribute, ast.UnaryOp, CapturedArgument)):
             owners = qualified(value, names)
             if len(owners) == 1:
                 owner, = owners
@@ -2035,6 +2091,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return result
         if len(owners) == 1:
             owner, = owners
+            if owner in ('os.POSIX_SPAWN_OPEN', 'os.POSIX_SPAWN_CLOSE', 'os.POSIX_SPAWN_DUP2'):
+                return ast.Constant(getattr(os, owner.split('.')[1]))
             if owner in ('subprocess.DEVNULL', 'asyncio.subprocess.DEVNULL'):
                 return ast.Constant(subprocess.DEVNULL)
             if owner == 'sys.executable':
@@ -2167,7 +2225,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         def index_value(node):
             yield from visit(node, names, interrupted)
             value = argument(node, names)
-            if isinstance(value, (ast.Constant, ast.UnaryOp)):
+            if isinstance(value, ast.Constant):
                 return value
             choices = qualified(value, names)
             if len(choices) == 1 and isinstance(item := next(iter(choices)), ast.Constant):
@@ -2950,6 +3008,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {STANDARD_CONTEXT}
             if target.partition('.')[0] not in sys.stdlib_module_names:
                 return {UNRESOLVED_CONTEXT}
+        elif AUDIT_CHECKOUT.get() is not None:
+            yield call, CheckoutWrite(''), False, source, frozenset()
         return {UNKNOWN_CALLABLE}
 
     def record_exception(interrupted, names):
@@ -3054,6 +3114,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return completed
 
     def visit(node, names, interrupted=None):
+        results.pop(node, None)
         may_raise = (interrupted is not None and isinstance(node, (ast.stmt, ast.expr)) and
                 not isinstance(node, (ast.Pass, ast.Constant, ast.Return, ast.Break, ast.Continue, ast.Expr,
                                       ast.Assign, ast.Global, ast.Nonlocal, ast.Try, ast.TryStar)) and
@@ -3067,6 +3128,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             record_exception(interrupted, names)
         try:
             completed = yield from visit_node(node, names, interrupted)
+            if (isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) or
+                    isinstance(node, (ast.UnaryOp, ast.JoinedStr, ast.NamedExpr, ast.IfExp))):
+                results[node] = qualified(node, names)
         except Unsupported as error:
             if error.lineno is None:
                 error.lineno = getattr(node, 'lineno', None)
@@ -3565,10 +3629,17 @@ def resolve_module_calls(calls, lexer):
         arguments, directory = call[3:] if len(call) > 3 else (None, None)
         if not all(name.isidentifier() for name in module.split('.')):
             raise Unsupported('cannot resolve Python module ' + module)
-        if SuiteImports(directory, isolated).import_root(module):
+        imports = SuiteImports(directory, isolated)
+        origin = imports.import_root(module)
+        for path in imports.reads:
+            yield lexer.call(line, path, True, directory=directory)
+        if origin:
             stdin = getattr(word, 'stdin', ())
-            key = directory, module, tuple(arguments) if arguments is not None else None, pythonpath, stdin
+            key = directory, module, tuple(arguments) if arguments is not None else None, pythonpath, stdin_key(stdin)
+            key += (frozenset(AUDIT_CHECKOUT.get() or ()),)
             if key not in inspected:
+                if len(inspected) >= 128:
+                    raise Unsupported('cannot resolve Python module traversal beyond context budget')
                 inspected.add(key)
                 entry = python_calls(None, line, lexer, directory, module=(module, call[3:]),
                                      pythonpath=pythonpath, ignore_env=ignore_env, stdin=stdin)
@@ -3613,9 +3684,19 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             path = entry.path.relative_to(imports.root)
             if directory is not None:
                 path = WorkflowLexer.workspace / path
-            found.append((line, '(module-file)' + str(path), True, *context))
+            operand = ScriptFile('(module-file)' + str(path), pythonpath, ignore_env, False)
+            operand.stdin = stdin
+            found.append((line, operand, True, *context))
         calls = entry_calls()
-    calls = dict.fromkeys(calls)
+    if AUDIT_CHECKOUT.get() is not None:
+        ordered = []
+        for call in calls:
+            ordered.extend(imports.reads)
+            imports.reads.clear()
+            ordered.append(call)
+        calls = ordered + imports.reads
+    else:
+        calls = dict.fromkeys(calls)
 
     rebound = set().union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
 
@@ -3638,12 +3719,35 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         return node
 
     def read_call(node, name, wrapped, start, inherited_paths):
+        if isinstance(name, CheckoutWrite):
+            yield lexer.call(start, name, True, directory=directory)
+            return
         if name.startswith('(suite)'):
             yield lexer.call(start, '(py)' + name.removeprefix('(suite)'), True, directory=directory)
             return
         if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
         if name not in PY_SHELL_TEXT and name not in PY_ARGV and name not in ('pty.spawn', 'asyncio.create_subprocess_exec'):
+            if AUDIT_CHECKOUT.get() is not None:
+                if name in ('builtins.open', 'io.open'):
+                    options = {kw.arg: kw.value for kw in node.keywords}
+                    mode = node.args[1] if len(node.args) > 1 else options.get('mode', ast.Constant('r'))
+                    if (None not in options and 'opener' not in options and isinstance(mode, ast.Constant)
+                            and mode.value in ('r', 'rt', 'rb', 'br', 'tr')):
+                        return
+                    file = node.args[0] if node.args else options.get('file')
+                    if isinstance(file, ast.Constant) and isinstance(file.value, str):
+                        yield lexer.call(start, CheckoutWrite(lexer.path(directory, file.value)), True, directory=directory)
+                        return
+                if name == 'builtins.print' and not any(kw.arg in (None, 'file') for kw in node.keywords):
+                    return
+                owner, _, method = name.rpartition('.')
+                if owner in ENVIRON or owner in ('os', 'posix') and method in ('putenv', 'unsetenv'):
+                    return
+                if name not in PATH_CONSTRUCTORS and name not in ('pathlib.Path.resolve', 'pathlib.Path.with_name',
+                        'builtins.len', 'os.getenv', 'shutil.which', 'unittest.main',
+                        'unittest.skip', 'unittest.skipIf', 'unittest.skipUnless'):
+                    yield lexer.call(start, CheckoutWrite(''), True, directory=directory)
             return
         args = expanded_items([process_arguments(arg) for arg in node.args])
         keywords = {item.arg: process_arguments(item.value) for item in node.keywords}
@@ -3793,6 +3897,26 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         child_stdin = stdin
         stream = args[3] if subprocess_argv and len(args) > 3 else keywords.get('stdin')
         payload = keywords.get('input')
+        if name in ('os.posix_spawn', 'os.posix_spawnp') and 'file_actions' in keywords:
+            actions = keywords['file_actions']
+            if not (isinstance(actions, ast.Constant) and actions.value is None):
+                items_by_action = py_items(actions)
+                if items_by_action is None:
+                    child_stdin = None
+                for action in items_by_action or ():
+                    items = py_items(action) or []
+                    operation = items[0].value if items and isinstance(items[0], ast.Constant) else None
+                    position = {os.POSIX_SPAWN_OPEN: 1, os.POSIX_SPAWN_CLOSE: 1, os.POSIX_SPAWN_DUP2: 2}.get(operation)
+                    if (position is None or len(items) <= position or not isinstance(items[position], ast.Constant)
+                            or items[position].value == 0):
+                        child_stdin = None
+                        break
+        elif name == 'os.popen':
+            mode = args[1] if len(args) > 1 else keywords.get('mode', ast.Constant('r'))
+            if not isinstance(mode, ast.Constant) or mode.value != 'r':
+                child_stdin = None
+        elif name == 'pty.spawn' and (len(args) > 2 or 'stdin_read' in keywords):
+            child_stdin = None
         if stream is not None and not (isinstance(stream, ast.Constant) and stream.value is None):
             child_stdin = () if isinstance(stream, ast.Constant) and stream.value == subprocess.DEVNULL else None
         if payload is not None and not (isinstance(payload, ast.Constant) and payload.value is None):
@@ -3816,7 +3940,11 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             else:
                 raise Unsupported('cannot resolve Python process command')
 
-    for node, name, wrapped, source, inherited_paths in calls:
+    for call in calls:
+        if isinstance(call, CheckoutRead):
+            found.append(lexer.call(line, call, True, directory=directory))
+            continue
+        node, name, wrapped, source, inherited_paths = call
         start = node.lineno if source is not None else line + node.lineno - 1
         try:
             for number, *rest in read_call(node, name, wrapped, start, inherited_paths):
@@ -3912,14 +4040,23 @@ def problems(root):
     tracked_files = set(files)
     kinds = {name: classify(root, name) for name in files}
     readings, order = {}, []
+    contexts = {}
 
-    def want(name, lang):
+    def want(name, lang, stdin=()):
         parent = Path(name).parent
         if lang == 'package python' and (parent == Path('.') or (parent / '__init__.py').as_posix() not in tracked_files):
             lang = 'python'
-        if (name, lang) not in readings:
-            readings[(name, lang)] = None
-            order.append((name, lang))
+        key = name, lang, stdin_key(stdin)
+        if key not in readings:
+            known = contexts.setdefault((name, lang), {})
+            if len(known) >= 128:
+                issue = f'{name}: cannot resolve script input beyond context budget'
+                if issue not in found:
+                    found.append(issue)
+                return
+            known[key[2]] = stdin
+            readings[key] = None
+            order.append(key)
 
     for name in files:
         kind, bang = kinds[name]
@@ -3932,7 +4069,8 @@ def problems(root):
                          'which this reader does not read')
     position = 0
     while position < len(order):
-        name, lang = order[position]
+        name, lang, stream = key = order[position]
+        stdin = contexts[name, lang][stream]
         position += 1
         language = 'python' if lang in ('package python', 'isolated python', 'cwdpath python') else lang
         label = name if kinds[name][0] == language else f'{name} (run as {language})'
@@ -3945,31 +4083,31 @@ def problems(root):
             token = IMPORT_SOURCE.set((root, origin, tracked_files, {}))
             try:
                 if lang == 'package python':
-                    calls = python_calls(None, filename=name, package_file=True)
+                    calls = python_calls(None, filename=name, package_file=True, stdin=stdin)
                 else:
                     text = path.read_text(encoding='utf-8')
-                    calls = shell_calls(text) if lang == 'shell' else python_calls(
-                        text, filename=name, isolated=lang == 'isolated python', pythonpath='.' if lang == 'cwdpath python' else UNSET_PATH)
+                    calls = shell_calls(text, stdin=stdin) if lang == 'shell' else python_calls(
+                        text, filename=name, stdin=stdin, isolated=lang == 'isolated python', pythonpath='.' if lang == 'cwdpath python' else UNSET_PATH)
                 calls = list(resolve_module_calls(calls, Lexer))
             finally:
                 IMPORT_SOURCE.reset(token)
         except (Unsupported, SyntaxError, UnicodeDecodeError) as error:
-            readings[(name, lang)] = label
+            readings[key] = label
             location = getattr(error, 'location', None)
             at = command_location(label, location) if location else label
             found.append(f'{at}: not read: {error}')
             continue
-        readings[(name, lang)] = calls
+        readings[key] = calls
         for line, word, _ in calls:
             marker = next((m for m in RUNS if word.startswith(m)), None)
             target = repo_path(word[len(marker):] if marker else word) if (marker or '/' in word) else None
             if target not in tracked_files:
                 continue
             if marker:
-                want(target, RUNS[marker])
+                want(target, RUNS[marker], getattr(word, 'stdin', ()))
             elif kinds[target][0] != 'other':
                 # Run as a program: its `#!` decides; without one, the shell runs it as a script.
-                want(target, kinds[target][0] if kinds[target][0] in ('shell', 'python') else 'shell')
+                want(target, kinds[target][0] if kinds[target][0] in ('shell', 'python') else 'shell', getattr(word, 'stdin', ()))
             privileged = sorted(command for command, owners in ONLY_IN.items() if target in owners)
             if privileged and target != name:
                 found.append(f'{command_location(label, line)}: runs `{target}`, which alone may call '
@@ -3983,26 +4121,28 @@ def problems(root):
         for _, word, _ in calls:
             if word.startswith('(src)'):
                 target = repo_path(word[5:])
-                if (target, 'shell') not in seen:
-                    seen.add((target, 'shell'))
-                    names |= functions_of((target, 'shell'), seen)
+                child = target, 'shell', stdin_key(getattr(word, 'stdin', ()))
+                if child not in seen:
+                    seen.add(child)
+                    names |= functions_of(child, seen)
         return names
 
-    for name, lang in order:
-        calls = readings[(name, lang)]
+    for key in order:
+        name, lang, stream = key
+        calls = readings[key]
         if not isinstance(calls, list):
             continue
         kind, bang = kinds[name]
         language = 'python' if lang in ('package python', 'isolated python', 'cwdpath python') else lang
         label = name if kind == language else f'{name} (run as {language})'
-        package_calls = readings.get((name, 'package python')) if lang == 'python' else None
+        package_calls = readings.get((name, 'package python', stream)) if lang == 'python' else None
         if isinstance(package_calls, list):
             reported = {(command_location(label, line), word, external) for line, word, external in package_calls}
             calls = [(line, word, external) for line, word, external in calls
                      if (command_location(label, line), word, external) not in reported]
         if bang and kind == language:
             calls = [(1, bang[1], True)] + calls
-        functions = functions_of((name, lang), {(name, lang)})
+        functions = functions_of(key, {key})
         once = 0
         for line, word, by_prefix in calls:
             if word.startswith('()') or any(word.startswith(m) for m in RUNS):

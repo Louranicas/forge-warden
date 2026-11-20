@@ -366,7 +366,7 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
     return None
 
 
-def just_consumer(step, commands, cases, root=None, inherited_env=()):
+def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None):
     lexer = commands['WorkflowLexer']
     pythonpath = commands['UNSET_PATH']
     for environment in (*inherited_env, step.get('env', {})):
@@ -388,10 +388,32 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
         raise ValueError('unsupported gate shell before Just installation')
     root = root or lexer.workspace
     files = None
+    writes = set() if checkout_writes is None else checkout_writes
+
+    def require_original(path):
+        if None in writes or any(path.is_relative_to(changed) for changed in writes):
+            raise ValueError('cannot resolve modified gate script ' + str(path.relative_to(lexer.workspace)))
+
+    def record_write(path):
+        if path is not None:
+            path = Path(os.path.normpath(path))
+            if not path.is_relative_to(lexer.workspace):
+                return
+            file = root / path.relative_to(lexer.workspace)
+            if (None in writes or any(path.is_relative_to(changed) for changed in writes)
+                    or file.resolve() != file or file.is_file() and file.stat().st_nlink > 1):
+                path = None
+        writes.add(path)
 
     def inspect(calls, active):
         nonlocal files
         for _, word, _, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
+            if isinstance(word, commands['CheckoutRead']):
+                require_original(Path(word))
+                continue
+            if isinstance(word, commands['CheckoutWrite']):
+                record_write(Path(word) if word else None)
+                continue
             if word.startswith('(module)'):
                 consumer = unittest_consumer(arguments, cwd.relative_to(lexer.workspace), None, lexer.unknown)
                 if consumer:
@@ -401,11 +423,27 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
             target = Path(word.removeprefix(marker))
             if target.name == 'just':
                 return 'just'
+            program = word if '/' not in word else target.name
+            if not marker and ('/' not in word or word.startswith(commands['STANDARD_BIN'])):
+                if program in ('cp', 'mv') and arguments and len(arguments) >= 2 and all(
+                        arg and lexer.unknown not in arg and not arg.startswith('-') and not re.search(r'[?*\[~]', arg)
+                        for arg in arguments):
+                    for arg in arguments if program == 'mv' else arguments[-1:]:
+                        record_write(lexer.path(cwd, arg))
+                elif (program not in commands['PREFIXES'] | commands['SHELLS'] and
+                      not commands['PYTHONS'].fullmatch(program) and
+                      program not in (':', '.', 'source', 'true', 'false', 'echo', 'printf', 'cat', 'export', 'unset',
+                                      'set', 'declare', 'typeset', 'local', 'readonly', 'test', '[', '[[', 'pwd') and
+                      (program, arguments) != ('git', ['--version'])):
+                    record_write(None)
+                continue
             path = Path(os.path.normpath(cwd / target))
             if not path.is_relative_to(lexer.workspace):
                 if marker:
                     raise ValueError('cannot resolve gate script outside the workspace before Just installation')
+                record_write(None)
                 continue
+            require_original(path)
             path = path.relative_to(lexer.workspace).as_posix()
             if path in JUST_TESTS:
                 if unittest_consumer(arguments, cwd.relative_to(lexer.workspace), path, lexer.unknown):
@@ -422,7 +460,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
                 continue
             if path in JUST_CONSUMERS:
                 return path
-            if marker == '(module-file)' or not marker and '/' not in word:
+            if marker == '(module-file)':
                 continue
             file = root / path
             if file.is_symlink() or file.resolve() != file:
@@ -465,12 +503,15 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
 
     source = commands['IMPORT_SOURCE']
     token = source.set((root, directory, None, JUST_TESTS))
+    audit = commands['AUDIT_CHECKOUT']
+    audit_token = audit.set(writes)
     try:
         options = ({'isolated': arguments_format == '-I {0}', 'temporary_script': True}
                    if reader is commands['python_calls'] else {})
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
         return inspect(calls, ())
     finally:
+        audit.reset(audit_token)
         source.reset(token)
 
 
@@ -537,11 +578,13 @@ def check_ci(root):
     values = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
     commands = runpy.run_path(str(Path(__file__).with_name('script_commands.py')))
     runner_env = {}
+    checkout_writes = set()
     inherited = workflow.get('env', {}), gate.get('env', {}), runner_env
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
-            consumer = just_consumer(step, commands, cases, root, inherited)
+            step_writes = checkout_writes.copy()
+            consumer = just_consumer(step, commands, cases, root, inherited, step_writes)
             if consumer:
                 raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
@@ -550,8 +593,10 @@ def check_ci(root):
                     r'--component rustfmt,clippy && rustup default \1', run)):
                 raise ValueError('plant CI compiler install must be unconditional with reviewed fields')
             available.update(('rustup', 'rustc', 'cargo', 'cargo-clippy'))
-        elif run and 'just' not in available and may_write_runner_environment(step, commands):
-            runner_env['PYTHONPATH'] = None
+        elif run and 'just' not in available:
+            checkout_writes = step_writes
+            if may_write_runner_environment(step, commands):
+                runner_env['PYTHONPATH'] = None
         tool = installed_tool(step, values)
         if tool is not None:
             name = tool.partition('@')[0]
