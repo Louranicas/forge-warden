@@ -2305,7 +2305,8 @@ class GateImageCommands(unittest.TestCase):
         for setup, update in (('[print]', 'alias.append(run)'), ('[print, print]', 'alias[1] = run'),
                               ('[print]', 'add(run)'), ('[print]', 'alias.extend([run])')):
             source = ("from subprocess import run\nitems = " + setup + "\nalias = items\nadd = alias.append\n"
-                      "for launch in items:\n    launch(['just'])\n    if launch is print: " + update)
+                      "first = True\nfor launch in items:\n    launch(['just'])\n    if first:\n"
+                      "        first = False\n        " + update)
             with self.subTest(update=update):
                 self.assertEqual(self.recorded_commands(source), [['just']])
                 self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
