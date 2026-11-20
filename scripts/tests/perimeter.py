@@ -1995,6 +1995,20 @@ class GateImageCommands(unittest.TestCase):
         self.assertIsNone(CAPS.just_consumer({'shell': 'dash {0}', 'run': "BASHOPTS=lastpipe; bash -c 'true | wait'"},
                                              vars(COMMANDS), []))
 
+    def test_function_local_bashopts_restore_value_and_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'locals').write_text('local BASHOPTS=; unset BASHOPTS')
+            child = "bash -c 'true | wait'"
+            for body in ('local BASHOPTS=; export BASHOPTS; unset BASHOPTS', '. ./locals',
+                         'local BASHOPTS=; inner', 'inner'):
+                step = {'shell': 'dash {0}', 'env': {'BASHOPTS': 'lastpipe'},
+                        'run': f'inner() {{ local BASHOPTS=; }}; outer() {{ {body}; }}; outer; {child}'}
+                with self.subTest(body=body), self.assertRaisesRegex(ValueError, 'lastpipe'):
+                    CAPS.just_consumer(step, vars(COMMANDS), [], root)
+            step = {'shell': 'dash {0}', 'run': f'BASHOPTS=lastpipe; f() {{ local BASHOPTS; export BASHOPTS; }}; f; {child}'}
+            self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2567,16 +2581,61 @@ class GateImageCommands(unittest.TestCase):
                 self.assertEqual([word for _, word, _ in COMMANDS.python_calls(setup + definition + '\n' + call)], ['cmp'])
 
     def test_unpacking_preserves_unaffected_helper_arguments(self):
-        setup = "from subprocess import run\ndef cb(message='ok', *, launch=run): launch(['cmp'])\n"
-        for call, expected in (('cb(**{})', ['cmp']), ('cb(*unknown)', ['cmp']),
-                               ("cb(**{'launch': print})", []), ('cb(**unknown, launch=print)', [])):
+        inputs = ("import os\nfrom subprocess import run\nitems = os.getenv('FW_TEST_ARGS', '').split()\n"
+                  "options = dict.fromkeys(items, print)\n")
+        setup = inputs + "def cb(message='ok', *, launch=run):\n    run(['entered'])\n    launch(['cmp'])\n"
+        with patch.dict(os.environ, {'FW_TEST_ARGS': 'message'}):
+            for call, expected in (('cb(**{})', ['entered', 'cmp']), ('cb(*items)', ['entered', 'cmp']),
+                                   ("cb(**{'launch': print})", ['entered']), ('cb(**options, launch=print)', ['entered'])):
+                with self.subTest(call=call):
+                    source = setup + call
+                    self.assertEqual(self.recorded_commands(source), [[word] for word in expected])
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+            source = setup + 'cb(**options)'
+            self.assertEqual(self.recorded_commands(source), [['entered'], ['cmp']])
+            with self.assertRaisesRegex(ValueError, 'callable'):
+                COMMANDS.python_calls(source)
+            for args in ('**{}', '*items', '**options'):
+                source = inputs + f"def log(message='ok'): print('entered')\nlog({args})"
+                out = StringIO()
+                with self.subTest(args=args), redirect_stdout(out):
+                    exec(source, {})
+                    self.assertEqual(out.getvalue(), 'entered\n')
+                    self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_variadic_helpers_capture_arguments(self):
+        prefix = "from subprocess import run\nimport asyncio\nfrom functools import partial\n"
+        for body, call in (("def cb(*args, **kw): kw['launch'](args)", "cb('cmp', launch=run)"),
+                           ("def cb(*args, **kw): kw['launch'](args)", "partial(cb, 'cmp')(launch=run)"),
+                           ("def cb(*args, **kw): kw.get('launch', print)(args)", "cb('cmp', launch=run)"),
+                           ("def chain(**kw): use(**kw)\ndef use(**kw): kw['launch'](['cmp'])", 'chain(launch=run)'),
+                           ("def cb(*args, **kw): run(*args, **kw)", "cb(['cmp'], check=True)"),
+                           ("def cb(*args, **kw):\n    yield kw['launch'](args)", "list(cb('cmp', launch=run))"),
+                           ("async def cb(*args, **kw): kw['launch'](args)", "asyncio.run(cb('cmp', launch=run))"),
+                           ("class C:\n    def cb(self, *args, **kw): kw['launch'](args)", "C().cb('cmp', launch=run)")):
+            with self.subTest(body=body, call=call):
+                words = [word for _, word, _ in COMMANDS.python_calls(prefix + body + '\n' + call)]
+                self.assertEqual(words, ['cmp'])
+        for body, call in (("def cb(f=print): f(['cmp'])", 'cb(*items)'),
+                           ("async def cb(f=print): f(['cmp'])", 'asyncio.run(cb(*items))')):
+            for refill, expected in (('', []), ('items.append(run)\n', ['cmp'])):
+                source = prefix + body + '\nitems = [run]\nitems.clear()\n' + refill + call
+                with self.subTest(call=call, refill=refill):
+                    self.assertEqual(self.recorded_commands(source), [['cmp']] if expected else [])
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+
+        for inputs, call, expected in (("items = (f for f in (run,))", "cb(*items)", ['cmp']),
+                                       ("items = [run]", "cb(*items, tag=items.clear())", []),
+                                       ("items = [run]", "cb(*items, *(), tag=items.clear())", ['cmp'])):
+            source = prefix + "def cb(f=print, *, tag=None): f(['cmp'])\n" + inputs + '\n' + call
             with self.subTest(call=call):
-                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(setup + call)], expected)
-        with self.assertRaisesRegex(ValueError, 'callable'):
-            COMMANDS.python_calls(setup + 'cb(**unknown)')
-        for args in ('**{}', '*unknown', '**unknown'):
-            with self.subTest(args=args):
-                self.assertEqual(COMMANDS.python_calls(f"def log(msg='ok'): print(msg)\nlog({args})"), [])
+                self.assertEqual(self.recorded_commands(source), [['cmp']] if expected else [])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+        for update in ("alias['launch'] = run", "alias |= {'launch': run}"):
+            source = prefix + f"def cb(**kw):\n    alias = kw\n    {update}\n    kw['launch'](['cmp'])\ncb(launch=print)"
+            self.assertEqual(self.recorded_commands(source), [['cmp']])
+            with self.assertRaisesRegex(ValueError, 'keyword callable'):
+                COMMANDS.python_calls(source)
 
     def test_generator_loop_distinguishes_exhaustion_from_break(self):
         setup = "from subprocess import run\ndef reader():\n    yield 1\n    run(['just'])\n"

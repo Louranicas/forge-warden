@@ -448,11 +448,13 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             check_checkout_write(path, reads, lexer.workspace)
         writes.add(path)
 
-    def inspect(calls, active, shell=None, conditional=False, joined=frozenset(), options=(False, False), interpreter=None):
+    def inspect(calls, active, shell=None, conditional=False, joined=frozenset(), options=(False, False), interpreter=None,
+                local_options=None):
         nonlocal files, invocations
         owns_shell = shell is None
         if owns_shell:
             shell = GateShell(options, interpreter)
+        entry_shell = shell
         frames = []
         for _, word, external, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
             if isinstance(word, commands['ShellDefinition']):
@@ -514,7 +516,14 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 invocations += 1
                 if definition is None or invocation in active or len(active) >= 12 or invocations > 128:
                     raise ValueError('cannot resolve conditional or recursive gate function ' + word)
-                consumer = inspect(definition.calls(word, lexer, cwd, shell.functions), (*active, invocation), shell, conditional, joined)
+                saved = []
+                consumer = inspect(definition.calls(word, lexer, cwd, shell.functions), (*active, invocation),
+                                   shell, conditional, joined, local_options=saved)
+                if saved:
+                    if not saved[-1][2]:
+                        shell.lastpipe = shell.exported = False
+                    shell.lastpipe = shell.lastpipe or any(enabled for enabled, _, _ in saved)
+                    shell.exported = shell.exported or any(exported for _, exported, _ in saved)
                 if consumer:
                     return consumer
                 continue
@@ -554,6 +563,9 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         uncertain = lexer.unknown in key
                         if not uncertain and key != 'BASHOPTS':
                             continue
+                        if (word == 'local' and shell.interpreter in ('sh', 'dash', None) and shell is entry_shell and local_options is not None
+                                and (not local_options or local_options[-1][2])):
+                            local_options.append((shell.lastpipe, shell.exported, conditional or uncertain or shell.interpreter != 'dash'))
                         if (equals or uncertain) and shell.interpreter in ('sh', 'dash', None):
                             enabled = uncertain or lexer.unknown in value or commands['may_enable_lastpipe'](value)
                             shell.lastpipe = enabled or (conditional or shell.interpreter != 'dash') and shell.lastpipe
@@ -650,7 +662,8 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path,
                                                  shell_state=getattr(word, 'shell_state', None), stdin=stdin)
             consumer = inspect(nested, (*active, path), shell if marker == '(src)' else None, conditional, joined,
-                               options, getattr(word, 'interpreter', None))
+                               options, getattr(word, 'interpreter', None),
+                               local_options if marker == '(src)' and shell is entry_shell else None)
             if consumer:
                 return consumer
 
