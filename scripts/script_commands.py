@@ -967,7 +967,6 @@ class PythonHelper:
 
 class PythonClass:
     def __init__(self, node, bases, skipped):
-        self.line = node.lineno
         custom = bool(node.keywords)
         possible = set().union(*bases)
         self.test_case = any(base == 'unittest.TestCase' or isinstance(base, PythonClass)
@@ -1016,8 +1015,11 @@ BoundCall = namedtuple('BoundCall', ('target', 'receiver', 'args', 'keywords'), 
 
 UNKNOWN_CALLABLE = object()
 MISSING_FIELD = object()
+MISSING_NAME = object()
 EXCEPTION = object()
 SKIPPED_HANDLER = object()
+STANDARD_CONTEXT = object()
+UNRESOLVED_CONTEXT = object()
 
 
 def process_value(call, targets):
@@ -1075,13 +1077,37 @@ def loop_inputs(node, body):
     return inputs
 
 
-def literal_iterations(node):
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)) and not any(isinstance(item, ast.Starred) for item in node.elts):
-        return len(node.elts)
-    if isinstance(node, ast.Dict) and None not in node.keys:
-        return len(node.keys)
+def local_bindings(body):
+    def scan(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node.name
+            return
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            yield node.id
+        if isinstance(node, ast.alias):
+            yield node.asname or node.name.partition('.')[0]
+        if isinstance(node, ast.ExceptHandler) and node.name:
+            yield node.name
+        for child in ast.iter_child_nodes(node):
+            yield from scan(child)
+    if body and not hasattr(body[0], '_local_bindings'):
+        body[0]._local_bindings = {name for node in body for name in scan(node)}
+    return body[0]._local_bindings if body else set()
+
+
+def literal_elements(node):
+    if isinstance(node, (ast.List, ast.Tuple)):
+        items = expanded_items(node.elts)
+        if not any(isinstance(item, ast.Starred) for item in items):
+            return items
+    if isinstance(node, (ast.Set, ast.Dict)):
+        keys = node.elts if isinstance(node, ast.Set) else node.keys
+        if all(isinstance(key, ast.Constant) for key in keys):
+            distinct = dict.fromkeys(key.value for key in keys)
+            if isinstance(node, ast.Dict) or len(distinct) <= 1:
+                return [ast.Constant(value) for value in distinct]
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
-        return len(node.value)
+        return [ast.Constant(value) for value in node.value]
     return None
 
 
@@ -1100,7 +1126,8 @@ def loop_values(values, state, instances):
 
 
 def python_callees(body, bindings, ordering, targets, enclosing=(), active=None, class_body=False,
-                   require_command=False, reachable=True, exceptional_fields=None, testcase_super_init=False, allocations=None):
+                   require_command=False, reachable=True, exceptional_fields=None, testcase_super_init=False, allocations=None,
+                   protocol_returns=None):
     if active is None:
         active = {}
     if allocations is None:
@@ -1113,7 +1140,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def frames(names):
         return enclosing if class_body else (*enclosing, (scope, names))
 
-    def read_helper(helper, names, call=None, receiver=None, strict=False, interrupted=None):
+    def read_helper(helper, names, call=None, receiver=None, strict=False, interrupted=None, protocol=False):
         function = helper.node
         live = dict(frames(names))
         parents = tuple((key, live.get(key, frame)) for key, frame in helper.frames)
@@ -1152,7 +1179,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 raise Unsupported('cannot resolve recursive Python callable before Just installation')
             return {UNKNOWN_CALLABLE}
         entry = local.copy()
-        context = (call, receiver, strict, reachable, interrupted is not None, tuple(active))
+        context = (call, receiver, strict, reachable, interrupted is not None, tuple(active), protocol)
         environment = [entry, *(frame for _, frame in parents), *active.values()]
         if helper.summaries.get(context) == environment:
             return {UNKNOWN_CALLABLE}
@@ -1164,9 +1191,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(receiver, PythonInstance) and receiver.owner.base == 'unittest.TestCase' and function.name == '__init__':
                 initializers = [cls.members['__init__'] for cls in receiver.owner.lineage if '__init__' in cls.members]
                 base_init = bool(initializers and initializers[-1] == {helper})
+            protocol_values = set() if protocol else None
             returned = yield from python_callees(function.body, local, ordering, targets, parents, active,
                                                 require_command=strict, reachable=reachable and call is not None,
-                                                exceptional_fields=exceptions, testcase_super_init=base_init, allocations=allocations)
+                                                exceptional_fields=exceptions, testcase_super_init=base_init, allocations=allocations,
+                                                protocol_returns=protocol_values)
             updates = fields(local)
             raised = fields(exceptions or {})
             if returned == {UNKNOWN_CALLABLE}:
@@ -1183,7 +1212,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 names.update(updates)
         finally:
             del active[function]
-        if helper.decorator is UNKNOWN_CALLABLE or not isinstance(function, ast.FunctionDef):
+        if helper.decorator is UNKNOWN_CALLABLE or not protocol and not isinstance(function, ast.FunctionDef):
             return {UNKNOWN_CALLABLE}
         return returned
 
@@ -1206,6 +1235,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 break
         else:
             if cls.base == 'unittest.TestCase' and hasattr(unittest.TestCase, name):
+                if name in ('subTest', 'assertRaises', 'assertRaisesRegex', 'assertWarns', 'assertWarnsRegex'):
+                    bound.add('unittest.TestCase.' + name)
                 return bound
             if (cls.base, name) == ('yaml.SafeDumper', 'add_representer'):
                 return bound
@@ -1260,14 +1291,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return qualified(node.body, names) | qualified(node.orelse, names)
         return frozenset({None})
 
-    def join(states):
+    def join(states, *, paths=False):
         merged = {}
         for state in states:
             for key, values in state.items():
                 merged[key] = merged.get(key, frozenset()) | values
-        for key in fields(merged):
-            if any(key not in state for state in states):
-                merged[key] |= {MISSING_FIELD}
+        for key in merged:
+            if (isinstance(key, tuple) or paths and isinstance(key, str)) and any(key not in state for state in states):
+                merged[key] |= {MISSING_FIELD if isinstance(key, tuple) else MISSING_NAME}
         return merged
 
     def suite(statements, names, interrupted):
@@ -1284,7 +1315,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 outcomes.append(branch)
         if outcomes:
             names.clear()
-            names.update(join(outcomes))
+            names.update(join(outcomes, paths=True))
         return bool(outcomes)
 
     def argument(value, names):
@@ -1309,6 +1340,34 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(literal, ast.Starred):
             return ast.Starred(value=captured(literal.value, names), ctx=ast.Load())
         return CapturedArgument(qualified(value, names) or {UNKNOWN_CALLABLE})
+
+    def bind_target(target, value, names):
+        if isinstance(target, (ast.Tuple, ast.List)):
+            items = py_items(value)
+            if items is None:
+                items = [CapturedArgument({UNKNOWN_CALLABLE})] * len(target.elts)
+            elif any(isinstance(t, ast.Starred) for t in target.elts):
+                index = next(i for i, t in enumerate(target.elts) if isinstance(t, ast.Starred))
+                end = len(items) - (len(target.elts) - index - 1)
+                items = [*items[:index], ast.List(elts=items[index:end]), *items[end:]]
+            if len(items) != len(target.elts):
+                raise Unsupported('cannot resolve unpacked Python binding')
+            for part, item in zip(target.elts, items):
+                bind_target(part.value if isinstance(part, ast.Starred) else part, item, names)
+            return
+        owners = {value} if isinstance(value, (ast.List, ast.Tuple)) else qualified(value, names)
+        values = frozenset(BoundCall(UNKNOWN_CALLABLE) if owner in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT, MISSING_NAME)
+                           or isinstance(owner, ast.arg) else owner for owner in owners)
+        if isinstance(target, ast.Name):
+            names[target.id] = values
+        elif isinstance(target, ast.Attribute):
+            receivers = qualified(target.value, names)
+            for receiver in receivers:
+                if isinstance(receiver, (PythonClass, PythonInstance)):
+                    key = receiver, target.attr
+                    names[key] = values if len(receivers) == 1 else values | names.get(key, {MISSING_FIELD})
+        else:
+            raise Unsupported('cannot resolve Python binding target')
 
     def resolved_handler(handler):
         target = handler.target if isinstance(handler, BoundCall) else handler
@@ -1343,7 +1402,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(target, PythonHelper):
             returned = yield from read_helper(target, names, call, receiver, strict=wrapped or require_command,
                                               interrupted=interrupted)
-            return {BoundCall(value) if value is UNKNOWN_CALLABLE or isinstance(value, ast.arg) else value
+            if target.decorator in ('contextlib.contextmanager', 'contextlib.asynccontextmanager'):
+                return {STANDARD_CONTEXT}
+            return {BoundCall(value) if value in (UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(value, ast.arg) else value
                     for value in returned}
         if isinstance(target, PythonClass):
             instance = PythonInstance(target)
@@ -1369,10 +1430,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                 for kw in call.keywords):
                 raise Unsupported('cannot resolve unittest test selection')
             module = frames(names)[0][1]
-            classes = {cls for key, values in module.items() if isinstance(key, str)
-                       for cls in values if isinstance(cls, PythonClass)}
             suites = []
-            for cls in sorted(classes, key=lambda cls: cls.line):
+            for key in sorted(key for key in module if isinstance(key, str)):
+                values = module[key]
+                if not any(isinstance(value, PythonClass) for value in values):
+                    continue
+                if len(values) != 1:
+                    raise Unsupported('cannot resolve unittest discovery')
+                cls, = values
                 if cls.test_case is None or cls.test_case and cls.base != 'unittest.TestCase':
                     raise Unsupported('cannot resolve unittest discovery')
                 if not cls.test_case:
@@ -1388,9 +1453,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     constructor = ast.copy_location(ast.Call(func=call.func, args=[ast.Constant(method)], keywords=[]), call)
                     instance, = yield from invoke(cls, constructor, names, interrupted=interrupted)
                     cases.append((method, instance))
-                suites.append((cls, methods, cases))
+                if cases:
+                    if suites and suites[-1][0] is cls:
+                        suites[-1][2].extend(cases)
+                    else:
+                        suites.append((cls, methods, cases))
             for cls, methods, cases in suites:
-                if not cases or cls.skipped or methods.get('setUpClass') == {SKIPPED_HANDLER}:
+                if cls.skipped or methods.get('setUpClass') == {SKIPPED_HANDLER}:
                     continue
 
                 dispatch_call = ast.copy_location(ast.Call(func=call.func, args=[], keywords=[]), call)
@@ -1420,7 +1489,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                               args=tuple(captured(arg, names) for arg in args[1:]),
                               keywords=tuple(ast.keyword(arg=kw.arg, value=captured(kw.value, names))
                                              for kw in call.keywords)) for origin in origins}
-        if target is UNKNOWN_CALLABLE or isinstance(target, (ast.arg, PythonInstance)):
+        if target in (UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(target, (ast.arg, PythonInstance)):
             if ordering or wrapped or require_command:
                 raise Unsupported('cannot resolve Python callable')
         if isinstance(target, str):
@@ -1433,17 +1502,104 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
             yield call, target, wrapped or require_command
+            if target in ('contextlib.suppress', 'contextlib.ExitStack', 'tempfile.TemporaryDirectory',
+                          'tempfile.NamedTemporaryFile', 'os.fdopen', 'os.scandir', 'builtins.open',
+                          'unittest.mock.patch', 'unittest.mock.patch.dict', 'unittest.mock.patch.object',
+                          'unittest.TestCase.subTest', 'unittest.TestCase.assertRaises', 'unittest.TestCase.assertRaisesRegex',
+                          'unittest.TestCase.assertWarns', 'unittest.TestCase.assertWarnsRegex'):
+                return {STANDARD_CONTEXT}
+            if target.partition('.')[0] not in sys.stdlib_module_names:
+                return {UNRESOLVED_CONTEXT}
         return {UNKNOWN_CALLABLE}
 
     def record_exception(interrupted, names):
-        interrupted.update(join((interrupted, names)))
+        interrupted.update(join((interrupted, names), paths=True) if interrupted else names)
         interrupted[EXCEPTION] = frozenset()
+
+    def with_items(node, items, names, interrupted):
+        if not items:
+            return (yield from suite(node.body, names, interrupted))
+        item, *rest = items
+        expr = item.context_expr
+        yield from visit(expr, names, interrupted)
+        managers = qualified(expr, names)
+        prefix = '__a' if isinstance(node, ast.AsyncWith) else '__'
+        entry = prefix + 'enter__'
+        exit_method = prefix + 'exit__'
+
+        def lifecycle(method, state, args):
+            outcomes = []
+            values = set()
+            for manager in managers:
+                branch = state.copy()
+                if isinstance(manager, PythonInstance):
+                    handlers = member(manager.owner, method, state)
+                    if len(handlers) != 1:
+                        raise Unsupported('cannot resolve Python context manager lifecycle')
+                    handler, = handlers
+                    resolved_handler(handler)
+                    receiver = manager
+                    if isinstance(handler, BoundCall):
+                        handler, receiver = handler.target, handler.receiver
+                    if not isinstance(handler, PythonHelper):
+                        raise Unsupported('cannot resolve Python context manager method')
+                    if handler.decorator == 'builtins.staticmethod':
+                        receiver = None
+                    call = ast.copy_location(ast.Call(func=expr, args=args, keywords=[]), expr)
+                    values.update((yield from read_helper(handler, branch, call, receiver, interrupted=interrupted, protocol=True)))
+                else:
+                    if isinstance(manager, BoundCall) or manager in (MISSING_NAME, UNRESOLVED_CONTEXT) or (
+                            ordering and manager is not STANDARD_CONTEXT):
+                        raise Unsupported('cannot resolve Python context manager')
+                    values.add(UNKNOWN_CALLABLE)
+                outcomes.append(branch)
+            if outcomes:
+                state.update(join(outcomes, paths=True))
+            return values
+
+        entered = yield from lifecycle(entry, names, [])
+        if interrupted is not None:
+            record_exception(interrupted, names)
+        exceptions = {}
+        if item.optional_vars:
+            yield from visit(item.optional_vars, names, exceptions)
+            outcomes = []
+            for value in entered or {UNKNOWN_CALLABLE}:
+                branch = names.copy()
+                bind_target(item.optional_vars, value if isinstance(value, (ast.Tuple, ast.List)) else CapturedArgument({value}), branch)
+                outcomes.append(branch)
+            names.update(join(outcomes, paths=True))
+        start = len(transfers)
+        completed = yield from with_items(node, rest, names, exceptions)
+        normal_args = [ast.Constant(None)] * 3
+        for _, state in transfers[start:]:
+            yield from lifecycle(exit_method, state, normal_args)
+            if interrupted is not None:
+                record_exception(interrupted, state)
+        if completed:
+            yield from lifecycle(exit_method, names, normal_args)
+            if interrupted is not None:
+                record_exception(interrupted, names)
+        if EXCEPTION in exceptions:
+            del exceptions[EXCEPTION]
+            result = yield from lifecycle(exit_method, exceptions, [CapturedArgument({UNKNOWN_CALLABLE})] * 3)
+            if interrupted is not None:
+                record_exception(interrupted, exceptions)
+            if any(not isinstance(value, ast.Constant) or value.value for value in result):
+                names.update(join((names, exceptions), paths=True) if completed else exceptions)
+                return True
+        return completed
 
     def visit(node, names, interrupted=None):
         may_raise = (interrupted is not None and isinstance(node, (ast.stmt, ast.expr)) and
                 not isinstance(node, (ast.Pass, ast.Constant, ast.Return, ast.Break, ast.Continue, ast.Expr,
                                       ast.Assign, ast.Global, ast.Nonlocal, ast.Try, ast.TryStar)) and
-                not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)))
+                not (isinstance(node, ast.Name) and (isinstance(node.ctx, ast.Store) or
+                     isinstance(node.ctx, ast.Load) and node.id in names and MISSING_NAME not in names[node.id])))
+        if may_raise and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id not in names:
+            if node.id not in local_bindings(body):
+                owners = qualified(node, names)
+                may_raise = None in owners or MISSING_NAME in owners
         if may_raise:
             record_exception(interrupted, names)
         completed = yield from visit_node(node, names, interrupted)
@@ -1495,7 +1651,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     return
                 decorator = None
                 if decorators:
-                    if len(decorators) == 1 and decorators[0] in ({'builtins.classmethod'}, {'builtins.staticmethod'}):
+                    if len(decorators) == 1 and decorators[0] in ({'builtins.classmethod'}, {'builtins.staticmethod'},
+                                                                  {'contextlib.contextmanager'}, {'contextlib.asynccontextmanager'}):
                         decorator, = decorators[0]
                     else:
                         decorator = UNKNOWN_CALLABLE
@@ -1518,31 +1675,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for value in node.values[1:]:
                 yield from visit(value, names, interrupted)
                 outcomes.append(names.copy())
-            names.update(join(outcomes))
+            names.update(join(outcomes, paths=True))
             return
         if isinstance(node, (ast.With, ast.AsyncWith)):
-            exceptions = {}
-            for index, item in enumerate(node.items):
-                yield from visit(item.context_expr, names, exceptions if index else interrupted)
-                if index:
-                    record_exception(exceptions, names)
-                if item.optional_vars:
-                    yield from visit(item.optional_vars, names, exceptions)
-            start = len(transfers)
-            completed = yield from suite(node.body, names, exceptions)
-            outer = exceptions if len(node.items) > 1 else interrupted
-            if outer is not None:
-                if completed:
-                    record_exception(outer, names)
-                for _, state in transfers[start:]:
-                    record_exception(outer, state)
-            if EXCEPTION in exceptions:
-                if interrupted is not None:
-                    interrupted.update(join((interrupted, exceptions)))
-                exceptions.pop(EXCEPTION, None)
-                names.update(join((names, exceptions)) if completed else exceptions)
-                return True
-            return completed
+            return (yield from with_items(node, node.items, names, interrupted))
         if isinstance(node, ast.match_case):
             yield from visit(node.pattern, names, interrupted)
             if node.guard:
@@ -1564,20 +1700,45 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 body = [node.target, *node.body]
             inputs = loop_inputs(node, body)
             broken = []
-            limit = literal_iterations(node.iter) if isinstance(node, ast.For) else None
+            elements = literal_elements(node.iter) if isinstance(node, ast.For) else None
+            candidates = []
+            if elements is not None:
+                elements = [captured(element, names) for element in elements]
+            elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Set, ast.Dict, ast.List, ast.Tuple)):
+                items = node.iter.keys if isinstance(node.iter, ast.Dict) else node.iter.elts
+                candidates = [captured(item, names) for item in items]
             loop_allocations = set()
-            for _ in range(min(8, limit) if limit is not None else 8):
+            exhausted = True
+            for iteration in range(len(elements) if elements is not None else 8):
                 first_allocation = len(allocations)
                 start = len(transfers)
                 branch = names.copy()
-                completed = yield from suite(body, branch, interrupted)
+                if elements is not None:
+                    yield from visit(node.target, branch, interrupted)
+                    bind_target(node.target, elements[iteration], branch)
+                elif candidates:
+                    yield from visit(node.target, branch, interrupted)
+                    choices = []
+                    for candidate in candidates:
+                        choice = branch.copy()
+                        bind_target(node.target, candidate, choice)
+                        choices.append(choice)
+                    branch.update(join(choices, paths=True))
+                completed = yield from suite(node.body if elements is not None or candidates else body, branch, interrupted)
                 loop_exits = transfers[start:]
                 transfers[start:] = [transfer for transfer in loop_exits if transfer[0] is ast.Return]
                 back_edges = [state for kind, state in loop_exits if kind is ast.Continue]
                 broken.extend(state for kind, state in loop_exits if kind is ast.Break)
                 if completed:
                     back_edges.append(branch)
-                next_entry = join([names, *back_edges])
+                if elements is not None:
+                    if not back_edges:
+                        exhausted = False
+                        break
+                    names.clear()
+                    names.update(join(back_edges, paths=True))
+                    continue
+                next_entry = join([names, *back_edges], paths=True)
                 fresh = set(allocations[first_allocation:])
                 loop_allocations.update(fresh)
                 changed = any(values != names.get(key) and
@@ -1591,13 +1752,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(node, ast.While):
                     yield from visit(node.test, names, interrupted)
             else:
-                if limit is None or limit > 8:
+                if elements is None:
                     raise Unsupported('cannot resolve changing Python loop bindings')
-            if (yield from suite(node.orelse, names, interrupted)):
+            if exhausted and (yield from suite(node.orelse, names, interrupted)):
                 broken.append(names.copy())
             if broken:
                 names.clear()
-                names.update(join(broken))
+                names.update(join(broken, paths=True))
             return bool(broken)
         if isinstance(node, (ast.Try, ast.TryStar)):
             start = len(transfers)
@@ -1627,7 +1788,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if (yield from suite(node.finalbody, exits, interrupted)) and interrupted is not None:
                     interrupted.update(join((interrupted, exits)))
             names.clear()
-            names.update(join(normal) if normal else exits)
+            names.update(join(normal, paths=True) if normal else exits)
             if normal:
                 return (yield from suite(node.finalbody, names, interrupted))
             return False
@@ -1687,6 +1848,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             yield from visit(child, names, interrupted)
 
         if isinstance(node, (ast.Return, ast.Break, ast.Continue)):
+            if protocol_returns is not None and isinstance(node, ast.Return):
+                result = captured(node.value, names) if node.value is not None else ast.Constant(None)
+                protocol_returns.update(qualified(result, names) if isinstance(result, CapturedArgument) else {result})
             transfers.append((type(node), names.copy()))
             return False
         if isinstance(node, ast.Raise):
@@ -1701,6 +1865,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     for helper in functions.values():
         if not class_body and not ordering and not helper.called:
             yield from read_helper(helper, bindings)
+    if protocol_returns is not None:
+        if completed:
+            protocol_returns.add(ast.Constant(None))
+        return protocol_returns
     if len(body) == 1 and isinstance(body[0], ast.Return):
         return frozenset(BoundCall(value) if isinstance(value, str) else
                          UNKNOWN_CALLABLE if value is None else value
@@ -1744,8 +1912,12 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         if None in keywords:
             raise Unsupported('cannot resolve unpacked Python process keywords')
         subprocess_argv = name in PY_ARGV and PY_ARGV[name] is None
-        if subprocess_argv and any(isinstance(arg, ast.Starred) for arg in args[:9]):
+        if subprocess_argv and any(isinstance(arg, ast.Starred) for arg in args[:10]):
             raise Unsupported('cannot resolve starred Python process arguments')
+        for position, parameter in enumerate(('args', 'bufsize', 'executable', 'stdin', 'stdout', 'stderr',
+                                              'preexec_fn', 'close_fds', 'shell', 'cwd')):
+            if subprocess_argv and len(args) > position and parameter in keywords:
+                raise Unsupported('duplicate Python subprocess argument: ' + parameter)
         override = keywords.get('executable')
         if subprocess_argv and len(args) > 2:
             override = args[2]
@@ -1835,8 +2007,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                 else:
                     texts.extend(argv_text([choice, *after_argv_zero(args[index + 1:])], wrapped) for choice in branches(program))
         cwd = directory
-        if directory is not None and texts and keywords.get('cwd') is not None:
-            value = keywords['cwd']
+        value = args[9] if subprocess_argv and len(args) > 9 else keywords.get('cwd')
+        if directory is not None and texts and value is not None:
             if not isinstance(value, ast.Constant) or (value.value is not None and not isinstance(value.value, str)):
                 raise Unsupported('cannot resolve Python process directory before Just installation')
             if value.value is not None:

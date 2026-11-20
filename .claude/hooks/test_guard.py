@@ -431,12 +431,12 @@ class Guard(unittest.TestCase):
         git.write_text("#!/bin/sh\necho called > git-called\nexit 91\n")
         git.chmod(0o755)
         env["PATH"] = str(tools) + os.pathsep + env["PATH"]
-        for command in ([sys.executable, "-I", "scripts/worktree_diff.py", "--clean"],
+        for command in ([sys.executable, "-I", self.root / "scripts/worktree_diff.py", "--clean"],
                         [sys.executable, "-I", CHECKOUT_JUST, "judge-bound"],
                         [sys.executable, "-I", CHECKOUT_JUST, "review"],
-                        ["bash", "scripts/make_patch.sh", "HEAD", "HEAD", "scripts"],
-                        ["bash", "scripts/ci_fast.sh"], ["bash", "scripts/ci_local.sh"],
-                        ["bash", ".githooks/pre-commit"], ["bash", ".githooks/pre-push"]):
+                        ["bash", self.root / "scripts/make_patch.sh", "HEAD", "HEAD", "scripts"],
+                        ["bash", self.root / "scripts/ci_fast.sh"], ["bash", self.root / "scripts/ci_local.sh"],
+                        ["bash", self.root / ".githooks/pre-commit"], ["bash", self.root / ".githooks/pre-push"]):
             with self.subTest(command=command):
                 result = subprocess.run(command, cwd=self.root, env=env, capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
