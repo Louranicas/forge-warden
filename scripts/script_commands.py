@@ -69,6 +69,7 @@ from collections import namedtuple
 from contextvars import ContextVar
 from importlib import import_module
 from itertools import product
+import operator
 import os
 from pathlib import Path
 import posixpath
@@ -883,7 +884,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     workflow = AUDIT_CHECKOUT.get() is not None
 
     def checkpoint():
-        return len(calls), definitions, sourced
+        return len(calls), definitions, sourced, (shell_value, exported, allexport, ambient_path, environment_writes)
 
     list_start = pipeline_start = stage_start = checkpoint()
     pipeline = False
@@ -891,7 +892,10 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
 
     def wrap(position, kind):
         nonlocal definitions, sourced
-        start, previous, was_sourced = position
+        nonlocal shell_value, exported, allexport, ambient_path, environment_writes
+        start, previous, was_sourced, environment = position
+        if kind in ('subshell', 'background', 'process-substitution'):
+            shell_value, exported, allexport, ambient_path, environment_writes = environment
         if workflow:
             if kind in ('subshell', 'background', 'process-substitution', 'trap'):
                 definitions, sourced = previous, was_sourced
@@ -927,7 +931,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             wrap(start, 'conditional')
         if definition:
             name, opener, previous_writes, saved = definition
-            start, definitions, sourced = start
+            start, definitions, sourced, _ = start
             dependencies = {word for _, word, external_call, *_ in calls[start:]
                             if isinstance(word, ScriptFile) and not external_call}
             shell_value, exported, allexport, ambient_path, stdin = saved
@@ -981,6 +985,20 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             inline.clear()
             if not defining:
                 flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
+            conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
+            if auto_flag is not None:
+                environment_writes += 1
+                allexport = None if conditional and allexport != auto_flag else auto_flag
+            if changes_path and (expect and prefix is None or script in ('export', 'declare', 'typeset', 'local', 'readonly', 'unset')):
+                environment_writes += 1
+                new_export = export_flag
+                if new_export is None:
+                    new_export = True if True in (exported, allexport) else None if None in (exported, allexport) else False
+                shell_value = None if conditional and shell_value != pythonpath else pythonpath
+                exported = None if conditional and exported != new_export else new_export
+                ambient_path = UNSET_PATH if exported is False else shell_value if exported is True else None
+            export_flag = auto_flag = set_option = None
+            changes_path = False
             if op in ('|', '|&'):
                 wrap(stage_start, 'subshell')
                 stage_start = checkpoint()
@@ -998,20 +1016,6 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 stage_start = pipeline_start = checkpoint()
                 if op not in ('&&', '||'):
                     list_start = pipeline_start
-            conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
-            if auto_flag is not None:
-                environment_writes += 1
-                allexport = None if conditional and allexport != auto_flag else auto_flag
-            if changes_path and (expect and prefix is None or script in ('export', 'declare', 'typeset', 'local', 'readonly', 'unset')):
-                environment_writes += 1
-                new_export = export_flag
-                if new_export is None:
-                    new_export = True if True in (exported, allexport) else None if None in (exported, allexport) else False
-                shell_value = None if conditional and shell_value != pythonpath else pythonpath
-                exported = None if conditional and exported != new_export else new_export
-                ambient_path = UNSET_PATH if exported is False else shell_value if exported is True else None
-            export_flag = auto_flag = set_option = None
-            changes_path = False
             if op == '(' and not (skip_parens or function_start) and mode != 'array':
                 open_group(')', True)
             elif groups and op == groups[-1][0] and not function_end:
@@ -1446,6 +1450,8 @@ class PythonHelper:
         self.called = False
         self.summaries = {}
         self.managed_body = None
+        local_bindings(node.body)
+        self.generator = node.body[0]._yields
 
 
 class PythonClass:
@@ -1537,7 +1543,17 @@ PRIVATE_FIXTURE_HOME = object()
 NONSUPPRESSING_CONTEXT = object()
 GENERATOR_DECORATORS = ('contextlib.contextmanager', 'contextlib.asynccontextmanager')
 GeneratorManager = namedtuple('GeneratorManager', 'helper call receiver')
-DeferredGenerator = namedtuple('DeferredGenerator', 'node iterable scope')
+DeferredCall = namedtuple('DeferredCall', 'helper call receiver strict')
+
+
+class DeferredGenerator:
+    def __init__(self, node, iterable, scope):
+        self.node = node
+        self.iterable = iterable
+        self.scope = scope
+
+
+DEFERRED = (DeferredGenerator, DeferredCall)
 PATH_CONSTRUCTORS = {'pathlib.Path', 'pathlib.PosixPath', 'pathlib.WindowsPath',
                      'pathlib.PurePath', 'pathlib.PurePosixPath', 'pathlib.PureWindowsPath'}
 PROVIDER_FIELDS = {'sys.executable', 'shutil.which', 'sys.modules', 'tempfile.TemporaryDirectory',
@@ -1887,8 +1903,12 @@ def loop_inputs(node, body):
 
 def local_bindings(body):
     declared_globals = set()
+    yields = False
 
     def scan(node):
+        nonlocal yields
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
+            yields = True
         if isinstance(node, ast.Global):
             declared_globals.update(node.names)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -1905,6 +1925,7 @@ def local_bindings(body):
     if body and not hasattr(body[0], '_local_bindings'):
         body[0]._local_bindings = {name for node in body for name in scan(node)} - declared_globals
         body[0]._declared_globals = declared_globals
+        body[0]._yields = yields
     return body[0]._local_bindings if body else set()
 
 
@@ -2060,12 +2081,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     updates, raised = visible, failures
                     if not raised and phase is None:
                         helper.summaries[context] = [frame.copy() for frame in environment]
-            if not protocol and AUDIT_CHECKOUT.get() is not None and any(isinstance(key[0], ChildProcess) for key in updates):
-                if isinstance(function, ast.AsyncFunctionDef) or any(isinstance(part, (ast.Yield, ast.YieldFrom))
-                        for statement in function.body for part in ast.walk(statement)):
-                    if (joined_children(updates) | joined_children(raised)) - joined_children(entry):
-                        raise Unsupported('cannot establish deferred Python child join')
-                    updates = join((fields(entry), updates))
             if interrupted is not None:
                 interrupted.update(join((interrupted, raised)))
             if call is not None:
@@ -2195,7 +2210,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values.add(BoundCall(UNKNOWN_CALLABLE))
                 elif isinstance(owner, ast.Constant) and isinstance(owner.value, (str, bytes)) and node.attr == 'join':
                     values.add('builtins.' + type(owner.value).__name__ + '.join')
-                elif isinstance(owner, DeferredGenerator) and node.attr in ('__next__', 'send', 'throw', 'close'):
+                elif isinstance(owner, DEFERRED) and node.attr in ('__next__', 'send', 'throw', 'close'):
                     values.add(BoundCall('generator.' + node.attr, owner))
                 elif isinstance(owner, LocalModule):
                     members = owner.member(node.attr, names) or {UNKNOWN_CALLABLE}
@@ -2237,8 +2252,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         if container == {'sys.modules'} and values != {key.value}:
                             return frozenset({UNKNOWN_PROVIDER})
                         return values
-        if isinstance(node, ast.BoolOp):
-            return frozenset().union(*(qualified(value, names) for value in node.values))
         if isinstance(node, ast.NamedExpr):
             return qualified(node.target, names)
         if isinstance(node, ast.IfExp):
@@ -2350,6 +2363,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         owners = qualified(node, names)
         if len(owners) == 1:
             owner, = owners
+            if isinstance(owner, DEFERRED) and names.get((owner, 'consumed')) == {'exhausted'}:
+                return ast.Tuple(elts=[])
             if isinstance(owner, SequenceBinding):
                 states = owner.states(names)
                 if len(states) == 1:
@@ -2484,7 +2499,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def bind_target(target, value, names, interrupted):
         if isinstance(target, (ast.Tuple, ast.List)):
             for owner in qualified(value, names):
-                if isinstance(owner, DeferredGenerator):
+                if isinstance(owner, DEFERRED):
                     yield from inspect_generator(owner, names, interrupted, partial=True)
             check_sequence_length(len(target.elts))
             owners = qualified(value, names)
@@ -2897,12 +2912,22 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         yield from invoke(key, callback, names, wrapped=True)
 
     def iterate(expression, names, interrupted, *, partial=False):
-        for value in qualified(expression, names):
-            if isinstance(value, DeferredGenerator):
+        values = qualified(expression, names)
+        if len(values) > 1 and any(isinstance(value, DEFERRED) for value in values):
+            raise Unsupported('cannot resolve conditional Python iterator')
+        for value in values:
+            if isinstance(value, DEFERRED):
                 yield from inspect_generator(value, names, interrupted, partial=partial)
         if (UNREAD_STDIN in names and not isinstance(expression, (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
-                not all(isinstance(owner, (ast.Constant, SequenceBinding, DeferredGenerator)) for owner in qualified(expression, names))):
+                not all(isinstance(owner, (ast.Constant, SequenceBinding, *DEFERRED)) for owner in qualified(expression, names))):
             names[UNREAD_STDIN] = frozenset({False})
+
+    def await_helper(value, names, interrupted):
+        if value.helper.generator or not isinstance(value.helper.node, ast.AsyncFunctionDef) or (value, 'consumed') in names:
+            raise Unsupported('cannot resolve Python coroutine completion')
+        names[(value, 'consumed')] = frozenset({'exhausted'})
+        return (yield from read_helper(value.helper, names, value.call, value.receiver, strict=value.strict,
+                                       interrupted=interrupted, protocol=True))
 
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
@@ -2932,6 +2957,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             values = qualified(call.args[0], names)
             if len(values) == 1:
                 value, = values
+                if isinstance(value, DeferredCall):
+                    return (yield from await_helper(value, names, interrupted))
                 if isinstance(value, ChildProcess) and value.launcher.startswith('asyncio.'):
                     return values
                 if isinstance(value, tuple) and value[:1] == ('await-join',):
@@ -2943,25 +2970,43 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if UNREAD_STDIN in names and (target in (None, UNKNOWN_PROVIDER, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or
                                       isinstance(target, (ast.arg, ImportedMember, PythonInstance))):
             names[UNREAD_STDIN] = frozenset({False})
-        if isinstance(receiver, DeferredGenerator):
+        if isinstance(receiver, DEFERRED):
             if target in ('generator.throw', 'generator.close'):
-                names[(receiver, 'consumed')] = frozenset({True})
+                if isinstance(receiver, DeferredCall) and names.get((receiver, 'consumed')) == {'partial'}:
+                    raise Unsupported('cannot resolve partially consumed Python generator cleanup')
+                names[(receiver, 'consumed')] = frozenset({'exhausted'})
                 return {UNKNOWN_CALLABLE}
             if target == 'generator.send' and (len(call.args) != 1 or call.keywords or
                     not all(isinstance(arg, ast.Constant) and arg.value is None for arg in qualified(call.args[0], names))):
                 raise Unsupported('cannot resolve deferred Python generator send')
             return (yield from inspect_generator(receiver, names, interrupted, partial=True))
-        if target in ('builtins.min', 'builtins.max') and any(
-                kw.arg is None or kw.arg == 'key' and not all(isinstance(key, ast.Constant) and key.value is None
-                                                              for key in qualified(kw.value, names))
-                for kw in call.keywords):
-            raise Unsupported('cannot resolve Python reduction key invocation')
+        reduction_key = None
+        if target in ('builtins.min', 'builtins.max'):
+            for option in call.keywords:
+                if option.arg is None:
+                    raise Unsupported('cannot resolve Python reduction key')
+                if option.arg == 'key' and not all(isinstance(key, ast.Constant) and key.value is None
+                                                   for key in qualified(option.value, names)):
+                    reduction_key = option.value
+            if reduction_key is not None:
+                if len(call.args) == 1:
+                    owners = qualified(call.args[0], names)
+                    if any(isinstance(owner, DEFERRED) for owner in owners):
+                        if len(owners) != 1 or qualified(reduction_key, names) != {'builtins.len'}:
+                            raise Unsupported('cannot resolve Python reduction key invocation')
+                    else:
+                        yield from sort_keys(owners, reduction_key, call, names)
+                else:
+                    items = tuple(CapturedArgument(qualified(item, names)) for item in call.args)
+                    yield from sort_keys({SequenceBinding(ast.Tuple(), items)}, reduction_key, call, names)
         if not isinstance(target, PythonHelper):
             for index, operand in enumerate((*call.args, *(kw.value for kw in call.keywords))):
                 values = qualified(operand, names)
-                generators = [value for value in values if isinstance(value, DeferredGenerator)]
+                generators = [value for value in values if isinstance(value, DEFERRED)]
                 if not generators:
                     continue
+                if len(values) != 1:
+                    raise Unsupported('cannot resolve conditional Python generator consumer')
                 if target == 'builtins.iter' and len(call.args) == 1 and not call.keywords:
                     return values
                 if len(values) == 1 and len(call.args) == 1 and not call.keywords:
@@ -2971,6 +3016,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         return {UNKNOWN_CALLABLE}
                 if target in ('builtins.print', 'builtins.isinstance'):
                     continue
+                if (index == 0 and len(call.args) == 1 and not call.keywords
+                        and target in ('builtins.list', 'builtins.tuple', 'builtins.sorted')
+                        and names.get((generators[0], 'consumed')) == {'exhausted'}):
+                    return built_sequences(ast.Tuple() if target == 'builtins.tuple' else ast.List(), [])
                 if index == 0 and target == 'builtins.next':
                     returned = set()
                     for value in generators:
@@ -2982,12 +3031,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         'builtins.dict', 'builtins.sorted', 'builtins.sum', 'builtins.any', 'builtins.all',
                         'builtins.min', 'builtins.max', 'builtins.str.join', 'builtins.bytes.join', 'builtins.list.extend'):
                     for value in generators:
-                        yield from inspect_generator(value, names, interrupted, partial=target in ('builtins.any', 'builtins.all'))
+                        items = yield from inspect_generator(value, names, interrupted, partial=target in ('builtins.any', 'builtins.all'))
+                        if reduction_key is not None and not all(isinstance(item, ast.Constant) and
+                                                                 isinstance(item.value, (str, bytes)) for item in items):
+                            raise Unsupported('cannot resolve Python reduction key inputs')
                 else:
                     raise Unsupported('cannot resolve deferred Python generator consumer')
         if target in ('builtins.list', 'builtins.tuple', 'builtins.sorted') and call.args and UNREAD_STDIN in names:
             if (not isinstance(call.args[0], (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
-                    any(not isinstance(value, (SequenceBinding, ast.Constant, DeferredGenerator)) for value in qualified(call.args[0], names))):
+                    any(not isinstance(value, (SequenceBinding, ast.Constant, *DEFERRED)) for value in qualified(call.args[0], names))):
                 names[UNREAD_STDIN] = frozenset({False})
         if target is UNKNOWN_PROVIDER:
             return {UNKNOWN_PROVIDER}
@@ -3033,11 +3085,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return mutate(qualified(call.args[0], names), target.rsplit('.', 1)[1], call.args[1:], names)
             return {UNKNOWN_CALLABLE}
         if isinstance(target, PythonHelper):
-            if target.decorator in GENERATOR_DECORATORS:
+            if target.decorator in GENERATOR_DECORATORS or target.generator or isinstance(target.node, ast.AsyncFunctionDef):
                 target.called = True
                 frozen = ast.copy_location(ast.Call(func=call.func, args=[captured(arg, names) for arg in call.args],
                     keywords=[ast.keyword(arg=kw.arg, value=captured(kw.value, names)) for kw in call.keywords]), call)
-                return {GeneratorManager(target, frozen, receiver)}
+                if target.decorator in GENERATOR_DECORATORS:
+                    return {GeneratorManager(target, frozen, receiver)}
+                deferred = DeferredCall(target, frozen, receiver, wrapped or require_command)
+                allocations.append(deferred)
+                return {deferred}
             returned = yield from read_helper(target, names, call, receiver, strict=wrapped or require_command,
                                               interrupted=interrupted)
             if target.node is imports.fixture_options and not call.args and not call.keywords:
@@ -3294,7 +3350,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
             if target == 'builtins.print' and all(isinstance(argument(arg, names), ast.Constant) or
-                    all(isinstance(value, DeferredGenerator) for value in qualified(arg, names)) for arg in call.args):
+                    all(isinstance(value, DEFERRED) for value in qualified(arg, names)) for arg in call.args):
                 if all((kw.arg in ('sep', 'end', 'flush') and isinstance(argument(kw.value, names), ast.Constant)) or
                        (kw.arg == 'file' and all(owner in ('sys.stdout', 'sys.stderr', 'sys.__stdout__', 'sys.__stderr__')
                                                 or isinstance(owner, ast.Constant) and owner.value is None
@@ -3472,7 +3528,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if (isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) or
                     isinstance(node, (ast.UnaryOp, ast.JoinedStr, ast.NamedExpr, ast.IfExp))):
                 results[node] = qualified(node, names)
-            if not allow_generator and any(isinstance(value, DeferredGenerator) for value in results.get(node, ())):
+            if not allow_generator and any(isinstance(value, DEFERRED) for value in results.get(node, ())):
                 raise Unsupported('cannot resolve deferred Python generator use')
         except Unsupported as error:
             if error.lineno is None:
@@ -3487,12 +3543,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     inspecting_generators = set()
 
     def inspect_generator(value, names, interrupted, *, partial=False):
-        if value.scope is not scope or value in inspecting_generators:
+        if isinstance(value, DeferredGenerator) and value.scope is not scope or value in inspecting_generators:
             raise Unsupported('cannot resolve escaped Python generator')
-        if (value, 'consumed') in names:
+        state = names.get((value, 'consumed'), ())
+        if state == {'exhausted'}:
+            return set()
+        if state:
             raise Unsupported('cannot resolve repeated Python generator consumption')
-        if isinstance(value.node, ast.GeneratorExp) and any(value in owners for owners in names.values()):
-            names[(value, 'consumed')] = frozenset({True})
+        if isinstance(value, DeferredCall) or isinstance(value.node, ast.GeneratorExp):
+            names[(value, 'consumed')] = frozenset({'partial' if partial else 'exhausted'})
+        if isinstance(value, DeferredCall):
+            if not value.helper.generator:
+                raise Unsupported('cannot resolve Python coroutine iteration')
+            if partial and not all(isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield)
+                                   and isinstance(stmt.value.value, ast.Constant) for stmt in value.helper.node.body):
+                raise Unsupported('cannot establish consumed Python generator prefix')
+            if not partial:
+                yield from read_helper(value.helper, names, value.call, value.receiver, strict=value.strict,
+                                       interrupted=interrupted, protocol=True)
+            return {BoundCall(UNKNOWN_CALLABLE)}
         inspecting_generators.add(value)
         local = fields(names) if class_body else names.copy()
         node = value.node
@@ -3567,13 +3636,45 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             elements = [ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE}))]
         return built_sequences(ast.List(), [[(elements, False, None)]])
 
+    def comparison(left, op, right):
+        if len(left) != 1 or len(right) != 1:
+            return None
+        lhs, = left
+        rhs, = right
+        if isinstance(op, (ast.Is, ast.IsNot)) and isinstance(lhs, str) and isinstance(rhs, str):
+            objects = []
+            for name in (lhs, rhs):
+                module, _, attr = name.rpartition('.')
+                if module in sys.stdlib_module_names and module in sys.modules:
+                    objects.append(vars(sys.modules[module]).get(attr, MISSING_FIELD))
+            if len(objects) == 2 and all(obj is not MISSING_FIELD for obj in objects):
+                return (objects[0] is objects[1]) != isinstance(op, ast.IsNot)
+        if not isinstance(lhs, ast.Constant) or not isinstance(rhs, ast.Constant):
+            return None
+        if isinstance(op, (ast.Is, ast.IsNot)):
+            if lhs.value is None or rhs.value is None or isinstance(lhs.value, bool) or isinstance(rhs.value, bool):
+                return (lhs.value is rhs.value) != isinstance(op, ast.IsNot)
+            return None
+        operations = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.Gt: operator.gt,
+                      ast.LtE: operator.le, ast.GtE: operator.ge}
+        try:
+            if isinstance(op, (ast.In, ast.NotIn)):
+                return (lhs.value in rhs.value) != isinstance(op, ast.NotIn)
+            return operations[type(op)](lhs.value, rhs.value)
+        except TypeError:
+            return None
+
     def visit_node(node, names, interrupted):
         if isinstance(node, ast.Await):
-            yield from visit(node.value, names, interrupted)
+            yield from visit(node.value, names, interrupted, allow_generator=True)
             values = qualified(node.value, names)
+            if any(isinstance(value, DeferredCall) for value in values) and len(values) != 1:
+                raise Unsupported('cannot resolve conditional Python coroutine')
             if len(values) == 1:
                 value, = values
-                if isinstance(value, tuple) and value[:1] == ('await-join',):
+                if isinstance(value, DeferredCall):
+                    values = yield from await_helper(value, names, interrupted)
+                elif isinstance(value, tuple) and value[:1] == ('await-join',):
                     names[(value[1], 'joined')] = frozenset({True})
                     values = {UNKNOWN_CALLABLE}
             results[node] = values
@@ -3587,7 +3688,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if items is not None:
                     iterable = {ast.Tuple(elts=items)}
             value = DeferredGenerator(node, frozenset(iterable), scope)
-            results[node] = {value} if isinstance(node, ast.GeneratorExp) else (yield from inspect_generator(value, names, interrupted))
+            if isinstance(node, ast.GeneratorExp):
+                allocations.append(value)
+                results[node] = {value}
+            else:
+                results[node] = yield from inspect_generator(value, names, interrupted)
             return
         if isinstance(node, ast.Expr):
             yield from visit(node.value, names, interrupted, allow_generator=True)
@@ -3597,15 +3702,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return
         if isinstance(node, ast.Compare):
             yield from visit(node.left, names, interrupted, allow_generator=True)
+            left = qualified(node.left, names)
             outcomes = []
-            for operator, operand in zip(node.ops, node.comparators):
+            values = set()
+            for index, (op, operand) in enumerate(zip(node.ops, node.comparators)):
                 yield from visit(operand, names, interrupted, allow_generator=True)
-                if isinstance(operator, (ast.In, ast.NotIn)):
+                right = qualified(operand, names)
+                if isinstance(op, (ast.In, ast.NotIn)):
                     yield from iterate(operand, names, interrupted, partial=True)
-                if len(node.ops) > 1:
+                truth = comparison(left, op, right)
+                if truth is False or index == len(node.ops) - 1:
+                    values.add(ast.Constant(truth) if truth is not None else UNKNOWN_CALLABLE)
+                    break
+                if truth is None:
+                    values.add(UNKNOWN_CALLABLE)
                     outcomes.append(names.copy())
+                left = right
             if outcomes:
-                names.update(join(outcomes, paths=True))
+                names.update(join([*outcomes, names], paths=True))
+            results[node] = frozenset(values)
             return
         if isinstance(node, (ast.Starred, ast.YieldFrom)):
             yield from visit(node.value, names, interrupted, allow_generator=True)
@@ -3737,33 +3852,33 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, (ast.If, ast.IfExp)):
             yield from visit(node.test, names, interrupted, allow_generator=True)
             test = node.test
-            if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
-                left, right = qualified(test.left, names), qualified(test.comparators[0], names)
-                if len(left) == len(right) == 1:
-                    lhs, rhs = next(iter(left)), next(iter(right))
-                    if isinstance(test.ops[0], (ast.Is, ast.IsNot)) and isinstance(lhs, str) and isinstance(rhs, str):
-                        objects = []
-                        for name in (lhs, rhs):
-                            module, _, attr = name.rpartition('.')
-                            if module in sys.stdlib_module_names and module in sys.modules:
-                                objects.append(vars(sys.modules[module]).get(attr, MISSING_FIELD))
-                        if len(objects) == 2 and all(obj is not MISSING_FIELD for obj in objects):
-                            test = ast.Constant((objects[0] is objects[1]) != isinstance(test.ops[0], ast.IsNot))
-                    elif (isinstance(test.ops[0], (ast.Eq, ast.NotEq)) and
-                          isinstance(lhs, ast.Constant) and isinstance(rhs, ast.Constant)):
-                        test = ast.Constant((lhs.value == rhs.value) != isinstance(test.ops[0], ast.NotEq))
+            values = qualified(test, names)
+            if len(values) == 1:
+                test, = values
             if isinstance(test, ast.Constant):
                 arm = node.body if test.value else node.orelse
                 return (yield from suite(arm if isinstance(node, ast.If) else [arm], names, interrupted))
             paths = (node.body, node.orelse) if isinstance(node, ast.If) else ([node.body], [node.orelse])
             return (yield from alternatives(paths, names, interrupted))
         if isinstance(node, ast.BoolOp):
-            yield from visit(node.values[0], names, interrupted)
-            outcomes = [names.copy()]
-            for value in node.values[1:]:
-                yield from visit(value, names, interrupted)
-                outcomes.append(names.copy())
-            names.update(join(outcomes, paths=True))
+            outcomes = []
+            values = set()
+            proceed = isinstance(node.op, ast.And)
+            for index, operand in enumerate(node.values):
+                yield from visit(operand, names, interrupted)
+                owners = qualified(operand, names)
+                if index == len(node.values) - 1:
+                    values.update(owners)
+                    break
+                stopping = {owner for owner in owners if not isinstance(owner, ast.Constant) or bool(owner.value) != proceed}
+                values.update(stopping)
+                if stopping:
+                    if all(isinstance(owner, ast.Constant) and bool(owner.value) != proceed for owner in owners):
+                        break
+                    outcomes.append(names.copy())
+            if outcomes:
+                names.update(join([*outcomes, names], paths=True))
+            results[node] = frozenset(values)
             return
         if isinstance(node, (ast.With, ast.AsyncWith)):
             return (yield from with_items(node, node.items, names, interrupted))

@@ -170,10 +170,10 @@ def verify(args):
         tmp = Path(directory)
         (tmp / "allowed_signers").write_bytes(allowed)
         (tmp / "ack.sig").write_bytes(signature)
-        ssh_keygen = Path("/usr/bin/ssh-keygen")
-        require(ssh_keygen.is_file() and os.access(ssh_keygen, os.X_OK),
+        ssh_keygen = "/usr/bin/ssh-keygen"
+        require(Path(ssh_keygen).is_file() and os.access(ssh_keygen, os.X_OK),
                 "HOLD_ACK_TOOL_UNAVAILABLE: install executable /usr/bin/ssh-keygen (OpenSSH client) before verifying acknowledgements")
-        checked = subprocess.run([str(ssh_keygen), "-Y", "verify", "-f", str(tmp / "allowed_signers"),
+        checked = subprocess.run([ssh_keygen, "-Y", "verify", "-f", str(tmp / "allowed_signers"),
                                   "-I", receipt["signer"], "-n", NAMESPACE, "-s", str(tmp / "ack.sig")],
                                  input=raw, env=ENV, capture_output=True, timeout=5, check=False)
         require(checked.returncode == 0,

@@ -202,8 +202,8 @@ def post(event: dict) -> None:
 def fast_gate_failure(root: Path) -> str | None:
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     probe = Path(__file__).resolve().parents[2] / "scripts/worktree_diff.py"
-    gate = root / "scripts/ci_fast.sh"
-    for script in (probe, gate):
+    gate = "scripts/ci_fast.sh"
+    for script in (probe, root / gate):
         if script.parent.is_symlink() or script.is_symlink() or not script.is_file():
             return f"Gate input refused: {script!s} must be a regular file under a non-symlink scripts directory."
     clean = subprocess.run([sys.executable, "-I", str(probe), "--clean"], cwd=root, env=env,
@@ -212,7 +212,7 @@ def fast_gate_failure(root: Path) -> str | None:
         return None
     if clean.returncode != 1:
         return clean.stderr.strip() or "gate input check failed"
-    result = subprocess.run([str(gate)], cwd=root, env=env, capture_output=True, text=True, errors="replace")
+    result = subprocess.run([gate], cwd=root, env=env, capture_output=True, text=True, errors="replace")
     if result.returncode == 0:
         return None
     tail = "\n".join((result.stdout + result.stderr).splitlines()[-60:])

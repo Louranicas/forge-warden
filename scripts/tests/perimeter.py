@@ -1911,6 +1911,21 @@ class GateImageCommands(unittest.TestCase):
         step = {'run': f'{harmless}; (restore() {{ export PYTHONPATH=.; }}); unset PYTHONPATH; restore; python3 -Pc"pass"'}
         self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), []))
 
+    def test_child_shell_environment_stays_local(self):
+        for child in ('(export PYTHONPATH=.)', 'export PYTHONPATH=. | cat', 'true | export PYTHONPATH=.',
+                      'export PYTHONPATH=. & wait', '(set -a; PYTHONPATH=.)'):
+            script = f"unset PYTHONPATH; {child}; python3 -P -c 'pass'"
+            with self.subTest(child=child):
+                self.assertIsNone(CAPS.just_consumer({'run': script}, vars(COMMANDS), []))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'statistics.py').write_text("import subprocess\nsubprocess.run(['just'])")
+            for child in ('(unset PYTHONPATH)', 'unset PYTHONPATH | cat', 'true | unset PYTHONPATH',
+                          'unset PYTHONPATH & wait'):
+                script = f"export PYTHONPATH=.; {child}; python3 -P -c 'import statistics'"
+                with self.subTest(child=child):
+                    self.assertEqual(CAPS.just_consumer({'run': script}, vars(COMMANDS), [], root), 'just')
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1967,13 +1982,18 @@ class GateImageCommands(unittest.TestCase):
 
             write = "subprocess.run(['cp', 'original', 'generated'])"
             for delay, consume in (('async def join(): child.wait()', 'asyncio.run(later)'),
-                                   ('def join():\n    child.wait()\n    yield 1', 'next(later)')):
+                                   ('def join():\n    child.wait()\n    yield 1', 'list(later)')):
                 source = f'import asyncio, subprocess\nchild = {spawn}\n{delay}\nlater = join()\n{write}\n{consume}'
-                with self.subTest(delay=delay), self.assertRaisesRegex(ValueError, 'deferred Python child join|modified gate script'):
+                with self.subTest(delay=delay), self.assertRaisesRegex(ValueError, 'modified gate script'):
                     CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
             source = f'import subprocess\nchild = {spawn}\n1 == 2 == child.wait()\n{write}'
             with self.assertRaisesRegex(ValueError, 'modified gate script'):
                 CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
+
+            for condition in ('1 == 1 == child.wait()', 'True and child.wait()', 'False or child.wait()'):
+                source = f'import subprocess\nchild = {spawn}\n{condition}\n{write}'
+                with self.subTest(condition=condition):
+                    self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root))
 
             joined = f"with {spawn} as child:\n    child.wait()\n    subprocess.run(['cp', 'original', 'generated'])"
             self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': 'import subprocess\n' + joined}, vars(COMMANDS), [], root))
@@ -2389,6 +2409,25 @@ class GateImageCommands(unittest.TestCase):
         source += "b''.join(struct.pack('<BB', tag, mode) for tag, mode in pairs)\nsubprocess.run(['true'])"
         self.assertIn('true', [word for _, word, _ in COMMANDS.python_calls(source)])
 
+    def test_deferred_helpers_preserve_live_arguments(self):
+        for definition, driver in (('def clear(items):\n    items.clear()\n    yield 1', 'list(later)'),
+                                   ('async def clear(items): items.clear()', 'asyncio.run(later)')):
+            prefix = f'import asyncio\nfrom subprocess import run\n{definition}\nhandlers = [run]\nlater = clear(handlers)\n'
+            use = "for launch in handlers: launch(['just'])"
+            for body, expected in ((use + '\n' + driver, 'just'), (driver + '\n' + use, None)):
+                with self.subTest(definition=definition, body=body):
+                    self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': prefix + body}, vars(COMMANDS), []), expected)
+                    commands = [word for _, word, _ in COMMANDS.python_calls(prefix + body)]
+                    self.assertEqual('just' in commands, expected == 'just')
+
+    def test_short_circuit_preserves_reachable_commands(self):
+        for condition, expected in (('False and CALL', None), ('True or CALL', None), ('1 == 2 == CALL', None),
+                                    ('1 < 2 > 3 == CALL', None), ('1 <= 2 != CALL', 'just'),
+                                    ('False or CALL', 'just'), ('True and CALL', 'just')):
+            source = "from subprocess import run\n" + condition.replace('CALL', "run(['just'])")
+            with self.subTest(condition=condition):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), expected)
+
     def test_comprehension_targets_and_generator_consumers(self):
         setup = "from subprocess import run\n"
         for expression in ("[f(['just']) for f in (run,)]", "{f(['just']) for f in (run,)}",
@@ -2407,10 +2446,23 @@ class GateImageCommands(unittest.TestCase):
     def test_partial_generator_and_reduction_callbacks(self):
         setup = "from subprocess import run\ng = (f(['just']) for f in (print, run))\n"
         for consume in ('next(g)', 'g.__next__()', 'g.send(None)', 'all(g)', 'any(g)', 'True in g',
-                        'for item in g: break', 'g.close(); list(g)'):
+                        'for item in g: break'):
             with self.subTest(consume=consume), self.assertRaisesRegex(ValueError, 'generator (prefix|consumption)'):
                 CAPS.just_consumer({'shell': 'python', 'run': setup + consume}, vars(COMMANDS), [])
+        for consume in ('g.close(); list(g)', 'alias = g; alias.close(); tuple(g)',
+                        'g.close()\nfor _ in g: run(["just"])'):
+            with self.subTest(consume=consume):
+                self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': setup + consume}, vars(COMMANDS), []))
+        for repeat in ('list(g); list(g)', 'alias = g; tuple(alias); list(g)'):
+            source = "items = ('a', 'b')\nfor _ in (1, 2):\n    g = (x for x in items)\n    " + repeat
+            self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []))
+        with self.assertRaisesRegex(ValueError, 'repeated Python generator consumption'):
+            COMMANDS.python_calls("g = (x for x in [1, 2])\nnext(g); list(g)")
         for reducer in ('min', 'max'):
+            for items in ("['a', 'abc']", "('a', 'abc')", "'a', 'abc'", "(x for x in ('a', 'abc'))"):
+                with self.subTest(reducer=reducer, items=items):
+                    self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': f'{reducer}({items}, key=len)'},
+                                                         vars(COMMANDS), []))
             for option in ('key=run', "**{'key': run}"):
                 code = f"from subprocess import run\n{reducer}((x for x in [['just']]), {option})"
                 with self.subTest(reducer=reducer, option=option), self.assertRaisesRegex(ValueError, 'reduction key'):
