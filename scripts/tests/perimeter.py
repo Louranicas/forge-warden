@@ -991,7 +991,6 @@ class GateImageCommands(unittest.TestCase):
             "shlex.split": "subprocess.run(shlex.split('cmp a b'))",
             "a conditional argv": "subprocess.run(['cmp', 'a'] if flag else ['true'])",
             "shell=1": "subprocess.run('true && cmp a b', shell=1)",
-            "shell=flag": "subprocess.run('true && cmp a b', shell=flag)",
         }
         for name, call in calls.items():
             with self.subTest(call=name):
@@ -1235,15 +1234,94 @@ class GateImageCommands(unittest.TestCase):
                 source = setup + changes + "\na.fire()"
                 self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
 
-    def test_unresolved_inherited_dispatch_refuses_on_use(self):
+    def test_inherited_dispatch_resolves_declared_local_implementations(self):
         setup = ("from subprocess import run\nclass Base:\n    def prepare(self): run(['just'])\n"
-                 "class Child(Base):\n    def execute(self): super().prepare()\n")
-        self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": setup}, vars(COMMANDS), []))
-        for call in ("Child().execute()", "Child().prepare()"):
-            with self.subTest(call=call):
+                 "class Child(Base): pass\nclass Leaf(Child): pass\n")
+        init = setup.replace("def prepare(self)", "def __init__(self)")
+        unknown = "from elsewhere import Base\nclass Child(Base): pass\n"
+        for source, expected in ((setup + "Leaf()", None), (unknown, None),
+                                 (setup + "Leaf().prepare()", "just"), (init + "Leaf()", "just"),
+                                 (init + "class Quiet(Leaf):\n    def __init__(self): pass\nQuiet()", None)):
+            with self.subTest(source=source):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                found = self.problems({"t.py": source.replace("'just'", "'cmp'")})
+                self.assertEqual(len(found), int(expected is not None), found)
+                if expected:
+                    self.assertIn("calls `cmp`", found[0])
+        for source in (unknown + "Child()", unknown + "Child.prepare(None)",
+                       setup + "class Derived(Child):\n    def prepare(self): super().prepare()\nDerived().prepare()"):
+            with self.subTest(source=source):
                 with self.assertRaisesRegex(ValueError, "cannot resolve"):
-                    CAPS.just_consumer({"shell": "python", "run": setup + call}, vars(COMMANDS), [])
-                self.assertIn("cannot resolve", self.problems({"t.py": setup + call})[0])
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                self.assertIn("cannot resolve", self.problems({"t.py": source})[0])
+
+    def test_unresolved_shell_mode_audits_argv_and_shell_payload(self):
+        setup = "from functools import partial\nfrom subprocess import Popen\nmode = read_flag()\n"
+        for form in ("Popen(ARGV, shell=mode)", "Popen(ARGV, -1, None, None, None, None, None, True, mode)",
+                     "partial(Popen, ARGV, shell=mode)()",
+                     "partial(Popen, ARGV, -1, None, None, None, None, None, True, mode)()"):
+            for argv in (["bash", "-c", "just --version"], ["python3", "-c", "import os; os.system('just')"],
+                         ["true && just"]):
+                source = setup + form.replace("ARGV", repr(argv))
+                with self.subTest(form=form, argv=argv):
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), "just")
+                    tracked = source.replace("just", "cmp")
+                    found = self.problems({"t.py": tracked, "nested.sh": "python3 -c " + shlex.quote(tracked)})
+                    self.assertEqual(sum("calls `cmp`" in problem for problem in found), 2, found)
+            source = setup + form.replace("ARGV", "['bash', '-c', unknown_payload]")
+            with self.subTest(form=form, unresolved=True):
+                with self.assertRaisesRegex(ValueError, "cannot resolve"):
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                self.assertIn("cannot resolve", self.problems({"t.py": source})[0])
+
+    def test_conditional_unittest_decorators_preserve_possible_commands(self):
+        prefix = ("from unittest import TestCase, main, skipIf, skipUnless\nfrom shutil import which\n"
+                  "from subprocess import run\nclass Case(TestCase):\n    def test_control(self): pass\n")
+        for method in ("test_probe", "setUp", "tearDown", "setUpClass", "tearDownClass"):
+            descriptor = "    @classmethod\n" if method.endswith("Class") else ""
+            for decorator, enabled in (("skipIf(which('just'), 'dependency')", True),
+                                       ("skipUnless(which('just'), 'dependency')", True),
+                                       ("skipUnless(condition=False, reason='off')", False),
+                                       ("skipIf(True, 'off')", False), ("skipIf(False, 'on')", True)):
+                with self.subTest(method=method, decorator=decorator):
+                    source = prefix + descriptor + f"    @{decorator}\n    def {method}(self): run(['just'])\nmain()"
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []),
+                                     "just" if enabled else None)
+                    found = self.problems({"t.py": source.replace("run(['just'])", "run(['cmp'])")})
+                    self.assertEqual(len(found), int(enabled), found)
+                    if enabled:
+                        self.assertIn("calls `cmp`", found[0])
+
+    def test_finalizers_update_outgoing_fields(self):
+        for action in (
+            "try:\n    return\nfinally:\n    self.launch = last",
+            "try:\n    raise ValueError\nexcept ValueError:\n    return\nfinally:\n    self.launch = last",
+            "try:\n    try:\n        return\n    finally:\n        self.launch = first\nfinally:\n    self.launch = last",
+            "try:\n    raise ValueError\nfinally:\n    self.launch = last",
+        ):
+            for last, expected in (("run", "just"), ("print", None)):
+                source = (f"from subprocess import run\nlast = {last}\nfirst = print\nclass State:\n    def update(self):\n"
+                          + textwrap.indent(action, "        ") + "\nx = State()\nx.launch = first\n"
+                          "try:\n    x.update()\nexcept ValueError: pass\nx.launch(['just'])")
+                with self.subTest(action=action, last=last):
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                    found = self.problems({"t.py": source.replace("'just'", "'cmp'")})
+                    self.assertEqual(len(found), int(expected is not None), found)
+                    if expected:
+                        self.assertIn("calls `cmp`", found[0])
+        overwritten = ("from subprocess import run\nclass Task:\n    def update(self):\n"
+                       "        try: return\n        finally: self.launch = print\n"
+                       "x = Task()\nx.launch = run\nx.update()\nx.launch(['just'])")
+        self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": overwritten}, vars(COMMANDS), []))
+        for transfer in ("continue", "break"):
+            source = ("from subprocess import run\nlaunch = print\nfor item in items:\n"
+                      f"    try:\n        {transfer}\n    finally:\n        launch = run\n    launch = print\nlaunch(['just'])")
+            with self.subTest(transfer=transfer):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), "just")
+
+        carried = ("from subprocess import run\nlaunch = print\nfor item in items:\n    launch(['just'])\n"
+                   "    try: continue\n    finally: launch = run")
+        self.assertEqual(CAPS.just_consumer({"shell": "python", "run": carried}, vars(COMMANDS), []), "just")
 
     def test_python_ordering_resolves_process_arguments_at_the_call(self):
         def consumer(source):
