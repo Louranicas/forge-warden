@@ -1002,8 +1002,8 @@ class GateImageCommands(unittest.TestCase):
             "spawnlp": "os.spawnlp(os.P_WAIT, 'cmp', 'cmp', 'a', 'b')",
             "spawnvp": "os.spawnvp(os.P_WAIT, 'cmp', ['cmp', 'a'])",
             "execlp": "os.execlp('cmp', 'cmp', 'a', 'b')",
-            "create_subprocess_exec": "asyncio.create_subprocess_exec('cmp', 'a', 'b')",
-            "create_subprocess_shell": "asyncio.create_subprocess_shell('cmp a b')",
+            "create_subprocess_exec": "asyncio.run(asyncio.create_subprocess_exec('cmp', 'a', 'b'))",
+            "create_subprocess_shell": "asyncio.run(asyncio.create_subprocess_shell('cmp a b'))",
             "pty.spawn": "pty.spawn(['cmp', 'a', 'b'])",
             "str.split": "subprocess.run('cmp a b'.split())",
             "shlex.split": "subprocess.run(shlex.split('cmp a b'))",
@@ -1690,6 +1690,8 @@ class GateImageCommands(unittest.TestCase):
                 binary.write_bytes(b'replacement')
                 self.assertEqual(named.read_bytes(), data)
                 self.assertEqual(actual, receipt)
+                os.lseek(fd, 4, os.SEEK_SET)
+                self.assertEqual(producer.verify_artifact(fd, named, home, manifest, subject), receipt)
             self.assertFalse(named.is_symlink())
             with self.assertRaises(OSError):
                 os.fstat(fd)
@@ -1731,13 +1733,24 @@ class GateImageCommands(unittest.TestCase):
             COMMANDS.python_calls(after_exit, filename=filename)
         self.assertEqual(refused.exception.lineno, producer.partition(finished)[0].count('\n') + 1)
 
+        for original in ('hashlib.sha256(data).hexdigest() == receipt["artifact_sha256"]',
+                         'receipt["subject"] == subject == expected_subject',
+                         'os.readlink(named) == f"/proc/self/fd/{fd}"'):
+            with self.subTest(omitted=original):
+                issues = self.problems({filename: producer.replace(original, 'True')})
+                self.assertEqual(len(issues), 1, issues)
+                self.assertIn('reviewed fixture verification operation changed', issues[0])
+
         for value in ('os.open(receipt_path, os.O_RDONLY), named', 'fd, binary'):
             changed = producer.replace('yield fd, named,', 'yield ' + value + ',')
             with self.subTest(yielded=value), self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve') as refused:
                 COMMANDS.python_calls(changed, filename=filename)
             self.assertEqual(refused.exception.lineno, changed.partition('out = subprocess.run')[0].count('\n') + 1)
 
-        for operation, accepted in (('os.fstat(fd)', True), ('os.closerange(0, fd)', True),
+        for operation, accepted in (('os.fstat(fd)', True), ('os.pread(fd, 4, 0)', True),
+                                    ("with os.fdopen(fd, 'rb', closefd=False) as stream: stream.read(4)", True),
+                                    ("os.fdopen(fd, 'rb')", False), ("os.fdopen(3, 'rb')", False), ('os.dup2(0, 3)', False),
+                                    ('os.dup2(fd=0, fd2=3)', False), ('os.closerange(0, fd)', True),
                                     ('os.closerange(fd + 1, fd + 3)', True), ('os.closerange(fd, fd + 1)', False),
                                     ('os.close(fd)', False)):
             changed = before + operation + '\n            ' + launch + original_launch
@@ -1781,6 +1794,33 @@ class GateImageCommands(unittest.TestCase):
                 self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
                 restored = source.partition("    argv =")[0] + "    pass\nsubprocess.run([sys.executable, '--version'])"
                 self.assertEqual(self.problems({'entry.py': restored}), [])
+
+    def test_provider_replacements_follow_patcher_lifetime(self):
+        for module, field, lookup, original in (('sys', 'executable', 'sys.executable', 'python3'),
+                                                 ('shutil', 'which', "shutil.which('just')", 'just')):
+            head = f"subprocess.run([{lookup}, '--version'])"
+            setup = f"import sys, shutil, subprocess\nfrom unittest.mock import patch\nd = vars({module})\n"
+            for constructor in (f"patch('{module}.{field}')", f"patch.object({module}, '{field}')",
+                                f"patch.dict(d, {{'{field}': 'cmp'}})", f"patch.dict('{module}.__dict__', {field}='cmp')"):
+                patcher = setup + 'p = ' + constructor + '\n'
+                with self.subTest(provider=field, constructor=constructor):
+                    clean = patcher + head + '\np.start()\np.stop()\n' + head
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(clean)], [original, original])
+                    for active in ('p.start()\n' + head, 'with p:\n    ' + head):
+                        self.assertIn('cannot resolve', self.problems({'entry.py': patcher + active})[0])
+            for write in (f"setattr({module}, '{field}', 'cmp')", f"d['{field}'] = 'cmp'",
+                          f"d.update({field}='cmp')"):
+                with self.subTest(provider=field, write=write):
+                    self.assertIn('cannot resolve', self.problems({'entry.py': setup + write + '\n' + head})[0])
+
+    def test_direct_helper_argv_preserves_proven_command(self):
+        for vector in ("[tool, '--version']", "(tool, '--version')"):
+            setup = "import shutil, subprocess\ndef argv():\n    tool = shutil.which('just')\n    return " + vector
+            for use in ('subprocess.run(argv())', 'subprocess.run(args=argv())', 'args = argv()\nsubprocess.run(args)'):
+                source = setup + '\n' + use
+                with self.subTest(vector=vector, use=use):
+                    self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
+                    self.assertEqual(self.problems({'entry.py': source}), [])
 
     def test_context_decorators_wrap_each_call(self):
         for prefix, decorator in (('', 'contextmanager'), ('async ', 'asynccontextmanager')):
@@ -1889,7 +1929,7 @@ class GateImageCommands(unittest.TestCase):
                                 ("import shlex as words\ndef split(_): return ['just']\nwords.split = split",
                                  "words.split('true')"),
                                 ("from other import split", "split('true')")):
-            with self.subTest(setup=setup), self.assertRaisesRegex(ValueError, "Python process command"):
+            with self.subTest(setup=setup), self.assertRaisesRegex(ValueError, "cannot resolve Python process executable"):
                 consumer(setup + "\nrun(" + argument + ")")
 
     def test_fixed_executable_with_variable_arguments(self):
@@ -1949,9 +1989,12 @@ class GateImageCommands(unittest.TestCase):
                         "subprocess.check_output", "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell"):
             args = ("'probe', '--version'" if wrapper.endswith("_exec") else
                     "'true'" if wrapper.endswith("_shell") else "['probe', '--version']")
+            call = f"{wrapper}({args}, {{override}})"
+            if wrapper.startswith("asyncio."):
+                call = f"asyncio.run({call})"
             for executable, expected in (("'just'", "just"), ("'true'", None)):
                 with self.subTest(wrapper=wrapper, executable=executable):
-                    source = f"import asyncio, subprocess; {wrapper}({args}, executable={executable})"
+                    source = "import asyncio, subprocess; " + call.format(override=f"executable={executable}")
                     if wrapper.endswith("_shell"):
                         with self.assertRaisesRegex(ValueError, "interpreter"):
                             CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
@@ -1960,12 +2003,13 @@ class GateImageCommands(unittest.TestCase):
             for keyword, message in (("executable=dynamic", "process executable"),
                                      ("**{'executable': 'just'}", "unpacked Python process keywords")):
                 with self.subTest(wrapper=wrapper, keyword=keyword):
-                    source = f"import asyncio, subprocess; {wrapper}({args}, {keyword})"
+                    source = ("import asyncio, os, subprocess; dynamic = os.getenv('TEST_EXECUTABLE', 'true'); "
+                              + call.format(override=keyword))
                     with self.assertRaisesRegex(ValueError, message):
                         CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
         for call in ("subprocess.run(['probe', 'scripts/tests/dogfood.sh'], executable='/bin/bash')",
                      "subprocess.Popen(['probe', 'scripts/tests/dogfood.sh'], -1, '/bin/bash')",
-                     "asyncio.create_subprocess_exec('probe', 'scripts/tests/dogfood.sh', executable='bash')",
+                     "asyncio.run(asyncio.create_subprocess_exec('probe', 'scripts/tests/dogfood.sh', executable='bash'))",
                      "subprocess.run('bash scripts/tests/dogfood.sh', shell=True, executable='bash')"):
             source = "import asyncio, subprocess; " + call
             self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []),
@@ -2029,7 +2073,7 @@ class GateImageCommands(unittest.TestCase):
                     self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), []), expected)
             with self.subTest(api=api, dynamic=True):
                 source = f"import os; os.{api}({mode}{file}=unknown, {args}=['just']{env})"
-                with self.assertRaisesRegex(ValueError, "cannot resolve Python process command"):
+                with self.assertRaisesRegex(ValueError, "cannot resolve Python process executable"):
                     CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
                 source = f"import os; os.{api}({mode}{file}='bash', {args}=unknown{env})"
                 with self.assertRaisesRegex(ValueError, "cannot resolve gate script operand"):

@@ -5,8 +5,6 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
-import re
-import stat
 from pathlib import Path
 import subprocess
 import tempfile
@@ -38,29 +36,34 @@ def package_version():
     return tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
 
 
-def require(condition, message):
-    if not condition:
-        raise ValueError("FIXTURE_ARTIFACT_REFUSED: " + message)
-
-
-def unique_pairs(items):
-    result = {}
-    for key, value in items:
-        require(key not in result, "duplicate receipt key")
-        result[key] = value
-    return result
-
-
-def bounded_bytes(fd, budget):
-    with os.fdopen(fd, "rb", closefd=False) as stream:
-        info = os.fstat(fd)
-        require(stat.S_ISREG(info.st_mode) and info.st_size <= budget, "not a bounded regular file")
-        data = stream.read(budget + 1)
-        require(len(data) <= budget, "file exceeds byte budget")
-        return data
-
-
 def verify_artifact(fd, named, home, receipt_path, expected_subject):
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+    import re
+    import stat
+
+    def require(condition, message):
+        if not condition:
+            raise ValueError("FIXTURE_ARTIFACT_REFUSED: " + message)
+
+    def unique_pairs(items):
+        result = {}
+        for key, value in items:
+            require(key not in result, "duplicate receipt key")
+            result[key] = value
+        return result
+
+    def bounded_bytes(fd, budget):
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            info = os.fstat(fd)
+            require(stat.S_ISREG(info.st_mode) and info.st_size <= budget, "not a bounded regular file")
+            stream.seek(0)
+            data = stream.read(budget + 1)
+            require(len(data) <= budget, "file exceeds byte budget")
+            return data
+
     receipt_fd = os.open(receipt_path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     try:
         raw = bounded_bytes(receipt_fd, 65536)

@@ -64,6 +64,7 @@ usage: python3 -I scripts/script_commands.py     (exit 1 names each undeclared c
 """
 import ast
 import builtins
+import hashlib
 from collections import namedtuple
 from contextvars import ContextVar
 from importlib import import_module
@@ -1020,8 +1021,7 @@ class VerifiedCommand(str):
 
 
 class LookupExecutable(ast.expr):
-    def __init__(self, provider, program):
-        self.provider = provider
+    def __init__(self, program):
         self.program = program
 
 
@@ -1046,7 +1046,16 @@ FILE_CONTEXT = object()
 NONSUPPRESSING_CONTEXT = object()
 GENERATOR_DECORATORS = ('contextlib.contextmanager', 'contextlib.asynccontextmanager')
 GeneratorManager = namedtuple('GeneratorManager', 'helper call receiver')
-PatchedProvider = namedtuple('PatchedProvider', 'name')
+EXECUTABLE_PROVIDERS = {'sys': 'executable', 'shutil': 'which'}
+FIXTURE_VERIFIER_SHA256 = '738ecf280222d99f9d5042d41f37129fc7cb924ca2481fafe605f9c93918447a'
+
+
+class PatchedProvider:
+    def __init__(self, name, changes=True):
+        self.name = name
+        self.changes = changes
+
+
 ImportedMember = namedtuple('ImportedMember', 'module name source')
 SequenceBinding = namedtuple('SequenceBinding', 'origin elements sites revised', defaults=(False,))
 IMPORT_SOURCE = ContextVar('script_import_source', default=None)
@@ -1061,15 +1070,21 @@ class SuiteImports:
         self.class_paths = {}
         self.fixture_verifier = None
         self.fixture_manager = None
-        self.replacements = set()
 
-    def register_fixture(self, body, filename):
+    def register_fixture(self, body, filename, source):
         if filename == 'scripts/golden_output.py':
             definitions = [node for node in body if isinstance(node, ast.FunctionDef)]
             for name, field in (('verified_fixture', 'fixture_manager'), ('verify_artifact', 'fixture_verifier')):
                 matches = [node for node in definitions if node.name == name]
-                if len(matches) == 1:
-                    setattr(self, field, matches[0])
+                if len(matches) != 1:
+                    continue
+                definition, = matches
+                if field == 'fixture_verifier':
+                    lines = (source.encode() if isinstance(source, str) else source).splitlines(keepends=True)
+                    operation = b''.join(lines[definition.lineno - 1:definition.end_lineno])
+                    if definition.decorator_list or hashlib.sha256(operation).hexdigest() != FIXTURE_VERIFIER_SHA256:
+                        raise Unsupported('reviewed fixture verification operation changed')
+                setattr(self, field, definition)
 
     def load(self, path, module, ordering, targets, names):
         if path in self.loaded:
@@ -1082,8 +1097,9 @@ class SuiteImports:
         namespace = {key: values for key, values in names.items() if isinstance(key, tuple)}
         namespace['__name__'] = frozenset({ast.Constant(module)})
         try:
-            tree = ast.parse(path.read_bytes(), filename=relative)
-            self.register_fixture(tree.body, relative)
+            data = path.read_bytes()
+            tree = ast.parse(data, filename=relative)
+            self.register_fixture(tree.body, relative, data)
             yield from python_callees(tree.body, namespace, ordering, targets, imports=self, source=path)
         finally:
             self.stack.pop()
@@ -1465,6 +1481,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for owner in qualified(node.value, names):
                 if isinstance(owner, (PythonClass, PythonInstance)):
                     values.update(member(owner, node.attr, names))
+                elif isinstance(owner, PatchedProvider) and node.attr in ('start', 'stop'):
+                    values.add(BoundCall(node.attr, owner))
                 elif isinstance(owner, (SequenceBinding, ast.List)) and node.attr in LIST_MUTATIONS:
                     values.add(BoundCall('builtins.list.' + node.attr, owner))
                 elif owner == 'unittest.TestCase.super()' and node.attr == '__init__':
@@ -1479,6 +1497,16 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     name = owner + '.' + node.attr if isinstance(owner, str) else None
                     values.update(names.get((name, 'provider'), {name}))
             return frozenset(values)
+        if isinstance(node, ast.Subscript):
+            container = qualified(node.value, names)
+            key = argument(node.slice, names)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                if container == {'sys.modules'} and key.value in EXECUTABLE_PROVIDERS:
+                    return frozenset({key.value})
+                for module, attr in EXECUTABLE_PROVIDERS.items():
+                    if container == {module + '.__dict__'} and key.value == attr:
+                        name = module + '.' + attr
+                        return names.get((name, 'provider'), frozenset({name}))
         if isinstance(node, ast.BoolOp):
             return frozenset().union(*(qualified(value, names) for value in node.values))
         if isinstance(node, ast.NamedExpr):
@@ -1548,7 +1576,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if len(owners) == 1:
             owner, = owners
             if owner == 'sys.executable':
-                return LookupExecutable('sys.executable', 'python3')
+                return LookupExecutable('python3')
             if isinstance(owner, LookupExecutable):
                 return owner
             if isinstance(owner, (FixtureDescriptor, FixtureExecutable)):
@@ -1556,6 +1584,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if names.get((descriptor, 'verified')) != {True}:
                     raise Unsupported('cannot resolve closed fixture executable')
                 return owner
+            if isinstance(owner, (ast.List, ast.Tuple)) and not getattr(owner, '_mutated', False):
+                return type(owner)(elts=[process_argument(item, names) for item in owner.elts], ctx=ast.Load())
             if isinstance(value, (CapturedArgument, ast.JoinedStr)) and isinstance(owner, ast.Constant):
                 return owner
         if isinstance(value, ast.Starred):
@@ -1724,9 +1754,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return any(carries_descriptor(CapturedArgument(items), names, live)
                    for owner in owners if isinstance(owner, SequenceBinding) for items in owner.elements or ())
 
-    def disjoint_range(args, names, live):
-        if len(args) != 2:
-            return False
+    def disjoint_range(first, limit, names, live):
 
         def bound(node):
             value = argument(node, names)
@@ -1742,11 +1770,58 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return fd, 0
             return None, None
 
-        low, start = bound(args[0])
-        high, end = bound(args[1])
+        low, start = bound(first)
+        high, end = bound(limit) if limit is not None else (low, None if start is None else start + 1)
         return (low is high and start is not None and end is not None and start >= end
                 or end is not None and end <= 0 and (high is None or live == {high})
                 or start is not None and start > 0 and live == {low})
+
+    def readonly_descriptor_call(target, call, names):
+        if target in ('os.read', 'os.readv', 'os.pread', 'os.preadv', 'os.fstat', 'os.fstatvfs', 'os.fpathconf',
+                      'os.isatty', 'os.ttyname', 'os.device_encoding', 'os.get_inheritable', 'os.get_blocking'):
+            return True
+        if target not in ('builtins.open', 'io.open', 'os.fdopen', 'io.FileIO'):
+            return False
+        keywords = {kw.arg: kw.value for kw in call.keywords}
+        mode = argument(call.args[1] if len(call.args) > 1 else keywords.get('mode', ast.Constant('r')), names)
+        close_index = 2 if target == 'io.FileIO' else 6
+        closefd = argument(call.args[close_index] if len(call.args) > close_index else keywords.get('closefd'), names)
+        return (None not in keywords and 'opener' not in keywords and len(call.args) <= 7
+                and isinstance(mode, ast.Constant) and mode.value in ('r', 'rb', 'br', 'rt', 'tr')
+                and isinstance(closefd, ast.Constant) and closefd.value is False)
+
+    def provider_fields(owners, key, names, *, dictionary=False):
+        key = argument(key, names)
+        return {module + '.' + attr for module, attr in EXECUTABLE_PROVIDERS.items()
+                if (module + '.__dict__' if dictionary else module) in owners
+                and (not isinstance(key, ast.Constant) or key.value == attr)}
+
+    def mapping_writes(mapping, keywords, attr, names):
+        if any(kw.arg in (None, attr) for kw in keywords):
+            return True
+        if mapping is None:
+            return False
+        mapping = argument(mapping, names)
+        if isinstance(mapping, ast.Dict):
+            keys = [argument(key, names) for key in mapping.keys]
+            return any(not isinstance(key, ast.Constant) or key.value == attr for key in keys)
+        return not (isinstance(mapping, (ast.List, ast.Tuple)) and not mapping.elts)
+
+    def patch_provider(patch, state, enter, *, saved_as):
+        field = patch.name, 'provider'
+        saved = patch, saved_as
+        previous = state.get(saved, frozenset())
+        if enter:
+            if previous:
+                raise Unsupported('cannot resolve repeatedly started executable provider patch')
+            state[saved] = state.get(field, frozenset({patch.name}))
+            if patch.changes:
+                state[field] = frozenset({UNKNOWN_CALLABLE})
+        elif previous:
+            if MISSING_FIELD in previous:
+                raise Unsupported('cannot resolve conditional executable provider patch')
+            state[field] = previous
+            state[saved] = frozenset()
 
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
@@ -1756,6 +1831,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                                   keywords=list(keywords.values())), call)
             return (yield from invoke(target.target, call, names, target.receiver or receiver,
                                       wrapped or target.receiver is None, interrupted))
+        if isinstance(receiver, PatchedProvider) and target in ('start', 'stop'):
+            patch_provider(receiver, names, target == 'start', saved_as='started')
+            return {UNKNOWN_CALLABLE}
+        if isinstance(target, PatchedProvider):
+            raise Unsupported('cannot resolve executable provider patch application')
         if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
             if receiver is not None:
                 list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
@@ -1775,7 +1855,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if len(call.args) != 5 or call.keywords or not isinstance(call.args[1], ast.Name):
                     raise Unsupported('cannot resolve verified fixture arguments')
                 descriptors = qualified(call.args[0], names)
-                if len(descriptors) != 1 or not isinstance(fd := next(iter(descriptors)), FixtureDescriptor):
+                if (len(descriptors) != 1 or not isinstance(fd := next(iter(descriptors)), FixtureDescriptor)
+                        or names.get((fd, 'verified')) not in ({True}, {False})):
                     raise Unsupported('cannot resolve verified fixture descriptor')
                 names[(fd, 'verified')] = frozenset({True})
                 names[call.args[1].id] = frozenset({FixtureExecutable(fd, named=True)})
@@ -1878,43 +1959,108 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if target in (UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(target, (ast.arg, PythonInstance)):
             if ordering or wrapped or require_command:
                 raise Unsupported('cannot resolve Python callable')
-        if target == 'os.open' and imports.fixture_manager in active:
-            return {FixtureDescriptor()}
         if target == 'shutil.which' and not call.keywords and len(call.args) == 1:
             value = argument(call.args[0], names)
             if isinstance(value, ast.Constant) and value.value == 'just':
-                return {LookupExecutable(target, 'just')}
-        if target in ('unittest.mock.patch', 'unittest.mock.patch.object'):
+                return {LookupExecutable('just')}
+        if target == 'builtins.vars' and len(call.args) == 1:
+            modules = qualified(call.args[0], names)
+            if modules and all(module in EXECUTABLE_PROVIDERS for module in modules):
+                return {module + '.__dict__' for module in modules}
+        patching = target in ('unittest.mock.patch', 'unittest.mock.patch.object', 'unittest.mock.patch.dict')
+        if patching or target in ('builtins.setattr', 'builtins.delattr'):
             keywords = {kw.arg: kw.value for kw in call.keywords}
-            subject = call.args[0] if call.args else keywords.get('target')
+            subject = call.args[0] if call.args else keywords.get('in_dict' if target == 'unittest.mock.patch.dict' else 'target')
+            second = call.args[1] if len(call.args) > 1 else None
             providers = set()
             if target == 'unittest.mock.patch':
-                subject = argument(subject, names)
-                if isinstance(subject, ast.Constant) and isinstance(subject.value, str):
-                    providers.add(subject.value)
+                path = argument(subject, names)
+                if isinstance(path, ast.Constant) and path.value in {m + '.' + a for m, a in EXECUTABLE_PROVIDERS.items()}:
+                    providers.add(path.value)
+            elif target == 'unittest.mock.patch.dict':
+                owners = qualified(subject, names)
+                mapping = second or keywords.get('values')
+                clear = argument(call.args[2] if len(call.args) > 2 else keywords.get('clear', ast.Constant(False)), names)
+                path = argument(subject, names)
+                if isinstance(path, ast.Constant) and isinstance(path.value, str):
+                    owners = {path.value}
+                providers = provider_fields(owners, None, names, dictionary=True)
+                if providers:
+                    return {PatchedProvider(name, not isinstance(clear, ast.Constant) or clear.value or
+                                            mapping_writes(mapping, call.keywords, name.split('.')[1], names))
+                            for name in providers}
             else:
-                attr = argument(call.args[1] if len(call.args) > 1 else keywords.get('attribute'), names)
-                if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
-                    providers.update(owner + '.' + attr.value for owner in qualified(subject, names)
-                                     if isinstance(owner, str))
-            providers &= {'sys.executable', 'shutil.which'}
-            if providers and getattr(call, '_context_expr', False):
-                return {PatchedProvider(provider) for provider in providers}
-            imports.replacements.update(providers)
+                providers = provider_fields(qualified(subject, names), second or keywords.get('attribute'), names)
+            if patching and providers:
+                return {PatchedProvider(name) for name in providers}
+            for name in providers:
+                names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
+        if target == 'unittest.mock.patch.stopall':
+            started = [key[0] for key, values in names.items() if isinstance(key, tuple) and
+                       isinstance(key[0], PatchedProvider) and key[1] == 'started' and values]
+            if len({patch.name for patch in started}) != len(started):
+                raise Unsupported('cannot resolve overlapping executable provider patches')
+            for patch in started:
+                patch_provider(patch, names, False, saved_as='started')
+        if isinstance(target, str) and ('.__dict__.' in target or target.startswith('builtins.dict.')
+                                        or target in ('operator.setitem', 'operator.delitem')):
+            owner, _, method = target.rpartition('.')
+            operands = call.args
+            if owner in ('builtins.dict', 'operator') and operands:
+                dictionary, *operands = operands
+                owners = qualified(dictionary, names)
+            else:
+                owners = {owner}
+            for name in provider_fields(owners, None, names, dictionary=True):
+                attr = name.split('.')[1]
+                if method in ('clear', 'popitem') or (method in ('update', '__ior__') and
+                        mapping_writes(operands[0] if operands else None, call.keywords, attr, names)) or (
+                        method in ('__setitem__', '__delitem__', 'setitem', 'delitem', 'pop') and operands and
+                        name in provider_fields(owners, operands[0], names, dictionary=True)):
+                    names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if imports.fixture_manager is not None:
             live = {key[0] for key, values in names.items() if isinstance(key, tuple)
                     and isinstance(key[0], FixtureDescriptor) and True in values}
-            if target == 'os.close' and len(call.args) == 1:
-                descriptors = qualified(call.args[0], names)
-                if live and not all(isinstance(fd, FixtureDescriptor) for fd in descriptors):
-                    raise Unsupported('cannot resolve fixture descriptor close')
-                for fd in descriptors:
-                    if isinstance(fd, FixtureDescriptor):
-                        names[(fd, 'verified')] = frozenset({False})
-            elif live and target == 'os.closerange':
-                if not disjoint_range(call.args, names, live):
-                    raise Unsupported('cannot resolve fixture descriptor close range')
-            elif live and target not in ('os.fstat', 'os.isatty', 'os.get_inheritable', 'os.get_blocking'):
+            module, _, operation = target.partition('.') if isinstance(target, str) else ('', '', '')
+            if module not in ('os', 'posix'):
+                operation = ''
+            if operation == 'open' and (live or imports.fixture_manager in active):
+                fd = FixtureDescriptor()
+                names[(fd, 'verified')] = frozenset({False})
+                return {fd}
+            if operation in ('close', 'closerange', 'dup2', 'dup3') or target == 'socket.close':
+                keywords = {kw.arg: kw.value for kw in call.keywords}
+                replacing = operation in ('dup2', 'dup3')
+                index = int(replacing)
+                destination = call.args[index] if len(call.args) > index else keywords.get('fd2' if replacing else 'fd')
+                limit = None
+                if operation == 'closerange':
+                    destination = call.args[0] if call.args else keywords.get('fd_low')
+                    limit = call.args[1] if len(call.args) > 1 else keywords.get('fd_high', CapturedArgument({None}))
+                owners = qualified(destination, names)
+                known = (limit is None and len(owners) == 1 and isinstance(fd := next(iter(owners)), FixtureDescriptor)
+                         and names.get((fd, 'verified')) in ({True}, {False}))
+                if live and not disjoint_range(destination, limit, names, live):
+                    if not known or (replacing and fd in live):
+                        raise Unsupported('cannot resolve fixture descriptor replacement or close')
+                if replacing:
+                    src = call.args[0] if call.args else keywords.get('fd')
+                    if live.intersection(qualified(src, names)):
+                        raise Unsupported('cannot resolve fixture descriptor duplication')
+                elif known:
+                    names[(fd, 'verified')] = frozenset({None})
+                else:
+                    for key in list(names):
+                        if isinstance(key, tuple) and isinstance(key[0], FixtureDescriptor) and key[0] not in live:
+                            names[key] = frozenset({None})
+            elif live and not readonly_descriptor_call('os.' + operation if module == 'posix' else target, call, names):
+                if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen'):
+                    file = call.args[0] if call.args else next((kw.value for kw in call.keywords
+                                                              if kw.arg in ('fd', 'file', 'name')), None)
+                    value = argument(file, names)
+                    if not (isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes)) or
+                            disjoint_range(file, None, names, live)):
+                        raise Unsupported('cannot resolve fixture descriptor ownership')
                 process = target in PY_ARGV or target in ('asyncio.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_exec')
                 operands = [*call.args, *(kw.value for kw in call.keywords if not (process and kw.arg == 'pass_fds'))]
                 if any(carries_descriptor(operand, names, live) for operand in operands):
@@ -1931,7 +2077,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
             yield call, target, wrapped or require_command, source
-            if target in ('builtins.open', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
+            if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
                           'tempfile.NamedTemporaryFile'):
                 return {FILE_CONTEXT}
             if target in ('contextlib.closing', 'contextlib.aclosing', 'contextlib.redirect_stdout', 'contextlib.redirect_stderr'):
@@ -1961,15 +2107,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return (yield from suite(node.body, names, interrupted))
         item, *rest = items
         expr = item.context_expr
-        expr._context_expr = True
         yield from visit(expr, names, interrupted)
         managers = qualified(expr, names)
         prefix = '__a' if isinstance(node, ast.AsyncWith) else '__'
         entry = prefix + 'enter__'
         exit_method = prefix + 'exit__'
         suspended = {}
-        saved = {p.name: names.get((p.name, 'provider'), frozenset({p.name}))
-                 for p in managers if isinstance(p, PatchedProvider)}
 
         def lifecycle(method, state, args):
             outcomes = []
@@ -1980,8 +2123,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         isinstance(expr, ast.Call) and qualified(expr.func, names) == {'tempfile.TemporaryDirectory'}):
                     raise Unsupported('cannot resolve context surrounding Python generator yield')
                 if isinstance(manager, PatchedProvider):
-                    branch[(manager.name, 'provider')] = (frozenset({UNKNOWN_CALLABLE}) if method == entry
-                                                         else saved[manager.name])
+                    patch_provider(manager, branch, method == entry, saved_as='entered')
                     values.add(UNKNOWN_CALLABLE if method == entry else ast.Constant(False))
                 elif isinstance(manager, GeneratorManager):
                     if (manager.helper.decorator == 'contextlib.asynccontextmanager') != isinstance(node, ast.AsyncWith):
@@ -2081,6 +2223,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def visit_node(node, names, interrupted):
         def bind(key, values):
             names[key] = values
+        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            key = ast.Constant(node.attr) if isinstance(node, ast.Attribute) else node.slice
+            for name in provider_fields(qualified(node.value, names), key, names, dictionary=isinstance(node, ast.Subscript)):
+                names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
+        if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr):
+            for name in provider_fields(qualified(node.target, names), None, names, dictionary=True):
+                if mapping_writes(node.value, (), name.split('.')[1], names):
+                    names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign):
             method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__'
             owners = qualified(node.target, names)
@@ -2112,6 +2262,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         continue
                 decorators.append(qualified(expression, names))
             if isinstance(node, ast.ClassDef):
+                if any(isinstance(owner, PatchedProvider) for group in decorators for owner in group):
+                    raise Unsupported('cannot resolve class-wide executable provider patch')
                 bases = [qualified(base, names) for base in node.bases]
                 cls = PythonClass(node, bases, skipped)
                 allocations.append(cls)
@@ -2140,7 +2292,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     else:
                         decorator = UNKNOWN_CALLABLE
                 key = node, decorator
-                managers = [owner for group in decorators for owner in group if isinstance(owner, GeneratorManager)]
+                managers = [owner for group in decorators for owner in group if isinstance(owner, (GeneratorManager, PatchedProvider))]
                 if managers:
                     key = node, tuple(map(frozenset, decorators))
                 if key not in functions:
@@ -2151,8 +2303,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             helper.decorator = None
                             body = node.body
                             for manager in reversed(managers):
-                                asynchronous = manager.helper.decorator == 'contextlib.asynccontextmanager'
-                                if asynchronous != isinstance(node, ast.AsyncFunctionDef):
+                                asynchronous = isinstance(manager, GeneratorManager) and manager.helper.decorator == 'contextlib.asynccontextmanager'
+                                if isinstance(manager, GeneratorManager) and asynchronous != isinstance(node, ast.AsyncFunctionDef):
                                     break
                                 context = ast.withitem(context_expr=CapturedArgument({manager}), optional_vars=None)
                                 body = [(ast.AsyncWith if asynchronous else ast.With)(items=[context], body=body)]
@@ -2450,15 +2602,13 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None):
     found = []
     targets = {}
     imports = SuiteImports(directory)
-    imports.register_fixture(tree.body, filename)
+    imports.register_fixture(tree.body, filename, text)
     calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=imports))
 
-    rebound = imports.replacements.union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
+    rebound = set().union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
 
     def process_arguments(node):
         if isinstance(node, LookupExecutable):
-            if node.provider in rebound:
-                raise Unsupported('cannot resolve reassigned Python process executable')
             return ast.Constant(node.program)
         if isinstance(node, ast.Call):
             owners = targets.get(node, set())
