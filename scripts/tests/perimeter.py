@@ -1405,6 +1405,64 @@ class GateImageCommands(unittest.TestCase):
         source = prefix + "def finished():\n    with suppress(ValueError): return\n    run(['just'])\nfinished()"
         self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []))
 
+    def test_implicit_exceptions_can_resume_after_context_manager(self):
+        for context, declaration, invoke in (
+            ("with suppress(Exception)", "def probe():", "probe()"),
+            ("async with manager", "async def probe(manager):", "asyncio.run(probe(manager))"),
+        ):
+            for operation in ("return cached_result", "assert False\nreturn", "a, b = (1,)\nreturn",
+                              "return cache.value", "return lookup()", "return 1"):
+                source = ("import asyncio\nfrom contextlib import suppress\nfrom subprocess import run\n"
+                          + declaration + "\n    " + context + ":\n" + textwrap.indent(operation, "        ")
+                          + "\n    run(['just'])\n" + invoke)
+                with self.subTest(context=context, operation=operation):
+                    expected = operation != "return 1"
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []),
+                                     "just" if expected else None)
+                    found = self.problems({"t.py": source.replace("'just'", "'cmp'")})
+                    self.assertEqual(len(found), int(expected), found)
+                    if expected:
+                        self.assertIn("calls `cmp`", found[0])
+
+    def test_unittest_refuses_unresolved_handlers(self):
+        for method in ("__init__", "setUp", "tearDown", "setUpClass", "tearDownClass", "test_probe", "runTest"):
+            base = "class Fixture:\n    " + method + " = shared\n"
+            body = "pass" if method in ("test_probe", "runTest") else "def test_probe(self): pass"
+            source = ("from support import shared\nfrom unittest import TestCase, main\n" + base
+                      + f"class Case(Fixture, TestCase):\n    {body}\nmain()")
+            with self.subTest(method=method):
+                with self.assertRaisesRegex(ValueError, "cannot resolve"):
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                self.assertIn("cannot resolve", self.problems({"suite.py": source})[0])
+
+    def test_unittest_uses_runtest_for_noncallable_test_members(self):
+        for member, expected in (("test_data = 'fixture'", "just"), ("test_data = []", "just"),
+                                 ("def test_data(self): pass", None)):
+            source = ("from subprocess import run\nfrom unittest import TestCase, main\nclass Fixture:\n    " + member
+                      + "\nclass Case(Fixture, TestCase):\n    def runTest(self): run(['just'])\nmain()")
+            with self.subTest(member=member):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                found = self.problems({"suite.py": source.replace("'just'", "'cmp'")})
+                self.assertEqual(len(found), int(bool(expected)), found)
+                if expected:
+                    self.assertIn("calls `cmp`", found[0])
+
+    def test_loop_instances_converge_without_losing_field_changes(self):
+        prefix = "from subprocess import run\nclass Task:\n    def noop(self): pass\nprevious = Task()\n"
+        for loop in ("for i in (1, 2):", "while active:"):
+            for body, expected in (("previous.noop()\nprevious = Task()", None),
+                                   ("previous.launch(['just'])\nprevious = Task()\nprevious.launch = print", None),
+                                   ("previous.launch(['just'])\nprevious = Task()\nprevious.launch = run", "just")):
+                source = prefix + "previous.launch = print\n" + loop + "\n" + textwrap.indent(body, "    ")
+                with self.subTest(loop=loop, body=body):
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                    found = self.problems({"loop.py": source.replace("'just'", "'cmp'")})
+                    self.assertEqual(len(found), int(bool(expected)), found)
+                    if expected:
+                        self.assertIn("calls `cmp`", found[0])
+        source = prefix + "previous.launch = print\nfor i in (1,):\n    previous.launch(['just'])\n    previous.launch = run"
+        self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []))
+
     def test_python_ordering_resolves_process_arguments_at_the_call(self):
         def consumer(source):
             return CAPS.just_consumer({"shell": "python", "run": "from subprocess import run\n" + source},

@@ -1017,6 +1017,7 @@ BoundCall = namedtuple('BoundCall', ('target', 'receiver', 'args', 'keywords'), 
 UNKNOWN_CALLABLE = object()
 MISSING_FIELD = object()
 EXCEPTION = object()
+SKIPPED_HANDLER = object()
 
 
 def process_value(call, targets):
@@ -1072,6 +1073,30 @@ def loop_inputs(node, body):
             assigned.add(statement.id)
     node._command_inputs = inputs
     return inputs
+
+
+def literal_iterations(node):
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)) and not any(isinstance(item, ast.Starred) for item in node.elts):
+        return len(node.elts)
+    if isinstance(node, ast.Dict) and None not in node.keys:
+        return len(node.keys)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        return len(node.value)
+    return None
+
+
+def loop_values(values, state, instances):
+    def shape(value, path):
+        if isinstance(value, ast.Constant):
+            return ast.Constant, type(value.value), value.value
+        if value not in instances or not isinstance(value, PythonInstance) or value in path:
+            return value
+        fields = frozenset((key[1], frozenset(shape(item, path | {value}) for item in items))
+                           for key, items in state.items() if isinstance(key, tuple) and key[0] is value)
+        aliases = frozenset(key for key, items in state.items() if isinstance(key, str) and value in items)
+        return value.owner, fields, aliases
+
+    return len(values) > 1, frozenset(shape(value, set()) for value in values)
 
 
 def python_callees(body, bindings, ordering, targets, enclosing=(), active=None, class_body=False,
@@ -1285,6 +1310,28 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return ast.Starred(value=captured(literal.value, names), ctx=ast.Load())
         return CapturedArgument(qualified(value, names) or {UNKNOWN_CALLABLE})
 
+    def resolved_handler(handler):
+        target = handler.target if isinstance(handler, BoundCall) else handler
+        if isinstance(target, PythonHelper) and target.decorator is not UNKNOWN_CALLABLE:
+            return
+        if target in ('unittest.TestCase.__init__', 'unittest.TestCase.setUp', 'unittest.TestCase.tearDown',
+                      'unittest.TestCase.setUpClass', 'unittest.TestCase.tearDownClass'):
+            return
+        raise Unsupported('cannot resolve Python lifecycle or test handler')
+
+    def callable_test(values):
+        if not values:
+            raise Unsupported('cannot resolve unittest test member')
+        noncallable = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict)
+        if all(isinstance(value, noncallable) or isinstance(value, PythonInstance) and
+               value.owner.base == 'builtins.object' and all('__call__' not in cls.members for cls in value.owner.lineage)
+               for value in values):
+            return False
+        for value in values:
+            if value is not SKIPPED_HANDLER:
+                resolved_handler(value)
+        return True
+
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
@@ -1307,9 +1354,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         for cls in target.lineage)):
                 raise Unsupported('cannot resolve Python constructor')
             if any('__init__' in cls.members for cls in target.lineage):
-                for method in member(instance, '__init__', names):
-                    if method is UNKNOWN_CALLABLE:
-                        raise Unsupported('cannot resolve Python initializer')
+                initializers = member(instance, '__init__', names)
+                if not initializers:
+                    raise Unsupported('cannot resolve Python initializer')
+                for method in initializers - {SKIPPED_HANDLER}:
+                    resolved_handler(method)
                     yield from invoke(method, call, names, interrupted=interrupted)
             return {instance}
         if target == 'builtins.super':
@@ -1328,8 +1377,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     raise Unsupported('cannot resolve unittest discovery')
                 if not cls.test_case:
                     continue
-                methods = {name: values for ancestor in reversed(cls.lineage) for name, values in ancestor.members.items()}
-                tests = sorted(name for name in methods if isinstance(name, str) and name.startswith('test'))
+                members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
+                members.update(name for owner, name in fields(names) if owner in cls.lineage)
+                methods = {name: member(cls, name, names) for name in members}
+                tests = sorted(name for name in methods if name.startswith('test') and callable_test(methods[name]))
                 if not tests and 'runTest' in methods:
                     tests = ['runTest']
                 cases = []
@@ -1339,19 +1390,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     cases.append((method, instance))
                 suites.append((cls, methods, cases))
             for cls, methods, cases in suites:
-                if not cases or cls.skipped or methods.get('setUpClass') == frozenset():
+                if not cases or cls.skipped or methods.get('setUpClass') == {SKIPPED_HANDLER}:
                     continue
 
                 dispatch_call = ast.copy_location(ast.Call(func=call.func, args=[], keywords=[]), call)
 
                 def dispatch(owner, method):
-                    if method in methods:
-                        for handler in member(owner, method, names):
+                    if method in methods or (owner, method) in names:
+                        handlers = member(owner, method, names)
+                        if not handlers:
+                            raise Unsupported('cannot resolve unittest handler')
+                        for handler in handlers - {SKIPPED_HANDLER}:
+                            resolved_handler(handler)
                             yield from invoke(handler, dispatch_call, names, interrupted=interrupted)
 
                 yield from dispatch(cls, 'setUpClass')
                 for method, instance in cases:
-                    if not methods[method] or methods.get('setUp') == frozenset():
+                    if methods[method] == {SKIPPED_HANDLER} or methods.get('setUp') == {SKIPPED_HANDLER}:
                         continue
                     for phase in ('setUp', method, 'tearDown'):
                         yield from dispatch(instance, phase)
@@ -1380,14 +1435,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             yield call, target, wrapped or require_command
         return {UNKNOWN_CALLABLE}
 
+    def record_exception(interrupted, names):
+        interrupted.update(join((interrupted, names)))
+        interrupted[EXCEPTION] = frozenset()
+
     def visit(node, names, interrupted=None):
+        may_raise = (interrupted is not None and isinstance(node, (ast.stmt, ast.expr)) and
+                not isinstance(node, (ast.Pass, ast.Constant, ast.Return, ast.Break, ast.Continue, ast.Expr,
+                                      ast.Assign, ast.Global, ast.Nonlocal, ast.Try, ast.TryStar)) and
+                not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)))
+        if may_raise:
+            record_exception(interrupted, names)
+        completed = yield from visit_node(node, names, interrupted)
+        if may_raise and isinstance(node, ast.expr) and not isinstance(node, (ast.Name, ast.Constant)):
+            record_exception(interrupted, names)
+        return completed
+
+    def visit_node(node, names, interrupted):
         def bind(key, values):
             names[key] = values
-        if interrupted is not None and isinstance(node, (ast.Call, ast.Raise, ast.Attribute, ast.Subscript,
-                                                         ast.BinOp, ast.Compare, ast.Await, ast.Import, ast.ImportFrom)):
-            interrupted.update(join((interrupted, names)))
-            interrupted.setdefault(EXCEPTION, frozenset())
-
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for child in ast.iter_child_nodes(node):
                 if not isinstance(child, ast.stmt):
@@ -1425,7 +1491,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 bind(node.name, frozenset({cls}))
             else:
                 if skipped:
-                    bind(node.name, frozenset())
+                    bind(node.name, frozenset({SKIPPED_HANDLER}))
                     return
                 decorator = None
                 if decorators:
@@ -1455,11 +1521,22 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             names.update(join(outcomes))
             return
         if isinstance(node, (ast.With, ast.AsyncWith)):
-            for item in node.items:
-                yield from visit(item, names, interrupted)
             exceptions = {}
+            for index, item in enumerate(node.items):
+                yield from visit(item.context_expr, names, exceptions if index else interrupted)
+                if index:
+                    record_exception(exceptions, names)
+                if item.optional_vars:
+                    yield from visit(item.optional_vars, names, exceptions)
+            start = len(transfers)
             completed = yield from suite(node.body, names, exceptions)
-            if exceptions:
+            outer = exceptions if len(node.items) > 1 else interrupted
+            if outer is not None:
+                if completed:
+                    record_exception(outer, names)
+                for _, state in transfers[start:]:
+                    record_exception(outer, state)
+            if EXCEPTION in exceptions:
                 if interrupted is not None:
                     interrupted.update(join((interrupted, exceptions)))
                 exceptions.pop(EXCEPTION, None)
@@ -1487,7 +1564,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 body = [node.target, *node.body]
             inputs = loop_inputs(node, body)
             broken = []
-            for _ in range(8):
+            limit = literal_iterations(node.iter) if isinstance(node, ast.For) else None
+            loop_allocations = set()
+            for _ in range(min(8, limit) if limit is not None else 8):
                 first_allocation = len(allocations)
                 start = len(transfers)
                 branch = names.copy()
@@ -1500,8 +1579,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     back_edges.append(branch)
                 next_entry = join([names, *back_edges])
                 fresh = set(allocations[first_allocation:])
+                loop_allocations.update(fresh)
                 changed = any(values != names.get(key) and
-                              (key in inputs or key in scope.captured or isinstance(key, tuple) and key[0] not in fresh)
+                              (key in inputs or key in scope.captured or isinstance(key, tuple) and key[0] not in fresh) and
+                              (not loop_allocations or loop_values(values, next_entry, loop_allocations) !=
+                               loop_values(names.get(key, ()), names, loop_allocations))
                               for key, values in next_entry.items())
                 names.update(next_entry)
                 if not changed:
@@ -1509,7 +1591,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(node, ast.While):
                     yield from visit(node.test, names, interrupted)
             else:
-                raise Unsupported('cannot resolve changing Python loop bindings')
+                if limit is None or limit > 8:
+                    raise Unsupported('cannot resolve changing Python loop bindings')
             if (yield from suite(node.orelse, names, interrupted)):
                 broken.append(names.copy())
             if broken:
@@ -1567,6 +1650,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     return
             yield from visit(node.value, names, interrupted)
             values = qualified(node.value, names)
+            if class_body and isinstance(node.value, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
+                values = frozenset({node.value})
             for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
                 yield from visit(target, names, interrupted)
                 if isinstance(target, ast.Name):
@@ -1596,8 +1681,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if branch is not names:
                     outcomes.append(fields(branch))
             names.update(join(outcomes))
-            if interrupted is not None:
-                interrupted.update(join((interrupted, fields(names))))
             results[node] = frozenset(returned or {UNKNOWN_CALLABLE})
             return
         for child in ast.iter_child_nodes(node):
