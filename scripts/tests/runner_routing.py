@@ -557,15 +557,16 @@ TABLE = [
 ]
 
 
-class Routing(unittest.TestCase):
-    def reviewed_workflow(self, path):
-        data = (ROOT / path).read_bytes()
-        self.assertEqual(hashlib.sha256(data).hexdigest(), WORKFLOW_SHA256[path],
-                         f"{path} changed: review it, then update WORKFLOW_SHA256")
-        return data.decode("utf-8")
+def reviewed_workflow(path, root=ROOT):
+    data = (root / path).read_bytes()
+    if hashlib.sha256(data).hexdigest() != WORKFLOW_SHA256[path]:
+        raise ValueError(f"{path} changed: review it, then update WORKFLOW_SHA256")
+    return data.decode("utf-8")
 
+
+class Routing(unittest.TestCase):
     def workflows(self):
-        return {path: self.reviewed_workflow(path) for path in ROUTED}
+        return {path: reviewed_workflow(path) for path in ROUTED}
 
     def test_every_job_is_hosted_or_routed_through_the_route_job(self):
         for path, text in self.workflows().items():
@@ -659,7 +660,7 @@ class Routing(unittest.TestCase):
                          ["full-workspace: an unrouted job must run on ubuntu-latest"])
 
     def test_the_route_runner_refuses_a_script_that_writes_other_than_one_runner_line(self):
-        text = self.reviewed_workflow(BASELINE)
+        text = reviewed_workflow(BASELINE)
         line = "printf 'runner=%s\\n' \"$runner\" >> \"$GITHUB_OUTPUT\""
         self.assertEqual(text.count(line), 1)
         for name, edited in {"twice": text.replace(line, line + "\n          " + line, 1),
@@ -685,7 +686,7 @@ class Routing(unittest.TestCase):
         self.assertEqual(names, sorted(WORKFLOW_SHA256), "every workflow file has a pin")
         for name in names:
             with self.subTest(path=name):
-                self.reviewed_workflow(name)
+                reviewed_workflow(name)
 
     def test_each_shape_edit_is_refused(self):
         self.assertTrue(listed_workflow_problems([".github/workflows/new.yml"]))
@@ -766,7 +767,7 @@ class Routing(unittest.TestCase):
             (BASELINE, "full", "!cancelled() && needs.mutation-plan.result == 'success'", "", ""),
         ):
             with self.subTest(path=path, pr_base=pr_base, merge_base=merge_base):
-                workflow = yaml.load(self.reviewed_workflow(path), Loader=yaml.BaseLoader)
+                workflow = yaml.load(reviewed_workflow(path), Loader=yaml.BaseLoader)
                 job = workflow["jobs"]["mutation-shards"]
                 self.assertIn(condition(job), active | {job_condition})
                 workers = [step for step in job["steps"] if "SHARD_INDEX" in step.get("env", {})]

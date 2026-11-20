@@ -105,7 +105,7 @@ if sys.argv[1] == "mutants":
                             env["CARGO_TARGET_DIR"] = "/sentinel/must-not-reach-mutants"
                         if entry == "workflow":
                             env["GITHUB_OUTPUT"] = str(root / "output")
-                            subprocess.run([*command[:-2], "plan", "diff"], cwd=root, env=env,
+                            subprocess.run(["python3", "-I", "scripts/mutation_ci.py", "plan", "diff"], cwd=root, env=env,
                                            capture_output=True, check=True)
                             self.assertEqual(sentinel.read_text(), "original source\n")
                         result = subprocess.run(command, cwd=root, env=env, capture_output=True)

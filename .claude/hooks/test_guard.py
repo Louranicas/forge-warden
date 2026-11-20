@@ -450,18 +450,19 @@ class Guard(unittest.TestCase):
         justfile.write_text("\n".join(f'{name}:\n    @echo {name} > receipt\n' for name in recipes))
         receipt = self.root / "receipt"
         env = {**os.environ, "JUST_DRY_RUN": "true", "JUST_JUSTFILE": str(self.root / "other")}
-        command = [sys.executable, "-I", CHECKOUT_JUST]
         for recipe in recipes:
             with self.subTest(recipe=recipe):
-                subprocess.run([*command, recipe], cwd=self.root, env=env, check=True)
+                subprocess.run([sys.executable, "-I", CHECKOUT_JUST, recipe], cwd=self.root, env=env, check=True)
                 self.assertEqual(receipt.read_text().strip(), recipe)
                 receipt.unlink()
         for args in ([], ["fast", "ci"], ["--list"]):
-            self.assertNotEqual(subprocess.run([*command, *args], cwd=self.root, capture_output=True).returncode, 0)
+            result = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, *args], cwd=self.root, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
             self.assertFalse(receipt.exists())
         justfile.rename(self.root / "other")
         justfile.symlink_to(self.root / "other")
-        self.assertNotEqual(subprocess.run([*command, "fast"], cwd=self.root, env=env, capture_output=True).returncode, 0)
+        result = subprocess.run([sys.executable, "-I", CHECKOUT_JUST, "fast"], cwd=self.root, env=env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
         self.assertFalse(receipt.exists())
 
     def test_hook_installation_only_writes_selected_repository(self):
@@ -590,11 +591,12 @@ class Guard(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("just"), "just is required for the vocabulary recipe")
     def test_just_defers_vocabulary_lookup(self):
-        command = [shutil.which("just"), "--justfile", self.root / "justfile"]
+        just = shutil.which("just")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("JUST_", "GIT_"))}
 
         def run_recipe(*args):
-            return subprocess.run([*command, *args], cwd=self.root, env=env, capture_output=True)
+            return subprocess.run([just, "--justfile", self.root / "justfile", *args],
+                                  cwd=self.root, env=env, capture_output=True)
 
         repo = GUARD.parents[2]
         scripts = self.root / "scripts"

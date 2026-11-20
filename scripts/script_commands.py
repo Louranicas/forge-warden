@@ -137,6 +137,7 @@ SHELLS = frozenset({'sh', 'bash', 'dash'})
 PYTHONS = re.compile(r'python(?:3(?:\.[0-9]+)?)?')
 # A non-literal Python argument stands for this dynamic word in the command line it makes.
 PY_DYNAMIC = '"$python_expression"'
+PY_SPREAD = '"${\0python_spread}"'
 OPERATORS = (';;&', ';;', ';&', '&&', '||', '|&', '&', '|', ';', '(', ')', '\n')
 REDIRECTS = ('<<<', '<<-', '<<', '&>>', '&>', '>>', '>&', '<&', '<>', '>|', '>', '<')
 FD_REDIRECT = re.compile(r'([0-9]+)(?=<|>)')
@@ -496,6 +497,8 @@ class WorkflowLexer(Lexer):
             if token[0] == 'redirect':
                 start += 2
             elif token[0] == 'word':
+                if token[1].raw == PY_SPREAD:
+                    return line, word, external, None, directory
                 arguments.append(token[1].argument)
                 start += 1
             else:
@@ -726,6 +729,10 @@ def command_words(tokens, calls, lexer, directory):
                 mode = 'for-do'
             continue
         word = token[1]
+        if word.raw == PY_SPREAD and (expect or finding or isinstance(script, tuple) or
+                script in OPERAND_STATES or script in ('next', 'next-python', 'rustup', 'rustup-toolchain') or
+                script and PYTHONS.fullmatch(script)):
+            raise Unsupported('cannot resolve starred Python process arguments')
         skip_parens = False
         if mode == 'array':
             continue
@@ -896,25 +903,23 @@ def expanded_items(items):
     result = []
     for item in items:
         if isinstance(item, ast.Starred):
-            expanded = py_items(item.value, exact=True)
-            if expanded is None:
-                raise Unsupported('cannot resolve starred Python process arguments')
-            result.extend(expanded)
+            expanded = py_items(item.value)
+            result.extend([item] if expanded is None else expanded)
         else:
             result.append(item)
     return result
 
 
-def py_items(node, exact=False):
+def py_items(node):
     if isinstance(node, (ast.List, ast.Tuple)):
         return expanded_items(node.elts)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left = py_items(node.left, exact)
+        left = py_items(node.left)
         if left is not None:
-            right = py_items(node.right, exact)
-            if right is None and (exact or not left):
+            right = py_items(node.right)
+            if right is None and not left:
                 return None
-            return left + (right if right is not None else [None])
+            return left + (right if right is not None else [ast.Starred(value=node.right)])
     if isinstance(node, ast.Call):
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, 'id', None)
@@ -941,6 +946,8 @@ def py_text(node):
 
 
 def py_word(node):
+    if isinstance(node, ast.Starred):
+        return PY_SPREAD
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return shlex.quote(node.value)
     return PY_DYNAMIC
@@ -949,55 +956,59 @@ def py_word(node):
 def argv_text(items):
     """The command line an argument list makes, or None when its program is not a literal."""
     head = items[0] if items else None
+    if isinstance(head, ast.Starred):
+        raise Unsupported('cannot resolve starred Python process arguments')
     if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
         return None  # stated limit: the program is not a literal
     return ' '.join(py_word(item) for item in items)
 
 
-def python_callees(body, bindings, scope=(), enclosing=(), state=None):
-    if state is None:
-        state = ({}, {}, {})
-    analyzed, classes, method_owners = state
-    functions = {}
+def python_callees(body, bindings, ordering, scope=(), enclosing=(), analyzed=None):
+    if analyzed is None:
+        analyzed = {}
+    functions = []
 
-    def read_helper(helper, names):
+    def read_helper(helper, names, call=None):
         function = helper[-1]
         frames = (*enclosing, names)[:len(helper)]
-        entry = tuple(frozenset(frame.items()) for frame in frames)
+        local = frames[-1].copy()
+        for argument in ast.iter_child_nodes(function.args):
+            if isinstance(argument, ast.arg):
+                local[argument.arg] = frozenset({None})
+        if call is not None:
+            positional = function.args.posonlyargs + function.args.args
+            for parameter, value in zip(positional, expanded_items(call.args)):
+                if isinstance(value, ast.Starred):
+                    break
+                local[parameter.arg] = qualified(value, names)
+            named = {arg.arg for arg in function.args.args + function.args.kwonlyargs}
+            for keyword in call.keywords:
+                if keyword.arg in named:
+                    local[keyword.arg] = qualified(keyword.value, names)
+        entry = tuple(frozenset(frame.items()) for frame in (*frames[:-1], local))
         entries = analyzed.setdefault(helper, set())
         if entry in entries:
             return
         entries.add(entry)
-        local = frames[-1].copy()
-        for argument in ast.iter_child_nodes(function.args):
-            if isinstance(argument, ast.arg):
-                local.pop(argument.arg, None)
-        positional = function.args.posonlyargs + function.args.args
-        if positional and helper in method_owners:
-            local[positional[0].arg] = frozenset({method_owners[helper]})
-        yield from python_callees(function.body, local, helper, frames, state)
-
+        yield from python_callees(function.body, local, ordering, helper, frames, analyzed)
 
     def qualified(node, names):
+        if isinstance(node, ast.Constant):
+            return frozenset()
         if isinstance(node, ast.Name):
-            return names.get(node.id, frozenset())
+            return names.get(node.id, frozenset({None}))
         if isinstance(node, ast.Attribute):
-            possible = set()
-            for owner in qualified(node.value, names):
-                if isinstance(owner, str):
-                    possible.add(owner + '.' + node.attr)
-                elif owner in classes:
-                    possible.update(classes[owner].get(node.attr, ()))
-            return frozenset(possible)
-        if isinstance(node, ast.Call):
-            return frozenset(owner for owner in qualified(node.func, names) if owner in classes)
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and node.attr == 'split':
+                return frozenset({'str.split'})
+            return frozenset(owner + '.' + node.attr if isinstance(owner, str) else None
+                             for owner in qualified(node.value, names))
         if isinstance(node, ast.BoolOp):
             return frozenset().union(*(qualified(value, names) for value in node.values))
         if isinstance(node, ast.NamedExpr):
             return qualified(node.target, names)
         if isinstance(node, ast.IfExp):
             return qualified(node.body, names) | qualified(node.orelse, names)
-        return frozenset()
+        return frozenset({None})
 
     def join(states):
         merged = {}
@@ -1035,17 +1046,11 @@ def python_callees(body, bindings, scope=(), enclosing=(), state=None):
                     yield from visit(child, names, interrupted)
             helper = (*scope, node)
             if isinstance(node, ast.ClassDef):
-                members = names.copy()
-                for statement in node.body:
-                    yield from visit(statement, members)
-                classes[helper] = {child.name: members[child.name] for child in node.body
-                                   if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name in members}
-                for values in classes[helper].values():
-                    for method in values:
-                        method_owners[method] = helper
+                yield from python_callees(node.body, names.copy(), ordering, scope, enclosing, analyzed)
+                bind(node.name, frozenset({None}))
             else:
-                functions[helper] = None
-            bind(node.name, frozenset({helper}))
+                functions.append(helper)
+                bind(node.name, frozenset({helper}))
             return
         if isinstance(node, (ast.If, ast.IfExp)):
             yield from visit(node.test, names, interrupted)
@@ -1125,7 +1130,7 @@ def python_callees(body, bindings, scope=(), enclosing=(), state=None):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 yield from visit(target, names, interrupted)
-                if isinstance(target, ast.Name) and values:
+                if isinstance(target, ast.Name):
                     bind(target.id, values)
             return
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -1136,11 +1141,11 @@ def python_callees(body, bindings, scope=(), enclosing=(), state=None):
             for argument in (*node.args, *node.keywords):
                 yield from visit(argument, names, interrupted)
             for name in callees:
-                if name in classes:
-                    for initializer in classes[name].get('__init__', ()):
-                        yield from read_helper(initializer, names)
+                if name is None:
+                    if ordering:
+                        raise Unsupported('cannot resolve Python callable before Just installation')
                 elif isinstance(name, tuple):
-                    yield from read_helper(name, names)
+                    yield from read_helper(name, names, node)
                 else:
                     if name.startswith('asyncio.subprocess.'):
                         name = 'asyncio.' + name.removeprefix('asyncio.subprocess.')
@@ -1154,7 +1159,7 @@ def python_callees(body, bindings, scope=(), enclosing=(), state=None):
 
     yield from suite(body, bindings, None)
     for helper in functions:
-        if helper not in analyzed:
+        if not ordering and helper not in analyzed:
             yield from read_helper(helper, bindings)
 
 
@@ -1163,16 +1168,23 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
     turned into the shell text or command line it runs, which shell_calls reads."""
     tree = ast.parse(text)
     found = []
-    for node, name in dict.fromkeys(python_callees(tree.body, {})):
+    bindings = {name: frozenset({'builtins.' + name}) for name in ('print', 'open')}
+    for node, name in dict.fromkeys(python_callees(tree.body, bindings, directory is not None)):
         if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
         if name not in PY_SHELL_TEXT and name not in PY_ARGV and name not in ('pty.spawn', 'asyncio.create_subprocess_exec'):
+            if directory is not None and name not in (
+                    'builtins.print', 'builtins.open', 'asyncio.run', 'shlex.split', 'str.split',
+                    'asyncio', 'os', 'pty', 'subprocess', 'builtins'):
+                raise Unsupported('cannot resolve Python callable before Just installation')
             continue
         args = expanded_items(node.args)
         keywords = {item.arg: item.value for item in node.keywords}
         if None in keywords:
             raise Unsupported('cannot resolve unpacked Python process keywords')
         subprocess_argv = name in PY_ARGV and PY_ARGV[name] is None
+        if subprocess_argv and any(isinstance(arg, ast.Starred) for arg in args[:9]):
+            raise Unsupported('cannot resolve starred Python process arguments')
         override = keywords.get('executable')
         if subprocess_argv and len(args) > 2:
             override = args[2]
@@ -1185,12 +1197,17 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                     raise Unsupported('cannot resolve Python process executable')
                 executables.append(option if option.value is not None else None)
 
+        def after_argv_zero(items):
+            return items if items and isinstance(items[0], ast.Starred) else items[1:]
+
         def process_argv(items):
-            return [argv_text([exe, *items[1:]] if exe is not None else items) for exe in executables]
+            return [argv_text([exe, *after_argv_zero(items)] if exe is not None else items) for exe in executables]
 
         texts = []
         if name in PY_SHELL_TEXT:
             first = args[0] if args else keywords.get('cmd', keywords.get('command'))
+            if isinstance(first, ast.Starred):
+                raise Unsupported('cannot resolve starred Python process arguments')
             texts = [py_text(branch) for branch in branches(first)] if first is not None else []
             texts.extend(argv_text([exe]) for exe in executables if exe is not None)
         elif name == 'asyncio.create_subprocess_exec':
@@ -1210,26 +1227,34 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                 for branch in branches(first) if first is not None else []:
                     listed = py_items(branch)
                     if shell_on:
-                        texts.append(py_text(branch if listed is None else (listed[0] if listed else None)))
+                        payload = branch if listed is None else (listed[0] if listed else None)
+                        if isinstance(payload, ast.Starred):
+                            raise Unsupported('cannot resolve starred Python process arguments')
+                        texts.append(py_text(payload))
                     else:
                         if listed is None and py_text(branch) is None and any(executables):
-                            raise Unsupported('cannot resolve arguments for Python process executable')
+                            listed = [ast.Starred(value=branch)]
                         texts.extend(process_argv(listed if listed is not None else [branch]))
                 if shell_on:
                     texts.extend(argv_text([exe]) for exe in executables if exe is not None)
             else:
                 index, shape, program_key, argv_key = spec
+                if any(isinstance(arg, ast.Starred) for arg in args[:index + 1]):
+                    raise Unsupported('cannot resolve starred Python process arguments')
                 program = args[index] if len(args) > index else keywords.get(program_key)
                 if program is None:
                     continue
                 if shape == 'list':
                     argv = args[index + 1] if len(args) > index + 1 else keywords.get(argv_key)
                     for listed in branches(argv):
-                        rest = [] if listed is None else py_items(listed)
-                        rest = [None] if rest is None else rest[1:]
+                        vector = py_items(listed)
+                        if vector is None:
+                            rest = [listed] if isinstance(listed, ast.Starred) else [None]
+                        else:
+                            rest = after_argv_zero(vector)
                         texts.extend(argv_text([choice, *rest]) for choice in branches(program))
                 else:
-                    texts.extend(argv_text([choice, *args[index + 2:]]) for choice in branches(program))
+                    texts.extend(argv_text([choice, *after_argv_zero(args[index + 1:])]) for choice in branches(program))
         cwd = directory
         if directory is not None and texts and keywords.get('cwd') is not None:
             value = keywords['cwd']

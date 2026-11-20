@@ -658,9 +658,29 @@ class Contracts(unittest.TestCase):
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                 PLANTS.validate_report(dict(good, **{field: value}), "subject", ["one", "two"])
 
+    def test_unreviewed_merge_worker_cannot_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / ".github/workflows/ci.yml"
+            path.parent.mkdir(parents=True)
+            workflow = yaml.load((ROOT / ".github/workflows/ci.yml").read_bytes(), Loader=yaml.BaseLoader)
+            marker = root / "ran"
+            for step in workflow["jobs"]["dogfood"]["steps"]:
+                if "run" in step:
+                    step["run"] = f": > {shlex.quote(str(marker))}\n" + step["run"]
+            path.write_text(yaml.safe_dump(workflow))
+            with patch.object(subprocess, "run") as launch, self.assertRaisesRegex(ValueError, "WORKFLOW_SHA256"):
+                self.check_merge_subjects(root)
+            launch.assert_not_called()
+            self.assertFalse(marker.exists())
+
     def test_merge_queue_jobs_bind_both_subjects(self):
-        jobs = CAPS.workflow_jobs((ROOT / ".github/workflows/ci.yml").read_text())
-        evaluate = runpy.run_path(str(ROOT / "scripts/tests/runner_routing.py"))["evaluate"]
+        self.check_merge_subjects(ROOT)
+
+    def check_merge_subjects(self, root):
+        routing = runpy.run_path(str(ROOT / "scripts/tests/runner_routing.py"))
+        jobs = CAPS.workflow_jobs(routing["reviewed_workflow"](routing["CI"], root))
+        evaluate = routing["evaluate"]
         events = ("pull_request", "merge_group", "push")
         contexts = [{"github.event_name": event, "github.sha": "e" * 40,
                      "github.event.pull_request.base.sha": "a" * 40 if event == "pull_request" else "",
@@ -710,49 +730,44 @@ class Contracts(unittest.TestCase):
                         return [evaluate(condition, context) for context in contexts]
                     check_field(job, "if", active, [True, True, False], "false")
 
-                def is_worker(step):
-                    if "run" not in step:
-                        return False
-                    if name == "mutation-plan":
-                        matrix = job["outputs"]["matrix"].removeprefix("${{").removesuffix("}}").strip()
-                        return "id" in step and matrix == f"steps.{step['id']}.outputs.matrix"
-                    if name == "mutation-shards":
-                        return "SHARD_INDEX" in step.get("env", {})
-                    return any(word == "(sh)trusted/scripts/dogfood.sh"
-                               for _, word, _ in COMMANDS.shell_calls(step["run"]))
-
-                worker, = filter(is_worker, steps)
-                literal = "run: |\n" + textwrap.indent(worker["run"].rstrip("\n") + "\n", "  ")
-                with mock.patch.dict(worker, yaml.safe_load(literal)):
-                    self.assertEqual(list(filter(is_worker, steps)), [worker])
-                if name == "dogfood":
-                    refs = {"trusted": bases, "candidate": heads}
-                    env = {"BASE_SHA": bases, "HEAD_SHA": heads}
-                else:
-                    refs = {".": [context["github.sha"] for context in contexts[:2]]}
-                    env = {"BASE_SHA": bases}
-                for i, context in enumerate(contexts[:2]):
-                    environment = {key: evaluate(worker["env"][key], context) for key in env}
-                    for version in (("v1", "v2") if name == "dogfood" else ("v2",)):
-                        if name == "dogfood":
-                            mode = ["--hosted-advisory"] if version == "v2" else []
-                            expected = ["driver", *mode, bases[i], heads[i], "/workspace/candidate",
-                                        "/runner-temp/warden-evidence", bases[i], heads[i], ""]
-                            wrong = shlex.join(["bash", "trusted/scripts/dogfood.sh", *mode]) + (
-                                ' "$HEAD_SHA" "$BASE_SHA" "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/warden-evidence"')
-                        else:
-                            operation = "plan" if name == "mutation-plan" else "run"
-                            expected = ["python3", "-I", "scripts/mutation_ci.py", operation, "diff", bases[i], "", ""]
-                            wrong = shlex.join(["python3", "-I", "scripts/mutation_ci.py", operation, "full"])
-                        for command in (worker["run"], yaml.safe_load(literal)["run"]):
-                            self.assertEqual(invocation(command, environment, version), expected)
-                        self.assertNotEqual(invocation(wrong, environment, version), expected)
+                refs = ({"trusted": bases, "candidate": heads} if name == "dogfood" else
+                        {".": [context["github.sha"] for context in contexts[:2]]})
                 checkouts = [step.get("with", {}) for step in steps
                              if step.get("uses", "").partition("@")[0] == "actions/checkout"]
                 self.assertCountEqual([inputs.get("path", ".") for inputs in checkouts], refs.keys())
-                self.assertEqual(worker["env"].keys() & {"BASE_SHA", "HEAD_SHA"}, env.keys())
                 fields = [(inputs, "ref", refs[inputs.get("path", ".")]) for inputs in checkouts]
-                fields.extend((worker["env"], key, expected) for key, expected in env.items())
+                if name != "mutation-shards":
+                    def is_worker(step):
+                        if "run" not in step:
+                            return False
+                        if name == "mutation-plan":
+                            matrix = job["outputs"]["matrix"].removeprefix("${{").removesuffix("}}").strip()
+                            return "id" in step and matrix == f"steps.{step['id']}.outputs.matrix"
+                        return any(word == "(sh)trusted/scripts/dogfood.sh"
+                                   for _, word, _ in COMMANDS.shell_calls(step["run"]))
+
+                    worker, = filter(is_worker, steps)
+                    literal = "run: |\n" + textwrap.indent(worker["run"].rstrip("\n") + "\n", "  ")
+                    with mock.patch.dict(worker, yaml.safe_load(literal)):
+                        self.assertEqual(list(filter(is_worker, steps)), [worker])
+                    env = {"BASE_SHA": bases, **({"HEAD_SHA": heads} if name == "dogfood" else {})}
+                    for i, context in enumerate(contexts[:2]):
+                        environment = {key: evaluate(worker["env"][key], context) for key in env}
+                        for version in (("v1", "v2") if name == "dogfood" else ("v2",)):
+                            if name == "dogfood":
+                                mode = ["--hosted-advisory"] if version == "v2" else []
+                                expected = ["driver", *mode, bases[i], heads[i], "/workspace/candidate",
+                                            "/runner-temp/warden-evidence", bases[i], heads[i], ""]
+                                wrong = shlex.join(["bash", "trusted/scripts/dogfood.sh", *mode]) + (
+                                    ' "$HEAD_SHA" "$BASE_SHA" "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/warden-evidence"')
+                            else:
+                                expected = ["python3", "-I", "scripts/mutation_ci.py", "plan", "diff", bases[i], "", ""]
+                                wrong = shlex.join(["python3", "-I", "scripts/mutation_ci.py", "plan", "full"])
+                            for command in (worker["run"], yaml.safe_load(literal)["run"]):
+                                self.assertEqual(invocation(command, environment, version), expected)
+                            self.assertNotEqual(invocation(wrong, environment, version), expected)
+                    self.assertEqual(worker["env"].keys() & {"BASE_SHA", "HEAD_SHA"}, env.keys())
+                    fields.extend((worker["env"], key, expected) for key, expected in env.items())
                 for mapping, key, expected in fields:
                     with self.subTest(field=key, path=mapping.get("path")):
                         def revisions(fields):
@@ -1067,8 +1082,6 @@ class GateImageCommands(unittest.TestCase):
             for helper in (
                 "def cleanup(): launch(['just'])",
                 "def inner(): launch(['just'])\ndef cleanup(): inner()",
-                "class Helper:\n    def finish(self): launch(['just'])\n    def cleanup(self): self.finish()\n"
-                "cleanup = Helper().cleanup",
             ):
                 with self.subTest(owner=owner, helper=helper):
                     source = (f"import subprocess\nlaunch = {owner}\n{helper}\ntry:\n    open('config')\n"
@@ -1083,6 +1096,44 @@ class GateImageCommands(unittest.TestCase):
                       "launch = print\ncleanup()")
         self.assertIsNone(CAPS.just_consumer({"run": local_call, "shell": "python"}, vars(COMMANDS), []))
 
+    def test_helper_callable_arguments_before_install(self):
+        helper = "from subprocess import run\ndef invoke(launch): launch(['just'])\n"
+        for call, expected in (("invoke(run)", "just"), ("invoke(launch=run)", "just"),
+                               ("invoke(print)", None), ("invoke(print); invoke(run)", "just")):
+            with self.subTest(call=call):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": helper + call},
+                                                    vars(COMMANDS), []), expected)
+        for call in ("invoke(unknown)", "invoke(*arguments)", "invoke(**options)",
+                     "class Cleanup:\n    def finish(self): invoke(run)\nCleanup().finish()"):
+            with self.subTest(call=call), self.assertRaisesRegex(ValueError, "Python callable"):
+                CAPS.just_consumer({"shell": "python", "run": helper + call}, vars(COMMANDS), [])
+
+    def test_fixed_executable_with_variable_arguments(self):
+        for program in ("git", "cmp"):
+            source = f"import subprocess\ndef git(*args): return subprocess.run(['{program}', *args])\ngit('status')"
+            for path, script in (("wrapper.py", source), ("embedded.sh", "python3 - <<'PY'\n" + source + "\nPY")):
+                with self.subTest(program=program, path=path):
+                    problems = self.problems({path: script})
+                    if program == "git":
+                        self.assertEqual(problems, [])
+                    else:
+                        self.assertEqual(len(problems), 1)
+                        self.assertIn("calls `cmp`", problems[0])
+            self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []))
+        for source, expected in (
+            ("subprocess.run(['bash', 'other.sh', *args])", None),
+            ("subprocess.run(['bash', 'scripts/tests/dogfood.sh', *args])", "scripts/tests/dogfood.sh"),
+            ("subprocess.run(['python3', '.claude/hooks/guard.py', *args, 'stop'])", ".claude/hooks/guard.py"),
+            ("subprocess.run(args, executable='git')", None),
+        ):
+            step = {"shell": "python", "run": "import subprocess; " + source}
+            with self.subTest(source=source):
+                self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), []), expected)
+        path = "scripts/worktree_diff.py"
+        with patch.object(COMMANDS, "DECLARED", COMMANDS.DECLARED - {"git"}):
+            problems = self.problems({path: (ROOT / path).read_text()})
+            self.assertTrue(any("calls `git`" in problem for problem in problems), problems)
+
     def test_starred_process_arguments_preserve_script_operands(self):
         for template in (
             "os.execvp('bash', [*ARGS])",
@@ -1091,6 +1142,8 @@ class GateImageCommands(unittest.TestCase):
             "os.execlp('bash', *ARGS)",
             "os.spawnlp(os.P_WAIT, 'bash', *ARGS)",
             "subprocess.run([*ARGS])",
+            "subprocess.run(['env', *ARGS])",
+            "subprocess.run(['ignored', *ARGS], executable='env')",
             "subprocess.run(*[ARGS])",
             "asyncio.run(asyncio.create_subprocess_exec(*ARGS))",
         ):
@@ -1138,14 +1191,16 @@ class GateImageCommands(unittest.TestCase):
             for assigned in (False, True):
                 for process in (True, False):
                     with self.subTest(value=value, assigned=assigned, process=process):
-                        owner = "subprocess" if process else "Local"
+                        owner = "subprocess" if process else "builtins"
                         expression = value
-                        source = ("import subprocess\nclass Local:\n    run = print\n"
+                        source = ("import subprocess, builtins\n"
                                   f"module = {owner}\ntarget = module.run\n")
                         if assigned:
                             source += "launch = " + expression + "\n"
                             expression = "launch"
                         source += f"({expression})(['just'])"
+                        if not process:
+                            source = source.replace(".run", ".print")
                         consumer = CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
                         self.assertEqual(consumer, "just" if process else None)
 

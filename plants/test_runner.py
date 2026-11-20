@@ -210,9 +210,9 @@ class Runner(unittest.TestCase):
                      diagnostic='named create breach'),
                 dict(id='ignored', guardrail='G-06', path='ignored.plant', create='x\n', command=command,
                      diagnostic='named create breach')])))
-            common = [sys.executable, '-I', str(root / 'run.py'), '--source', str(source),
+            common = [str(root / 'run.py'), '--source', str(source),
                       '--revision', revision]
-            result = subprocess.run([*common, '--output', str(root / 'ok')], capture_output=True, timeout=20)
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'ok')], capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((root / 'ok' / 'report.json').read_text())
             self.assertEqual([r['status'] for r in report['results']], ['CAUGHT', 'CAUGHT'])
@@ -223,7 +223,7 @@ class Runner(unittest.TestCase):
             unlink = '        path.unlink(missing_ok=True)\n'
             self.assertEqual(original.count(unlink), 1)
             program.write_text(original.replace(unlink, '        pass  # planted missing unlink\n'))
-            result = subprocess.run([*common, '--output', str(root / 'broken'), '--case', 'ignored'],
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'broken'), '--case', 'ignored'],
                                     capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 1, result.stderr)
             report = json.loads((root / 'broken' / 'report.json').read_text())
@@ -258,13 +258,13 @@ class Runner(unittest.TestCase):
                      command=[sys.executable, '-I', 'check.py', 'verdict.json'], diagnostic='named create breach'),
                 dict(id='leaves-target', guardrail='G-06', path='new.plant', create='x\n',
                      command=[sys.executable, '-I', 'check.py', 'target/out'], diagnostic='named create breach')])))
-            common = [sys.executable, '-I', str(root / 'run.py'), '--source', str(source), '--revision', revision]
-            result = subprocess.run([*common, '--output', str(root / 'target-ok'), '--case', 'leaves-target'],
+            common = [str(root / 'run.py'), '--source', str(source), '--revision', revision]
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'target-ok'), '--case', 'leaves-target'],
                                     capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads((root / 'target-ok' / 'report.json').read_text())
             self.assertEqual(report['results'][0]['status'], 'CAUGHT')
-            result = subprocess.run([*common, '--output', str(root / 'leak'), '--case', 'leaves-ignored'],
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'leak'), '--case', 'leaves-ignored'],
                                     capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 1, result.stderr)
             report = json.loads((root / 'leak' / 'report.json').read_text())
@@ -300,9 +300,9 @@ class Runner(unittest.TestCase):
                      diagnostic='named create breach'),
                 dict(id='next', guardrail='G-06', path='second.plant', create='x\n', command=command,
                      diagnostic='named create breach')])))
-            common = [sys.executable, '-I', str(program), '--source', str(source), '--revision', revision]
+            common = [str(program), '--source', str(source), '--revision', revision]
             # (1) Refused before any checkout: nothing runs, no output directory.
-            result = subprocess.run([*common, '--output', str(root / 'refused')], capture_output=True, timeout=20)
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'refused')], capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn(b'UTF-8 encodable', result.stderr)
             self.assertFalse((root / 'refused').exists())
@@ -311,7 +311,7 @@ class Runner(unittest.TestCase):
             check = "            text.encode('utf-8')\n"
             self.assertEqual(original.count(check), 1)
             program.write_text(original.replace(check, '            pass  # planted: no encoding check\n'))
-            result = subprocess.run([*common, '--output', str(root / 'planted')], capture_output=True, timeout=20)
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'planted')], capture_output=True, timeout=20)
             report = json.loads((root / 'planted' / 'report.json').read_text())
             rows = {r['id']: r for r in report['results']}
             self.assertEqual(rows['unwritable']['status'], 'ERROR_RECIPE', rows['unwritable'])
@@ -326,7 +326,7 @@ class Runner(unittest.TestCase):
             self.assertEqual(original.count(unlink), 1)
             program.write_text(original.replace(check, '            pass  # planted: no encoding check\n')
                                .replace(unlink, '        pass  # planted: no unlink\n'))
-            result = subprocess.run([*common, '--output', str(root / 'stuck')], capture_output=True, timeout=20)
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(root / 'stuck')], capture_output=True, timeout=20)
             report = json.loads((root / 'stuck' / 'report.json').read_text())
             self.assertEqual([r['status'] for r in report['results']], ['ERROR_RESTORE'])
             self.assertTrue(report['aborted_after_restore_error'])
@@ -368,11 +368,11 @@ class Runner(unittest.TestCase):
             backend.write_text('#!' + sys.executable + '\nimport subprocess,sys\n'
                 'sys.exit(subprocess.run(sys.argv[2:], cwd=sys.argv[1]).returncode)\n')
             backend.chmod(0o700)
-            common = [sys.executable, '-I', str(root / 'run.py'), '--source', str(source),
+            common = [str(root / 'run.py'), '--source', str(source),
                       '--revision', revision]
             for name, options in [('native', []), ('exec-runner', ['--exec-runner', str(backend)])]:
                 output = root / name
-                result = subprocess.run([*common, '--output', str(output), *options], capture_output=True, timeout=10)
+                result = subprocess.run([sys.executable, '-I', *common, '--output', str(output), *options], capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 report = json.loads((output / 'report.json').read_text())
                 self.assertEqual(report['execution_profile'], name)
@@ -380,7 +380,7 @@ class Runner(unittest.TestCase):
                 self.assertIn(literal, report['results'][0]['baseline']['argv'])
             # A cargo-only backend must refuse before any checkout or command, not run scripts natively.
             refused = root / 'refused'
-            result = subprocess.run([*common, '--output', str(refused), '--runner', str(backend)], capture_output=True)
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(refused), '--runner', str(backend)], capture_output=True)
             self.assertEqual(result.returncode, 2)
             self.assertFalse(refused.exists())
             self.assertEqual((source / 'fixture').read_text(), 'clean\n')
@@ -391,7 +391,7 @@ class Runner(unittest.TestCase):
             self.assertEqual(original.count('path.write_bytes(before)'), 1)
             program.write_text(original.replace('path.write_bytes(before)', 'pass  # planted missing restore'))
             output = root / 'broken-restore'
-            result = subprocess.run([*common, '--output', str(output), '--case', 'script'], capture_output=True, timeout=10)
+            result = subprocess.run([sys.executable, '-I', *common, '--output', str(output), '--case', 'script'], capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 1, result.stderr)
             report = json.loads((output / 'report.json').read_text())
             self.assertEqual(report['results'][0]['status'], 'ERROR_RESTORE')
@@ -453,11 +453,11 @@ class Runner(unittest.TestCase):
                 'bad="breach" in (Path(sys.argv[1])/"fixture").read_text()\n'
                 'print("named violation" if bad else "baseline")\nsys.exit(101 if bad else 0)\n')
             backend.chmod(0o700)
-            common = [sys.executable, '-I', str(program), '--source', str(source),
+            common = [str(program), '--source', str(source),
                 '--revision', revision, '--runner', str(backend)]
             for selection, expected, name in [([], 2, 'survey'), (['--case', 'probe'], 0, 'selected')]:
                 output = root / name
-                result = subprocess.run([*common, '--output', str(output), *selection],
+                result = subprocess.run([sys.executable, '-I', *common, '--output', str(output), *selection],
                     capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, expected, result.stderr)
                 report = json.loads((output / 'report.json').read_text())
