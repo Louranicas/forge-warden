@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Explicit golden regeneration/checking, separate from ordinary read-only tests."""
-import argparse
 from contextlib import contextmanager
 import hashlib
 import json
@@ -111,7 +110,10 @@ def normalize(stdout):
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
 
 
-def main():
+def parse_options():
+    import argparse
+    from pathlib import Path
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
@@ -120,6 +122,11 @@ def main():
     parser.add_argument("--write", action="store_true", help="operator-only explicit regeneration")
     parser.add_argument("--backup-dir", type=Path, help="existing private outside-root backup directory")
     args = parser.parse_args()
+    return parser, args, args.binary.absolute(), args.receipt, args.subject
+
+
+def main():
+    parser, args, binary, receipt_path, subject = parse_options()
     if args.write and ("CI" in os.environ or "GITHUB_ACTIONS" in os.environ):
         parser.error("golden regeneration is refused in CI")
     if args.write:
@@ -138,8 +145,7 @@ def main():
     destination = ROOT / golden
     if destination.resolve() != destination.absolute() or not destination.is_file():
         parser.error("golden destination must be an existing regular file without symlinks")
-    binary = args.binary.absolute()
-    with verified_fixture(binary, args.receipt, args.subject) as (fd, named, home, receipt):
+    with verified_fixture(binary, receipt_path, subject) as (fd, named, home, receipt):
         executable = f"/proc/self/fd/{fd}"
         env = {"PATH": os.defpath, "HOME": home, "LC_ALL": "C", "LANG": "C", "FORGE_WARDEN_TEST_POLICY_ROOT": home}
         command = [executable, "check", "--policy", "examples/starter.warden.toml",
@@ -172,10 +178,9 @@ def main():
                                      timeout=30, check=False)
                 expected = 4
             else:
-                over_budget = [executable, "check", "--policy", "examples/starter.warden.toml",
-                               "--patch", "fixtures/demo.patch", "--advisory", "--rank", "-",
-                               "--today", "2026-11-05"]
-                out = subprocess.run(over_budget, cwd=ROOT, env=env, pass_fds=(fd,),
+                command[-4] = "-"
+                command.pop()
+                out = subprocess.run(command, cwd=ROOT, env=env, pass_fds=(fd,),
                                      input=b" " * (67108864 + 1), capture_output=True,
                                      timeout=30, check=False)
                 expected = 4

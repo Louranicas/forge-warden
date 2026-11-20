@@ -283,6 +283,20 @@ class CompiledSources(unittest.TestCase):
 
 
 class DependencyPrecondition(unittest.TestCase):
+    def test_cargo_search_preserves_relative_path_components(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('bin', 'toolchain'):
+                (root / name).mkdir()
+                tool = root / name / 'cargo'
+                tool.write_text(f'#!/bin/sh\necho {name} >&2\nexit 1\n')
+                tool.chmod(0o700)
+            result = subprocess.run([sys.executable, '-I', str(Path(__file__).resolve()), 'AgreementFixtures'],
+                                    cwd=root, env=dict(os.environ, PATH='missing/../bin:toolchain'),
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Offline preflight failed:\ntoolchain', result.stderr)
+
     def test_missing_cargo_refuses_before_agreement_fixtures(self):
         with tempfile.TemporaryDirectory(prefix="guardrails-empty-path-") as empty_path:
             result = subprocess.run(
@@ -313,9 +327,10 @@ class AgreementFixtures(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if shutil.which("cargo") is None:
+        search_path = os.pathsep.join(os.path.join(os.getcwd(), entry) for entry in os.get_exec_path())
+        if shutil.which("cargo", path=search_path) is None:
             raise RuntimeError("GUARDRAILS_TOOL_UNAVAILABLE: install Cargo and set PATH before running source-agreement fixtures")
-        cls.cargo_env = dict(os.environ, PATH=os.pathsep.join(os.path.abspath(entry) for entry in os.get_exec_path()))
+        cls.cargo_env = dict(os.environ, PATH=search_path)
         fetched = subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT, env=cls.cargo_env,
                                  capture_output=True, text=True)
         if fetched.returncode:

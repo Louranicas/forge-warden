@@ -62,6 +62,7 @@ would run as the real command.
 
 usage: python3 -I scripts/script_commands.py     (exit 1 names each undeclared call)
 """
+import _imp
 import ast
 import builtins
 import hashlib
@@ -1011,6 +1012,10 @@ class FixtureDescriptor(ast.expr):
         self.paths = paths
 
 
+class ChangedTail(ast.Starred):
+    pass
+
+
 class FixtureExecutable(ast.expr):
     def __init__(self, descriptor, named=False):
         self.descriptor = descriptor
@@ -1028,13 +1033,14 @@ class LookupExecutable(ast.expr):
 
 class CapturedArgument(ast.expr):
     def __init__(self, owners):
-        self.owners = owners
+        self.owners = frozenset(owners)
 
 
 BoundCall = namedtuple('BoundCall', ('target', 'receiver', 'args', 'keywords'), defaults=(None, (), ()))
 
 
 UNKNOWN_CALLABLE = object()
+UNKNOWN_PROVIDER = object()
 MISSING_FIELD = object()
 MISSING_NAME = object()
 EXCEPTION = object()
@@ -1051,8 +1057,11 @@ GENERATOR_DECORATORS = ('contextlib.contextmanager', 'contextlib.asynccontextman
 GeneratorManager = namedtuple('GeneratorManager', 'helper call receiver')
 PATH_CONSTRUCTORS = {'pathlib.Path', 'pathlib.PosixPath', 'pathlib.WindowsPath',
                      'pathlib.PurePath', 'pathlib.PurePosixPath', 'pathlib.PureWindowsPath'}
-PROVIDER_FIELDS = {'sys.executable', 'shutil.which', 'sys.modules', 'tempfile.TemporaryDirectory'} | PATH_CONSTRUCTORS
+PROVIDER_FIELDS = {'sys.executable', 'shutil.which', 'sys.modules', 'tempfile.TemporaryDirectory',
+                   'unittest.mock.patch.TEST_PREFIX'} | PATH_CONSTRUCTORS
 PROVIDER_MODULES = {name.partition('.')[0] for name in PROVIDER_FIELDS}
+FIXTURE_OPTIONS_SHA256 = 'ea05fe7e2ebd01d1a8c8c46c854bc8f250e8bbf08189e0b83a39d7b8be04acf9'
+FixtureInput = namedtuple('FixtureInput', 'source option')
 FIXTURE_VERIFIER_SHA256 = '738ecf280222d99f9d5042d41f37129fc7cb924ca2481fafe605f9c93918447a'
 
 
@@ -1061,8 +1070,33 @@ class PatchedProvider:
         self.changes = changes
 
 
+class LocalModule(namedtuple('LocalModule', 'path')):
+    def member(self, name, imports, state):
+        stored = state.get((self, name), {MISSING_FIELD})
+        values = stored - {MISSING_FIELD}
+        if MISSING_FIELD in stored:
+            values = values | imports.loaded[self.path].get(name, set())
+        return values
+
+
 ImportedMember = namedtuple('ImportedMember', 'module name source')
-SequenceBinding = namedtuple('SequenceBinding', 'origin elements sites revised', defaults=(False,))
+SequenceState = namedtuple('SequenceState', 'elements head revised', defaults=(False,))
+
+
+class SequenceBinding:
+    def __init__(self, origin, items):
+        self.origin = origin
+        self.items = items
+        exact = all(not isinstance(item, ast.Starred) for item in items)
+        elements = tuple(item.owners for item in items) if exact else None
+        head = items[0].owners if items and not isinstance(items[0], ast.Starred) else None
+        self.initial = SequenceState(elements, head)
+
+    def states(self, names):
+        values = names.get((self, 'contents'), {self.initial})
+        return {self.initial if value is MISSING_FIELD else value for value in values}
+
+
 IMPORT_SOURCE = ContextVar('script_import_source', default=None)
 
 
@@ -1075,19 +1109,22 @@ class SuiteImports:
         self.class_paths = {}
         self.fixture_verifier = None
         self.fixture_manager = None
+        self.fixture_options = None
 
     def register_fixture(self, body, filename, source):
         if filename == 'scripts/golden_output.py':
             definitions = [node for node in body if isinstance(node, ast.FunctionDef)]
-            for name, field in (('verified_fixture', 'fixture_manager'), ('verify_artifact', 'fixture_verifier')):
+            for name, field in (('verified_fixture', 'fixture_manager'), ('verify_artifact', 'fixture_verifier'),
+                                ('parse_options', 'fixture_options')):
                 matches = [node for node in definitions if node.name == name]
                 if len(matches) != 1:
                     continue
                 definition, = matches
-                if field == 'fixture_verifier':
+                if field != 'fixture_manager':
                     lines = (source.encode() if isinstance(source, str) else source).splitlines(keepends=True)
                     operation = b''.join(lines[definition.lineno - 1:definition.end_lineno])
-                    if definition.decorator_list or hashlib.sha256(operation).hexdigest() != FIXTURE_VERIFIER_SHA256:
+                    digest = FIXTURE_VERIFIER_SHA256 if field == 'fixture_verifier' else FIXTURE_OPTIONS_SHA256
+                    if definition.decorator_list or hashlib.sha256(operation).hexdigest() != digest:
                         raise Unsupported('reviewed fixture verification operation changed')
                 setattr(self, field, definition)
 
@@ -1116,7 +1153,15 @@ class SuiteImports:
                     self.class_paths[cls] = WorkflowLexer.workspace / relative
         return namespace
 
-    def module(self, module, source, ordering, targets, names):
+    def has_local_root(self, module):
+        root = module.partition('.')[0]
+        stem = self.directory / root
+        if not root or _imp.is_builtin(root) or _imp.is_frozen(root):
+            return False
+        return (stem.with_suffix('.py').is_file() or (stem / '__init__.py').is_file() or
+                root not in sys.stdlib_module_names and stem.is_dir())
+
+    def module(self, module, source, ordering, targets, names, *, bind_root=False):
         absolute = module.lstrip('.')
         levels = len(module) - len(absolute)
         parent = self.directory
@@ -1132,9 +1177,11 @@ class SuiteImports:
             raise Unsupported('cannot resolve unittest import inside the checkout')
         if self.files is None:
             self.files = set(tracked(self.root))
+        chain = []
         for index, part in enumerate(parts[:-1], 1):
             parent = parent / part
             initializer = parent / '__init__.py'
+            chain.append(initializer)
             if initializer not in self.stack:
                 yield from self.load(initializer, '.'.join(parts[:index]), ordering, targets, names)
         paths = [stem / '__init__.py']
@@ -1143,13 +1190,25 @@ class SuiteImports:
         candidates = [path for path in paths if path.relative_to(self.root).as_posix() in self.files]
         if len(candidates) != 1:
             raise Unsupported('cannot resolve unittest import ' + module)
-        return (yield from self.load(candidates[0], module, ordering, targets, names))
+        leaf, = candidates
+        yield from self.load(leaf, module, ordering, targets, names)
+        chain.append(leaf)
+        for package, child, part in zip(chain, chain[1:], parts[1:]):
+            if package in self.loaded:
+                self.loaded[package][part] = frozenset({LocalModule(child)})
+        return LocalModule(chain[0] if bind_root else leaf)
 
     def resolve(self, symbol, ordering, targets, names, chain=()):
         if symbol in chain or len(chain) >= 12:
             raise Unsupported('cannot resolve recursive unittest re-export ' + symbol.name)
-        namespace = yield from self.module(symbol.module, symbol.source, ordering, targets, names)
-        values = namespace.get(symbol.name)
+        reference = yield from self.module(symbol.module, symbol.source, ordering, targets, names)
+        values = reference.member(symbol.name, self, names)
+        if not values and reference.path.name == '__init__.py':
+            child = reference.path.parent / symbol.name
+            if child.with_suffix('.py').is_file() or (child / '__init__.py').is_file():
+                parent = symbol.module if symbol.module.endswith('.') else symbol.module + '.'
+                submodule = yield from self.module(parent + symbol.name, symbol.source, ordering, targets, names)
+                return {submodule}
         if not values or any(value in (None, MISSING_NAME, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
                              or isinstance(value, BoundCall) for value in values):
             raise Unsupported('cannot resolve imported unittest binding ' + symbol.name)
@@ -1289,10 +1348,16 @@ def loop_values(values, state, instances):
             return ast.Constant, type(value.value), value.value
         if isinstance(value, CapturedArgument):
             return CapturedArgument, frozenset(shape(item, path) for item in value.owners)
-        if isinstance(value, SequenceBinding) and value.elements is not None:
-            return value.origin, tuple(frozenset(shape(item, path) for item in choices) for choices in value.elements)
+        if isinstance(value, SequenceBinding):
+            if value in path:
+                return value.origin
+            return value.origin, frozenset(shape(item, path | {value}) for item in value.states(state))
+        if isinstance(value, SequenceState):
+            items = value.elements
+            return (None if items is None else tuple(frozenset(shape(item, path) for item in choices) for choices in items),
+                    value.revised)
         if isinstance(value, (ast.Tuple, ast.List)):
-            return type(value), tuple(shape(item, path) for item in value.elts), getattr(value, '_mutated', False)
+            return type(value), tuple(shape(item, path) for item in value.elts)
         if value not in instances or not isinstance(value, PythonInstance) or value in path:
             return value
         fields = frozenset((key[1], frozenset(shape(item, path | {value}) for item in items))
@@ -1338,10 +1403,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not (ordering or strict or receiver is not None):
                     return
                 literal = argument(value, names)
-                if (isinstance(literal, ast.Constant) and isinstance(literal.value, str) or
-                        isinstance(literal, (ast.Tuple, ast.List)) and len(function.body) == 1 and
-                        isinstance(function.body[0], (ast.Return, ast.Expr)) and
-                        all(isinstance(item, ast.Constant) for item in literal.elts)):
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
                     local[parameter.arg] = frozenset({literal})
 
             for parameter, value in zip(positional, expanded_items(call.args)):
@@ -1355,8 +1417,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if suspended:
             local.update(suspended)
         elif function is imports.fixture_manager:
-            for parameter in positional:
-                local[parameter.arg] = frozenset({object()})
+            inputs = [next(iter(local[arg.arg])) for arg in positional if len(local[arg.arg]) == 1]
+            if (len(inputs) != 3 or not all(isinstance(value, FixtureInput) for value in inputs)
+                    or [value.option for value in inputs] != ['binary', 'receipt', 'subject']
+                    or len({value.source for value in inputs}) != 1):
+                raise Unsupported('cannot resolve verified fixture inputs')
             local[PRIVATE_FIXTURE_HOME] = frozenset({object()})
         helper.called = True
         if function in active:
@@ -1381,9 +1446,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(receiver, PythonInstance) and receiver.owner.base == 'unittest.TestCase' and function.name == '__init__':
                 initializers = [cls.members['__init__'] for cls in receiver.owner.lineage if '__init__' in cls.members]
                 base_init = bool(initializers and initializers[-1] == {helper})
-            returns_sequence = (function.body and isinstance(function.body[-1], ast.Return)
-                                and isinstance(function.body[-1].value, (ast.List, ast.Tuple)))
-            protocol_values = set() if protocol or returns_sequence else None
+            returns_value = any(isinstance(child, ast.Return) for statement in function.body for child in ast.walk(statement))
+            protocol_values = set() if protocol or returns_value else None
             returned = yield from python_callees(function.body if phase is None else phase, local, ordering, targets, parents, active,
                                                 require_command=strict, reachable=reachable and call is not None,
                                                 exceptional_fields=exceptions, testcase_super_init=base_init, allocations=allocations,
@@ -1408,6 +1472,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             del active[function]
         if helper.decorator is UNKNOWN_CALLABLE or not protocol and not isinstance(function, ast.FunctionDef):
             return {UNKNOWN_CALLABLE}
+        if not protocol:
+            return {BoundCall(value) if isinstance(value, str) else value for value in returned}
         return returned
 
     def fields(names):
@@ -1473,7 +1539,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 else:
                     return frozenset({None})
             return frozenset({ast.Constant(''.join(parts))})
-        if isinstance(node, ast.Call):
+        if isinstance(node, (ast.Call, ast.List, ast.Tuple)):
             return results.get(node, frozenset({UNKNOWN_CALLABLE}))
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and qualified(node.left, names) == {FILESYSTEM_PATH}:
             parts = qualified(node.right, names)
@@ -1495,14 +1561,20 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for owner in qualified(node.value, names):
                 if isinstance(owner, (PythonClass, PythonInstance)):
                     values.update(member(owner, node.attr, names))
+                elif owner is UNKNOWN_PROVIDER:
+                    values.add(UNKNOWN_PROVIDER)
                 elif isinstance(owner, PatchedProvider) and node.attr in ('start', 'stop'):
                     values.add(BoundCall(node.attr, owner))
-                elif isinstance(owner, (SequenceBinding, ast.List)) and node.attr in LIST_MUTATIONS:
+                elif isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) and node.attr in LIST_MUTATIONS:
                     values.add(BoundCall('builtins.list.' + node.attr, owner))
                 elif owner == 'unittest.TestCase.super()' and node.attr == '__init__':
                     values.add('unittest.TestCase.__init__')
                 elif owner in ('builtins.super()', 'unittest.TestCase.super()'):
                     values.add(BoundCall(UNKNOWN_CALLABLE))
+                elif isinstance(owner, LocalModule):
+                    members = owner.member(node.attr, imports, names) or {UNKNOWN_CALLABLE}
+                    values.update(BoundCall(UNKNOWN_CALLABLE) if member in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
+                                  else member for member in members)
                 elif isinstance(owner, ImportedMember):
                     values.add(ImportedMember(owner.module + '.' + owner.name, node.attr, owner.source))
                 elif isinstance(owner, str) and owner.partition('.')[0] not in sys.stdlib_module_names:
@@ -1519,7 +1591,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     for field in provider_fields(container, key, names, dictionary=True):
                         values = names.get((field, 'provider'), frozenset({field}))
                         if container == {'sys.modules'} and values != {key.value}:
-                            raise Unsupported('cannot resolve Python provider module ' + key.value)
+                            return frozenset({UNKNOWN_PROVIDER})
                         return values
         if isinstance(node, ast.BoolOp):
             return frozenset().union(*(qualified(value, names) for value in node.values))
@@ -1561,7 +1633,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             owners = qualified(value, names)
             if len(owners) == 1:
                 owner, = owners
-                if isinstance(owner, (ast.Constant, ast.Tuple, ast.List)) and not getattr(owner, '_mutated', False):
+                if isinstance(owner, (ast.Constant, ast.Tuple, ast.List)):
                     return owner
         if isinstance(value, (ast.List, ast.Tuple)):
             items = [argument(item, names) for item in value.elts]
@@ -1569,20 +1641,24 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return type(value)(elts=items, ctx=ast.Load())
         return value
 
-    def process_argument(value, names):
+    def process_argument(value, names, seen=frozenset()):
         owners = qualified(value, names)
+        if isinstance(value, (ast.List, ast.Tuple)) and all(isinstance(item, ast.Constant) for item in value.elts):
+            return value
         if any(isinstance(owner, SequenceBinding) for owner in owners):
             choices = []
             for owner in owners:
-                if not isinstance(owner, SequenceBinding) or owner.elements is None:
+                if not isinstance(owner, SequenceBinding) or owner in seen:
                     return CapturedArgument({UNKNOWN_CALLABLE})
-                if (getattr(owner.origin, '_mutated', False) and
-                        not getattr(owner.origin, '_append_only', False)):
-                    return CapturedArgument({UNKNOWN_CALLABLE})
-                items = [process_argument(CapturedArgument(values), names) for values in owner.elements]
-                if getattr(owner.origin, '_mutated', False):
-                    items.append(ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE})))
-                choices.append(type(owner.origin)(elts=items, ctx=ast.Load()))
+                for state in owner.states(names):
+                    if state.revised:
+                        if not state.head:
+                            return CapturedArgument({UNKNOWN_CALLABLE})
+                        items = [CapturedArgument(state.head), ChangedTail(value=CapturedArgument({UNKNOWN_CALLABLE}))]
+                    else:
+                        items = owner.items
+                    items = [process_argument(item, names, seen | {owner}) for item in items]
+                    choices.append(type(owner.origin)(elts=items, ctx=ast.Load()))
             result = choices.pop()
             for choice in choices:
                 result = ast.IfExp(test=CapturedArgument({UNKNOWN_CALLABLE}), body=choice, orelse=result)
@@ -1598,16 +1674,16 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if names.get((descriptor, 'verified')) != {True}:
                     raise Unsupported('cannot resolve closed fixture executable')
                 return owner
-            if isinstance(owner, (ast.List, ast.Tuple)) and not getattr(owner, '_mutated', False):
-                return type(owner)(elts=[process_argument(item, names) for item in owner.elts], ctx=ast.Load())
+            if isinstance(owner, (ast.List, ast.Tuple)):
+                return type(owner)(elts=[process_argument(item, names, seen) for item in owner.elts], ctx=ast.Load())
             if isinstance(value, (CapturedArgument, ast.JoinedStr)) and isinstance(owner, ast.Constant):
                 return owner
         if isinstance(value, ast.Starred):
-            item = process_argument(value.value, names)
+            item = process_argument(value.value, names, seen)
             return value if item is value.value else ast.Starred(value=item, ctx=ast.Load())
         literal = argument(value, names)
         if isinstance(literal, (ast.List, ast.Tuple)):
-            items = [process_argument(item, names) for item in literal.elts]
+            items = [process_argument(item, names, seen) for item in literal.elts]
             if items != literal.elts:
                 return type(literal)(elts=items, ctx=ast.Load())
         return literal
@@ -1615,6 +1691,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def captured(value, names):
         if isinstance(value, CapturedArgument):
             return value
+        owners = qualified(value, names)
+        if any(isinstance(owner, SequenceBinding) for owner in owners):
+            return CapturedArgument(owners)
         literal = argument(value, names)
         if isinstance(literal, ast.Constant):
             return literal
@@ -1624,40 +1703,35 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return ast.Starred(value=captured(literal.value, names), ctx=ast.Load())
         return CapturedArgument(qualified(value, names) or {UNKNOWN_CALLABLE})
 
-    def element_values(item, names):
-        if isinstance(item, ast.IfExp):
-            return element_values(item.body, names) | element_values(item.orelse, names)
-        if isinstance(item, (ast.Tuple, ast.List)):
-            return {sequence_binding(item, names)}
-        return qualified(item, names)
-
-    def sequence_binding(node, names):
-        sites = {node}
-        elements = []
-        for item in expanded_items(node.elts):
-            if isinstance(item, ast.Starred):
-                return SequenceBinding(node, None, frozenset(sites))
-            owners = element_values(item, names)
-            nested = [owner.sites for owner in owners if isinstance(owner, SequenceBinding)]
-            if any(node in origins for origins in nested):
-                owners = {UNKNOWN_CALLABLE}
-            else:
-                sites.update(*nested)
-            elements.append(frozenset(owners or {UNKNOWN_CALLABLE}))
-        return SequenceBinding(node, tuple(elements), frozenset(sites))
-
     def sequence_value(node, names):
         owners = qualified(node, names)
         if len(owners) == 1:
             owner, = owners
-            if isinstance(owner, SequenceBinding) and owner.elements is not None and not getattr(owner.origin, '_mutated', False):
-                return type(owner.origin)(elts=[CapturedArgument(values) for values in owner.elements])
-            if isinstance(owner, (ast.Tuple, ast.List)) and not getattr(owner, '_mutated', False):
+            if isinstance(owner, SequenceBinding):
+                states = owner.states(names)
+                if len(states) == 1:
+                    state, = states
+                    if state.elements is not None:
+                        return type(owner.origin)(elts=[CapturedArgument(items) for items in state.elements])
+            if isinstance(owner, (ast.Tuple, ast.List)):
                 return owner
         return node
 
     def bind_target(target, value, names):
         if isinstance(target, (ast.Tuple, ast.List)):
+            owners = qualified(value, names)
+            if len(owners) > 1 or any(isinstance(owner, SequenceBinding) and len(owner.states(names)) > 1 for owner in owners):
+                outcomes = []
+                for owner in owners:
+                    for state in owner.states(names) if isinstance(owner, SequenceBinding) else (None,):
+                        branch = names.copy()
+                        if state is not None:
+                            branch[(owner, 'contents')] = frozenset({state})
+                        if bind_target(target, CapturedArgument({owner}), branch) is not False:
+                            outcomes.append(branch)
+                if outcomes:
+                    names.update(join(outcomes, paths=True))
+                return bool(outcomes)
             value = sequence_value(value, names)
             items = py_items(value)
             if items is None:
@@ -1665,11 +1739,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             elif any(isinstance(t, ast.Starred) for t in target.elts):
                 index = next(i for i, t in enumerate(target.elts) if isinstance(t, ast.Starred))
                 end = len(items) - (len(target.elts) - index - 1)
-                items = [*items[:index], ast.List(elts=items[index:end]), *items[end:]]
+                rest = ast.List(elts=items[index:end])
+                binding = SequenceBinding(rest, tuple(CapturedArgument(qualified(item, names)) for item in rest.elts))
+                allocations.append(binding)
+                items = [*items[:index], CapturedArgument({binding}), *items[end:]]
             if len(items) != len(target.elts):
-                raise Unsupported('cannot resolve unpacked Python binding')
+                return False
             for part, item in zip(target.elts, items):
-                bind_target(part.value if isinstance(part, ast.Starred) else part, item, names)
+                if bind_target(part.value if isinstance(part, ast.Starred) else part, item, names) is False:
+                    return False
             return
         owners = {value} if isinstance(value, (ast.List, ast.Tuple)) else qualified(value, names)
         values = frozenset(BoundCall(UNKNOWN_CALLABLE) if owner in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT, MISSING_NAME)
@@ -1708,54 +1786,106 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return True
 
     def list_change(owner, method, args, names):
-        origin = owner.origin if isinstance(owner, SequenceBinding) else owner
-        if not isinstance(origin, ast.List):
+        if not isinstance(owner, SequenceBinding) or not isinstance(owner.origin, ast.List):
             return
-        def replace(new):
-            for key, values in list(names.items()):
-                if owner in values:
-                    names[key] = frozenset(new if value is owner else value for value in values)
+        if len(args) < 2 and method in ('insert', '__setitem__'):
+            raise Unsupported('cannot resolve list mutation arguments')
 
-        # `clear()` changes the exact sequence rather than merely widening it.  Preserve
-        # that path-local exact state through later mutations.  Other mutations retain
-        # the established conservative widening below, which also keeps accumulator
-        # loops analyzable when their values are not statically bounded.
-        if (isinstance(owner, SequenceBinding) and owner.elements is not None and
-                (owner.revised or method == 'clear')):
-            elements = list(owner.elements)
-            if method == 'clear':
-                replace(SequenceBinding(owner.origin, (), owner.sites, True))
-                return
-            if method == 'append' and args:
-                elements.append(frozenset(element_values(args[-1], names) or {UNKNOWN_CALLABLE}))
-                replace(SequenceBinding(owner.origin, tuple(elements), owner.sites, True))
-                return
-            if method == 'extend' and args:
-                appended = py_items(sequence_value(args[-1], names))
-                if appended is not None:
-                    elements.extend(frozenset(element_values(item, names) or {UNKNOWN_CALLABLE}) for item in appended)
-                    replace(SequenceBinding(owner.origin, tuple(elements), owner.sites, True))
-                    return
-            if method == '__setitem__' and len(args) >= 2 and isinstance(args[0], ast.Constant) and isinstance(args[0].value, int):
-                index = args[0].value
-                if -len(elements) <= index < len(elements):
-                    elements[index] = frozenset(element_values(args[-1], names) or {UNKNOWN_CALLABLE})
-                    replace(SequenceBinding(owner.origin, tuple(elements), owner.sites, True))
-                    return
-            replace(SequenceBinding(owner.origin, None, owner.sites, True))
-            return
-        added = set()
-        if args and method in ('insert', 'append', '__setitem__'):
-            added.update(element_values(args[-1], names))
-        if args and (method in ('extend', '__iadd__') or
-                     method == '__setitem__' and isinstance(args[0], ast.Slice)):
-            items = py_items(sequence_value(args[-1], names))
-            added = {UNKNOWN_CALLABLE} if items is None else set().union(*(element_values(item, names) for item in items))
-        origin._append_only = getattr(origin, '_append_only', True) and method in ('append', 'extend', '__iadd__')
-        origin._mutated = True
-        origin._added = getattr(origin, '_added', frozenset()) | added
+        def literal(node):
+            try:
+                return ast.literal_eval(argument(node, names))
+            except (ValueError, TypeError, SyntaxError):
+                return UNKNOWN_CALLABLE
 
-    def carries_descriptor(value, names, live):
+        index = literal(args[0]) if args else -1
+        if args and isinstance(args[0], ast.Slice):
+            bounds = [literal(node) if node else None for node in (args[0].lower, args[0].upper, args[0].step)]
+            index = slice(*bounds) if all(value is None or type(value) is int for value in bounds) else None
+        if type(index) not in (int, slice):
+            index = None
+        states = set()
+        returned = set()
+        for state in owner.states(names):
+            elements = list(state.elements) if state.elements is not None else None
+            head = state.head
+            after_head = (isinstance(index, int) and index > 0 or isinstance(index, slice)
+                          and index.start is not None and index.start > 0 and index.step in (None, 1))
+            preserves_head = (method in ('append', 'extend', '__iadd__') or
+                              after_head and method in ('__setitem__', '__delitem__', 'insert', 'pop') or
+                              method == '__imul__' and isinstance(index, int) and index > 0)
+            try:
+                if method == 'clear' or method == '__imul__' and index == 0:
+                    elements = []
+                elif elements is None:
+                    pass
+                elif method == 'append' and args:
+                    elements.append(qualified(args[0], names))
+                elif method in ('extend', '__iadd__') or method == '__setitem__' and isinstance(index, slice):
+                    more = literal_elements(sequence_value(args[-1], names)) if args else None
+                    if more is None:
+                        if isinstance(index, slice):
+                            selected = range(*index.indices(len(elements)))
+                            preserves_head = 0 not in selected and selected.start != 0
+                        elements = None
+                    else:
+                        elements[index if method == '__setitem__' else slice(len(elements), None)] = [
+                            qualified(item, names) for item in more]
+                elif method == '__setitem__' and isinstance(index, int):
+                    elements[index] = qualified(args[1], names)
+                elif method == 'insert' and isinstance(index, int):
+                    elements.insert(index, qualified(args[1], names))
+                elif method == '__delitem__' and index is not None:
+                    del elements[index]
+                elif method == 'pop' and isinstance(index, int):
+                    returned.update(elements.pop(index))
+                elif method == '__imul__' and isinstance(index, int) and len(elements) * index <= 1024:
+                    elements *= max(0, index)
+                elif method == 'reverse':
+                    elements.reverse()
+                elif method == 'remove' and args:
+                    value = literal(args[0])
+                    for position, choices in enumerate(elements):
+                        if value is UNKNOWN_CALLABLE or not all(isinstance(item, ast.Constant) for item in choices):
+                            elements = None
+                            break
+                        matches = {item.value == value for item in choices}
+                        if matches == {True}:
+                            del elements[position]
+                            break
+                        if True in matches:
+                            elements = None
+                            break
+                        preserves_head = True
+                else:
+                    elements = None
+            except (IndexError, ValueError, OverflowError):
+                elements, head = None, None
+            if method == 'pop' and elements is None:
+                returned.add(BoundCall(UNKNOWN_CALLABLE))
+            if elements is None:
+                states.add(SequenceState(None, head if preserves_head else None, True))
+            elif tuple(elements) == state.elements:
+                states.add(state)
+            else:
+                states.add(SequenceState(tuple(elements), head if elements and elements[0] == head else None, True))
+        names[(owner, 'contents')] = frozenset(states)
+        if method in ('__iadd__', '__imul__'):
+            return {owner}
+        return returned or {ast.Constant(None)}
+
+    def mutate(owners, method, args, names):
+        outcomes = []
+        returned = set()
+        for owner in owners:
+            branch = names.copy() if len(owners) > 1 else names
+            returned.update(list_change(owner, method, args, branch) or {UNKNOWN_CALLABLE})
+            if branch is not names:
+                outcomes.append(branch)
+        if outcomes:
+            names.update(join(outcomes))
+        return returned
+
+    def carries_descriptor(value, names, live, seen=frozenset()):
         if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
             return any(carries_descriptor(item, names, live) for item in value.elts)
         if isinstance(value, ast.Dict):
@@ -1765,8 +1895,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         owners = qualified(value, names)
         if live.intersection(owners):
             return True
-        return any(carries_descriptor(CapturedArgument(items), names, live)
-                   for owner in owners if isinstance(owner, SequenceBinding) for items in owner.elements or ())
+        return any(carries_descriptor(CapturedArgument(items), names, live, seen | {owner})
+                   for owner in owners if isinstance(owner, SequenceBinding) and owner not in seen
+                   for state in owner.states(names) for items in state.elements or ())
 
     def disjoint_range(first, limit, names, live):
 
@@ -1823,8 +1954,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             known = names.get((field, 'provider'), ())
             if (not names.get(('sys.modules', 'provider'), frozenset()) <= {'sys.modules', MISSING_FIELD} or
                     any(value not in (module, field, MISSING_FIELD) for value in known)):
-                raise Unsupported('cannot resolve replaced Python provider module ' + module)
+                return False
             names[(field, 'provider')] = frozenset({module})
+        return True
 
     def mapping_writes(mapping, keywords, attr, names):
         if any(kw.arg in (None, attr) for kw in keywords):
@@ -1845,7 +1977,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if enter:
                 if previous:
                     raise Unsupported('cannot resolve repeatedly started executable provider patch')
-                state[saved] = state.get(field, frozenset({name}))
+                default = ast.Constant('test') if name == 'unittest.mock.patch.TEST_PREFIX' else name
+                state[saved] = state.get(field, frozenset({default}))
                 if changes:
                     state[field] = frozenset({UNKNOWN_CALLABLE})
             elif previous:
@@ -1865,14 +1998,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(receiver, PatchedProvider) and target in ('start', 'stop'):
             patch_provider(receiver, names, target == 'start', saved_as='started')
             return {UNKNOWN_CALLABLE}
+        if target is UNKNOWN_PROVIDER:
+            return {UNKNOWN_PROVIDER}
         if isinstance(target, PatchedProvider):
             raise Unsupported('cannot resolve executable provider patch application')
         if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
             if receiver is not None:
-                list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
-            elif call.args:
-                for owner in qualified(call.args[0], names):
-                    list_change(owner, target.rsplit('.', 1)[1], call.args[1:], names)
+                return list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
+            if call.args:
+                return mutate(qualified(call.args[0], names), target.rsplit('.', 1)[1], call.args[1:], names)
             return {UNKNOWN_CALLABLE}
         if isinstance(target, PythonHelper):
             if target.decorator in GENERATOR_DECORATORS:
@@ -1882,6 +2016,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {GeneratorManager(target, frozen, receiver)}
             returned = yield from read_helper(target, names, call, receiver, strict=wrapped or require_command,
                                               interrupted=interrupted)
+            if target.node is imports.fixture_options:
+                invocation = object()
+                items = [CapturedArgument({UNKNOWN_CALLABLE}), CapturedArgument({UNKNOWN_CALLABLE})]
+                items.extend(CapturedArgument({FixtureInput(invocation, key)}) for key in ('binary', 'receipt', 'subject'))
+                return {ast.Tuple(elts=items)}
             if target.node is imports.fixture_verifier and imports.fixture_manager in active:
                 if len(call.args) != 5 or call.keywords or not isinstance(call.args[1], ast.Name):
                     raise Unsupported('cannot resolve verified fixture arguments')
@@ -2003,7 +2142,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {LookupExecutable('just')}
         if target == 'builtins.vars' and len(call.args) == 1:
             modules = qualified(call.args[0], names)
-            if modules and all(module in PROVIDER_MODULES for module in modules):
+            if modules and all(module in PROVIDER_MODULES or module == 'unittest.mock.patch' for module in modules):
                 return {module + '.__dict__' for module in modules}
         patching = target in ('unittest.mock.patch', 'unittest.mock.patch.object', 'unittest.mock.patch.dict')
         if patching or target in ('builtins.setattr', 'builtins.delattr'):
@@ -2279,16 +2418,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if mapping_writes(node.value, (), name.rpartition('.')[2], names):
                     names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign):
-            method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__'
+            method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__' if isinstance(node.op, ast.Mult) else None
             owners = qualified(node.target, names)
             if owners and all(isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) for owner in owners):
                 yield from visit(node.value, names, interrupted)
-                for owner in owners:
-                    list_change(owner, method, [node.value], names)
+                mutate(owners, method, [node.value], names)
                 return
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Del):
-            for owner in qualified(node.value, names):
-                list_change(owner, '__delitem__', [], names)
+            mutate(qualified(node.value, names), '__delitem__', [node.slice], names)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for child in ast.iter_child_nodes(node):
                 if not isinstance(child, ast.stmt):
@@ -2317,9 +2454,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                          imports=imports, source=source)
                 for owners in reversed(decorators):
                     if len(owners) == 1 and isinstance(patch := next(iter(owners)), PatchedProvider):
+                        prefixes = names.get(('unittest.mock.patch.TEST_PREFIX', 'provider'), {ast.Constant('test')})
+                        possible = tuple(p.value for p in prefixes if isinstance(p, ast.Constant) and isinstance(p.value, str))
                         inherited = {name: values for ancestor in reversed(cls.lineage)
                                      for name, values in ancestor.members.items()
-                                     if isinstance(name, str) and name.startswith('test')}
+                                     if isinstance(name, str) and (len(possible) != len(prefixes) or name.startswith(possible))}
                         for name, values in inherited.items():
                             wrapped = set()
                             for value in values:
@@ -2383,8 +2522,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     and test.left.id == '__name__' and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
                     and isinstance(test.comparators[0], ast.Constant) and test.comparators[0].value == '__main__'):
                 return (yield from suite(node.orelse if isinstance(node, ast.If) else [node.orelse], names, interrupted))
-            if isinstance(node.test, ast.Constant):
-                arm = node.body if node.test.value else node.orelse
+            if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+                left, right = qualified(test.left, names), qualified(test.comparators[0], names)
+                if len(left) == len(right) == 1:
+                    lhs, rhs = next(iter(left)), next(iter(right))
+                    if isinstance(test.ops[0], (ast.Is, ast.IsNot)) and isinstance(lhs, str) and isinstance(rhs, str):
+                        objects = []
+                        for name in (lhs, rhs):
+                            module, _, attr = name.rpartition('.')
+                            if module in sys.stdlib_module_names and module in sys.modules:
+                                objects.append(vars(sys.modules[module]).get(attr, MISSING_FIELD))
+                        if len(objects) == 2 and all(obj is not MISSING_FIELD for obj in objects):
+                            test = ast.Constant((objects[0] is objects[1]) != isinstance(test.ops[0], ast.IsNot))
+                    elif (isinstance(test.ops[0], (ast.Eq, ast.NotEq)) and
+                          isinstance(lhs, ast.Constant) and isinstance(rhs, ast.Constant)):
+                        test = ast.Constant((lhs.value == rhs.value) != isinstance(test.ops[0], ast.NotEq))
+            if isinstance(test, ast.Constant):
+                arm = node.body if test.value else node.orelse
                 return (yield from suite(arm if isinstance(node, ast.If) else [arm], names, interrupted))
             paths = (node.body, node.orelse) if isinstance(node, ast.If) else ([node.body], [node.orelse])
             return (yield from alternatives(paths, names, interrupted))
@@ -2422,50 +2576,59 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             iterable = sequence_value(node.iter, names) if isinstance(node, ast.For) else None
             owners = qualified(node.iter, names) if isinstance(node, ast.For) else ()
             owner = next(iter(owners)) if len(owners) == 1 else None
-            origin = owner.origin if isinstance(owner, SequenceBinding) else owner
+            if len(owners) > 1 and all(isinstance(value, SequenceBinding) for value in owners):
+                paths = [[ast.copy_location(ast.For(target=node.target, iter=CapturedArgument({value}),
+                                                   body=node.body, orelse=node.orelse), node)] for value in owners]
+                return (yield from alternatives(paths, names, interrupted))
             elements = literal_elements(iterable)
             candidates = []
             if elements is not None:
                 elements = [captured(element, names) for element in elements]
-            elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Set, ast.Dict, ast.List, ast.Tuple)):
+            elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Set, ast.Dict)):
                 items = node.iter.keys if isinstance(node.iter, ast.Dict) else node.iter.elts
                 candidates = [captured(item, names) for item in items]
+            sequence = owner if isinstance(owner, SequenceBinding) else None
+            initial_length = len(elements or ())
+            if sequence:
+                initial_length = max(len(state.elements or ()) for state in sequence.states(names))
             loop_allocations = set()
+            finished = []
             exhausted = True
-            for iteration in range((len(elements) if elements is not None else 0) + 8):
-                if isinstance(node, ast.For):
-                    current = qualified(node.iter, names)
-                    sequences = [value for value in current if isinstance(value, SequenceBinding)]
-                    if sequences and len(sequences) == len(current) and any(value.revised for value in sequences):
-                        owner = sequences[0] if len(sequences) == 1 else None
-                        origin = owner.origin if owner is not None else None
-                        if len(sequences) == 1 and owner.elements is not None:
-                            elements = [CapturedArgument(values) for values in owner.elements]
-                            candidates = []
-                        else:
-                            elements = None
-                            values = set()
-                            for sequence in sequences:
-                                if sequence.elements is None:
-                                    values.add(UNKNOWN_CALLABLE)
-                                else:
-                                    values.update(frozenset().union(*sequence.elements) if sequence.elements else ())
-                            candidates = [CapturedArgument({value}) for value in values]
-                widened = isinstance(origin, ast.List) and getattr(origin, '_mutated', False)
-                if widened:
-                    additions = origin._added
-                    initial = owner.elements if isinstance(owner, SequenceBinding) else [qualified(item, names) for item in origin.elts]
-                    values = additions | (frozenset().union(*initial) if initial is not None else {UNKNOWN_CALLABLE})
-                    elements = None
-                    candidates = [CapturedArgument({value}) for value in values or {UNKNOWN_CALLABLE}]
-                elif elements is not None and iteration == len(elements):
-                    break
+            for iteration in range(initial_length + 9):
+                if sequence:
+                    states = sequence.states(names)
+                    ended = {state for state in states if state.elements is not None and iteration >= len(state.elements)}
+                    if ended:
+                        done = names.copy()
+                        done[(sequence, 'contents')] = frozenset(ended)
+                        finished.append(done)
+                    pending = states - ended
+                    if not pending:
+                        exhausted = False
+                        break
+                    names[(sequence, 'contents')] = frozenset(pending)
+                    if all(state.elements is not None for state in pending):
+                        current = frozenset().union(*(state.elements[iteration] for state in pending))
+                        item = CapturedArgument(current)
+                        exact = True
+                    else:
+                        exact = False
+                        elements = None
+                        candidates = [CapturedArgument({UNKNOWN_CALLABLE})]
+                else:
+                    exact = elements is not None
+                    if exact:
+                        if iteration >= len(elements):
+                            break
+                        item = elements[iteration]
+                if iteration == initial_length + 8:
+                    raise Unsupported(f'line {node.lineno}: cannot resolve changing Python loop bindings')
                 first_allocation = len(allocations)
                 start = len(transfers)
                 branch = names.copy()
-                if elements is not None:
+                if exact:
                     yield from visit(node.target, branch, interrupted)
-                    bind_target(node.target, elements[iteration], branch)
+                    bind_target(node.target, item, branch)
                 elif candidates:
                     yield from visit(node.target, branch, interrupted)
                     choices = []
@@ -2474,20 +2637,20 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         bind_target(node.target, candidate, choice)
                         choices.append(choice)
                     branch.update(join(choices, paths=True))
-                if (isinstance(node, ast.For) and elements is None and not candidates and
+                if (isinstance(node, ast.For) and not exact and not candidates and
                         (isinstance(node.target, ast.Name) or any(isinstance(value, SequenceBinding)
                          for value in qualified(node.iter, names)))):
                     bind_target(node.target, CapturedArgument({UNKNOWN_CALLABLE}), branch)
                     completed = yield from suite(node.body, branch, interrupted)
                 else:
-                    completed = yield from suite(node.body if elements is not None or candidates else body, branch, interrupted)
+                    completed = yield from suite(node.body if exact or candidates else body, branch, interrupted)
                 loop_exits = transfers[start:]
                 transfers[start:] = [transfer for transfer in loop_exits if transfer[0] is ast.Return]
                 back_edges = [state for kind, state in loop_exits if kind is ast.Continue]
                 broken.extend(state for kind, state in loop_exits if kind is ast.Break)
                 if completed:
                     back_edges.append(branch)
-                if elements is not None:
+                if exact:
                     if not back_edges:
                         exhausted = False
                         break
@@ -2495,6 +2658,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     names.update(join(back_edges, paths=True))
                     continue
                 next_entry = join([names, *back_edges], paths=True)
+                for key in next_entry:
+                    if (isinstance(key, tuple) and isinstance(key[0], SequenceBinding) and key[1] == 'contents'
+                            and next_entry[key] != names.get(key) and len(key[0].states(next_entry)) > 1
+                            and len({len(state.elements) if state.elements is not None else None
+                                     for state in key[0].states(next_entry)}) > 1):
+                        heads = {state.head for state in key[0].states(next_entry)}
+                        head = next(iter(heads)) if len(heads) == 1 else None
+                        next_entry[key] = frozenset({SequenceState(None, head, True)})
                 fresh = set(allocations[first_allocation:])
                 loop_allocations.update(fresh)
                 changed = any(values != names.get(key) and
@@ -2503,15 +2674,17 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                loop_values(names.get(key, ()), names, loop_allocations))
                               for key, values in next_entry.items())
                 names.update(next_entry)
-                if not changed and (not widened or additions == origin._added):
+                if not changed:
                     break
                 if isinstance(node, ast.While):
                     yield from visit(node.test, names, interrupted)
-            else:
-                if elements is None:
-                    raise Unsupported(f'line {node.lineno}: cannot resolve changing Python loop bindings')
-            if exhausted and (yield from suite(node.orelse, names, interrupted)):
-                broken.append(names.copy())
+            if exhausted:
+                finished.append(names.copy())
+            if finished:
+                names.clear()
+                names.update(join(finished, paths=True))
+                if (yield from suite(node.orelse, names, interrupted)):
+                    broken.append(names.copy())
             if broken:
                 names.clear()
                 names.update(join(broken, paths=True))
@@ -2551,29 +2724,47 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split('.')[0]
-                record_provider_import(root, names)
-                if (root not in sys.stdlib_module_names and
-                        ((imports.directory / root).is_dir() or
-                         (imports.directory / root).with_suffix('.py').is_file())):
-                    yield from imports.module(alias.name, source, ordering, targets, names)
-                bind(alias.asname or root, frozenset({alias.name if alias.asname else root}))
+                if imports.has_local_root(root):
+                    value = yield from imports.module(alias.name, source, ordering, targets, names, bind_root=not alias.asname)
+                elif record_provider_import(root, names):
+                    value = alias.name if alias.asname else root
+                else:
+                    value = UNKNOWN_PROVIDER
+                bind(alias.asname or root, frozenset({value}))
         elif isinstance(node, ast.ImportFrom):
             module = '.' * node.level + (node.module or '')
-            record_provider_import(module.partition('.')[0], names)
+            local = node.level or imports.has_local_root(module)
+            available = local or record_provider_import(module.partition('.')[0], names)
             for alias in node.names:
-                if alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty', 'shlex', 'functools'):
+                if alias.name == '*' and local:
+                    reference = yield from imports.module(module, source, ordering, targets, names)
+                    namespace = imports.loaded[reference.path]
+                    exported = [name for name in namespace if isinstance(name, str) and not name.startswith('_')]
+                    if '__all__' in namespace:
+                        exports = sequence_value(CapturedArgument(namespace['__all__']), names)
+                        exported = []
+                        items = literal_elements(exports)
+                        if items is None:
+                            raise Unsupported('cannot resolve local wildcard exports')
+                        for item in items:
+                            values = qualified(item, names)
+                            if len(values) != 1 or not isinstance(value := next(iter(values)), ast.Constant) or value.value not in namespace:
+                                raise Unsupported('cannot resolve local wildcard exports')
+                            exported.append(value.value)
+                    for name in exported:
+                        bind(name, reference.member(name, imports, names))
+                elif alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty', 'shlex', 'functools'):
                     for exported in import_module(module).__all__:
-                        bind(exported, frozenset({module + '.' + exported}))
+                        bind(exported, frozenset({module + '.' + exported if available else UNKNOWN_PROVIDER}))
                 else:
-                    if node.level or module.partition('.')[0] not in sys.stdlib_module_names:
+                    if local or module.partition('.')[0] not in sys.stdlib_module_names:
                         symbol = ImportedMember(module, alias.name, source)
-                        root = module.lstrip('.').partition('.')[0]
-                        local = ((imports.directory / root).is_dir() or
-                                 (imports.directory / root).with_suffix('.py').is_file())
                         values = (yield from imports.resolve(symbol, ordering, targets, names)) if (source is not None or local) else {symbol}
-                    else:
+                    elif available:
                         name = module + '.' + alias.name
                         values = names.get((name, 'provider'), {name})
+                    else:
+                        values = {UNKNOWN_PROVIDER}
                     bind(alias.asname or alias.name, frozenset(values))
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             if isinstance(node, ast.AnnAssign):
@@ -2582,29 +2773,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     return
             yield from visit(node.value, names, interrupted)
             values = qualified(node.value, names)
-            if isinstance(node.value, (ast.Tuple, ast.List)) or (isinstance(node.value, ast.IfExp) and
-                    all(isinstance(arm, (ast.Tuple, ast.List)) for arm in branches(node.value))):
-                values = frozenset(element_values(node.value, names))
-            elif class_body and isinstance(node.value, (ast.Set, ast.Dict)):
+            if class_body and isinstance(node.value, (ast.Set, ast.Dict)):
                 values = frozenset({node.value})
             for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
                 yield from visit(target, names, interrupted)
                 if isinstance(target, ast.Name):
                     bind(target.id, values)
-                elif isinstance(target, (ast.Tuple, ast.List)) and len(values) == 1:
-                    value, = values
-                    if isinstance(value, SequenceBinding):
-                        if (value.elements is not None and not getattr(value.origin, '_mutated', False) and
-                                len(target.elts) != len(value.elements) and not any(isinstance(t, ast.Starred) for t in target.elts)):
-                            return False
-                        bind_target(target, CapturedArgument(values), names)
+                elif isinstance(target, (ast.Tuple, ast.List)):
+                    if bind_target(target, CapturedArgument(values), names) is False:
+                        return False
                 elif isinstance(target, ast.Subscript):
-                    for owner in qualified(target.value, names):
-                        list_change(owner, '__setitem__', [target.slice, node.value], names)
+                    mutate(qualified(target.value, names), '__setitem__', [target.slice, node.value], names)
                 elif isinstance(target, ast.Attribute):
                     owners = qualified(target.value, names)
+                    if owners == {'unittest.mock.patch'} and target.attr == 'TEST_PREFIX':
+                        bind(('unittest.mock.patch.TEST_PREFIX', 'provider'), values)
                     for owner in owners:
-                        if isinstance(owner, (PythonInstance, PythonClass)):
+                        if isinstance(owner, (PythonInstance, PythonClass, LocalModule)):
                             prior = names.get((owner, target.attr), {MISSING_FIELD}) if len(owners) > 1 else ()
                             bind((owner, target.attr), frozenset(prior) | values)
             return
@@ -2612,6 +2797,20 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             names.pop(node.id, None)
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
             targets.setdefault(node, set()).update(qualified(node, names))
+            if isinstance(node.ctx, ast.Del):
+                for owner in qualified(node.value, names):
+                    if isinstance(owner, LocalModule):
+                        names[(owner, node.attr)] = frozenset({UNKNOWN_CALLABLE})
+        elif isinstance(node, (ast.List, ast.Tuple)) and isinstance(node.ctx, ast.Load):
+            items = []
+            for item in expanded_items(node.elts):
+                yield from visit(item, names, interrupted)
+                items.append(ast.Starred(value=captured(item.value, names)) if isinstance(item, ast.Starred)
+                             else CapturedArgument(qualified(item, names)))
+            owner = SequenceBinding(node, tuple(items))
+            allocations.append(owner)
+            results[node] = frozenset({owner})
+            return
         elif isinstance(node, ast.Call):
             yield from visit(node.func, names, interrupted)
             callees = qualified(node.func, names)
@@ -2738,6 +2937,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None):
             return texts
 
         def shell_invocations(payload, rest):
+            if any(isinstance(item, ChangedTail) for item in rest):
+                raise Unsupported('cannot resolve changed Python shell arguments')
             if isinstance(payload, CapturedArgument):
                 raise Unsupported('cannot resolve Python shell payload')
             if isinstance(payload, ast.Starred):

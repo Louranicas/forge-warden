@@ -1606,6 +1606,24 @@ class GateImageCommands(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'cannot resolve'):
                 CAPS.just_consumer({'shell': 'python', 'run': 'import pkg.data.suite'}, vars(COMMANDS), [], root)
 
+    def test_local_package_exports_reach_qualified_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for package in ('pkg', 'statistics'):
+                child = root / package / 'child'
+                child.mkdir(parents=True)
+                for parent in (child.parent, child):
+                    (parent / '__init__.py').write_text("from subprocess import run as launch\n")
+                for prefix, call in ((f'import {package} as local', 'local.launch'),
+                                     (f'import {package}.child', f'{package}.child.launch'),
+                                     (f'import {package}.child as local', 'local.launch'),
+                                     (f'from {package} import launch', 'launch'),
+                                     (f'from {package} import *', 'launch')):
+                    source = prefix + '\n' + call + "(['just'])"
+                    with self.subTest(source=source):
+                        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source},
+                                                            vars(COMMANDS), [], root), 'just')
+
     def test_loop_reads_mutated_list_elements(self):
         for setup, update in (('[print]', 'alias.append(run)'), ('[print, print]', 'alias[1] = run'),
                               ('[print]', 'add(run)'), ('[print]', 'alias.extend([run])')):
@@ -1634,8 +1652,41 @@ class GateImageCommands(unittest.TestCase):
         conditional = ("import os\nfrom subprocess import run\nitems = [run]\n"
                        "if os.getenv('FORGE_WARDEN_TEST_CLEAR'):\n    items.clear()\n"
                        "for launch in items: launch(['just'])")
-        self.assertEqual(self.recorded_commands(conditional), [['just']])
+        for clear, expected in (('', [['just']]), ('1', [])):
+            with patch.dict(os.environ, FORGE_WARDEN_TEST_CLEAR=clear):
+                self.assertEqual(self.recorded_commands(conditional), expected)
         self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': conditional}, vars(COMMANDS), []), 'just')
+
+    def test_list_aliases_and_cursors_follow_the_original_list(self):
+        prefix = "from subprocess import run\nitems = [print]\nadd = items.append\n"
+        for edit, loop, expected in (
+            ("add(run)\nitems.clear()", "for launch in items: launch(['just'])", []),
+            ("def change(alias):\n    alias.clear()\n    add(run)\nchange(items)",
+             "only, = items\nonly(['just'])", [['just']]),
+            ("def change(alias):\n    alias.clear()\n    alias.extend([run])\n    return alias\n"
+             "changed = change(items)", "for launch in changed: launch(['just'])", [['just']]),
+            ("add(run)", "for launch in items:\n    launch(['just'])\n    items = []", [['just']]),
+            ("add(run)", "for launch in items:\n    launch(['just'])\n    items.clear()", []),
+        ):
+            source = prefix + edit + '\n' + loop
+            with self.subTest(source=source):
+                self.assertEqual(self.recorded_commands(source), expected)
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []),
+                                 'just' if expected else None)
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'changing Python loop'):
+            COMMANDS.python_calls(prefix + 'for item in items: add(item)')
+
+    def test_mutated_process_arguments_retain_only_the_head(self):
+        for edit in ("argv[1] = 'new'", "del argv[-1]", "argv += ['new']", "add = argv.append\nadd('new')",
+                     "argv[1:] = ['new']"):
+            for head in ('git', 'bash', 'python3', 'env'):
+                source = f"import subprocess\nargv = ['{head}', '-c', 'true']\n{edit}\nsubprocess.run(argv)"
+                with self.subTest(head=head, edit=edit):
+                    if head == 'git':
+                        self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['git'])
+                    else:
+                        with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve'):
+                            COMMANDS.python_calls(source)
 
     def test_stored_argv_at_process_calls(self):
         for argv in ("['cmp']", "('cmp',)"):
@@ -1704,7 +1755,7 @@ class GateImageCommands(unittest.TestCase):
         producer = (ROOT / filename).read_text()
         self.assertEqual(self.problems({filename: producer}), [])
         launch = 'out = subprocess.run(command,'
-        before, original_launch = producer.split(launch)
+        before, original_launch = producer.split(launch, 1)
         line = before.count('\n') + 1
         for argv, diagnostic in (("['forge-warden']", 'calls `forge-warden`'),
                                  ('[args.binary]', 'cannot resolve Python process executable'),
@@ -1748,6 +1799,10 @@ class GateImageCommands(unittest.TestCase):
             self.assertEqual(refused.exception.lineno, changed.partition('out = subprocess.run')[0].count('\n') + 1)
 
         for old, new in (('os.open(binary,', 'os.open(receipt_path,'),
+                         ('with verified_fixture(binary, receipt_path, subject)',
+                          'with verified_fixture(binary, receipt_path, json.loads(receipt_path.read_text())["subject"])'),
+                         ('with verified_fixture(binary, receipt_path, subject)',
+                          'with verified_fixture(receipt_path, binary, subject)'),
                          ('home, receipt_path, expected_subject)\n            yield',
                           'home, binary, expected_subject)\n            yield'),
                          ('home, receipt_path, expected_subject)\n            yield',
@@ -1858,13 +1913,18 @@ class GateImageCommands(unittest.TestCase):
                     self.assertIn('cannot resolve', self.problems({'entry.py': source})[0])
             clean = setup + f'    subprocess.run([original.{field}{suffix}])\nimport {module}\nsubprocess.run([{module}.{field}{suffix}])'
             self.assertEqual(self.problems({'entry.py': clean}), [])
+            inspect = setup + (f'    import {module} as fresh\n    from {module} import {field} as value\n'
+                               f"    assert registry['{module}'] is fresh and value is fresh.{field}\n"
+                               "    subprocess.run(['git'])")
+            self.assertEqual(self.recorded_commands(inspect), [['git']])
+            self.assertEqual(self.problems({'entry.py': inspect}), [])
             for update in (f"registry['{module}'] = other", f"registry.update({module}=other)",
                            f"registry |= {{'{module}': other}}"):
                 source = setup.partition('with patch.dict')[0] + update + f'\nfrom {module} import {field}\nsubprocess.run([{field}{suffix}])'
                 with self.subTest(update=update):
                     with patch.dict(sys.modules):
                         self.assertEqual(self.recorded_commands(source), [['cmp']])
-                    self.assertIn('cannot resolve replaced Python provider module', self.problems({'entry.py': source})[0])
+                    self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
 
     def test_class_provider_patch_covers_test_method_calls(self):
         setup = ("import unittest, sys, subprocess\nfrom unittest.mock import patch\n"
@@ -1876,6 +1936,13 @@ class GateImageCommands(unittest.TestCase):
             source = setup.replace('BODY', launch) + call
             with self.subTest(call=call):
                 self.assertEqual(self.recorded_commands(source), [['cmp']] * (2 if call == 'unittest.main()' else 1))
+                self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
+
+        custom = setup.replace("class Parent:", "patch.TEST_PREFIX = 'check'\nclass Parent:").replace('def test_', 'def check_')
+        for method in ('check_local', 'check_inherited'):
+            source = custom.replace('BODY', launch) + f'Suite().{method}()'
+            with self.subTest(method=method), patch.object(patch, 'TEST_PREFIX', 'test'):
+                self.assertEqual(self.recorded_commands(source), [['cmp']])
                 self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
 
     def test_direct_helper_argv_preserves_proven_command(self):
