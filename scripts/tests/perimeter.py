@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Owned gate contracts: exact tool inputs, complete plant receipts and merge subjects."""
+import hashlib
 import importlib.util
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -1650,6 +1651,66 @@ class GateImageCommands(unittest.TestCase):
         for argv in ("[unknown()]", "['git']\nTask.argv[0] = unknown()"):
             source = "from subprocess import run\nclass Task: argv = " + argv + "\nrun(Task.argv)"
             self.assertIn('cannot resolve', self.problems({'argv.py': source})[0])
+
+    def test_unresolved_executable_refuses_every_process_form(self):
+        imports = "import asyncio, os, pty, shlex, subprocess, sys\n"
+        for call in ("subprocess.run([head])", "subprocess.Popen(args=[head])",
+                     "subprocess.run(['git'], executable=head)", "asyncio.create_subprocess_exec(head)",
+                     "pty.spawn([head])", "os.execvp(head, ['arg0'])", "os.spawnlp(0, head, 'arg0')"):
+            source = imports + call.replace('head', "f'{os.getenv(\"PROGRAM\")}'")
+            with self.subTest(call=call):
+                issues = self.problems({'entry.py': source, 'inline.sh': 'python3 -c ' + shlex.quote(source)})
+                self.assertEqual(len(issues), 2, issues)
+                self.assertTrue(all('cannot resolve Python process executable' in issue for issue in issues), issues)
+        for head in ("'git' + shlex.quote(sys.argv[1])", "sys.argv[1]", "f'{sys.argv[1]}'"):
+            source = imports + f"command = [{head}]\nsubprocess.run(command)"
+            self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
+        source = imports + "name = 'cmp'\nsubprocess.run([f'{name}'])"
+        self.assertIn('calls `cmp`', self.problems({'entry.py': source})[0])
+
+    def test_fixture_context_keeps_the_verified_inode(self):
+        producer = load('golden_output')
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'fixture'
+            manifest = Path(directory) / 'receipt.json'
+            data = b'\x7fELFFORGE_WARDEN_TEST_POLICY_ROOT'
+            binary.write_bytes(data)
+            inputs = {'source': '0' * 64}
+            subject = 'source-sha256:' + hashlib.sha256(json.dumps(inputs, separators=(',', ':')).encode()).hexdigest()
+            receipt = dict(schema='forge-warden.fixture-cli.v1', artifact_sha256=hashlib.sha256(data).hexdigest(),
+                           cfg=['fw_fixture_cli', 'test'], inputs=inputs, subject=subject)
+            manifest.write_text(json.dumps(receipt))
+            with producer.verified_fixture(binary, manifest, subject) as (fd, named, home, actual):
+                descriptor = Path(f'/proc/self/fd/{fd}')
+                self.assertEqual(named.parent, Path(home))
+                self.assertEqual(named.readlink(), descriptor)
+                self.assertEqual(named.name, 'forge-warden')
+                self.assertTrue(binary.samefile(named))
+                binary.unlink()
+                binary.write_bytes(b'replacement')
+                self.assertEqual(named.read_bytes(), data)
+                self.assertEqual(actual, receipt)
+            self.assertFalse(named.is_symlink())
+            with self.assertRaises(OSError):
+                os.fstat(fd)
+            with self.assertRaisesRegex(ValueError, 'artifact digest mismatch'):
+                with producer.verified_fixture(binary, manifest, subject):
+                    self.fail('opened a replacement artifact')
+
+    def test_only_open_fixture_executables_are_admitted(self):
+        filename = 'scripts/golden_output.py'
+        producer = (ROOT / filename).read_text()
+        self.assertEqual(self.problems({filename: producer}), [])
+        context = '\nwith verified_fixture(binary, manifest, subject) as (fd, named, home, receipt):\n'
+        for suffix in ("subprocess.run(['forge-warden'])", "subprocess.run([args.binary])",
+                       "subprocess.run([f'/proc/self/fd/{fd}x'], pass_fds=(fd,))",
+                       "subprocess.run([f'/proc/self/fd/{fd}'])",
+                       "subprocess.run([f'{home}/forge-warden'], executable=f'/proc/self/fd/{fd}', pass_fds=(fd,))",
+                       "command = [f'/proc/self/fd/{fd}']\nsubprocess.run(command, pass_fds=(fd,))"):
+            with self.subTest(suffix=suffix):
+                issues = self.problems({filename: producer + context + '    ' + suffix})
+                self.assertEqual(len(issues), 1, issues)
+                self.assertRegex(issues[0], r'cannot resolve|calls `forge-warden`')
 
     def test_context_decorators_wrap_each_call(self):
         for prefix, decorator in (('', 'contextmanager'), ('async ', 'asynccontextmanager')):

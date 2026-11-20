@@ -45,10 +45,7 @@ read with or without an extension or a `#!` line; the functions of a sourced fil
 file that sources it. A file another file runs by a literal path may not be one that ONLY_IN lets
 call commands the gate image lacks (it is named).
 
-Stated limits (each needs a deliberate author): a Python call whose program is not a literal
-(a variable, `sys.executable`, an argument list built by a call other than `'...'.split()` and
-`shlex.split('...')`) is not resolved;
-a script run or sourced through a non-literal path, a pipe (`cat FILE | bash`) or a process
+Stated limits (each needs a deliberate author): a script run or sourced through a non-literal path, a pipe (`cat FILE | bash`) or a process
 substitution (`bash <(...)`, `. <(...)`) is not read, nor standard input the shell or Python
 inherits from elsewhere: a redirect on a group, subshell or loop (`{ bash; } < FILE`,
 `( bash ) < FILE`, `done < FILE`), an earlier `exec < FILE`, a duplicated descriptor
@@ -157,8 +154,6 @@ DYNAMIC = {
     '.githooks/pre-push': {'"$root/scripts/ci_local.sh"'},
     # The dogfood driver runs the ranker it fetched (sha256-pinned) and the judge it built.
     'scripts/dogfood.sh': {'"$out/ranker/bin/deep-diff-forge"', '"$out/target/release/forge-warden"'},
-    # The golden producer writes digest-verified bytes to a private executable with this literal name.
-    'scripts/golden_output.py': {'forge-warden'},
     # The guest bootstrap runs the rustup-init it downloaded (sha256-pinned).
     'scripts/guest_bootstrap.sh': {'"$work/rustup-init"'},
     # gitenv and made run their own arguments; every caller passes a declared command (bash, env),
@@ -950,14 +945,14 @@ def py_word(node, strict):
 
 
 def argv_text(items, strict=False):
-    """The command line an argument list makes, or None when its program is not a literal."""
+    """Resolve the effective program before serializing its arguments."""
     head = items[0] if items else None
     if isinstance(head, ast.Starred):
         raise Unsupported('cannot resolve starred Python process arguments')
-    if isinstance(head, CapturedArgument):
+    if isinstance(head, FixtureExecutable):
+        return head
+    if not (isinstance(head, ast.Constant) and isinstance(head.value, str) and head.value):
         raise Unsupported('cannot resolve Python process executable')
-    if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
-        return None  # stated limit: the program is not a literal
     return ' '.join(py_word(item, strict) for item in items)
 
 
@@ -1012,6 +1007,24 @@ class PythonInstance:
         self.owner = owner
 
 
+class FixtureDescriptor(ast.expr):
+    pass
+
+
+class FixtureExecutable(ast.expr):
+    def __init__(self, descriptor, named=False):
+        self.descriptor = descriptor
+        self.named = named
+
+
+class VerifiedCommand(str):
+    pass
+
+
+class PythonExecutable(ast.expr):
+    pass
+
+
 class CapturedArgument(ast.expr):
     def __init__(self, owners):
         self.owners = owners
@@ -1045,6 +1058,14 @@ class SuiteImports:
         self.loaded = {}
         self.stack = []
         self.class_paths = {}
+        self.fixture_verifier = None
+        self.open_fixtures = set()
+
+    def register_fixture(self, body, filename):
+        if filename == 'scripts/golden_output.py':
+            definitions = [node for node in body if isinstance(node, ast.FunctionDef) and node.name == 'verified_fixture']
+            if len(definitions) == 1:
+                self.fixture_verifier = definitions[0]
 
     def load(self, path, module, ordering, targets, names):
         if path in self.loaded:
@@ -1058,6 +1079,7 @@ class SuiteImports:
         namespace['__name__'] = frozenset({ast.Constant(module)})
         try:
             tree = ast.parse(path.read_bytes(), filename=relative)
+            self.register_fixture(tree.body, relative)
             yield from python_callees(tree.body, namespace, ordering, targets, imports=self, source=path)
         finally:
             self.stack.pop()
@@ -1398,8 +1420,28 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def qualified(node, names):
         if isinstance(node, CapturedArgument):
             return node.owners
-        if isinstance(node, ast.Constant):
+        if isinstance(node, (ast.Constant, FixtureDescriptor, FixtureExecutable)):
             return frozenset({node})
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for field in node.values:
+                if isinstance(field, ast.Constant):
+                    parts.append(field.value)
+                    continue
+                owners = qualified(field.value, names)
+                if len(owners) != 1 or field.conversion != -1 or field.format_spec is not None:
+                    return frozenset({None})
+                owner, = owners
+                if isinstance(owner, ast.Constant) and isinstance(owner.value, str):
+                    parts.append(owner.value)
+                elif len(node.values) == 1 and isinstance(owner, FixtureExecutable):
+                    return owners
+                elif (len(node.values) == 2 and parts == ['/proc/self/fd/']
+                      and isinstance(owner, FixtureDescriptor)):
+                    return frozenset({FixtureExecutable(owner)})
+                else:
+                    return frozenset({None})
+            return frozenset({ast.Constant(''.join(parts))})
         if isinstance(node, ast.Call):
             return results.get(node, frozenset({UNKNOWN_CALLABLE}))
         if isinstance(node, ast.Name):
@@ -1496,11 +1538,16 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for choice in choices:
                 result = ast.IfExp(test=CapturedArgument({UNKNOWN_CALLABLE}), body=choice, orelse=result)
             return result
-        if isinstance(value, CapturedArgument) and len(owners) == 1:
+        if len(owners) == 1:
             owner, = owners
             if owner == 'sys.executable':
-                return ast.Constant('python3')
-            if isinstance(owner, ast.Constant):
+                return PythonExecutable()
+            if isinstance(owner, (FixtureDescriptor, FixtureExecutable)):
+                descriptor = owner.descriptor if isinstance(owner, FixtureExecutable) else owner
+                if descriptor not in imports.open_fixtures:
+                    raise Unsupported('cannot resolve closed fixture executable')
+                return owner
+            if isinstance(value, (CapturedArgument, ast.JoinedStr)) and isinstance(owner, ast.Constant):
                 return owner
         if isinstance(value, ast.Starred):
             item = process_argument(value.value, names)
@@ -1527,27 +1574,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def element_values(item, names):
         if isinstance(item, ast.IfExp):
             return element_values(item.body, names) | element_values(item.orelse, names)
-        if isinstance(item, ast.JoinedStr):
-            parts = []
-            for part in item.values:
-                if isinstance(part, ast.Constant):
-                    parts.append(part.value)
-                else:
-                    owners = qualified(part.value, names)
-                    if (len(owners) != 1 or part.conversion != -1 or part.format_spec is not None):
-                        break
-                    value, = owners
-                    if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
-                        break
-                    parts.append(value.value)
-            else:
-                return {ast.Constant(''.join(parts))}
         if isinstance(item, (ast.Tuple, ast.List)):
             return {sequence_binding(item, names)}
-        if (isinstance(item, ast.BinOp) and isinstance(item.op, ast.Add) and
-                isinstance(item.left, ast.Constant) and isinstance(item.left.value, str) and
-                isinstance(item.right, ast.Call) and qualified(item.right.func, names) == {'shlex.quote'}):
-            return {ast.Constant(item.left.value + PY_DYNAMIC)}
         return qualified(item, names)
 
     def sequence_binding(node, names):
@@ -1798,6 +1826,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 raise Unsupported('cannot resolve Python callable')
         if isinstance(target, ImportedMember):
             return {UNRESOLVED_CONTEXT}
+        if imports.open_fixtures:
+            operands = [*call.args, *(kw.value for kw in call.keywords)]
+            if (target == 'os.closerange' or any(isinstance(value, FixtureDescriptor)
+                    for operand in operands for value in qualified(operand, names))):
+                raise Unsupported('cannot resolve fixture descriptor passed to another call')
         if isinstance(target, str):
             if target.startswith('asyncio.subprocess.'):
                 target = 'asyncio.' + target.removeprefix('asyncio.subprocess.')
@@ -1892,6 +1925,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return values
 
         entered = yield from lifecycle(entry, names, [])
+        fixture_fd = None
+        if len(managers) == 1:
+            manager, = managers
+            if isinstance(manager, GeneratorManager) and manager.helper.node is imports.fixture_verifier:
+                fixture_fd = FixtureDescriptor()
+                entered = {ast.Tuple(elts=[fixture_fd, FixtureExecutable(fixture_fd, named=True),
+                                           CapturedArgument({UNKNOWN_CALLABLE}), CapturedArgument({UNKNOWN_CALLABLE})])}
         if interrupted is not None:
             record_exception(interrupted, names)
         exceptions = {}
@@ -1904,7 +1944,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 outcomes.append(branch)
             names.update(join(outcomes, paths=True))
         start = len(transfers)
-        completed = yield from with_items(node, rest, names, exceptions)
+        if fixture_fd is not None:
+            imports.open_fixtures.add(fixture_fd)
+        try:
+            completed = yield from with_items(node, rest, names, exceptions)
+        finally:
+            if fixture_fd is not None:
+                imports.open_fixtures.remove(fixture_fd)
         normal_args = [ast.Constant(None)] * 3
         for _, state in transfers[start:]:
             yield from lifecycle(exit_method, state, normal_args)
@@ -2311,18 +2357,22 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     return {UNKNOWN_CALLABLE}
 
 
-def python_calls(text, line=1, lexer=Lexer, directory=None):
-    """(line, command, True) for each process call whose program is a string literal: the call is
-    turned into the shell text or command line it runs, which shell_calls reads."""
+def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None):
+    """Read process calls as their effective executable and command line or shell payload."""
     tree = ast.parse(text)
     found = []
     targets = {}
     imports = SuiteImports(directory)
+    imports.register_fixture(tree.body, filename)
     calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=imports))
 
     rebound = set().union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
 
     def process_arguments(node):
+        if isinstance(node, PythonExecutable):
+            if 'sys.executable' in rebound:
+                raise Unsupported('cannot resolve reassigned Python process executable')
+            return ast.Constant('python3')
         if isinstance(node, ast.Call):
             owners = targets.get(node, set())
             if not rebound & owners:
@@ -2364,6 +2414,9 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         if override is not None and (subprocess_argv or name.startswith('asyncio.')):
             executables = []
             for option in branches(override):
+                if isinstance(option, FixtureExecutable) and not option.named:
+                    executables.append(option)
+                    continue
                 if not isinstance(option, ast.Constant) or (option.value is not None and
                         not (isinstance(option.value, str) and option.value)):
                     raise Unsupported('cannot resolve Python process executable')
@@ -2375,7 +2428,13 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         strict = wrapped
 
         def process_argv(items):
-            return [argv_text([exe, *after_argv_zero(items)] if exe is not None else items, strict) for exe in executables]
+            texts = []
+            for exe in executables:
+                if isinstance(exe, FixtureExecutable) and not (
+                        items and isinstance(items[0], FixtureExecutable) and items[0].descriptor is exe.descriptor):
+                    raise Unsupported('cannot resolve verified fixture argv zero')
+                texts.append(argv_text([exe, *after_argv_zero(items)] if exe is not None else items, strict))
+            return texts
 
         def shell_invocations(payload, rest):
             if isinstance(payload, CapturedArgument):
@@ -2387,6 +2446,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                 if exe is None:
                     invocations.append(py_text(payload))
                     continue
+                if isinstance(exe, FixtureExecutable):
+                    raise Unsupported('cannot resolve Python shell interpreter')
                 interpreter = posixpath.basename(exe.value)
                 if interpreter not in SHELLS and not PYTHONS.fullmatch(interpreter):
                     raise Unsupported('cannot resolve Python shell interpreter')
@@ -2455,9 +2516,16 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
             if value.value is not None:
                 cwd = lexer.location(directory, value.value)
         for shell_text in dict.fromkeys(texts):
-            if shell_text is not None:
+            if isinstance(shell_text, FixtureExecutable):
+                inherited = py_items(keywords.get('pass_fds'))
+                preexec = args[6] if subprocess_argv and len(args) > 6 else keywords.get('preexec_fn')
+                if (shell_text.named or inherited != [shell_text.descriptor]
+                        or preexec is not None and not (isinstance(preexec, ast.Constant) and preexec.value is None)):
+                    raise Unsupported('cannot resolve inherited fixture executable')
+                yield lexer.call(start, VerifiedCommand('forge-warden'), True, directory=cwd)
+            elif shell_text is not None:
                 yield from external(shell_calls(shell_text, start, lexer, cwd))
-            elif directory is not None or strict:
+            else:
                 raise Unsupported('cannot resolve Python process command')
 
     for node, name, wrapped, source in calls:
@@ -2578,7 +2646,7 @@ def problems(root):
             origin = (root / name).parent if lang == 'python' else root
             token = IMPORT_SOURCE.set((root, origin, tracked_files, {}))
             try:
-                calls = shell_calls(text) if lang == 'shell' else python_calls(text)
+                calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name)
             finally:
                 IMPORT_SOURCE.reset(token)
         except (Unsupported, SyntaxError, UnicodeDecodeError) as error:
@@ -2629,7 +2697,7 @@ def problems(root):
         for line, word, by_prefix in calls:
             if word.startswith('()') or any(word.startswith(m) for m in RUNS):
                 continue
-            if word in BUILTINS or (word in functions and not by_prefix):
+            if isinstance(word, VerifiedCommand) or word in BUILTINS or (word in functions and not by_prefix):
                 continue
             if word in DECLARED:
                 if word in ONLY_IN and name not in ONLY_IN[word]:

@@ -871,8 +871,14 @@ import subprocess
 import sys
 
 root = Path(sys.argv[1])
-launcher = ["bash", "-c", "[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && "
-            "exec python3 -I scripts/checkout_just.py " + shlex.quote(sys.argv[2])]
+prefix = ("[[ ! -L scripts && -f scripts/checkout_just.py && ! -L scripts/checkout_just.py ]] && "
+          "exec python3 -I scripts/checkout_just.py ")
+if sys.argv[2] == "judge":
+    launcher = ["bash", "-c", f"{prefix}judge"]
+elif sys.argv[2] == "judge-local":
+    launcher = ["bash", "-c", f"{prefix}judge-local"]
+else:
+    raise ValueError("unknown advisory recipe")
 command = shlex.join(launcher)
 settings = json.loads((root / ".claude/settings.json").read_bytes())
 assert f"Bash({command})" in settings["permissions"]["allow"]

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit golden regeneration/checking, separate from ordinary read-only tests."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -64,6 +65,7 @@ def regular_stream(path, budget):
         raise
 
 
+@contextmanager
 def verified_fixture(binary, receipt_path, expected_subject):
     stream, raw = regular_stream(receipt_path, 65536)
     stream.close()
@@ -81,29 +83,13 @@ def verified_fixture(binary, receipt_path, expected_subject):
     try:
         require(hashlib.sha256(data).hexdigest() == receipt["artifact_sha256"], "artifact digest mismatch")
         require(data.startswith(b"\x7fELF") and b"FORGE_WARDEN_TEST_POLICY_ROOT" in data, "not the fixture artifact")
-    except BaseException:
-        artifact.close()
-        raise
-    return artifact, receipt, data
-
-
-def private_executable(directory, data):
-    path = Path(directory) / "forge-warden"
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
-    try:
-        # A restrictive inherited umask must not silently make the verified private copy
-        # non-executable; fchmod also states the intended least-privilege mode exactly.
-        os.fchmod(descriptor, 0o700)
-        view = memoryview(data)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise OSError("short write while staging verified fixture")
-            view = view[written:]
-        os.fsync(descriptor)
+        fd = artifact.fileno()
+        with tempfile.TemporaryDirectory(prefix="fw-golden-home-", dir="/tmp") as home:
+            named = Path(home) / "forge-warden"
+            named.symlink_to(f"/proc/self/fd/{fd}")
+            yield fd, named, home, receipt
     finally:
-        os.close(descriptor)
-    return path
+        artifact.close()
 
 
 def normalize(stdout):
@@ -145,23 +131,22 @@ def main():
     if destination.resolve() != destination.absolute() or not destination.is_file():
         parser.error("golden destination must be an existing regular file without symlinks")
     binary = args.binary.absolute()
-    artifact, receipt, artifact_data = verified_fixture(binary, args.receipt, args.subject)
-    with artifact, tempfile.TemporaryDirectory(prefix="fw-golden-home-", dir="/tmp") as home:
-        private_executable(home, artifact_data)
-        env = {"PATH": home, "HOME": home, "LC_ALL": "C", "LANG": "C", "FORGE_WARDEN_TEST_POLICY_ROOT": home}
-        command = ["forge-warden", "check", "--policy", "examples/starter.warden.toml",
+    with verified_fixture(binary, args.receipt, args.subject) as (fd, named, home, receipt):
+        executable = f"/proc/self/fd/{fd}"
+        env = {"PATH": os.defpath, "HOME": home, "LC_ALL": "C", "LANG": "C", "FORGE_WARDEN_TEST_POLICY_ROOT": home}
+        command = [executable, "check", "--policy", "examples/starter.warden.toml",
                    "--patch", "fixtures/demo.patch", "--advisory", "--rank",
                    "fixtures/demo.rank.json", "--today", "2026-11-05", "--json"]
         if golden in SURFACE:
             text = ""
             for argv in SURFACE[golden]:  # not `args`: that is the argparse namespace, read below
-                out = subprocess.run(["forge-warden", *argv], cwd=ROOT, env=env,
+                out = subprocess.run([f"{named}", *argv], executable=executable, cwd=ROOT, env=env, pass_fds=(fd,),
                                      input=b"", capture_output=True, timeout=30, check=False)
                 text += (f"=== forge-warden {' '.join(argv)} (exit {out.returncode})\n--- stdout\n"
                          f"{out.stdout.decode()}--- stderr\n{out.stderr.decode()}")
             result = text.replace(package_version(), "<version>").encode()
         elif golden == GOLDENS[0]:
-            out = subprocess.run(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+            out = subprocess.run(command, cwd=ROOT, env=env, pass_fds=(fd,), stdin=subprocess.DEVNULL,
                                  capture_output=True, timeout=30, check=False)
             if out.returncode != 7 or out.stderr:
                 raise ValueError("golden producer did not return the expected demo judgement")
@@ -169,20 +154,20 @@ def main():
         else:
             if golden == "fixtures/cli-stderr/io.txt":
                 with open("/dev/full", "wb") as full:
-                    out = subprocess.run(["forge-warden", "init"], cwd=ROOT, env=env,
+                    out = subprocess.run([executable, "init"], cwd=ROOT, env=env, pass_fds=(fd,),
                                          stdin=subprocess.DEVNULL, stdout=full,
                                          stderr=subprocess.PIPE, timeout=30, check=False)
                 expected = 3
             elif golden == "fixtures/cli-stderr/refused.txt":
-                out = subprocess.run(["forge-warden", "lint", "."], cwd=ROOT, env=env,
+                out = subprocess.run([executable, "lint", "."], cwd=ROOT, env=env, pass_fds=(fd,),
                                      stdin=subprocess.DEVNULL, capture_output=True,
                                      timeout=30, check=False)
                 expected = 4
             else:
-                over_budget = ["forge-warden", "check", "--policy", "examples/starter.warden.toml",
+                over_budget = [executable, "check", "--policy", "examples/starter.warden.toml",
                                "--patch", "fixtures/demo.patch", "--advisory", "--rank", "-",
                                "--today", "2026-11-05"]
-                out = subprocess.run(over_budget, cwd=ROOT, env=env,
+                out = subprocess.run(over_budget, cwd=ROOT, env=env, pass_fds=(fd,),
                                      input=b" " * (67108864 + 1), capture_output=True,
                                      timeout=30, check=False)
                 expected = 4
