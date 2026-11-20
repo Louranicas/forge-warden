@@ -45,11 +45,10 @@ read with or without an extension or a `#!` line; the functions of a sourced fil
 file that sources it. A file another file runs by a literal path may not be one that ONLY_IN lets
 call commands the gate image lacks (it is named).
 
-Stated limits (each needs a deliberate author): a script run or sourced through a non-literal path, a pipe (`cat FILE | bash`) or a process
+Stated limits (each needs a deliberate author): a script run or sourced through a non-literal path or a process
 substitution (`bash <(...)`, `. <(...)`) is not read, nor standard input the shell or Python
 inherits from elsewhere: a redirect on a group, subshell or loop (`{ bash; } < FILE`,
-`( bash ) < FILE`, `done < FILE`), an earlier `exec < FILE`, a duplicated descriptor
-(`exec 3< FILE` then `bash <&3`), or a Python `stdin=` argument; a data here-document that a later line
+`( bash ) < FILE`, `done < FILE`) or a Python `stdin=` argument; a data here-document that a later line
 runs is not read; a command reached only through a non-literal path is pinned by
 DYNAMIC, not resolved; commands run by another program's own language or configuration are not
 read: a program in IMAGE told to run a command by an argument, an option, its configuration or
@@ -171,7 +170,8 @@ DYNAMIC_ONCE = {
 }
 # Markers in a reader's output for a file a call runs or sources: `bash FILE`, `python3 FILE`,
 # `. FILE`. problems() reads that file in that language (or names it as not read).
-RUNS = {'(sh)': 'shell', '(py)': 'python', '(isolated-py)': 'isolated python', '(src)': 'shell'}
+RUNS = {'(sh)': 'shell', '(py)': 'python', '(isolated-py)': 'isolated python', '(src)': 'shell',
+        '(module-file)': 'package python'}
 PY_SHELL_TEXT = frozenset({
     'os.system', 'os.popen', 'subprocess.getoutput', 'subprocess.getstatusoutput', 'asyncio.create_subprocess_shell',
 })
@@ -671,9 +671,15 @@ def script_markers(marker, isolated):
 
 
 def flush_stdin(script, inputs, found, calls, lexer, directory, isolated):
+    if script == 'exec' and inputs:
+        raise Unsupported('cannot resolve persistent script input descriptor')
     if 0 not in inputs:
         return
     runner = stdin_runner(script)
+    if inputs[0] is None:
+        if runner:
+            raise Unsupported('cannot resolve piped script input')
+        return
     operator, word, heredoc = inputs[0]
     if heredoc:
         _, body, start, _, body_lexer = heredoc
@@ -700,6 +706,11 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated):
                 found.append(lexer.call(word.line, marker + path, True, directory=directory))
 
 
+def check_pythonpath(value):
+    if value not in ('', '.'):
+        raise Unsupported('cannot resolve explicit PYTHONPATH')
+
+
 def command_words(tokens, calls, lexer, directory):
     isolated = False
     initial_directory = directory
@@ -707,6 +718,8 @@ def command_words(tokens, calls, lexer, directory):
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     inputs = {}
+    cat_arguments = False
+    piped = False
     heredocs = {token[3]: token for token in tokens if token[0] == 'heredoc'}
     for index, token in enumerate(tokens):
         kind = token[0]
@@ -719,8 +732,16 @@ def command_words(tokens, calls, lexer, directory):
             continue
         if kind == 'op':
             op = token[1]
+            if piped and expect and script is None and op == '\n':
+                continue
             flush_stdin(script, inputs, found, calls, lexer, directory, isolated)
-            inputs.clear()
+            piped = op in ('|', '|&') and (script == 'cat' or piped)
+            forwarded = inputs.get(0)
+            if (script != 'cat' or cat_arguments or op == '|&' or
+                    forwarded and forwarded[0] not in ('<<<', '<<', '<<-')):
+                forwarded = None
+            inputs = {0: forwarded} if piped else {}
+            cat_arguments = False
             directory = initial_directory
             if mode == 'array':
                 if op == ')':
@@ -765,11 +786,13 @@ def command_words(tokens, calls, lexer, directory):
                 if operator in ('<&', '>&'):
                     if not word.literal and inputs:
                         raise Unsupported('cannot resolve script input descriptor')
-                    copied = inputs.get(int(word.value)) if word.literal and re.fullmatch(r'[0-9]+', word.value) else None
-                    if copied is None:
-                        inputs.pop(descriptor, None)
+                    moved = re.fullmatch(r'([0-9]+)(-?)', word.value) if word.literal else None
+                    if moved and int(moved[1]) in inputs:
+                        inputs[descriptor] = inputs[int(moved[1])]
                     else:
-                        inputs[descriptor] = copied
+                        inputs.pop(descriptor, None)
+                    if moved and moved[2]:
+                        inputs.pop(int(moved[1]), None)
                 elif operator.startswith('<'):
                     inputs[descriptor] = operator, word, heredocs.get(index + 1)
                 else:
@@ -797,7 +820,13 @@ def command_words(tokens, calls, lexer, directory):
             if word.value == ']]':
                 mode, expect = None, False
             continue
+        if expect or script in ('export', 'declare', 'typeset', 'local', 'readonly'):
+            assignment = word.value if word.literal else word.raw.lstrip('"\'')
+            if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment):
+                check_pythonpath(assignment.removeprefix('PYTHONPATH=') if word.literal else None)
         if not expect:
+            if script == 'cat':
+                cat_arguments = True
             if finding and word.literal and word.value in FIND_EXEC:
                 # find runs the word after -exec/-execdir/-ok/-okdir as a command.
                 expect, prefix, script, by_find = True, None, None, True
@@ -1191,6 +1220,7 @@ class SuiteImports:
         self.root, origin, self.files, self.reviewed = IMPORT_SOURCE.get() or (ROOT, ROOT, None, {})
         self.directory = origin if directory is None else self.root / directory.relative_to(WorkflowLexer.workspace)
         self.trees = {}
+        self.inventory_source = None
         self.stack = []
         self.class_paths = {}
         self.fixture_verifier = None
@@ -2067,6 +2097,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     elements *= max(0, index)
                 elif method == 'reverse':
                     elements.reverse()
+                elif method == 'sort' and len(elements) < 2:
+                    pass
                 elif method == 'remove' and args:
                     value = literal(args[0])
                     for position, choices in enumerate(elements):
@@ -2215,6 +2247,24 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 state[field] = previous
                 state[saved] = frozenset()
 
+    def sort_keys(owners, expression, call, names):
+        keys = {key for key in qualified(expression, names)
+                if not (isinstance(key, ast.Constant) and key.value is None)}
+        if not keys:
+            return
+        for owner in owners:
+            if not isinstance(owner, SequenceBinding):
+                raise Unsupported('cannot resolve Python sort key inputs')
+            for state in owner.states(names):
+                if state.elements is None:
+                    raise Unsupported('cannot resolve Python sort key inputs')
+                for item in state.elements:
+                    callback = ast.copy_location(ast.Call(func=expression, args=[CapturedArgument(item)], keywords=[]), call)
+                    for key in keys:
+                        if key not in PY_ARGV and key not in PY_SHELL_TEXT:
+                            raise Unsupported('cannot resolve Python sort key invocation')
+                        yield from invoke(key, callback, names, wrapped=True)
+
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
@@ -2230,14 +2280,26 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return {UNKNOWN_PROVIDER}
         if isinstance(target, PatchedProvider):
             raise Unsupported('cannot resolve executable provider patch application')
-        if target in ('builtins.list.copy', 'copy.copy', 'builtins.list', 'builtins.tuple') and not call.keywords:
+        if target in ('builtins.list', 'builtins.tuple') and not call.keywords:
+            constructor = ast.List() if target == 'builtins.list' else ast.Tuple()
+            if not call.args:
+                return built_sequences(constructor, [])
+            if len(call.args) == 1:
+                return copy_sequences(qualified(call.args[0], names), names, constructor=constructor)
+        if target in ('builtins.list.copy', 'copy.copy') and not call.keywords:
             if receiver is not None and not call.args:
                 return copy_sequences({receiver}, names)
             if receiver is None and len(call.args) == 1:
                 owners = qualified(call.args[0], names)
                 if any(isinstance(owner, SequenceBinding) for owner in owners):
-                    constructor = ast.List() if target == 'builtins.list' else ast.Tuple() if target == 'builtins.tuple' else None
-                    return copy_sequences(owners, names, constructor=constructor)
+                    return copy_sequences(owners, names)
+        if target in ('builtins.list.sort', 'builtins.sorted') and (call.args or receiver is not None):
+            owners = {receiver} if receiver is not None else qualified(call.args[0], names)
+            for keyword in call.keywords:
+                if keyword.arg is None:
+                    raise Unsupported('cannot resolve unpacked Python sort keywords')
+                if keyword.arg == 'key':
+                    yield from sort_keys(owners, keyword.value, call, names)
         if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
             if receiver is not None:
                 return list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
@@ -3108,7 +3170,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             returned.append(fields(bindings))
         bindings.update(join(returned))
     for helper in functions.values():
-        if not class_body and not ordering and source is None and not helper.called and helper.decorator not in GENERATOR_DECORATORS:
+        if (not class_body and not ordering and source in (None, imports.inventory_source)
+                and not helper.called and helper.decorator not in GENERATOR_DECORATORS):
             yield from read_helper(helper, bindings)
     if protocol_returns is not None:
         if completed:
@@ -3141,13 +3204,13 @@ def resolve_module_calls(calls, lexer):
                 inspected.add(key)
                 entry = python_calls(None, line, lexer, directory, module=(module, call[3:]))
                 pending.extend(reversed(entry))
-        elif module.partition('.')[0] not in sys.stdlib_module_names:
-            raise Unsupported('cannot resolve Python module ' + module)
         elif directory is not None and module in ('unittest', 'unittest.__main__'):
             yield (line, '(module)' + module, *call[2:])
+        else:
+            raise Unsupported('cannot resolve Python module ' + module)
 
 
-def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False, module=None):
+def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False, module=None, package_file=False):
     """Read process calls as their effective executable and command line or shell payload."""
     if isolated is None:
         return [call for mode in (False, True)
@@ -3155,7 +3218,12 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     found = []
     targets = {}
     imports = SuiteImports(directory, isolated)
-    if module is None:
+    if package_file:
+        path = imports.root / filename
+        imports.inventory_source = path
+        stem = path.parent if path.name == '__init__.py' else path.with_suffix('')
+        calls = imports.module('.'.join(stem.relative_to(imports.directory).parts), None, False, targets, {})
+    elif module is None:
         tree = ast.parse(text)
         imports.register_fixture(tree.body, filename, text)
         calls = python_callees(tree.body, {}, directory is not None, targets, imports=imports)
@@ -3166,7 +3234,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             path = entry.path.relative_to(imports.root)
             if directory is not None:
                 path = WorkflowLexer.workspace / path
-            found.append((line, '(py)' + str(path), True, *context))
+            found.append((line, ('(py)' if directory is not None else '(module-file)') + str(path), True, *context))
         calls = entry_calls()
     calls = dict.fromkeys(calls)
 
@@ -3430,6 +3498,9 @@ def problems(root):
     readings, order = {}, []
 
     def want(name, lang):
+        parent = Path(name).parent
+        if lang == 'package python' and (parent == Path('.') or (parent / '__init__.py').as_posix() not in tracked_files):
+            lang = 'python'
         if (name, lang) not in readings:
             readings[(name, lang)] = None
             order.append((name, lang))
@@ -3437,7 +3508,7 @@ def problems(root):
     for name in files:
         kind, bang = kinds[name]
         if kind in ('shell', 'python'):
-            want(name, kind)
+            want(name, 'package python' if kind == 'python' and name.endswith('.py') else kind)
         elif kind == 'other':
             found.append(f'{name}: not read: line 1: its `#!` line names {bang[1]!r}, '
                          'which this reader does not read')
@@ -3445,14 +3516,21 @@ def problems(root):
     while position < len(order):
         name, lang = order[position]
         position += 1
-        language = 'python' if lang == 'isolated python' else lang
+        language = 'python' if lang in ('package python', 'isolated python') else lang
         label = name if kinds[name][0] == language else f'{name} (run as {language})'
         try:
-            text = (root / name).read_text(encoding='utf-8')
-            origin = (root / name).parent if lang == 'python' else root
+            path = root / name
+            origin = path.parent if lang in ('python', 'package python') else root
+            if lang == 'package python':
+                while origin != root and (origin.relative_to(root) / '__init__.py').as_posix() in tracked_files:
+                    origin = origin.parent
             token = IMPORT_SOURCE.set((root, origin, tracked_files, {}))
             try:
-                calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name, isolated=lang == 'isolated python')
+                if lang == 'package python':
+                    calls = python_calls(None, filename=name, package_file=True)
+                else:
+                    text = path.read_text(encoding='utf-8')
+                    calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name, isolated=lang == 'isolated python')
                 calls = list(resolve_module_calls(calls, Lexer))
             finally:
                 IMPORT_SOURCE.reset(token)
@@ -3496,9 +3574,9 @@ def problems(root):
         if not isinstance(calls, list):
             continue
         kind, bang = kinds[name]
-        language = 'python' if lang == 'isolated python' else lang
+        language = 'python' if lang in ('package python', 'isolated python') else lang
         label = name if kind == language else f'{name} (run as {language})'
-        if bang and kind == lang:
+        if bang and kind == language:
             calls = [(1, bang[1], True)] + calls
         functions = functions_of((name, lang), {(name, lang)})
         once = 0

@@ -361,6 +361,11 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
 
 def just_consumer(step, commands, cases, root=None):
     lexer = commands['WorkflowLexer']
+    environment = step.get('env', {})
+    if not isinstance(environment, dict):
+        raise ValueError('cannot resolve gate step environment before Just installation')
+    if 'PYTHONPATH' in environment:
+        commands['check_pythonpath'](environment['PYTHONPATH'])
     directory = step.get('working-directory', '.')
     if not isinstance(directory, str):
         raise ValueError('cannot resolve gate working-directory before Just installation')

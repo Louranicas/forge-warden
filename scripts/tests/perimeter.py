@@ -1660,9 +1660,21 @@ class GateImageCommands(unittest.TestCase):
                 ("env -C checkout python3 <<'A' <<'B'\nimport statistics\nA\npass\nB\n", None),
                 ("env -C checkout python3 3<<'A'\nimport statistics\nA\n", None),
                 ("env -C checkout python3 3<<'A' <&3 | python3 -I\nimport statistics\nA\n", 'just'),
+                ("env -C checkout python3 3<<'A' <&3-\nimport statistics\nA\n", 'just'),
+                ("cat <<'A' | env -C checkout python3\nimport statistics\nA\n", 'just'),
+                ("cat <<'A' | env -C checkout python3 <<< pass\nimport statistics\nA\n", None),
             ):
                 with self.subTest(run=run):
                     self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
+            with self.assertRaisesRegex(COMMANDS.Unsupported, 'persistent script input'):
+                CAPS.just_consumer({'run': "exec 3<<'A'\nimport statistics\nA\nenv -C checkout python3 <&3"},
+                                   vars(COMMANDS), [], root)
+            for step in ({'run': "env PYTHONPATH=checkout python3 -Pc'import statistics'"},
+                         {'run': "PYTHONPATH=checkout python3 -P -c 'from statistics import *'"},
+                         {'run': 'export PYTHONPATH=checkout\npython3 -Pmstatistics'},
+                         {'env': {'PYTHONPATH': 'checkout'}, 'shell': 'python', 'run': 'import statistics'}):
+                with self.subTest(step=step), self.assertRaisesRegex(COMMANDS.Unsupported, 'PYTHONPATH'):
+                    CAPS.just_consumer(step, vars(COMMANDS), [], root)
 
     def test_relative_names_and_module_entry_points(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1678,6 +1690,12 @@ class GateImageCommands(unittest.TestCase):
             for run in ("python3 -c 'import pkg'", 'python3 -m pkg', 'python3 -mpkg.data.child'):
                 with self.subTest(run=run):
                     self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), 'just')
+            files = {path.relative_to(root).as_posix(): path.read_text() for path in package.rglob('*.py')}
+            files['entry.sh'] = 'python3 -mpkg\n'
+            self.assertEqual(self.problems(files), [])
+            files['pkg/data/child.py'] += "\ndef inspect():\n    import subprocess\n    subprocess.run(['cmp'])"
+            findings = self.problems(files)
+            self.assertTrue(any('pkg/data/child.py:6: calls `cmp`' in item for item in findings), findings)
             (package / '__init__.py').write_text('pass')
             (child / 'child.py').write_text("if __name__ == '__main__':\n    if __package__ == 'pkg.data':\n"
                                             "        import subprocess\n        subprocess.run(['just'])")
@@ -1687,6 +1705,12 @@ class GateImageCommands(unittest.TestCase):
             (root / 'unittest.py').write_text("import subprocess\nsubprocess.run(['just'])")
             self.assertEqual(CAPS.just_consumer({'run': 'python3 -m unittest -h'}, vars(COMMANDS), [], root), 'just')
             self.assertNotEqual(CAPS.just_consumer({'run': 'python3 -I -m unittest -h'}, vars(COMMANDS), [], root), 'just')
+            for run in ('python3 -m cProfile job.py', 'python3 -I -mcProfile job.py'):
+                with self.subTest(run=run):
+                    with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python module cProfile'):
+                        CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root)
+                    self.assertTrue(any('cannot resolve Python module cProfile' in item for item in
+                                        self.problems({'entry.sh': run, 'job.py': 'pass'})))
 
     def test_imported_globals_and_initialization_follow_each_path(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1821,6 +1845,25 @@ class GateImageCommands(unittest.TestCase):
         with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python callable'):
             COMMANDS.python_calls("import os, subprocess\nitems = [subprocess.run]\n"
                                   "saved = items[int(os.getenv('START', '0')):]\nsaved[0](['just'])")
+
+    def test_sequence_constructors_preserve_indexed_launchers(self):
+        for constructor in ('list()', 'list(tuple())'):
+            source = f"import subprocess\nitems = {constructor}\nitems.append(subprocess.run)\nlaunch = items[-1]\nlaunch(['just'])"
+            with self.subTest(constructor=constructor):
+                self.assertEqual(self.recorded_commands(source), [['just']])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['just'])
+        for constructor in ('list', 'tuple'):
+            with self.subTest(constructor=constructor), self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python callable'):
+                COMMANDS.python_calls(f'def dispatch(items):\n    launch = {constructor}(items)[0]\n    launch()')
+
+    def test_sort_keys_visit_reachable_commands(self):
+        for sort in ('items.sort(key=run)', 'order = items.sort\norder(key=run)', 'list.sort(items, key=run)',
+                     'sorted(items, key=run)'):
+            for items, expected in (("[['just', '--version']]", [['just', '--version']]), ('[]', [])):
+                source = f'from subprocess import run\nitems = {items}\n{sort}'
+                with self.subTest(sort=sort, items=items):
+                    self.assertEqual(self.recorded_commands(source), expected)
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], [argv[0] for argv in expected])
 
     def test_sequence_growth_stops_at_element_budget(self):
         for grow in ('items = items + items', 'items = [*items, *items]', 'items.extend(items)',
