@@ -194,7 +194,7 @@ PY_ARGV = {
 
 
 class Unsupported(ValueError):
-    pass
+    location = None
 
 
 class Word:
@@ -952,6 +952,8 @@ def argv_text(items, strict=False):
     head = items[0] if items else None
     if isinstance(head, ast.Starred):
         raise Unsupported('cannot resolve starred Python process arguments')
+    if isinstance(head, CapturedArgument):
+        raise Unsupported('cannot resolve Python process executable')
     if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
         return None  # stated limit: the program is not a literal
     return ' '.join(py_word(item, strict) for item in items)
@@ -965,6 +967,7 @@ class PythonHelper:
         self.frames = frames
         self.called = False
         self.summaries = {}
+        self.managed_body = None
 
 
 class PythonClass:
@@ -1022,7 +1025,10 @@ EXCEPTION = object()
 SKIPPED_HANDLER = object()
 STANDARD_CONTEXT = object()
 UNRESOLVED_CONTEXT = object()
+LIST_MUTATIONS = frozenset({'append', 'extend', 'insert', 'pop', 'remove', 'clear', 'sort', 'reverse',
+                            '__iadd__', '__imul__', '__setitem__', '__delitem__'})
 FILE_CONTEXT = object()
+NONSUPPRESSING_CONTEXT = object()
 GENERATOR_DECORATORS = ('contextlib.contextmanager', 'contextlib.asynccontextmanager')
 GeneratorManager = namedtuple('GeneratorManager', 'helper call receiver')
 ImportedMember = namedtuple('ImportedMember', 'module name source')
@@ -1038,50 +1044,73 @@ class SuiteImports:
         self.stack = []
         self.class_paths = {}
 
-    def resolve(self, symbol, ordering, targets, names):
-        module = symbol.module.lstrip('.')
-        levels = len(symbol.module) - len(module)
+    def load(self, path, module, ordering, targets, names):
+        if path in self.loaded:
+            return self.loaded[path]
+        relative = path.relative_to(self.root).as_posix()
+        if (relative not in self.files or path.resolve() != path or not path.is_file()
+                or path in self.stack or len(self.stack) >= 12):
+            raise Unsupported('cannot resolve unsafe or recursive unittest import ' + module)
+        self.stack.append(path)
+        namespace = {key: values for key, values in names.items() if isinstance(key, tuple)}
+        namespace['__name__'] = frozenset({ast.Constant(module)})
+        try:
+            tree = ast.parse(path.read_bytes(), filename=relative)
+            yield from python_callees(tree.body, namespace, ordering, targets, imports=self, source=path)
+        finally:
+            self.stack.pop()
+        self.loaded[path] = namespace
+        names.update((key, values) for key, values in namespace.items() if isinstance(key, tuple))
+        for method in self.reviewed.get(relative, ()):
+            for cls in namespace.get(method.partition('.')[0], ()):
+                if isinstance(cls, PythonClass):
+                    self.class_paths[cls] = WorkflowLexer.workspace / relative
+        return namespace
+
+    def module(self, module, source, ordering, targets, names):
+        absolute = module.lstrip('.')
+        levels = len(module) - len(absolute)
         parent = self.directory
         if levels:
-            if symbol.source is None:
+            if source is None:
                 raise Unsupported('cannot resolve relative unittest import')
-            parent = symbol.source.parent
+            parent = source.parent
             for _ in range(levels - 1):
                 parent = parent.parent
-        stem = parent.joinpath(*module.split('.'))
-        if not stem.is_relative_to(self.root):
-            raise Unsupported('cannot resolve unittest import outside the checkout')
+        parts = absolute.split('.') if absolute else []
+        stem = parent.joinpath(*parts)
+        if not stem.is_relative_to(self.root) or len(parts) > 12:
+            raise Unsupported('cannot resolve unittest import inside the checkout')
         if self.files is None:
             self.files = set(tracked(self.root))
+        for index, part in enumerate(parts[:-1], 1):
+            parent = parent / part
+            initializer = parent / '__init__.py'
+            if initializer not in self.stack:
+                yield from self.load(initializer, '.'.join(parts[:index]), ordering, targets, names)
         paths = [stem / '__init__.py']
-        if module:
+        if absolute:
             paths.append(stem.with_suffix('.py'))
-        candidates = [path for path in paths
-                      if path.relative_to(self.root).as_posix() in self.files]
+        candidates = [path for path in paths if path.relative_to(self.root).as_posix() in self.files]
         if len(candidates) != 1:
-            raise Unsupported('cannot resolve unittest import ' + symbol.module)
-        path, = candidates
-        if path.resolve() != path or not path.is_file() or path in self.stack or len(self.stack) >= 12:
-            raise Unsupported('cannot resolve unsafe or recursive unittest import ' + symbol.module)
-        if path not in self.loaded:
-            self.stack.append(path)
-            namespace = {'__name__': frozenset({ast.Constant(module)})}
-            try:
-                tree = ast.parse(path.read_bytes(), filename=str(path))
-                yield from python_callees(tree.body, namespace, ordering, targets, imports=self, source=path)
-            finally:
-                self.stack.pop()
-            self.loaded[path] = namespace
-            names.update((key, values) for key, values in namespace.items() if isinstance(key, tuple))
-            for method in self.reviewed.get(path.relative_to(self.root).as_posix(), ()):
-                for cls in namespace.get(method.partition('.')[0], ()):
-                    if isinstance(cls, PythonClass):
-                        self.class_paths[cls] = WorkflowLexer.workspace / path.relative_to(self.root)
-        values = self.loaded[path].get(symbol.name)
+            raise Unsupported('cannot resolve unittest import ' + module)
+        return (yield from self.load(candidates[0], module, ordering, targets, names))
+
+    def resolve(self, symbol, ordering, targets, names, chain=()):
+        if symbol in chain or len(chain) >= 12:
+            raise Unsupported('cannot resolve recursive unittest re-export ' + symbol.name)
+        namespace = yield from self.module(symbol.module, symbol.source, ordering, targets, names)
+        values = namespace.get(symbol.name)
         if not values or any(value in (None, MISSING_NAME, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
                              or isinstance(value, BoundCall) for value in values):
             raise Unsupported('cannot resolve imported unittest binding ' + symbol.name)
-        return values
+        resolved = set()
+        for value in values:
+            if isinstance(value, ImportedMember):
+                resolved.update((yield from self.resolve(value, ordering, targets, names, (*chain, symbol))))
+            else:
+                resolved.add(value)
+        return resolved
 
 
 def generator_phases(body):
@@ -1211,6 +1240,8 @@ def loop_values(values, state, instances):
             return ast.Constant, type(value.value), value.value
         if isinstance(value, CapturedArgument):
             return CapturedArgument, frozenset(shape(item, path) for item in value.owners)
+        if isinstance(value, SequenceBinding) and value.elements is not None:
+            return value.origin, tuple(frozenset(shape(item, path) for item in choices) for choices in value.elements)
         if isinstance(value, (ast.Tuple, ast.List)):
             return type(value), tuple(shape(item, path) for item in value.elts), getattr(value, '_mutated', False)
         if value not in instances or not isinstance(value, PythonInstance) or value in path:
@@ -1282,6 +1313,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         entry = local.copy()
         context = (call, receiver, strict, reachable, interrupted is not None, tuple(active), protocol)
         environment = [entry, *(frame for _, frame in parents), *active.values()]
+        if call is not None and helper.managed_body is not None:
+            if not helper.managed_body:
+                raise Unsupported('cannot resolve decorated context manager lifecycle')
+            phase = helper.managed_body
+            protocol = True
         if phase is None and helper.summaries.get(context) == environment:
             return {UNKNOWN_CALLABLE}
         first_allocation = len(allocations)
@@ -1348,7 +1384,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return bound
         for value in values:
             if isinstance(value, PythonHelper):
-                if value.decorator is UNKNOWN_CALLABLE:
+                if value.decorator is UNKNOWN_CALLABLE and value.managed_body is None:
                     value = UNKNOWN_CALLABLE
                 elif value.decorator == 'builtins.classmethod':
                     value = BoundCall(value, cls)
@@ -1379,6 +1415,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for owner in qualified(node.value, names):
                 if isinstance(owner, (PythonClass, PythonInstance)):
                     values.update(member(owner, node.attr, names))
+                elif isinstance(owner, (SequenceBinding, ast.List)) and node.attr in LIST_MUTATIONS:
+                    values.add(BoundCall('builtins.list.' + node.attr, owner))
                 elif owner == 'unittest.TestCase.super()' and node.attr == '__init__':
                     values.add('unittest.TestCase.__init__')
                 elif owner in ('builtins.super()', 'unittest.TestCase.super()'):
@@ -1438,6 +1476,38 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return type(value)(elts=items, ctx=ast.Load())
         return value
 
+    def process_argument(value, names):
+        owners = qualified(value, names)
+        if any(isinstance(owner, SequenceBinding) for owner in owners):
+            choices = []
+            for owner in owners:
+                if (not isinstance(owner, SequenceBinding) or owner.elements is None or
+                        getattr(owner.origin, '_mutated', False) and not getattr(owner.origin, '_append_only', False)):
+                    return CapturedArgument({UNKNOWN_CALLABLE})
+                items = [process_argument(CapturedArgument(values), names) for values in owner.elements]
+                if getattr(owner.origin, '_mutated', False):
+                    items.append(ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE})))
+                choices.append(type(owner.origin)(elts=items, ctx=ast.Load()))
+            result = choices.pop()
+            for choice in choices:
+                result = ast.IfExp(test=CapturedArgument({UNKNOWN_CALLABLE}), body=choice, orelse=result)
+            return result
+        if isinstance(value, CapturedArgument) and len(owners) == 1:
+            owner, = owners
+            if owner == 'sys.executable':
+                return ast.Constant('python3')
+            if isinstance(owner, ast.Constant):
+                return owner
+        if isinstance(value, ast.Starred):
+            item = process_argument(value.value, names)
+            return value if item is value.value else ast.Starred(value=item, ctx=ast.Load())
+        literal = argument(value, names)
+        if isinstance(literal, (ast.List, ast.Tuple)):
+            items = [process_argument(item, names) for item in literal.elts]
+            if items != literal.elts:
+                return type(literal)(elts=items, ctx=ast.Load())
+        return literal
+
     def captured(value, names):
         if isinstance(value, CapturedArgument):
             return value
@@ -1450,14 +1520,39 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return ast.Starred(value=captured(literal.value, names), ctx=ast.Load())
         return CapturedArgument(qualified(value, names) or {UNKNOWN_CALLABLE})
 
+    def element_values(item, names):
+        if isinstance(item, ast.IfExp):
+            return element_values(item.body, names) | element_values(item.orelse, names)
+        if isinstance(item, ast.JoinedStr):
+            parts = []
+            for part in item.values:
+                if isinstance(part, ast.Constant):
+                    parts.append(part.value)
+                else:
+                    owners = qualified(part.value, names)
+                    if (len(owners) != 1 or part.conversion != -1 or part.format_spec is not None):
+                        break
+                    value, = owners
+                    if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                        break
+                    parts.append(value.value)
+            else:
+                return {ast.Constant(''.join(parts))}
+        if isinstance(item, (ast.Tuple, ast.List)):
+            return {sequence_binding(item, names)}
+        if (isinstance(item, ast.BinOp) and isinstance(item.op, ast.Add) and
+                isinstance(item.left, ast.Constant) and isinstance(item.left.value, str) and
+                isinstance(item.right, ast.Call) and qualified(item.right.func, names) == {'shlex.quote'}):
+            return {ast.Constant(item.left.value + PY_DYNAMIC)}
+        return qualified(item, names)
+
     def sequence_binding(node, names):
         sites = {node}
         elements = []
         for item in expanded_items(node.elts):
             if isinstance(item, ast.Starred):
                 return SequenceBinding(node, None, frozenset(sites))
-            owners = ({sequence_binding(item, names)} if isinstance(item, (ast.Tuple, ast.List))
-                      else qualified(item, names))
+            owners = element_values(item, names)
             nested = [owner.sites for owner in owners if isinstance(owner, SequenceBinding)]
             if any(node in origins for origins in nested):
                 owners = {UNKNOWN_CALLABLE}
@@ -1527,6 +1622,21 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 resolved_handler(value)
         return True
 
+    def list_change(owner, method, args, names):
+        origin = owner.origin if isinstance(owner, SequenceBinding) else owner
+        if not isinstance(origin, ast.List):
+            return
+        added = set()
+        if args and method in ('insert', 'append', '__setitem__'):
+            added.update(element_values(args[-1], names))
+        if args and (method in ('extend', '__iadd__') or
+                     method == '__setitem__' and isinstance(args[0], ast.Slice)):
+            items = py_items(sequence_value(args[-1], names))
+            added = {UNKNOWN_CALLABLE} if items is None else set().union(*(element_values(item, names) for item in items))
+        origin._append_only = getattr(origin, '_append_only', True) and method in ('append', 'extend', '__iadd__')
+        origin._mutated = True
+        origin._added = getattr(origin, '_added', frozenset()) | added
+
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
@@ -1535,6 +1645,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                                   keywords=list(keywords.values())), call)
             return (yield from invoke(target.target, call, names, target.receiver or receiver,
                                       wrapped or target.receiver is None, interrupted))
+        if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
+            if receiver is not None:
+                list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
+            elif call.args:
+                for owner in qualified(call.args[0], names):
+                    list_change(owner, target.rsplit('.', 1)[1], call.args[1:], names)
+            return {UNKNOWN_CALLABLE}
         if isinstance(target, PythonHelper):
             if target.decorator in GENERATOR_DECORATORS:
                 target.called = True
@@ -1590,7 +1707,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not cls.test_case:
                     continue
                 if cls in imports.class_paths:
-                    yield call, '(suite)' + str(imports.class_paths[cls]), False
+                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source
                     continue
                 members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
                 members.update(name for owner, name in fields(names) if owner in cls.lineage)
@@ -1648,12 +1765,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if target.startswith('asyncio.subprocess.'):
                 target = 'asyncio.' + target.removeprefix('asyncio.subprocess.')
             if target in PY_ARGV or target in PY_SHELL_TEXT or target in ('asyncio.create_subprocess_exec', 'pty.spawn'):
-                args = [argument(value, names) for value in call.args]
-                keyword_values = [argument(kw.value, names) for kw in call.keywords]
+                args = [process_argument(value, names) for value in call.args]
+                keyword_values = [process_argument(kw.value, names) for kw in call.keywords]
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
-            yield call, target, wrapped or require_command
+            yield call, target, wrapped or require_command, source
             if target in ('builtins.open', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
                           'tempfile.NamedTemporaryFile'):
                 return {FILE_CONTEXT}
@@ -1664,7 +1781,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             FILE_CONTEXT, 'sys.stdout', 'sys.stderr', 'sys.__stdout__', 'sys.__stderr__'}:
                         return {FILE_CONTEXT}
                 return {UNRESOLVED_CONTEXT}
-            if target in ('subprocess.Popen', 'contextlib.suppress', 'contextlib.ExitStack', 'tempfile.TemporaryDirectory', 'os.scandir',
+            if target in ('subprocess.Popen', 'tempfile.TemporaryDirectory', 'os.scandir'):
+                return {NONSUPPRESSING_CONTEXT}
+            if target in ('contextlib.suppress', 'contextlib.ExitStack',
                           'unittest.mock.patch', 'unittest.mock.patch.dict', 'unittest.mock.patch.object',
                           'unittest.TestCase.subTest', 'unittest.TestCase.assertRaises', 'unittest.TestCase.assertRaisesRegex',
                           'unittest.TestCase.assertWarns', 'unittest.TestCase.assertWarnsRegex'):
@@ -1724,9 +1843,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values.update((yield from read_helper(handler, branch, call, receiver, interrupted=interrupted, protocol=True)))
                 else:
                     if isinstance(manager, BoundCall) or manager in (MISSING_NAME, UNRESOLVED_CONTEXT) or (
-                            ordering and manager not in (STANDARD_CONTEXT, FILE_CONTEXT)):
+                            ordering and manager not in (STANDARD_CONTEXT, FILE_CONTEXT, NONSUPPRESSING_CONTEXT)):
                         raise Unsupported('cannot resolve Python context manager')
-                    values.add(FILE_CONTEXT if manager is FILE_CONTEXT and method == entry else UNKNOWN_CALLABLE)
+                    if method == exit_method and manager in (FILE_CONTEXT, NONSUPPRESSING_CONTEXT):
+                        values.add(ast.Constant(False))
+                    else:
+                        values.add(FILE_CONTEXT if manager is FILE_CONTEXT and method == entry else UNKNOWN_CALLABLE)
                 outcomes.append(branch)
             if outcomes:
                 state.update(join(outcomes, paths=True))
@@ -1777,7 +1899,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 may_raise = None in owners or MISSING_NAME in owners
         if may_raise:
             record_exception(interrupted, names)
-        completed = yield from visit_node(node, names, interrupted)
+        try:
+            completed = yield from visit_node(node, names, interrupted)
+        except Unsupported as error:
+            if source is not None and error.location is None and hasattr(node, 'lineno'):
+                error.location = source.relative_to(imports.root), node.lineno
+            raise
         if may_raise and isinstance(node, ast.expr) and not isinstance(node, (ast.Name, ast.Constant)):
             record_exception(interrupted, names)
         return completed
@@ -1785,19 +1912,17 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def visit_node(node, names, interrupted):
         def bind(key, values):
             names[key] = values
-        mutated = None
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in (
-                'append', 'extend', 'insert', 'pop', 'remove', 'clear', 'sort', 'reverse', '__setitem__', '__delitem__'):
-            mutated = node.func.value
-        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            mutated = node.value
-        elif isinstance(node, ast.AugAssign):
-            mutated = node.target
-        if mutated is not None:
-            for owner in qualified(mutated, names):
-                origin = owner.origin if isinstance(owner, SequenceBinding) else owner
-                if isinstance(origin, ast.List):
-                    origin._mutated = True
+        if isinstance(node, ast.AugAssign):
+            method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__'
+            owners = qualified(node.target, names)
+            if owners and all(isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) for owner in owners):
+                yield from visit(node.value, names, interrupted)
+                for owner in owners:
+                    list_change(owner, method, [node.value], names)
+                return
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Del):
+            for owner in qualified(node.value, names):
+                list_change(owner, '__delitem__', [], names)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for child in ast.iter_child_nodes(node):
                 if not isinstance(child, ast.stmt):
@@ -1846,8 +1971,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     else:
                         decorator = UNKNOWN_CALLABLE
                 key = node, decorator
+                managers = [owner for group in decorators for owner in group if isinstance(owner, GeneratorManager)]
+                if managers:
+                    key = node, tuple(map(frozenset, decorators))
                 if key not in functions:
-                    functions[key] = PythonHelper(node, frames(bindings), decorator, source)
+                    helper = PythonHelper(node, frames(bindings), decorator, source)
+                    if managers:
+                        helper.managed_body = []
+                        if len(managers) == len(decorators) and all(len(group) == 1 for group in decorators):
+                            helper.decorator = None
+                            body = node.body
+                            for manager in reversed(managers):
+                                asynchronous = manager.helper.decorator == 'contextlib.asynccontextmanager'
+                                if asynchronous != isinstance(node, ast.AsyncFunctionDef):
+                                    break
+                                context = ast.withitem(context_expr=CapturedArgument({manager}), optional_vars=None)
+                                body = [(ast.AsyncWith if asynchronous else ast.With)(items=[context], body=body)]
+                            else:
+                                helper.managed_body = body
+                    functions[key] = helper
                 helper = functions[key]
                 bind(node.name, frozenset({helper}))
             return
@@ -1895,6 +2037,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             inputs = loop_inputs(node, body)
             broken = []
             iterable = sequence_value(node.iter, names) if isinstance(node, ast.For) else None
+            owners = qualified(node.iter, names) if isinstance(node, ast.For) else ()
+            owner = next(iter(owners)) if len(owners) == 1 else None
+            origin = owner.origin if isinstance(owner, SequenceBinding) else owner
             elements = literal_elements(iterable)
             candidates = []
             if elements is not None:
@@ -1904,7 +2049,16 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 candidates = [captured(item, names) for item in items]
             loop_allocations = set()
             exhausted = True
-            for iteration in range(len(elements) if elements is not None else 8):
+            for iteration in range((len(elements) if elements is not None else 0) + 8):
+                widened = isinstance(origin, ast.List) and getattr(origin, '_mutated', False)
+                if widened:
+                    additions = origin._added
+                    initial = owner.elements if isinstance(owner, SequenceBinding) else [qualified(item, names) for item in origin.elts]
+                    values = additions | (frozenset().union(*initial) if initial is not None else {UNKNOWN_CALLABLE})
+                    elements = None
+                    candidates = [CapturedArgument({value}) for value in values or {UNKNOWN_CALLABLE}]
+                elif elements is not None and iteration == len(elements):
+                    break
                 first_allocation = len(allocations)
                 start = len(transfers)
                 branch = names.copy()
@@ -1948,7 +2102,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                loop_values(names.get(key, ()), names, loop_allocations))
                               for key, values in next_entry.items())
                 names.update(next_entry)
-                if not changed:
+                if not changed and (not widened or additions == origin._added):
                     break
                 if isinstance(node, ast.While):
                     yield from visit(node.test, names, interrupted)
@@ -1996,6 +2150,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split('.')[0]
+                if ('.' in alias.name and root not in sys.stdlib_module_names and
+                        (imports.directory / root).is_dir()):
+                    yield from imports.module(alias.name, source, ordering, targets, names)
                 bind(alias.asname or root, frozenset({alias.name if alias.asname else root}))
         elif isinstance(node, ast.ImportFrom):
             module = '.' * node.level + (node.module or '')
@@ -2006,7 +2163,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 else:
                     if node.level or module.partition('.')[0] not in sys.stdlib_module_names:
                         symbol = ImportedMember(module, alias.name, source)
-                        values = (yield from imports.resolve(symbol, ordering, targets, names)) if source is not None else {symbol}
+                        values = (yield from imports.resolve(symbol, ordering, targets, names)) if (source is not None or
+                            '.' in module and (imports.directory / module.partition('.')[0]).is_dir()) else {symbol}
                     else:
                         values = {module + '.' + alias.name}
                     bind(alias.asname or alias.name, frozenset(values))
@@ -2017,8 +2175,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     return
             yield from visit(node.value, names, interrupted)
             values = qualified(node.value, names)
-            if isinstance(node.value, (ast.Tuple, ast.List)):
-                values = frozenset({sequence_binding(node.value, names)})
+            if isinstance(node.value, (ast.Tuple, ast.List)) or (isinstance(node.value, ast.IfExp) and
+                    all(isinstance(arm, (ast.Tuple, ast.List)) for arm in branches(node.value))):
+                values = frozenset(element_values(node.value, names))
             elif class_body and isinstance(node.value, (ast.Set, ast.Dict)):
                 values = frozenset({node.value})
             for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
@@ -2032,6 +2191,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                 len(target.elts) != len(value.elements) and not any(isinstance(t, ast.Starred) for t in target.elts)):
                             return False
                         bind_target(target, CapturedArgument(values), names)
+                elif isinstance(target, ast.Subscript):
+                    for owner in qualified(target.value, names):
+                        list_change(owner, '__setitem__', [target.slice, node.value], names)
                 elif isinstance(target, ast.Attribute):
                     owners = qualified(target.value, names)
                     for owner in owners:
@@ -2097,7 +2259,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
     tree = ast.parse(text)
     found = []
     targets = {}
-    calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=SuiteImports(directory)))
+    imports = SuiteImports(directory)
+    calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=imports))
 
     rebound = set().union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
 
@@ -2117,14 +2280,14 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                 setattr(node, field, process_arguments(value))
         return node
 
-    for node, name, wrapped in calls:
+    def read_call(node, name, wrapped, start):
         if name.startswith('(suite)'):
-            found.append(lexer.call(line + node.lineno - 1, '(py)' + name.removeprefix('(suite)'), True, directory=directory))
-            continue
+            yield lexer.call(start, '(py)' + name.removeprefix('(suite)'), True, directory=directory)
+            return
         if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
         if name not in PY_SHELL_TEXT and name not in PY_ARGV and name not in ('pty.spawn', 'asyncio.create_subprocess_exec'):
-            continue
+            return
         args = expanded_items([process_arguments(arg) for arg in node.args])
         keywords = {item.arg: process_arguments(item.value) for item in node.keywords}
         if None in keywords:
@@ -2157,6 +2320,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
             return [argv_text([exe, *after_argv_zero(items)] if exe is not None else items, strict) for exe in executables]
 
         def shell_invocations(payload, rest):
+            if isinstance(payload, CapturedArgument):
+                raise Unsupported('cannot resolve Python shell payload')
             if isinstance(payload, ast.Starred):
                 raise Unsupported('cannot resolve starred Python process arguments')
             invocations = []
@@ -2212,7 +2377,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                     raise Unsupported('cannot resolve starred Python process arguments')
                 program = args[index] if len(args) > index else keywords.get(program_key)
                 if program is None:
-                    continue
+                    return
                 if shape == 'list':
                     argv = args[index + 1] if len(args) > index + 1 else keywords.get(argv_key)
                     for listed in branches(argv):
@@ -2233,9 +2398,21 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                 cwd = lexer.location(directory, value.value)
         for shell_text in dict.fromkeys(texts):
             if shell_text is not None:
-                found.extend(external(shell_calls(shell_text, line + node.lineno - 1, lexer, cwd)))
+                yield from external(shell_calls(shell_text, start, lexer, cwd))
             elif directory is not None or strict:
                 raise Unsupported('cannot resolve Python process command')
+
+    for node, name, wrapped, source in calls:
+        start = node.lineno if source is not None else line + node.lineno - 1
+        try:
+            for number, *rest in read_call(node, name, wrapped, start):
+                if source is not None and isinstance(number, int):
+                    number = source.relative_to(imports.root), number
+                found.append((number, *rest))
+        except Unsupported as error:
+            if source is not None and error.location is None:
+                error.location = source.relative_to(imports.root), start
+            raise
     return found
 
 
@@ -2307,6 +2484,11 @@ def repo_path(word):
     return None if path == '..' or path.startswith('../') else path
 
 
+def command_location(label, line):
+    path, number = line if isinstance(line, tuple) else (label, line)
+    return f'{path}:{number}'
+
+
 def problems(root):
     """Every file is read in the language it runs in: by its own kind, and also in the language
     of each call that runs or sources it by a literal path (`bash FILE`, `python3 FILE`,
@@ -2343,7 +2525,9 @@ def problems(root):
                 IMPORT_SOURCE.reset(token)
         except (Unsupported, SyntaxError, UnicodeDecodeError) as error:
             readings[(name, lang)] = label
-            found.append(f'{label}: not read: {error}')
+            location = getattr(error, 'location', None)
+            at = command_location(label, location) if location else label
+            found.append(f'{at}: not read: {error}')
             continue
         readings[(name, lang)] = calls
         for line, word, _ in calls:
@@ -2358,7 +2542,7 @@ def problems(root):
                 want(target, kinds[target][0] if kinds[target][0] in ('shell', 'python') else 'shell')
             privileged = sorted(command for command, owners in ONLY_IN.items() if target in owners)
             if privileged and target != name:
-                found.append(f'{label}:{line}: runs `{target}`, which alone may call '
+                found.append(f'{command_location(label, line)}: runs `{target}`, which alone may call '
                              f'{", ".join(privileged)} (not in the gate image)')
 
     def functions_of(key, seen):
@@ -2391,7 +2575,7 @@ def problems(root):
                 continue
             if word in DECLARED:
                 if word in ONLY_IN and name not in ONLY_IN[word]:
-                    found.append(f'{label}:{line}: calls `{word}`, which only '
+                    found.append(f'{command_location(label, line)}: calls `{word}`, which only '
                                  f'{", ".join(sorted(ONLY_IN[word]))} may call')
                 continue
             if word in DYNAMIC.get(name, ()):
@@ -2405,7 +2589,7 @@ def problems(root):
                     continue
                 if repo_path(word) in tracked_files:
                     continue  # read above in the language it runs in (or named as not read)
-            found.append(f'{label}:{line}: calls `{word}`, which the gate image does not declare '
+            found.append(f'{command_location(label, line)}: calls `{word}`, which the gate image does not declare '
                          '(scripts/script_commands.py)')
     return found
 

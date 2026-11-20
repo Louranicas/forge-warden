@@ -392,7 +392,7 @@ class Guard(unittest.TestCase):
             (root / "edit").touch()
             commands = []
             for recipe, hook, gate in (("fast", "pre-commit", "ci_fast.sh"), ("ci", "pre-push", "ci_local.sh")):
-                hook_command = ["git", "hook", "run", hook] if root == linked else [root / ".githooks" / hook]
+                hook_command = ["git", "hook", "run", hook] if root == linked else [f"./.githooks/{hook}"]
                 commands.extend(([sys.executable, "-I", CHECKOUT_JUST, recipe], ["bash", root / "scripts" / gate],
                                  hook_command))
             if root == copied:
