@@ -193,6 +193,8 @@ PY_ARGV = {
     'os.spawnl': (1, 'spread', None, None), 'os.spawnle': (1, 'spread', None, None),
     'os.spawnlp': (1, 'spread', None, None), 'os.spawnlpe': (1, 'spread', None, None),
 }
+FLAT_ARGV_LAUNCHERS = {name for name, operands in PY_ARGV.items() if operands and operands[1] == 'spread'} | {
+    'asyncio.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_exec'}
 
 
 class Unsupported(ValueError):
@@ -1579,10 +1581,10 @@ BoundCall = namedtuple('BoundCall', ('target', 'receiver', 'args', 'keywords'), 
 
 UNKNOWN_CALLABLE = object()
 UNKNOWN_KEYWORD = object()
-KEYWORD_VIEW = object()
-KEYWORD_METHODS = {'get', 'keys', 'items', 'values', 'copy'}
+KeywordView = namedtuple('KeywordView', 'mapping method')
+KEYWORD_METHODS = {'get', '__getitem__', '__contains__', 'keys', 'items', 'values', 'copy'}
 KEYWORD_READERS = {'builtins.dict.' + method for method in KEYWORD_METHODS} | {
-    'builtins.len', 'builtins.dict', 'copy.copy'}
+    'builtins.len', 'builtins.dict', 'copy.copy', 'operator.getitem', 'operator.contains'}
 UNKNOWN_PROVIDER = object()
 MODULE_INITIALIZED = object()
 MISSING_FIELD = object()
@@ -1593,6 +1595,9 @@ STANDARD_CONTEXT = object()
 UNRESOLVED_CONTEXT = object()
 LIST_MUTATIONS = frozenset({'append', 'extend', 'insert', 'pop', 'remove', 'clear', 'sort', 'reverse',
                             '__iadd__', '__imul__', '__setitem__', '__delitem__'})
+ITERABLE_CONSUMERS = {'builtins.list', 'builtins.tuple', 'builtins.set', 'builtins.frozenset', 'builtins.dict',
+                      'builtins.sorted', 'builtins.sum', 'builtins.any', 'builtins.all', 'builtins.min', 'builtins.max',
+                      'builtins.str.join', 'builtins.bytes.join', 'builtins.list.extend'}
 FILE_CONTEXT = object()
 FILESYSTEM_PATH = object()
 PRIVATE_FIXTURE_HOME = object()
@@ -2156,6 +2161,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     local[name] = uncertain
             for keyword in call.keywords:
                 if keyword.arg in named:
+                    if keyword.arg in supplied:
+                        raise Unsupported('duplicate Python call keyword')
                     bind_argument(named[keyword.arg], keyword.value)
                 elif function.args.kwarg and keyword.arg is not None:
                     keywords[keyword.arg] = captured(keyword.value, names)
@@ -2261,9 +2268,26 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             bound.add(value)
         return bound
 
+    def check_keyword_keys(keys):
+        if not keys or any(not isinstance(key, ast.Constant) for key in keys):
+            raise Unsupported('cannot resolve Python keyword lookup key')
+
+    def check_keyword_repr(mapping, keys_only, names):
+        if not names.get((mapping, 'escaped')) and None not in mapping.entries:
+            if keys_only:
+                return
+            if all(isinstance(owner, ast.Constant) or isinstance(owner, PythonHelper) and owner.decorator is None
+                   or owner in PY_ARGV or owner in PY_SHELL_TEXT or owner == 'builtins.print'
+                   for value in mapping.entries.values() for owner in qualified(value, names)):
+                return
+        raise Unsupported('cannot resolve Python keyword view representation')
+
     def keyword_value(mapping, key, names, default):
-        if names.get((mapping, 'escaped')) or not isinstance(key, ast.Constant):
+        keys = qualified(key, names)
+        check_keyword_keys(keys)
+        if len(keys) != 1 or names.get((mapping, 'escaped')):
             return {UNKNOWN_KEYWORD}
+        key, = keys
         if key.value not in mapping.entries or key.value is None:
             return {UNKNOWN_KEYWORD} if None in mapping.entries else default
         return {UNKNOWN_KEYWORD if value in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(value, ast.arg)
@@ -2278,6 +2302,22 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                                 for key in node.keys):
             return {key.value: captured(value, names) for key, value in zip(node.keys, node.values)}
         raise Unsupported('cannot resolve collected Python keyword copy')
+
+    def known_keyword_names(node, names):
+        keys = set()
+        for mapping in qualified(node, names):
+            if isinstance(mapping, KeywordArguments) and not names.get((mapping, 'escaped')):
+                keys.update(mapping.entries)
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if key is None:
+                    keys.update(known_keyword_names(value, names))
+                else:
+                    key = argument(key, names)
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        keys.add(key.value)
+        keys.discard(None)
+        return keys
 
     def check_expansion(owners):
         if any(isinstance(value, (PythonInstance, PythonClass)) for value in owners):
@@ -2546,12 +2586,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return owner
         return node
 
-    def star_items(star, names, interrupted, process_target):
+    def star_items(star, names, interrupted):
         value = CapturedArgument(qualified(star.value, names))
-        check_expansion(value.owners)
-        if process_target and any(isinstance(owner, SequenceBinding) and any(state.revised for state in owner.states(names))
-                                  for owner in value.owners):
-            raise Unsupported('cannot resolve changed Python process argument expansion')
         if len(value.owners) == 1 and isinstance(mapping := next(iter(value.owners)), KeywordArguments):
             if not names.get((mapping, 'escaped')) and None not in mapping.entries:
                 check_sequence_length(len(mapping.entries))
@@ -2665,6 +2701,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if indexed:
             deleting = isinstance(target.ctx, ast.Del)
+            if any(isinstance(owner, KeywordArguments) for owner in owners):
+                check_keyword_keys(qualified(key, names))
             value = CapturedArgument(values)
             if ENVIRON.intersection(owners):
                 path = UNSET_PATH if deleting else path_value(value, names)
@@ -2686,9 +2724,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def bind_target(target, value, names, interrupted):
         if isinstance(target, (ast.Tuple, ast.List)):
-            for owner in qualified(value, names):
-                if isinstance(owner, DEFERRED):
-                    yield from inspect_generator(owner, names, interrupted, partial=True)
             check_sequence_length(len(target.elts))
             owners = qualified(value, names)
             if len(owners) > 1 or any(isinstance(owner, SequenceBinding) and len(owner.states(names)) > 1 for owner in owners):
@@ -2703,6 +2738,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if outcomes:
                     names.update(join(outcomes, paths=True))
                 return bool(outcomes)
+            yield from iterate(value, names, interrupted, partial=True)
             value = sequence_value(value, names)
             items = py_items(value)
             if items is None:
@@ -2770,6 +2806,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         index = literal(args[0]) if args else -1
         if args and isinstance(args[0], ast.Slice):
             index = sequence_slice(args[0], names)
+        if args and (method in ('extend', '__iadd__') or method == '__setitem__' and isinstance(args[0], ast.Slice)):
+            check_expansion(qualified(args[-1], names))
         if type(index) not in (int, slice):
             index = None
         states = set()
@@ -3103,6 +3141,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def iterate(expression, names, interrupted, *, partial=False, collect=False):
         values = qualified(expression, names)
+        check_expansion(values)
         if len(values) > 1 and any(isinstance(value, DEFERRED) for value in values):
             raise Unsupported('cannot resolve conditional Python iterator')
         for value in values:
@@ -3123,6 +3162,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         while isinstance(target, BoundCall):
             target = target.target
         return target
+
+    def iteration_arguments(target, call):
+        args = call.args
+        if target == 'builtins.zip':
+            return args
+        if target in ('builtins.list.extend', 'builtins.str.join', 'builtins.bytes.join'):
+            return args[-1:]
+        if target in ('builtins.filter', 'builtins.map'):
+            return args[1:]
+        if target in ('builtins.iter', 'builtins.min', 'builtins.max') and len(args) != 1:
+            return ()
+        if target == 'builtins.enumerate' and not args:
+            return [kw.value for kw in call.keywords if kw.arg == 'iterable']
+        if target in ITERABLE_CONSUMERS | {'builtins.iter', 'builtins.next', 'builtins.aiter', 'builtins.anext',
+                                          'builtins.enumerate', 'builtins.reversed', 'builtins.dict.fromkeys'}:
+            return args[:1]
+        return ()
 
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if any(kw.arg is None for kw in call.keywords):
@@ -3146,11 +3202,17 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
                 keywords = {kw.arg: kw for kw in target.keywords}
-                if any(kw.arg is None for kw in call.keywords):
-                    keywords.clear()
-                keywords.update({kw.arg: kw for kw in call.keywords})
+                for kw in call.keywords:
+                    if kw.arg is None and keywords:
+                        incoming = keyword_entries(kw.value, names)
+                        if None in incoming:
+                            raise Unsupported('cannot resolve partial Python keyword override')
+                        for key in incoming:
+                            keywords.pop(key, None)
+                    else:
+                        keywords.pop(kw.arg, None)
                 call = ast.copy_location(ast.Call(func=call.func, args=[*target.args, *call.args],
-                                                  keywords=list(keywords.values())), call)
+                                                  keywords=[*keywords.values(), *call.keywords]), call)
             return (yield from invoke(target.target, call, names, target.receiver or receiver,
                                       wrapped or target.receiver is None, interrupted))
         if target == 'builtins.dict' and any(isinstance(owner, KeywordArguments)
@@ -3169,11 +3231,21 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if any(isinstance(owner, KeywordArguments) for owner in owners):
                 if target == 'copy.copy' and len(call.args) == 1 and not call.keywords:
                     return {KeywordArguments(dict(keyword_entries(call.args[0], names)))}
+                if target in ('operator.getitem', 'operator.contains'):
+                    target = 'builtins.dict.__getitem__' if target == 'operator.getitem' else 'builtins.dict.__contains__'
                 if target.startswith('builtins.dict.'):
                     if len(owners) != 1:
                         raise Unsupported('cannot resolve collected Python keyword receiver')
                     receiver, = owners
                     call = ast.copy_location(ast.Call(func=call.func, args=call.args[1:], keywords=call.keywords), call)
+        if target in ('builtins.dict.pop', 'builtins.dict.setdefault', 'builtins.dict.__setitem__',
+                      'builtins.dict.__delitem__', 'operator.setitem', 'operator.delitem') and len(call.args) >= 2:
+            if any(isinstance(owner, KeywordArguments) for owner in qualified(call.args[0], names)):
+                check_keyword_keys(qualified(call.args[1], names))
+        if isinstance(receiver, KeywordArguments) and target in ('builtins.dict.__getitem__', 'builtins.dict.__contains__'):
+            if len(call.args) == 1 and not call.keywords:
+                values = keyword_value(receiver, argument(call.args[0], names), names, {UNKNOWN_KEYWORD})
+                return values if target == 'builtins.dict.__getitem__' else {UNKNOWN_CALLABLE}
         if isinstance(receiver, KeywordArguments) and target == 'builtins.dict.get':
             if not call.keywords and 1 <= len(call.args) <= 2:
                 default = qualified(call.args[1], names) if len(call.args) == 2 else {ast.Constant(None)}
@@ -3183,7 +3255,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if target == 'builtins.dict.copy':
                 return {KeywordArguments(dict(keyword_entries(CapturedArgument({receiver}), names)))}
             if target in ('builtins.dict.keys', 'builtins.dict.values', 'builtins.dict.items'):
-                return {KEYWORD_VIEW}
+                return {KeywordView(receiver, target)}
+        if target in ('builtins.print', 'builtins.str', 'builtins.repr', 'builtins.ascii'):
+            for arg in call.args:
+                for view in qualified(arg, names):
+                    if isinstance(view, KeywordView):
+                        check_keyword_repr(view.mapping, view.method == 'builtins.dict.keys', names)
+                    elif isinstance(view, KeywordArguments):
+                        check_keyword_repr(view, False, names)
         if isinstance(receiver, ChildProcess):
             if ((receiver.launcher == 'os.popen' and target == 'close' or
                  receiver.launcher == 'subprocess.Popen' and target in ('wait', 'communicate'))
@@ -3253,6 +3332,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     items = tuple(CapturedArgument(qualified(item, names)) for item in call.args)
                     yield from sort_keys({SequenceBinding(ast.Tuple(), items)}, reduction_key, call, names)
         if not isinstance(target, PythonHelper):
+            for operand in iteration_arguments(target, call):
+                check_expansion(qualified(operand, names))
             for index, operand in enumerate((*call.args, *(kw.value for kw in call.keywords))):
                 values = qualified(operand, names)
                 generators = [value for value in values if isinstance(value, DEFERRED)]
@@ -3280,9 +3361,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     return returned | (qualified(call.args[1], names) if len(call.args) == 2 else set())
                 if target in ('builtins.min', 'builtins.max') and len(call.args) > 1:
                     raise Unsupported('cannot resolve generator comparison')
-                if index == 0 and target in ('builtins.list', 'builtins.tuple', 'builtins.set', 'builtins.frozenset',
-                        'builtins.dict', 'builtins.sorted', 'builtins.sum', 'builtins.any', 'builtins.all',
-                        'builtins.min', 'builtins.max', 'builtins.str.join', 'builtins.bytes.join', 'builtins.list.extend'):
+                if index == 0 and target in ITERABLE_CONSUMERS:
                     for value in generators:
                         items = yield from inspect_generator(value, names, interrupted, partial=target in ('builtins.any', 'builtins.all'))
                         if reduction_key is not None and not all(isinstance(item, ast.Constant) and
@@ -3794,7 +3873,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 for owner in results.get(node, ()):
                     if isinstance(owner, KeywordArguments):
                         names[(owner, 'escaped')] = frozenset({True})
-            if not allow_view and KEYWORD_VIEW in results.get(node, ()):
+            if not allow_view and any(isinstance(value, KeywordView) for value in results.get(node, ())):
                 raise Unsupported('cannot resolve collected Python keyword view use')
             if not allow_generator and any(isinstance(value, DEFERRED) for value in results.get(node, ())):
                 raise Unsupported('cannot resolve deferred Python generator use')
@@ -3984,6 +4063,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             outer = node.generators[0].iter
             yield from visit(outer, names, interrupted, allow_generator=True)
             iterable = qualified(outer, names)
+            if isinstance(node, ast.GeneratorExp):
+                check_expansion(iterable)
             if isinstance(outer, (ast.Set, ast.Dict)):
                 items = literal_elements(outer)
                 if items is not None:
@@ -4010,6 +4091,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 yield from visit(operand, names, interrupted, allow_generator=True)
                 right = qualified(operand, names)
                 if isinstance(op, (ast.In, ast.NotIn)):
+                    if any(isinstance(owner, KeywordArguments) for owner in right):
+                        check_keyword_keys(left)
                     yield from iterate(operand, names, interrupted, partial=True)
                 truth = comparison(left, op, right)
                 if truth is False or index == len(node.ops) - 1:
@@ -4025,8 +4108,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return
         if isinstance(node, (ast.Starred, ast.YieldFrom)):
             yield from visit(node.value, names, interrupted, allow_generator=True)
-            if isinstance(node, ast.Starred):
-                check_expansion(qualified(node.value, names))
             yield from iterate(node.value, names, interrupted)
             return
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, ast.Del):
@@ -4530,24 +4611,38 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             helpers = {target for target in targets_here if isinstance(target, (PythonHelper, PythonClass))
                        or target == 'functools.partial'}
             mixed = bool(helpers and targets_here - helpers)
-            process_target = mixed and any(target in PY_ARGV or target in PY_SHELL_TEXT or target in (
-                'asyncio.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_exec',
-                'asyncio.subprocess.create_subprocess_shell', 'pty.spawn') for target in targets_here)
+            flat_launchers = targets_here & FLAT_ARGV_LAUNCHERS if mixed else set()
             read_only = targets_here <= helpers | KEYWORD_READERS
             view_reader = targets_here <= {'builtins.print', 'builtins.len'}
             args = []
+            flat_args = []
+
+            def expand_star(operand):
+                items = yield from star_items(operand, names, interrupted)
+                args.extend(items)
+                if flat_launchers:
+                    owners = qualified(operand.value, names)
+                    if any(isinstance(owner, SequenceBinding) and any(state.revised for state in owner.states(names))
+                           for owner in owners):
+                        flat_args.append(ast.Starred(value=process_argument(operand.value, names)))
+                    else:
+                        flat_args.extend(items)
+
             single_star = bool(helpers) and len(node.args) == 1 and isinstance(node.args[0], ast.Starred)
             for operand in node.args:
                 if helpers and isinstance(operand, ast.Starred):
                     yield from visit(operand.value, names, interrupted, allow_generator=True, allow_keywords=True)
                     if not single_star:
-                        args.extend((yield from star_items(operand, names, interrupted, process_target)))
+                        yield from expand_star(operand)
                 else:
-                    yield from visit(operand, names, interrupted, allow_generator=True, allow_keywords=read_only,
+                    yield from visit(operand, names, interrupted, allow_generator=True, allow_keywords=read_only or view_reader,
                                      allow_view=view_reader)
                     args.append(operand)
+                    if flat_launchers:
+                        flat_args.append(operand)
                 check_sequence_length(len(args))
             keywords = []
+            supplied_keywords = set()
             for kw in node.keywords:
                 env = kw.arg == 'env' and callees and all(target in PY_ARGV or target in PY_SHELL_TEXT
                                 or target == 'asyncio.create_subprocess_exec' for target in callees)
@@ -4557,6 +4652,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     check_expansion(owners)
                     if mixed and None in keyword_entries(kw.value, names):
                         raise Unsupported('cannot resolve mixed Python helper argument expansion')
+                keys = {kw.arg} if kw.arg is not None else known_keyword_names(kw.value, names)
+                if supplied_keywords.intersection(keys):
+                    raise Unsupported('duplicate Python call keyword')
+                supplied_keywords.update(keys)
                 if (kw.arg is None and len(owners) == 1 and isinstance(mapping := next(iter(owners)), KeywordArguments)
                         and not names.get((mapping, 'escaped'))):
                     keywords.append(ast.keyword(arg=None, value=CapturedArgument({KeywordArguments(dict(mapping.entries))})))
@@ -4564,7 +4663,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     keywords.append(kw)
             call = node
             if single_star:
-                args = yield from star_items(node.args[0], names, interrupted, process_target)
+                yield from expand_star(node.args[0])
             if mixed and any(isinstance(arg, ast.Starred) for arg in args):
                 raise Unsupported('cannot resolve mixed Python helper argument expansion')
             if args != node.args or keywords != node.keywords:
@@ -4573,7 +4672,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             outcomes = []
             for name in callees:
                 branch = names.copy() if len(callees) > 1 else names
-                returned.update((yield from invoke(name, call, branch, interrupted=interrupted)))
+                invocation = call
+                if helper_target(name) in flat_launchers and flat_args != args:
+                    invocation = ast.copy_location(ast.Call(func=node.func, args=flat_args, keywords=keywords), node)
+                returned.update((yield from invoke(name, invocation, branch, interrupted=interrupted)))
                 if branch is not names:
                     outcomes.append(fields(branch))
             names.update(join(outcomes))
@@ -4872,7 +4974,9 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                             rest = after_argv_zero(vector)
                         texts.extend(argv_text([choice, *rest], wrapped) for choice in branches(program))
                 else:
-                    argv = args[index + 1:-1] if name.endswith('e') else args[index + 1:]
+                    argv = args[index + 1:]
+                    if name.endswith('e') and argv and not isinstance(argv[-1], ast.Starred):
+                        argv = argv[:-1]
                     texts.extend(argv_text([choice, *after_argv_zero(argv)], wrapped) for choice in branches(program))
         cwd = directory
         environment = keywords.get('env')

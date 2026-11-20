@@ -2662,6 +2662,58 @@ class GateImageCommands(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'keyword view'):
             COMMANDS.python_calls(source)
 
+    def test_keyword_view_rendering_checks_current_values(self):
+        setup = ("seen = []\nclass Item:\n    def __repr__(self): seen.append('repr'); return 'item'\n"
+                 "def display(**kw):\n    view = kw.METHOD()\n    ")
+        for method in ('keys', 'values', 'items'):
+            for mutate, call in (('', 'display(item=Item())'), ("kw['item'] = Item()\n    ", 'display(item=1)')):
+                for use in ('print(view)', 'len(view)'):
+                    source = setup.replace('METHOD', method) + mutate + use + '\n' + call
+                    state = {}
+                    with self.subTest(method=method, mutate=mutate, use=use), redirect_stdout(StringIO()):
+                        exec(source, state)
+                        renders = method != 'keys' and use == 'print(view)'
+                        self.assertEqual(state['seen'], ['repr'] if renders else [])
+                        if renders or mutate and use == 'print(view)':
+                            with self.assertRaisesRegex(ValueError, 'keyword (view|copy)'):
+                                COMMANDS.python_calls(source)
+                        else:
+                            self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_collected_keyword_lookup_checks_discarded_keys(self):
+        prefix = ("seen = []\nclass Key:\n    def __hash__(self): seen.append('hash'); return 7\n"
+                  "key = Key()\ndef lookup(**kw):\n    ")
+        for operation in ("kw.get(key)", "dict.get(kw, key)", "read = kw.get\n    read(key)",
+                          "kw[key]", "kw.__getitem__(key)", "key in kw", "kw[key] = 1"):
+            operation = "try: " + operation + "\n    except KeyError: pass" if 'getitem' in operation or operation == 'kw[key]' else operation
+            source = prefix + operation + "\nlookup(value=1)"
+            state = {}
+            with self.subTest(operation=operation):
+                exec(source, state)
+                self.assertEqual(state['seen'], ['hash'])
+                with self.assertRaisesRegex(ValueError, 'keyword lookup key'):
+                    COMMANDS.python_calls(source)
+
+    def test_call_keyword_collisions_precede_dispatch(self):
+        prefix = ("entered = []\ndef log(**kw): entered.append('called')\n"
+                  "def check(**kw):\n    ")
+        for target in ('log', 'dict', 'print'):
+            for keywords in ("**kw, end=''", "end='', **kw", "**kw, **{'end': ''}", "**kw, **kw"):
+                source = prefix + f"{target}({keywords})\n    entered.append('returned')\ncheck(end='')"
+                state = {}
+                with self.subTest(target=target, keywords=keywords):
+                    with self.assertRaises(TypeError):
+                        exec(source, state)
+                    self.assertEqual(state['entered'], [])
+                    with self.assertRaisesRegex(ValueError, 'duplicate Python call keyword'):
+                        COMMANDS.python_calls(source)
+        for call, expected in (('check(extra=1)', ['cmp']), ('check(launch=print)', [])):
+            source = ("from functools import partial\nfrom subprocess import run\n"
+                      "make = partial(dict, launch=run)\ndef check(**kw): make(**kw)['launch'](['cmp'])\n" + call)
+            with self.subTest(call=call):
+                self.assertEqual(self.recorded_commands(source), [[word] for word in expected])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+
     def test_local_argument_expansion_requires_known_protocol_effects(self):
         prefix = ("from subprocess import run\nclass Items:\n"
                   "    def __iter__(self): run(['iter']); return iter(())\n"
@@ -2671,7 +2723,12 @@ class GateImageCommands(unittest.TestCase):
         for expression, expected in (("log(*items)", ['iter']), ("log(*items, *())", ['iter']),
                                      ("later(*items).close()", ['iter']), ("print(*items)", ['iter']),
                                      ("[*items]", ['iter']), ("log(**items)", ['keys', 'item']),
-                                     ("{**items}", ['keys', 'item'])):
+                                     ("{**items}", ['keys', 'item']), ('*rest, = items', ['iter']),
+                                     ('(nested,), = [(items,)]\n*rest, = nested', ['iter']),
+                                     ('for item in items: pass', ['iter']), ('[x for x in items]', ['iter']),
+                                     ('1 in items', ['iter']), ('list(items)', ['iter']), ('tuple(items)', ['iter']),
+                                     ('rest = []\nrest[:] = items', ['iter']), ('rest = []\nrest += items', ['iter']),
+                                     ('def stream(): yield from items\nlist(stream())', ['iter'])):
             with self.subTest(expression=expression):
                 source = prefix + expression
                 self.assertEqual(self.recorded_commands(source), [[word] for word in expected])
@@ -2688,6 +2745,16 @@ class GateImageCommands(unittest.TestCase):
                 self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
         with self.assertRaisesRegex(ValueError, 'mixed Python helper argument expansion'):
             COMMANDS.python_calls(prefix + "print\nhandler(*os.getenv('FW_TEST_ARGS', '').split())")
+        for args in ('*items', '*(), *items'):
+            source = prefix + "run\nitems = []\nitems.append(('git', '--version'))\nhandler(" + args + ")"
+            with self.subTest(args=args), patch.dict(os.environ, {'FW_TEST_ARGS': ''}):
+                self.assertEqual(self.recorded_commands(source), [('git', '--version')])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['git'])
+        for launcher, tail in (('os.execlp', ''), ('os.execlpe', ', {}')):
+            flat = ("import os\ndef log(*words): pass\nhandler = log if os.getenv('FW_TEST_ARGS') else " + launcher +
+                    "\nwords = ['bash', 'bash', '-c', 'false'" + tail + "]\nwords[3] = 'true'\nhandler(*words)")
+            with self.subTest(launcher=launcher), self.assertRaisesRegex(ValueError, 'changed interpreter'):
+                COMMANDS.python_calls(flat)
 
     def test_generator_loop_distinguishes_exhaustion_from_break(self):
         setup = "from subprocess import run\ndef reader():\n    yield 1\n    run(['just'])\n"
@@ -3344,15 +3411,17 @@ class GateImageCommands(unittest.TestCase):
                         self.assertEqual(len(problems), 1)
                         self.assertIn("calls `cmp`", problems[0])
             self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []))
-        root = self.harmless_script_root()
-        for source, expected in (
-            ("subprocess.run(['bash', 'other.sh', *args])", None),
-            ("subprocess.run(['bash', 'scripts/tests/dogfood.sh', *args])", "scripts/tests/dogfood.sh"),
-            ("subprocess.run(['python3', '.claude/hooks/guard.py', *args, 'stop'])", ".claude/hooks/guard.py"),
-            ("subprocess.run(args, executable='git')", None),
+        for root, source, argv, expected in (
+            (self.harmless_script_root(), "subprocess.run(['bash', 'other.sh', *args])", ['bash', 'other.sh'], None),
+            (ROOT, "subprocess.run(['bash', 'scripts/tests/dogfood.sh', *args])",
+             ['bash', 'scripts/tests/dogfood.sh'], "scripts/tests/dogfood.sh"),
+            (ROOT, "subprocess.run(['python3', '.claude/hooks/guard.py', *args, 'stop'])",
+             ['python3', '.claude/hooks/guard.py', 'stop'], ".claude/hooks/guard.py"),
+            (ROOT, "subprocess.run(args or ['git', '--version'], executable='git')", ['git', '--version'], None),
         ):
-            step = {"shell": "python", "run": "import subprocess; " + source}
+            step = {"shell": "python", "run": "import subprocess, sys\nargs = sys.argv[1:]\n" + source}
             with self.subTest(source=source):
+                self.assertEqual(self.recorded_commands(step['run']), [argv])
                 self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), [], root), expected)
         path = "scripts/worktree_diff.py"
         with patch.object(COMMANDS, "DECLARED", COMMANDS.DECLARED - {"git"}):
@@ -3360,7 +3429,7 @@ class GateImageCommands(unittest.TestCase):
             self.assertTrue(any("calls `git`" in problem for problem in problems), problems)
 
     def test_starred_process_arguments_preserve_script_operands(self):
-        root = self.harmless_script_root()
+        harmless = self.harmless_script_root()
         for template in (
             "os.execvp('bash', [*ARGS])",
             "os.spawnvp(os.P_WAIT, 'bash', [*ARGS])",
@@ -3373,13 +3442,16 @@ class GateImageCommands(unittest.TestCase):
             "subprocess.run(*[ARGS])",
             "asyncio.run(asyncio.create_subprocess_exec(*ARGS))",
         ):
-            for vector, expected in (("['bash', 'scripts/tests/dogfood.sh']", "scripts/tests/dogfood.sh"),
-                                     ("['bash', 'other.sh']", None)):
+            for root, vector, expected in ((ROOT, "['bash', 'scripts/tests/dogfood.sh']", "scripts/tests/dogfood.sh"),
+                                           (harmless, "['bash', 'other.sh']", None)):
                 with self.subTest(template=template, vector=vector):
                     source = "import asyncio, os, subprocess; " + template.replace("ARGS", vector)
                     self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [], root), expected)
             unknown = template.replace("*[ARGS]", "*dynamic").replace("ARGS", "dynamic")
-            source = "import asyncio, os, subprocess; " + unknown
+            dynamic = "os.getenv('FW_TEST_CMD', 'bash -c true').split()"
+            if '*[ARGS]' in template:
+                dynamic = "[['bash', '-c', 'true']] * int(os.getenv('FW_TEST_COUNT', '1'))"
+            source = "import asyncio, os, subprocess\ndynamic = " + dynamic + "\n" + unknown
             with self.subTest(unknown=unknown):
                 with self.assertRaisesRegex(ValueError, "starred Python process arguments"):
                     CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
