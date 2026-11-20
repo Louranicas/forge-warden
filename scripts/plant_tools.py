@@ -379,7 +379,8 @@ def just_consumer(step, commands, cases, root=None):
     source = commands['IMPORT_SOURCE']
     token = source.set((root or lexer.workspace, directory, None, JUST_TESTS))
     try:
-        calls = reader(run, lexer=lexer, directory=directory)
+        options = {'isolated': True} if arguments_format == '-I {0}' else {}
+        calls = reader(run, lexer=lexer, directory=directory, **options)
     finally:
         source.reset(token)
     for _, word, _, arguments, cwd in calls:

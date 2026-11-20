@@ -69,6 +69,7 @@ import hashlib
 from collections import namedtuple
 from contextvars import ContextVar
 from importlib import import_module
+from itertools import product
 import os
 from pathlib import Path
 import posixpath
@@ -170,7 +171,7 @@ DYNAMIC_ONCE = {
 }
 # Markers in a reader's output for a file a call runs or sources: `bash FILE`, `python3 FILE`,
 # `. FILE`. problems() reads that file in that language (or names it as not read).
-RUNS = {'(sh)': 'shell', '(py)': 'python', '(src)': 'shell'}
+RUNS = {'(sh)': 'shell', '(py)': 'python', '(isolated-py)': 'isolated python', '(src)': 'shell'}
 PY_SHELL_TEXT = frozenset({
     'os.system', 'os.popen', 'subprocess.getoutput', 'subprocess.getstatusoutput', 'asyncio.create_subprocess_shell',
 })
@@ -633,17 +634,20 @@ def operand_word(state, value, raw, workflow=False):
         return state, []
     if value.startswith('-'):
         letters = value[1:]
+        events = []
         for index, letter in enumerate(letters):
+            if letter in 'IP':
+                events.append(('isolated', None))
             if letter in 'cmWX':
                 rest = letters[index + 1:]
                 if letter == 'c':
-                    return (None, [('python', rest)]) if rest else ('next-python', [])
+                    return (None, events + [('python', rest)]) if rest else ('next-python', events)
                 if letter == 'm':
                     if workflow:
-                        return (None, [('(module)', rest)]) if rest else (('file-next', '(module)'), [])
-                    return None, []
-                return (state if rest else ('option-argument', state, 1)), []
-        return state, []
+                        return (None, events + [('(module)', rest)]) if rest else (('file-next', '(module)'), events)
+                    return None, events
+                return (state if rest else ('option-argument', state, 1)), events
+        return state, events
     return None, [('(py)', value)]
 
 
@@ -661,26 +665,29 @@ def stdin_runner(script):
     return None
 
 
-def flush_stdin(script, stdin_words, found, calls, lexer, directory):
+def flush_stdin(script, stdin_words, found, calls, lexer, directory, isolated):
     """At the end of a simple command: `bash < FILE`, `< FILE bash`, `0< FILE sh` run FILE, and
     `bash <<< 'TEXT'` runs TEXT. Returns the emptied list."""
     runner = stdin_runner(script) if stdin_words else None
     for operator, word in stdin_words if runner else []:
         if operator == '<<<' and word.literal:
             text = word.value
-            read = shell_calls if runner == '(sh)' else python_calls
-            calls.extend(read(text, word.line, word.lexer, directory))
+            if runner == '(sh)':
+                calls.extend(shell_calls(text, word.line, word.lexer, directory))
+            else:
+                calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=isolated))
         elif directory is not None and not word.literal:
             raise Unsupported('cannot resolve gate script input before Just installation')
         elif operator == '<<<':
             found.append(lexer.call(word.line, word.raw, True, directory=directory))  # a dynamic script text is named
         elif word.literal:
             path = str(word.lexer.path(directory, word.value)) if directory is not None else word.value
-            found.append(lexer.call(word.line, runner + path, True, directory=directory))
+            found.append(lexer.call(word.line, ('(isolated-py)' if isolated and runner == '(py)' else runner) + path, True, directory=directory))
     return []
 
 
 def command_words(tokens, calls, lexer, directory):
+    isolated = False
     initial_directory = heredoc_directory = directory
     found, functions = [], set()
     expect, mode, prefix, owner, script = True, None, None, None, None
@@ -697,7 +704,7 @@ def command_words(tokens, calls, lexer, directory):
             if consumer in SHELLS:
                 calls.extend(shell_calls(body, start, body_lexer, heredoc_directory))
             elif consumer and PYTHONS.fullmatch(consumer):
-                calls.extend(python_calls(body, start, body_lexer, heredoc_directory))
+                calls.extend(python_calls(body, start, body_lexer, heredoc_directory, isolated=isolated))
             continue
         if kind == 'redirect':
             # Standard input (`<`, `0<`, `<>`, `0<>`, `<<<`), before or after the command word: decided at the
@@ -708,7 +715,7 @@ def command_words(tokens, calls, lexer, directory):
         if kind == 'op':
             op = token[1]
             heredoc_directory = directory
-            stdin_words = flush_stdin(script, stdin_words, found, calls, lexer, directory)
+            stdin_words = flush_stdin(script, stdin_words, found, calls, lexer, directory, isolated)
             directory = initial_directory
             if mode == 'array':
                 if op == ')':
@@ -787,7 +794,7 @@ def command_words(tokens, calls, lexer, directory):
                 elif script == 'next':
                     calls.extend(shell_calls(word.value, word.line, word.lexer, directory))
                 else:
-                    calls.extend(python_calls(word.value, word.line, word.lexer, directory))
+                    calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated))
                 script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
@@ -802,15 +809,21 @@ def command_words(tokens, calls, lexer, directory):
                     raise Unsupported('cannot resolve gate script operand before Just installation')
                 script, events = operand_word(script, word.value if word.literal else None, word.raw, directory is not None)
                 for event, text in events:
-                    if event == 'shell':
+                    if event == 'isolated':
+                        isolated = True
+                    elif event == 'shell':
                         calls.extend(external(shell_calls(text, word.line, word.lexer, directory)))
                     elif event == 'python':
-                        calls.extend(python_calls(text, word.line, word.lexer, directory))
+                        calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=isolated))
                     elif event == 'dynamic':
                         if directory is not None:
                             raise Unsupported('cannot resolve inline gate command before Just installation')
                         found.append(lexer.call(word.line, text, True, directory=directory))
                     else:
+                        if isolated and event == '(py)':
+                            event = '(isolated-py)'
+                        if isolated and event == '(module)' and text not in sys.stdlib_module_names and text != 'unittest.__main__':
+                            raise Unsupported('cannot resolve isolated Python module ' + text)
                         if directory is not None and event in RUNS:
                             text = str(word.lexer.path(directory, text))
                         found.append(lexer.call(word.line, event + text, True, tokens, index + 1, directory))
@@ -889,13 +902,14 @@ def command_words(tokens, calls, lexer, directory):
         found.append(lexer.call(word.line, command, prefix is not None or by_find,
                                 tokens, index + 1, directory))
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
+        isolated = False
         owner = value.rsplit('/', 1)[-1] if word.literal else None
         prefix = owner if owner in PREFIXES else None
         script = 'next' if owner == 'trap' else owner
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
-    flush_stdin(script, stdin_words, found, calls, lexer, directory)
+    flush_stdin(script, stdin_words, found, calls, lexer, directory, isolated)
     return found + [lexer.call(0, '()' + name, False, directory=directory) for name in functions]
 
 
@@ -953,6 +967,12 @@ def argv_text(items, strict=False):
         return head
     if not (isinstance(head, ast.Constant) and isinstance(head.value, str) and head.value):
         raise Unsupported('cannot resolve Python process executable')
+    program = posixpath.basename(head.value)
+    if (any(isinstance(item, ChangedTail) for item in items[1:]) and
+            (program in PREFIXES | OPERAND_STATES | {'awk', 'gawk', 'mawk', 'sed', 'find', 'rustup',
+                                                     'perl', 'ruby', 'node', 'lua', 'ksh', 'zsh'}
+             or PYTHONS.fullmatch(program))):
+        raise Unsupported('cannot resolve changed interpreter or prefix arguments')
     return ' '.join(py_word(item, strict) for item in items)
 
 
@@ -1041,6 +1061,7 @@ BoundCall = namedtuple('BoundCall', ('target', 'receiver', 'args', 'keywords'), 
 
 UNKNOWN_CALLABLE = object()
 UNKNOWN_PROVIDER = object()
+MODULE_INITIALIZED = object()
 MISSING_FIELD = object()
 MISSING_NAME = object()
 EXCEPTION = object()
@@ -1060,7 +1081,7 @@ PATH_CONSTRUCTORS = {'pathlib.Path', 'pathlib.PosixPath', 'pathlib.WindowsPath',
 PROVIDER_FIELDS = {'sys.executable', 'shutil.which', 'sys.modules', 'tempfile.TemporaryDirectory',
                    'unittest.mock.patch.TEST_PREFIX'} | PATH_CONSTRUCTORS
 PROVIDER_MODULES = {name.partition('.')[0] for name in PROVIDER_FIELDS}
-FIXTURE_OPTIONS_SHA256 = 'ea05fe7e2ebd01d1a8c8c46c854bc8f250e8bbf08189e0b83a39d7b8be04acf9'
+FIXTURE_OPTIONS_SHA256 = '0bf88dd8180c62d751c58b1192fa456d492ec2320ce26aaebef2694f217ba150'
 FixtureInput = namedtuple('FixtureInput', 'source option')
 FIXTURE_VERIFIER_SHA256 = '738ecf280222d99f9d5042d41f37129fc7cb924ca2481fafe605f9c93918447a'
 
@@ -1070,13 +1091,25 @@ class PatchedProvider:
         self.changes = changes
 
 
+def join(states, *, paths=False):
+    merged = {}
+    for state in states:
+        for key, values in state.items():
+            merged[key] = merged.get(key, frozenset()) | values
+    for key in merged:
+        if (isinstance(key, tuple) or paths and isinstance(key, str)) and any(key not in state for state in states):
+            merged[key] |= {MISSING_FIELD if isinstance(key, tuple) else MISSING_NAME}
+    return merged
+
+
 class LocalModule(namedtuple('LocalModule', 'path')):
-    def member(self, name, imports, state):
-        stored = state.get((self, name), {MISSING_FIELD})
-        values = stored - {MISSING_FIELD}
-        if MISSING_FIELD in stored:
-            values = values | imports.loaded[self.path].get(name, set())
-        return values
+    def member(self, name, state):
+        values = state.get((self, name), frozenset())
+        return (values - {MISSING_FIELD}) | ({UNKNOWN_CALLABLE} if MISSING_FIELD in values else set())
+
+    def namespace(self, state):
+        return {key[1]: self.member(key[1], state) for key in state
+                if isinstance(key, tuple) and key[0] == self and isinstance(key[1], str) and state[key]}
 
 
 ImportedMember = namedtuple('ImportedMember', 'module name source')
@@ -1101,10 +1134,11 @@ IMPORT_SOURCE = ContextVar('script_import_source', default=None)
 
 
 class SuiteImports:
-    def __init__(self, directory):
+    def __init__(self, directory, isolated):
+        self.isolated = isolated
         self.root, origin, self.files, self.reviewed = IMPORT_SOURCE.get() or (ROOT, ROOT, None, {})
         self.directory = origin if directory is None else self.root / directory.relative_to(WorkflowLexer.workspace)
-        self.loaded = {}
+        self.trees = {}
         self.stack = []
         self.class_paths = {}
         self.fixture_verifier = None
@@ -1115,7 +1149,7 @@ class SuiteImports:
         if filename == 'scripts/golden_output.py':
             definitions = [node for node in body if isinstance(node, ast.FunctionDef)]
             for name, field in (('verified_fixture', 'fixture_manager'), ('verify_artifact', 'fixture_verifier'),
-                                ('parse_options', 'fixture_options')):
+                                ('fixture_options', 'fixture_options')):
                 matches = [node for node in definitions if node.name == name]
                 if len(matches) != 1:
                     continue
@@ -1129,39 +1163,55 @@ class SuiteImports:
                 setattr(self, field, definition)
 
     def load(self, path, module, ordering, targets, names):
-        if path in self.loaded:
-            return self.loaded[path]
+        reference = LocalModule(path)
+        marker = reference, MODULE_INITIALIZED
+        prior = names.get(marker, ())
+        if prior == {True}:
+            return
         relative = path.relative_to(self.root).as_posix()
         if (relative not in self.files or path.resolve() != path or not path.is_file()
                 or path in self.stack or len(self.stack) >= 12):
             raise Unsupported('cannot resolve unsafe or recursive unittest import ' + module)
-        self.stack.append(path)
-        namespace = {key: values for key, values in names.items() if isinstance(key, tuple)}
-        namespace['__name__'] = frozenset({ast.Constant(module)})
-        try:
+        if path not in self.trees:
             data = path.read_bytes()
-            tree = ast.parse(data, filename=relative)
-            self.register_fixture(tree.body, relative, data)
-            yield from python_callees(tree.body, namespace, ordering, targets, imports=self, source=path)
+            self.trees[path] = ast.parse(data, filename=relative)
+            self.register_fixture(self.trees[path].body, relative, data)
+        namespace = {key: values for key, values in names.items() if isinstance(key, tuple) and key[0] != reference}
+        namespace[(reference, '__name__')] = frozenset({ast.Constant(module)})
+        self.stack.append(path)
+        try:
+            yield from python_callees(self.trees[path].body, namespace, ordering, targets, imports=self,
+                                      source=path, module_scope=reference)
         finally:
             self.stack.pop()
-        self.loaded[path] = namespace
-        names.update((key, values) for key, values in namespace.items() if isinstance(key, tuple))
+        namespace[marker] = frozenset({True})
+        parent = path.parent.parent if path.name == '__init__.py' else path.parent
+        package = LocalModule(parent / '__init__.py')
+        if package.path in self.stack or (package, MODULE_INITIALIZED) in namespace:
+            name = path.parent.name if path.name == '__init__.py' else path.stem
+            namespace[(package, name)] = frozenset({reference})
+        updates = {key: values for key, values in namespace.items() if isinstance(key, tuple)}
+        if True in prior:
+            cached = {key: values for key, values in names.items() if isinstance(key, tuple)}
+            cached[marker] = frozenset({True})
+            updates = join((cached, updates))
+        names.update(updates)
         for method in self.reviewed.get(relative, ()):
-            for cls in namespace.get(method.partition('.')[0], ()):
+            for cls in reference.member(method.partition('.')[0], names):
                 if isinstance(cls, PythonClass):
                     self.class_paths[cls] = WorkflowLexer.workspace / relative
-        return namespace
 
     def has_local_root(self, module):
         root = module.partition('.')[0]
         stem = self.directory / root
-        if not root or _imp.is_builtin(root) or _imp.is_frozen(root):
+        if self.isolated or not root or _imp.is_builtin(root) or _imp.is_frozen(root):
             return False
         return (stem.with_suffix('.py').is_file() or (stem / '__init__.py').is_file() or
                 root not in sys.stdlib_module_names and stem.is_dir())
 
-    def module(self, module, source, ordering, targets, names, *, bind_root=False):
+    def module(self, module, source, ordering, targets, names, *, bind_root=False, from_list=False):
+        if self.isolated:
+            raise Unsupported('cannot resolve isolated Python import ' + module)
         absolute = module.lstrip('.')
         levels = len(module) - len(absolute)
         parent = self.directory
@@ -1191,18 +1241,16 @@ class SuiteImports:
         if len(candidates) != 1:
             raise Unsupported('cannot resolve unittest import ' + module)
         leaf, = candidates
-        yield from self.load(leaf, module, ordering, targets, names)
+        if not (from_list and leaf in self.stack and leaf.name == '__init__.py'):
+            yield from self.load(leaf, module, ordering, targets, names)
         chain.append(leaf)
-        for package, child, part in zip(chain, chain[1:], parts[1:]):
-            if package in self.loaded:
-                self.loaded[package][part] = frozenset({LocalModule(child)})
         return LocalModule(chain[0] if bind_root else leaf)
 
     def resolve(self, symbol, ordering, targets, names, chain=()):
         if symbol in chain or len(chain) >= 12:
             raise Unsupported('cannot resolve recursive unittest re-export ' + symbol.name)
-        reference = yield from self.module(symbol.module, symbol.source, ordering, targets, names)
-        values = reference.member(symbol.name, self, names)
+        reference = yield from self.module(symbol.module, symbol.source, ordering, targets, names, from_list=True)
+        values = reference.member(symbol.name, names)
         if not values and reference.path.name == '__init__.py':
             child = reference.path.parent / symbol.name
             if child.with_suffix('.py').is_file() or (child / '__init__.py').is_file():
@@ -1285,7 +1333,8 @@ def process_value(call, targets):
 
 
 class PythonScope:
-    def __init__(self):
+    def __init__(self, module):
+        self.module = module
         self.captured = set()
 
 
@@ -1309,7 +1358,11 @@ def loop_inputs(node, body):
 
 
 def local_bindings(body):
+    declared_globals = set()
+
     def scan(node):
+        if isinstance(node, ast.Global):
+            declared_globals.update(node.names)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             yield node.name
             return
@@ -1322,7 +1375,8 @@ def local_bindings(body):
         for child in ast.iter_child_nodes(node):
             yield from scan(child)
     if body and not hasattr(body[0], '_local_bindings'):
-        body[0]._local_bindings = {name for node in body for name in scan(node)}
+        body[0]._local_bindings = {name for node in body for name in scan(node)} - declared_globals
+        body[0]._declared_globals = declared_globals
     return body[0]._local_bindings if body else set()
 
 
@@ -1370,12 +1424,24 @@ def loop_values(values, state, instances):
 
 def python_callees(body, bindings, ordering, targets, enclosing=(), active=None, class_body=False,
                    require_command=False, reachable=True, exceptional_fields=None, testcase_super_init=False, allocations=None,
-                   protocol_returns=None, imports=None, source=None):
+                   protocol_returns=None, imports=None, source=None, module_scope=None):
     if active is None:
         active = {}
     if allocations is None:
         allocations = []
-    scope = PythonScope()
+    scope = PythonScope(module_scope)
+    module = module_scope or next((frame.module for frame, _ in enclosing if frame.module), None)
+    local_bindings(body)
+    declared_globals = body[0]._declared_globals if body else set()
+
+    def module_field(name):
+        return (module, name) if module and (module_scope or name in declared_globals) else None
+
+    def bind_name(name, values, names):
+        names[name] = values
+        if (key := module_field(name)) is not None:
+            names[key] = values
+
     functions = {}
     results = {}
     transfers = []
@@ -1539,6 +1605,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 else:
                     return frozenset({None})
             return frozenset({ast.Constant(''.join(parts))})
+        if isinstance(node, ast.BinOp) and node in results:
+            return results[node]
         if isinstance(node, (ast.Call, ast.List, ast.Tuple)):
             return results.get(node, frozenset({UNKNOWN_CALLABLE}))
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and qualified(node.left, names) == {FILESYSTEM_PATH}:
@@ -1547,10 +1615,18 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                              for part in parts):
                 return frozenset({FILESYSTEM_PATH})
         if isinstance(node, ast.Name):
+            field = module_field(node.id)
+            if field in names:
+                return module.member(node.id, names) or {BoundCall(UNKNOWN_CALLABLE)}
             if node.id in names:
                 return names[node.id]
             for parent_scope, parent in reversed(enclosing):
                 parent_scope.captured.add(node.id)
+                if parent_scope.module:
+                    key = parent_scope.module, node.id
+                    state = names if key in names else parent
+                    if key in state:
+                        return parent_scope.module.member(node.id, state) or {BoundCall(UNKNOWN_CALLABLE)}
                 if node.id in parent:
                     return parent[node.id]
             return frozenset({'builtins.' + node.id if node.id in vars(builtins) else None})
@@ -1572,7 +1648,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 elif owner in ('builtins.super()', 'unittest.TestCase.super()'):
                     values.add(BoundCall(UNKNOWN_CALLABLE))
                 elif isinstance(owner, LocalModule):
-                    members = owner.member(node.attr, imports, names) or {UNKNOWN_CALLABLE}
+                    members = owner.member(node.attr, names) or {UNKNOWN_CALLABLE}
                     values.update(BoundCall(UNKNOWN_CALLABLE) if member in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
                                   else member for member in members)
                 elif isinstance(owner, ImportedMember):
@@ -1586,6 +1662,24 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.Subscript):
             container = qualified(node.value, names)
             key = argument(node.slice, names)
+            if any(isinstance(owner, SequenceBinding) for owner in container):
+                try:
+                    index = ast.literal_eval(key)
+                except (ValueError, TypeError, SyntaxError):
+                    index = None
+                selected = set()
+                for owner in container:
+                    if not isinstance(owner, SequenceBinding):
+                        selected.add(BoundCall(UNKNOWN_CALLABLE))
+                        continue
+                    for state in owner.states(names):
+                        if (isinstance(index, int) and state.elements is not None and
+                                -len(state.elements) <= index < len(state.elements)):
+                            selected.update(state.elements[index])
+                        else:
+                            selected.add(BoundCall(UNKNOWN_CALLABLE))
+                return frozenset(BoundCall(UNKNOWN_CALLABLE) if value in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
+                                 or isinstance(value, ast.arg) else value for value in selected)
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
                 if len(container) == 1:
                     for field in provider_fields(container, key, names, dictionary=True):
@@ -1600,16 +1694,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.IfExp):
             return qualified(node.body, names) | qualified(node.orelse, names)
         return frozenset({None})
-
-    def join(states, *, paths=False):
-        merged = {}
-        for state in states:
-            for key, values in state.items():
-                merged[key] = merged.get(key, frozenset()) | values
-        for key in merged:
-            if (isinstance(key, tuple) or paths and isinstance(key, str)) and any(key not in state for state in states):
-                merged[key] |= {MISSING_FIELD if isinstance(key, tuple) else MISSING_NAME}
-        return merged
 
     def suite(statements, names, interrupted):
         for child in statements:
@@ -1676,11 +1760,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return owner
             if isinstance(owner, (ast.List, ast.Tuple)):
                 return type(owner)(elts=[process_argument(item, names, seen) for item in owner.elts], ctx=ast.Load())
-            if isinstance(value, (CapturedArgument, ast.JoinedStr)) and isinstance(owner, ast.Constant):
+            if isinstance(value, (CapturedArgument, ast.JoinedStr, ast.Subscript)) and isinstance(owner, ast.Constant):
                 return owner
         if isinstance(value, ast.Starred):
             item = process_argument(value.value, names, seen)
-            return value if item is value.value else ast.Starred(value=item, ctx=ast.Load())
+            return value if item is value.value else type(value)(value=item, ctx=ast.Load())
         literal = argument(value, names)
         if isinstance(literal, (ast.List, ast.Tuple)):
             items = [process_argument(item, names, seen) for item in literal.elts]
@@ -1716,6 +1800,38 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(owner, (ast.Tuple, ast.List)):
                 return owner
         return node
+
+    def expanded_sequence(owners, names):
+        choices = []
+        for owner in owners:
+            if isinstance(owner, SequenceBinding):
+                for state in owner.states(names):
+                    if state.elements is not None:
+                        items = tuple(CapturedArgument(values) for values in state.elements)
+                    elif state.revised:
+                        items = (ChangedTail(value=CapturedArgument({UNKNOWN_CALLABLE})),)
+                        if state.head:
+                            items = (CapturedArgument(state.head), *items)
+                    else:
+                        items = owner.items
+                    choices.append((items, state.revised, state.head))
+            else:
+                choices.append(((ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE})),), False, None))
+        return choices
+
+    def built_sequences(origin, parts):
+        owners = set()
+        for index, combination in enumerate(product(*parts)):
+            if index >= 256:
+                raise Unsupported('cannot resolve Python sequence alternatives')
+            items = tuple(item for segment, _, _ in combination for item in segment)
+            owner = SequenceBinding(origin, items)
+            if any(revised for _, revised, _ in combination):
+                head = next((first for segment, _, first in combination if segment), None)
+                owner.initial = SequenceState(owner.initial.elements, head, True)
+            allocations.append(owner)
+            owners.add(owner)
+        return frozenset(owners)
 
     def bind_target(target, value, names):
         if isinstance(target, (ast.Tuple, ast.List)):
@@ -1753,7 +1869,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         values = frozenset(BoundCall(UNKNOWN_CALLABLE) if owner in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT, MISSING_NAME)
                            or isinstance(owner, ast.arg) else owner for owner in owners)
         if isinstance(target, ast.Name):
-            names[target.id] = values
+            bind_name(target.id, values, names)
         elif isinstance(target, ast.Attribute):
             receivers = qualified(target.value, names)
             for receiver in receivers:
@@ -1867,7 +1983,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             elif tuple(elements) == state.elements:
                 states.add(state)
             else:
-                states.add(SequenceState(tuple(elements), head if elements and elements[0] == head else None, True))
+                new_head = elements[0] if elements and (state.elements == () or elements[0] == head) else None
+                states.add(SequenceState(tuple(elements), new_head, True))
         names[(owner, 'contents')] = frozenset(states)
         if method in ('__iadd__', '__imul__'):
             return {owner}
@@ -2016,10 +2133,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {GeneratorManager(target, frozen, receiver)}
             returned = yield from read_helper(target, names, call, receiver, strict=wrapped or require_command,
                                               interrupted=interrupted)
-            if target.node is imports.fixture_options:
+            if (target.node is imports.fixture_options and not call.args and len(call.keywords) == 1
+                    and call.keywords[0].arg == 'extract' and isinstance(call.keywords[0].value, ast.Constant)
+                    and call.keywords[0].value.value is True):
                 invocation = object()
-                items = [CapturedArgument({UNKNOWN_CALLABLE}), CapturedArgument({UNKNOWN_CALLABLE})]
-                items.extend(CapturedArgument({FixtureInput(invocation, key)}) for key in ('binary', 'receipt', 'subject'))
+                items = [CapturedArgument({FixtureInput(invocation, key)}) for key in ('binary', 'receipt', 'subject')]
                 return {ast.Tuple(elts=items)}
             if target.node is imports.fixture_verifier and imports.fixture_manager in active:
                 if len(call.args) != 5 or call.keywords or not isinstance(call.args[1], ast.Name):
@@ -2408,7 +2526,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def visit_node(node, names, interrupted):
         def bind(key, values):
-            names[key] = values
+            if isinstance(key, str):
+                bind_name(key, values, names)
+            else:
+                names[key] = values
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
             key = ast.Constant(node.attr) if isinstance(node, ast.Attribute) else node.slice
             for name in provider_fields(qualified(node.value, names), key, names, dictionary=isinstance(node, ast.Subscript)):
@@ -2449,9 +2570,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 bases = [qualified(base, names) for base in node.bases]
                 cls = PythonClass(node, bases, skipped)
                 allocations.append(cls)
-                yield from python_callees(node.body, cls.members, ordering, targets, frames(names), active,
+                class_namespace = fields(names)
+                yield from python_callees(node.body, class_namespace, ordering, targets, frames(names), active,
                                          class_body=True, require_command=require_command, reachable=reachable, allocations=allocations,
                                          imports=imports, source=source)
+                names.update(fields(class_namespace))
+                cls.members.update((key, values) for key, values in class_namespace.items() if isinstance(key, str))
                 for owners in reversed(decorators):
                     if len(owners) == 1 and isinstance(patch := next(iter(owners)), PatchedProvider):
                         prefixes = names.get(('unittest.mock.patch.TEST_PREFIX', 'provider'), {ast.Constant('test')})
@@ -2737,8 +2861,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             available = local or record_provider_import(module.partition('.')[0], names)
             for alias in node.names:
                 if alias.name == '*' and local:
-                    reference = yield from imports.module(module, source, ordering, targets, names)
-                    namespace = imports.loaded[reference.path]
+                    reference = yield from imports.module(module, source, ordering, targets, names, from_list=True)
+                    namespace = reference.namespace(names)
                     exported = [name for name in namespace if isinstance(name, str) and not name.startswith('_')]
                     if '__all__' in namespace:
                         exports = sequence_value(CapturedArgument(namespace['__all__']), names)
@@ -2752,7 +2876,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                 raise Unsupported('cannot resolve local wildcard exports')
                             exported.append(value.value)
                     for name in exported:
-                        bind(name, reference.member(name, imports, names))
+                        bind(name, namespace[name])
                 elif alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty', 'shlex', 'functools'):
                     for exported in import_module(module).__all__:
                         bind(exported, frozenset({module + '.' + exported if available else UNKNOWN_PROVIDER}))
@@ -2795,21 +2919,38 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.pop(node.id, None)
+            if isinstance(node.ctx, ast.Del) and (key := module_field(node.id)) is not None:
+                names[key] = frozenset()
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
             targets.setdefault(node, set()).update(qualified(node, names))
             if isinstance(node.ctx, ast.Del):
                 for owner in qualified(node.value, names):
                     if isinstance(owner, LocalModule):
-                        names[(owner, node.attr)] = frozenset({UNKNOWN_CALLABLE})
+                        names[(owner, node.attr)] = frozenset()
         elif isinstance(node, (ast.List, ast.Tuple)) and isinstance(node.ctx, ast.Load):
-            items = []
-            for item in expanded_items(node.elts):
+            parts = []
+            for item in node.elts:
                 yield from visit(item, names, interrupted)
-                items.append(ast.Starred(value=captured(item.value, names)) if isinstance(item, ast.Starred)
-                             else CapturedArgument(qualified(item, names)))
-            owner = SequenceBinding(node, tuple(items))
-            allocations.append(owner)
-            results[node] = frozenset({owner})
+                if isinstance(item, ast.Starred):
+                    parts.append(expanded_sequence(qualified(item.value, names), names))
+                else:
+                    values = qualified(item, names)
+                    parts.append([((CapturedArgument(values),), False, values)])
+            results[node] = built_sequences(node, parts)
+            return
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            yield from visit(node.left, names, interrupted)
+            left = qualified(node.left, names)
+            yield from visit(node.right, names, interrupted)
+            if any(isinstance(owner, SequenceBinding) for owner in left):
+                right = expanded_sequence(qualified(node.right, names), names)
+                owners = set()
+                for owner in left:
+                    if isinstance(owner, SequenceBinding):
+                        owners.update(built_sequences(owner.origin, [expanded_sequence({owner}, names), right]))
+                    else:
+                        owners.add(UNKNOWN_CALLABLE)
+                results[node] = frozenset(owners)
             return
         elif isinstance(node, ast.Call):
             yield from visit(node.func, names, interrupted)
@@ -2859,12 +3000,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     return {UNKNOWN_CALLABLE}
 
 
-def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None):
+def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False):
     """Read process calls as their effective executable and command line or shell payload."""
     tree = ast.parse(text)
     found = []
     targets = {}
-    imports = SuiteImports(directory)
+    imports = SuiteImports(directory, isolated)
     imports.register_fixture(tree.body, filename, text)
     calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=imports))
 
@@ -3143,13 +3284,14 @@ def problems(root):
     while position < len(order):
         name, lang = order[position]
         position += 1
-        label = name if kinds[name][0] == lang else f'{name} (run as {lang})'
+        language = 'python' if lang == 'isolated python' else lang
+        label = name if kinds[name][0] == language else f'{name} (run as {language})'
         try:
             text = (root / name).read_text(encoding='utf-8')
             origin = (root / name).parent if lang == 'python' else root
             token = IMPORT_SOURCE.set((root, origin, tracked_files, {}))
             try:
-                calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name)
+                calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name, isolated=lang == 'isolated python')
             finally:
                 IMPORT_SOURCE.reset(token)
         except (Unsupported, SyntaxError, UnicodeDecodeError) as error:
@@ -3192,7 +3334,8 @@ def problems(root):
         if not isinstance(calls, list):
             continue
         kind, bang = kinds[name]
-        label = name if kind == lang else f'{name} (run as {lang})'
+        language = 'python' if lang == 'isolated python' else lang
+        label = name if kind == language else f'{name} (run as {language})'
         if bang and kind == lang:
             calls = [(1, bang[1], True)] + calls
         functions = functions_of((name, lang), {(name, lang)})

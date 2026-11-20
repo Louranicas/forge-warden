@@ -350,14 +350,20 @@ class Contracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mutation orchestration requires review"):
                 TOOLS.check(root)
             workflow.write_text(original)
-            drifted = dict(versions)
-            drifted["cargo_mutants"] = "9.9.9"
-            for workflow_name in ("main", "baseline"):
-                with self.subTest(decoded_pin_workflow=workflow_name):
-                    with self.assertRaisesRegex(ValueError, "CI tool pins drift from scripts/tool-versions.toml"):
-                        TOOLS.check_ci_tool_pins(root, drifted, workflows=(workflow_name,))
             baseline = root / ".github/workflows/mutation-baseline.yml"
             baseline_original = baseline.read_text()
+            for name, other, path, clean in (("main", "baseline", workflow, original),
+                                             ("baseline", "main", baseline, baseline_original)):
+                with self.subTest(decoded_pin_workflow=name):
+                    jobs = CAPS.workflow_jobs(clean)
+                    installer = next(step for job in jobs.values() for step in job['steps']
+                                     if CAPS.installed_tool(step, versions) == mutants)
+                    installer['with']['tool'] = 'cargo-mutants@9.9.9'
+                    path.write_text(yaml.safe_dump({'jobs': jobs}))
+                    with self.assertRaisesRegex(ValueError, "CI tool pins drift from scripts/tool-versions.toml"):
+                        TOOLS.check_ci_tool_pins(root, versions, CAPS, workflows=(name,))
+                    TOOLS.check_ci_tool_pins(root, versions, CAPS, workflows=(other,))
+                    path.write_text(clean)
             for pin in (versions["rust"],):
                 with self.subTest(baseline_pin=pin):
                     baseline.write_text(baseline_original.replace(pin, "9.9.9"))
@@ -1624,6 +1630,51 @@ class GateImageCommands(unittest.TestCase):
                         self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source},
                                                             vars(COMMANDS), [], root), 'just')
 
+    def test_isolated_python_omits_checkout_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'statistics'
+            package.mkdir()
+            (package / '__init__.py').write_text("from subprocess import run\nrun(['just'])\nmean = print")
+            for source in ('import statistics', 'from statistics import mean', 'from statistics import *'):
+                for step in ({'shell': 'python3 -I {0}', 'run': source},
+                             {'run': 'python3 -I -c ' + shlex.quote(source)},
+                             {'run': 'python3 -BIc' + shlex.quote(source)},
+                             {'run': "python3 -I - <<'PY'\n" + source + "\nPY\n"},
+                             {'run': 'python3 -I <<< ' + shlex.quote(source)}):
+                    with self.subTest(step=step):
+                        self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root), 'just')
+
+    def test_imported_globals_and_initialization_follow_each_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'pkg'
+            package.mkdir()
+            (root / 'settings.py').write_text('launch = print')
+            (package / 'child.py').write_text('from . import launch\ndef check(): launch(["just"])')
+            initializer = package / '__init__.py'
+            initializer.write_text('import settings\nlaunch = print\nfrom . import child\n'
+                                   'settings.launch(["just"])\ndef check(): launch(["just"])')
+
+            def consumer(source):
+                return CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
+
+            self.assertIsNone(consumer('import pkg\npkg.child.check()'))
+            self.assertEqual(consumer('import pkg, subprocess\npkg.launch = subprocess.run\npkg.check()'), 'just')
+            self.assertEqual(consumer('import pkg, subprocess\npkg.new = subprocess.run\npkg.__all__ = ["new"]\n'
+                                      'from pkg import *\nnew(["just"])'), 'just')
+            self.assertIsNone(consumer('import pkg, subprocess\npkg.launch = subprocess.run\ndel pkg.launch\n'
+                                       'from pkg import *'))
+            self.assertEqual(consumer('import os, settings, subprocess\nif os.getenv("SELECT_BRANCH"):\n    import pkg\nelse:\n'
+                                      '    settings.launch = subprocess.run\n    import pkg'), 'just')
+            self.assertEqual(consumer('import os, settings, subprocess\nif os.getenv("SELECT_BRANCH"):\n    import pkg\n'
+                                      'settings.launch = subprocess.run\nimport pkg'), 'just')
+            self.assertIsNone(consumer('import settings, pkg, subprocess\nsettings.launch = subprocess.run\nimport pkg'))
+            (package / 'child.py').write_text('from . import unavailable')
+            with self.assertRaisesRegex(ValueError, 'cannot resolve'):
+                consumer('from pkg import child')
+
     def test_loop_reads_mutated_list_elements(self):
         for setup, update in (('[print]', 'alias.append(run)'), ('[print, print]', 'alias[1] = run'),
                               ('[print]', 'add(run)'), ('[print]', 'alias.extend([run])')):
@@ -1679,7 +1730,7 @@ class GateImageCommands(unittest.TestCase):
     def test_mutated_process_arguments_retain_only_the_head(self):
         for edit in ("argv[1] = 'new'", "del argv[-1]", "argv += ['new']", "add = argv.append\nadd('new')",
                      "argv[1:] = ['new']"):
-            for head in ('git', 'bash', 'python3', 'env'):
+            for head in ('git', 'bash', 'python3', 'env', 'awk'):
                 source = f"import subprocess\nargv = ['{head}', '-c', 'true']\n{edit}\nsubprocess.run(argv)"
                 with self.subTest(head=head, edit=edit):
                     if head == 'git':
@@ -1687,6 +1738,33 @@ class GateImageCommands(unittest.TestCase):
                     else:
                         with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve'):
                             COMMANDS.python_calls(source)
+
+    def test_command_vectors_snapshot_elements_and_recover_empty_heads(self):
+        for expression in ('[*base, *tail]', '(*base, *tail)', 'base + tail'):
+            source = ("import subprocess\nbase = ['git']\ntail = ['--version']\nsaved = " + expression +
+                      "\nbase.clear()\ntail.clear()\nsubprocess.run(saved)")
+            with self.subTest(expression=expression):
+                self.assertEqual([list(argv) for argv in self.recorded_commands(source)], [['git', '--version']])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['git'])
+        for start in ('[]', "['discard']\nargv.clear()"):
+            for insert in ("argv.append('git')", "argv.extend(['git'])", "argv += ['git']", "argv[:0] = ['git']"):
+                source = 'import subprocess\nargv = ' + start + '\n' + insert + '\nsubprocess.run(argv)'
+                with self.subTest(start=start, insert=insert):
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['git'])
+        driver = (ROOT / 'scripts/mutation_ci.py').read_text()
+        self.assertGreaterEqual(len({line for line, word, _ in COMMANDS.python_calls(driver) if word == 'cargo'}), 2)
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'changed interpreter'):
+            COMMANDS.python_calls("import subprocess\nargv = ['git', '--version']\nargv.pop()\n"
+                                  "subprocess.run(argv + ['--version'], executable='awk')")
+
+    def test_indexed_launchers_use_current_elements(self):
+        prefix = "from subprocess import run\nitems = [print]\nitems.append(run)\n"
+        for call in ("items[1](['just'])", "launch = items[-1]\nlaunch(['just'])"):
+            with self.subTest(call=call):
+                self.assertEqual(self.recorded_commands(prefix + call), [['just']])
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': prefix + call}, vars(COMMANDS), []), 'just')
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python callable'):
+            COMMANDS.python_calls(prefix + "import os\nitems[int(os.getenv('POSITION', '1'))](['just'])")
 
     def test_stored_argv_at_process_calls(self):
         for argv in ("['cmp']", "('cmp',)"):
@@ -1754,6 +1832,8 @@ class GateImageCommands(unittest.TestCase):
         filename = 'scripts/golden_output.py'
         producer = (ROOT / filename).read_text()
         self.assertEqual(self.problems({filename: producer}), [])
+        changed_help = producer.replace('existing private outside-root backup directory', 'operator backup directory')
+        self.assertEqual(self.problems({filename: changed_help}), [])
         launch = 'out = subprocess.run(command,'
         before, original_launch = producer.split(launch, 1)
         line = before.count('\n') + 1
