@@ -51,24 +51,21 @@ def unique_pairs(items):
     return result
 
 
-def regular_stream(path, budget):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
-    stream = os.fdopen(descriptor, "rb")
-    try:
-        info = os.fstat(stream.fileno())
+def bounded_bytes(fd, budget):
+    with os.fdopen(fd, "rb", closefd=False) as stream:
+        info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_size <= budget, "not a bounded regular file")
         data = stream.read(budget + 1)
         require(len(data) <= budget, "file exceeds byte budget")
-        return stream, data
-    except BaseException:
-        stream.close()
-        raise
+        return data
 
 
-@contextmanager
-def verified_fixture(binary, receipt_path, expected_subject):
-    stream, raw = regular_stream(receipt_path, 65536)
-    stream.close()
+def verify_artifact(fd, named, home, receipt_path, expected_subject):
+    receipt_fd = os.open(receipt_path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        raw = bounded_bytes(receipt_fd, 65536)
+    finally:
+        os.close(receipt_fd)
     receipt = json.loads(raw, object_pairs_hook=unique_pairs)
     require(set(receipt) == {"schema", "artifact_sha256", "subject", "cfg", "inputs"}, "receipt fields differ")
     require(receipt["schema"] == "forge-warden.fixture-cli.v1", "unknown receipt schema")
@@ -79,17 +76,25 @@ def verified_fixture(binary, receipt_path, expected_subject):
     source_bytes = json.dumps(inputs, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     subject = "source-sha256:" + hashlib.sha256(source_bytes).hexdigest()
     require(receipt["subject"] == subject == expected_subject, "wrong build-input subject")
-    artifact, data = regular_stream(binary, 512 * 1024 * 1024)
+    data = bounded_bytes(fd, 512 * 1024 * 1024)
+    require(hashlib.sha256(data).hexdigest() == receipt["artifact_sha256"], "artifact digest mismatch")
+    require(data.startswith(b"\x7fELF") and b"FORGE_WARDEN_TEST_POLICY_ROOT" in data, "not the fixture artifact")
+    require(named == Path(home) / "forge-warden" and os.readlink(named) == f"/proc/self/fd/{fd}",
+            "wrong fixture executable link")
+    return receipt
+
+
+@contextmanager
+def verified_fixture(binary, receipt_path, expected_subject):
+    fd = os.open(binary, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     try:
-        require(hashlib.sha256(data).hexdigest() == receipt["artifact_sha256"], "artifact digest mismatch")
-        require(data.startswith(b"\x7fELF") and b"FORGE_WARDEN_TEST_POLICY_ROOT" in data, "not the fixture artifact")
-        fd = artifact.fileno()
         with tempfile.TemporaryDirectory(prefix="fw-golden-home-", dir="/tmp") as home:
             named = Path(home) / "forge-warden"
             named.symlink_to(f"/proc/self/fd/{fd}")
+            receipt = verify_artifact(fd, named, home, receipt_path, expected_subject)
             yield fd, named, home, receipt
     finally:
-        artifact.close()
+        os.close(fd)
 
 
 def normalize(stdout):

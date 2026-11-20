@@ -990,7 +990,7 @@ class GateImageCommands(unittest.TestCase):
         calls = {
             "shell=True pipe": "subprocess.run('cat a | cmp - b', shell=True)",
             "shell=True and": "subprocess.run('true && xxd a', shell=True)",
-            "shell=True f-string": "subprocess.run(f'cmp {name} b', shell=True)",
+            "shell=True f-string": "name = 'a'; subprocess.run(f'cmp {name} b', shell=True)",
             "bash -c in a list": "subprocess.run(['bash', '-c', 'cmp a b'])",
             "env in a list": "subprocess.run(['env', 'cmp', 'a', 'b'])",
             "list plus a variable": "subprocess.run(['cmp'] + rest)",
@@ -1655,7 +1655,7 @@ class GateImageCommands(unittest.TestCase):
     def test_unresolved_executable_refuses_every_process_form(self):
         imports = "import asyncio, os, pty, shlex, subprocess, sys\n"
         for call in ("subprocess.run([head])", "subprocess.Popen(args=[head])",
-                     "subprocess.run(['git'], executable=head)", "asyncio.create_subprocess_exec(head)",
+                     "subprocess.run(['git'], executable=head)", "asyncio.run(asyncio.create_subprocess_exec(head))",
                      "pty.spawn([head])", "os.execvp(head, ['arg0'])", "os.spawnlp(0, head, 'arg0')"):
             source = imports + call.replace('head', "f'{os.getenv(\"PROGRAM\")}'")
             with self.subTest(call=call):
@@ -1701,16 +1701,86 @@ class GateImageCommands(unittest.TestCase):
         filename = 'scripts/golden_output.py'
         producer = (ROOT / filename).read_text()
         self.assertEqual(self.problems({filename: producer}), [])
-        context = '\nwith verified_fixture(binary, manifest, subject) as (fd, named, home, receipt):\n'
-        for suffix in ("subprocess.run(['forge-warden'])", "subprocess.run([args.binary])",
-                       "subprocess.run([f'/proc/self/fd/{fd}x'], pass_fds=(fd,))",
-                       "subprocess.run([f'/proc/self/fd/{fd}'])",
-                       "subprocess.run([f'{home}/forge-warden'], executable=f'/proc/self/fd/{fd}', pass_fds=(fd,))",
-                       "command = [f'/proc/self/fd/{fd}']\nsubprocess.run(command, pass_fds=(fd,))"):
-            with self.subTest(suffix=suffix):
-                issues = self.problems({filename: producer + context + '    ' + suffix})
-                self.assertEqual(len(issues), 1, issues)
-                self.assertRegex(issues[0], r'cannot resolve|calls `forge-warden`')
+        launch = 'out = subprocess.run(command,'
+        before, original_launch = producer.split(launch)
+        line = before.count('\n') + 1
+        for argv, diagnostic in (("['forge-warden']", 'calls `forge-warden`'),
+                                 ('[args.binary]', 'cannot resolve Python process executable'),
+                                 ("[f'/proc/self/fd/{fd}x']", 'cannot resolve Python process executable'),
+                                 ('[executable], executable=named', 'cannot resolve Python process executable'),
+                                 ('[f"{home}/forge-warden"], executable=executable', 'cannot resolve verified fixture argv zero')):
+            with self.subTest(argv=argv):
+                changed = before + 'out = subprocess.run(' + argv + ',' + original_launch
+                if argv == "['forge-warden']":
+                    issues = self.problems({filename: changed})
+                    self.assertEqual(len(issues), 1, issues)
+                    self.assertIn(f'{filename}:{line}: ' + diagnostic, issues[0])
+                else:
+                    with self.assertRaisesRegex(COMMANDS.Unsupported, diagnostic) as refused:
+                        COMMANDS.python_calls(changed, filename=filename)
+                    self.assertEqual(refused.exception.lineno, line)
+
+        without_fd = before + launch + original_launch.replace('pass_fds=(fd,),', '', 1)
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'inherited fixture executable') as refused:
+            COMMANDS.python_calls(without_fd, filename=filename)
+        self.assertEqual(refused.exception.lineno, line)
+
+        finished = '    if args.write:\n        with tempfile.NamedTemporaryFile'
+        after_exit = producer.replace(finished, '    subprocess.run(command, pass_fds=(fd,))\n' + finished)
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'closed fixture executable') as refused:
+            COMMANDS.python_calls(after_exit, filename=filename)
+        self.assertEqual(refused.exception.lineno, producer.partition(finished)[0].count('\n') + 1)
+
+        for value in ('os.open(receipt_path, os.O_RDONLY), named', 'fd, binary'):
+            changed = producer.replace('yield fd, named,', 'yield ' + value + ',')
+            with self.subTest(yielded=value), self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve') as refused:
+                COMMANDS.python_calls(changed, filename=filename)
+            self.assertEqual(refused.exception.lineno, changed.partition('out = subprocess.run')[0].count('\n') + 1)
+
+        for operation, accepted in (('os.fstat(fd)', True), ('os.closerange(0, fd)', True),
+                                    ('os.closerange(fd + 1, fd + 3)', True), ('os.closerange(fd, fd + 1)', False),
+                                    ('os.close(fd)', False)):
+            changed = before + operation + '\n            ' + launch + original_launch
+            with self.subTest(operation=operation):
+                if accepted:
+                    self.assertEqual(self.problems({filename: changed}), [])
+                else:
+                    with self.assertRaisesRegex(COMMANDS.Unsupported, 'fixture descriptor|fixture executable'):
+                        COMMANDS.python_calls(changed, filename=filename)
+
+    def test_provisioned_just_lookup_at_process_boundary(self):
+        checkout = (ROOT / 'scripts/checkout_just.py').read_text()
+        managed = (ROOT / 'scripts/tests/managed_review_bundle.py').read_text()
+        self.assertEqual(self.problems({'checkout.py': checkout, 'review.py': managed}), [])
+        self.assertEqual(CAPS.just_consumer({'run': checkout, 'shell': 'python'}, vars(COMMANDS), []), 'just')
+        unknown = checkout.replace('which("just")', 'which(sys.argv[1])')
+        self.assertIn('cannot resolve Python process executable', self.problems({'checkout.py': unknown})[0])
+
+    def test_shell_payload_requires_resolved_text(self):
+        for call in ("subprocess.run([payload], shell=True)", "os.system(payload)", "os.popen(payload)",
+                     "subprocess.getoutput(payload)", "subprocess.getstatusoutput(payload)",
+                     "asyncio.run(asyncio.create_subprocess_shell(payload))"):
+            setup = "import asyncio, os, subprocess\n"
+            for payload in ("f'true {os.getenv(\"COMMAND\")}'", '"true\\njust"'):
+                source = setup + call.replace('payload', payload)
+                with self.subTest(call=call, payload=payload):
+                    step = {'shell': 'python', 'run': source}
+                    if payload.startswith('f'):
+                        with self.assertRaisesRegex(ValueError, 'cannot resolve'):
+                            CAPS.just_consumer(step, vars(COMMANDS), [])
+                        self.assertIn('cannot resolve', self.problems({'entry.py': source})[0])
+                    else:
+                        self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), []), 'just')
+
+    def test_patched_interpreter_loses_process_identity(self):
+        for patcher in ("patch.object(sys, 'executable', 'cmp')", "patch('sys.executable', 'cmp')"):
+            source = ("from unittest.mock import patch\nimport sys, subprocess\nwith " + patcher + ":\n"
+                      "    argv = [sys.executable, '--version']\n    subprocess.run(argv)")
+            with self.subTest(patcher=patcher):
+                self.assertEqual(self.recorded_commands(source), [['cmp', '--version']])
+                self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
+                restored = source.partition("    argv =")[0] + "    pass\nsubprocess.run([sys.executable, '--version'])"
+                self.assertEqual(self.problems({'entry.py': restored}), [])
 
     def test_context_decorators_wrap_each_call(self):
         for prefix, decorator in (('', 'contextmanager'), ('async ', 'asynccontextmanager')):

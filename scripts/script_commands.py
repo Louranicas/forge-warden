@@ -101,7 +101,7 @@ ONLY_IN = {
     'sudo': frozenset({'scripts/guest_bootstrap.sh'}),
     'cc': frozenset({'scripts/guest_bootstrap.sh'}),
 }
-DECLARED = IMAGE | frozenset(ONLY_IN)
+DECLARED = IMAGE | frozenset(ONLY_IN) | {'just'}
 
 BUILTINS = frozenset("""
     : . [ [[ ]] alias bg bind break builtin caller cd command compgen complete continue declare
@@ -192,6 +192,7 @@ PY_ARGV = {
 
 class Unsupported(ValueError):
     location = None
+    lineno = None
 
 
 class Word:
@@ -928,11 +929,8 @@ def py_items(node):
 
 
 def py_text(node):
-    """A literal string, or an f-string with each expression standing as a dynamic word."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
-    if isinstance(node, ast.JoinedStr):
-        return ''.join(part.value if isinstance(part, ast.Constant) else PY_DYNAMIC for part in node.values)
     return None
 
 
@@ -1021,8 +1019,10 @@ class VerifiedCommand(str):
     pass
 
 
-class PythonExecutable(ast.expr):
-    pass
+class LookupExecutable(ast.expr):
+    def __init__(self, provider, program):
+        self.provider = provider
+        self.program = program
 
 
 class CapturedArgument(ast.expr):
@@ -1046,6 +1046,7 @@ FILE_CONTEXT = object()
 NONSUPPRESSING_CONTEXT = object()
 GENERATOR_DECORATORS = ('contextlib.contextmanager', 'contextlib.asynccontextmanager')
 GeneratorManager = namedtuple('GeneratorManager', 'helper call receiver')
+PatchedProvider = namedtuple('PatchedProvider', 'name')
 ImportedMember = namedtuple('ImportedMember', 'module name source')
 SequenceBinding = namedtuple('SequenceBinding', 'origin elements sites revised', defaults=(False,))
 IMPORT_SOURCE = ContextVar('script_import_source', default=None)
@@ -1059,13 +1060,16 @@ class SuiteImports:
         self.stack = []
         self.class_paths = {}
         self.fixture_verifier = None
-        self.open_fixtures = set()
+        self.fixture_manager = None
+        self.replacements = set()
 
     def register_fixture(self, body, filename):
         if filename == 'scripts/golden_output.py':
-            definitions = [node for node in body if isinstance(node, ast.FunctionDef) and node.name == 'verified_fixture']
-            if len(definitions) == 1:
-                self.fixture_verifier = definitions[0]
+            definitions = [node for node in body if isinstance(node, ast.FunctionDef)]
+            for name, field in (('verified_fixture', 'fixture_manager'), ('verify_artifact', 'fixture_verifier')):
+                matches = [node for node in definitions if node.name == name]
+                if len(matches) == 1:
+                    setattr(self, field, matches[0])
 
     def load(self, path, module, ordering, targets, names):
         if path in self.loaded:
@@ -1352,7 +1356,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(receiver, PythonInstance) and receiver.owner.base == 'unittest.TestCase' and function.name == '__init__':
                 initializers = [cls.members['__init__'] for cls in receiver.owner.lineage if '__init__' in cls.members]
                 base_init = bool(initializers and initializers[-1] == {helper})
-            protocol_values = set() if protocol else None
+            returns_sequence = (function.body and isinstance(function.body[-1], ast.Return)
+                                and isinstance(function.body[-1].value, (ast.List, ast.Tuple)))
+            protocol_values = set() if protocol or returns_sequence else None
             returned = yield from python_callees(function.body if phase is None else phase, local, ordering, targets, parents, active,
                                                 require_command=strict, reachable=reachable and call is not None,
                                                 exceptional_fields=exceptions, testcase_super_init=base_init, allocations=allocations,
@@ -1420,7 +1426,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def qualified(node, names):
         if isinstance(node, CapturedArgument):
             return node.owners
-        if isinstance(node, (ast.Constant, FixtureDescriptor, FixtureExecutable)):
+        if isinstance(node, (ast.Constant, FixtureDescriptor, FixtureExecutable, LookupExecutable)):
             return frozenset({node})
         if isinstance(node, ast.JoinedStr):
             parts = []
@@ -1470,7 +1476,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 elif isinstance(owner, str) and owner.partition('.')[0] not in sys.stdlib_module_names:
                     values.add(ImportedMember(owner, node.attr, source))
                 else:
-                    values.add(owner + '.' + node.attr if isinstance(owner, str) else None)
+                    name = owner + '.' + node.attr if isinstance(owner, str) else None
+                    values.update(names.get((name, 'provider'), {name}))
             return frozenset(values)
         if isinstance(node, ast.BoolOp):
             return frozenset().union(*(qualified(value, names) for value in node.values))
@@ -1541,10 +1548,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if len(owners) == 1:
             owner, = owners
             if owner == 'sys.executable':
-                return PythonExecutable()
+                return LookupExecutable('sys.executable', 'python3')
+            if isinstance(owner, LookupExecutable):
+                return owner
             if isinstance(owner, (FixtureDescriptor, FixtureExecutable)):
                 descriptor = owner.descriptor if isinstance(owner, FixtureExecutable) else owner
-                if descriptor not in imports.open_fixtures:
+                if names.get((descriptor, 'verified')) != {True}:
                     raise Unsupported('cannot resolve closed fixture executable')
                 return owner
             if isinstance(value, (CapturedArgument, ast.JoinedStr)) and isinstance(owner, ast.Constant):
@@ -1702,6 +1711,43 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         origin._mutated = True
         origin._added = getattr(origin, '_added', frozenset()) | added
 
+    def carries_descriptor(value, names, live):
+        if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            return any(carries_descriptor(item, names, live) for item in value.elts)
+        if isinstance(value, ast.Dict):
+            return any(carries_descriptor(item, names, live) for item in (*value.keys, *value.values))
+        if isinstance(value, ast.Starred):
+            return carries_descriptor(value.value, names, live)
+        owners = qualified(value, names)
+        if live.intersection(owners):
+            return True
+        return any(carries_descriptor(CapturedArgument(items), names, live)
+                   for owner in owners if isinstance(owner, SequenceBinding) for items in owner.elements or ())
+
+    def disjoint_range(args, names, live):
+        if len(args) != 2:
+            return False
+
+        def bound(node):
+            value = argument(node, names)
+            if isinstance(value, ast.Constant) and type(value.value) is int:
+                return None, value.value
+            if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
+                base, offset = bound(node.left)
+                delta = argument(node.right, names)
+                if offset is not None and isinstance(delta, ast.Constant) and type(delta.value) is int:
+                    return base, offset + (delta.value if isinstance(node.op, ast.Add) else -delta.value)
+            values = qualified(node, names)
+            if len(values) == 1 and isinstance(fd := next(iter(values)), FixtureDescriptor):
+                return fd, 0
+            return None, None
+
+        low, start = bound(args[0])
+        high, end = bound(args[1])
+        return (low is high and start is not None and end is not None and start >= end
+                or end is not None and end <= 0 and (high is None or live == {high})
+                or start is not None and start > 0 and live == {low})
+
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
@@ -1725,6 +1771,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {GeneratorManager(target, frozen, receiver)}
             returned = yield from read_helper(target, names, call, receiver, strict=wrapped or require_command,
                                               interrupted=interrupted)
+            if target.node is imports.fixture_verifier and imports.fixture_manager in active:
+                if len(call.args) != 5 or call.keywords or not isinstance(call.args[1], ast.Name):
+                    raise Unsupported('cannot resolve verified fixture arguments')
+                descriptors = qualified(call.args[0], names)
+                if len(descriptors) != 1 or not isinstance(fd := next(iter(descriptors)), FixtureDescriptor):
+                    raise Unsupported('cannot resolve verified fixture descriptor')
+                names[(fd, 'verified')] = frozenset({True})
+                names[call.args[1].id] = frozenset({FixtureExecutable(fd, named=True)})
             return {BoundCall(value) if value in (UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(value, ast.arg) else value
                     for value in returned}
         if isinstance(target, PythonClass):
@@ -1824,13 +1878,49 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if target in (UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(target, (ast.arg, PythonInstance)):
             if ordering or wrapped or require_command:
                 raise Unsupported('cannot resolve Python callable')
+        if target == 'os.open' and imports.fixture_manager in active:
+            return {FixtureDescriptor()}
+        if target == 'shutil.which' and not call.keywords and len(call.args) == 1:
+            value = argument(call.args[0], names)
+            if isinstance(value, ast.Constant) and value.value == 'just':
+                return {LookupExecutable(target, 'just')}
+        if target in ('unittest.mock.patch', 'unittest.mock.patch.object'):
+            keywords = {kw.arg: kw.value for kw in call.keywords}
+            subject = call.args[0] if call.args else keywords.get('target')
+            providers = set()
+            if target == 'unittest.mock.patch':
+                subject = argument(subject, names)
+                if isinstance(subject, ast.Constant) and isinstance(subject.value, str):
+                    providers.add(subject.value)
+            else:
+                attr = argument(call.args[1] if len(call.args) > 1 else keywords.get('attribute'), names)
+                if isinstance(attr, ast.Constant) and isinstance(attr.value, str):
+                    providers.update(owner + '.' + attr.value for owner in qualified(subject, names)
+                                     if isinstance(owner, str))
+            providers &= {'sys.executable', 'shutil.which'}
+            if providers and getattr(call, '_context_expr', False):
+                return {PatchedProvider(provider) for provider in providers}
+            imports.replacements.update(providers)
+        if imports.fixture_manager is not None:
+            live = {key[0] for key, values in names.items() if isinstance(key, tuple)
+                    and isinstance(key[0], FixtureDescriptor) and True in values}
+            if target == 'os.close' and len(call.args) == 1:
+                descriptors = qualified(call.args[0], names)
+                if live and not all(isinstance(fd, FixtureDescriptor) for fd in descriptors):
+                    raise Unsupported('cannot resolve fixture descriptor close')
+                for fd in descriptors:
+                    if isinstance(fd, FixtureDescriptor):
+                        names[(fd, 'verified')] = frozenset({False})
+            elif live and target == 'os.closerange':
+                if not disjoint_range(call.args, names, live):
+                    raise Unsupported('cannot resolve fixture descriptor close range')
+            elif live and target not in ('os.fstat', 'os.isatty', 'os.get_inheritable', 'os.get_blocking'):
+                process = target in PY_ARGV or target in ('asyncio.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_exec')
+                operands = [*call.args, *(kw.value for kw in call.keywords if not (process and kw.arg == 'pass_fds'))]
+                if any(carries_descriptor(operand, names, live) for operand in operands):
+                    raise Unsupported('cannot resolve fixture descriptor passed to another call')
         if isinstance(target, ImportedMember):
             return {UNRESOLVED_CONTEXT}
-        if imports.open_fixtures:
-            operands = [*call.args, *(kw.value for kw in call.keywords)]
-            if (target == 'os.closerange' or any(isinstance(value, FixtureDescriptor)
-                    for operand in operands for value in qualified(operand, names))):
-                raise Unsupported('cannot resolve fixture descriptor passed to another call')
         if isinstance(target, str):
             if target.startswith('asyncio.subprocess.'):
                 target = 'asyncio.' + target.removeprefix('asyncio.subprocess.')
@@ -1871,12 +1961,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return (yield from suite(node.body, names, interrupted))
         item, *rest = items
         expr = item.context_expr
+        expr._context_expr = True
         yield from visit(expr, names, interrupted)
         managers = qualified(expr, names)
         prefix = '__a' if isinstance(node, ast.AsyncWith) else '__'
         entry = prefix + 'enter__'
         exit_method = prefix + 'exit__'
         suspended = {}
+        saved = {p.name: names.get((p.name, 'provider'), frozenset({p.name}))
+                 for p in managers if isinstance(p, PatchedProvider)}
 
         def lifecycle(method, state, args):
             outcomes = []
@@ -1886,7 +1979,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if getattr(node, '_generator_span', False) and not (
                         isinstance(expr, ast.Call) and qualified(expr.func, names) == {'tempfile.TemporaryDirectory'}):
                     raise Unsupported('cannot resolve context surrounding Python generator yield')
-                if isinstance(manager, GeneratorManager):
+                if isinstance(manager, PatchedProvider):
+                    branch[(manager.name, 'provider')] = (frozenset({UNKNOWN_CALLABLE}) if method == entry
+                                                         else saved[manager.name])
+                    values.add(UNKNOWN_CALLABLE if method == entry else ast.Constant(False))
+                elif isinstance(manager, GeneratorManager):
                     if (manager.helper.decorator == 'contextlib.asynccontextmanager') != isinstance(node, ast.AsyncWith):
                         raise Unsupported('cannot resolve Python generator context protocol')
                     start, finish, failure = generator_phases(manager.helper.node.body)
@@ -1925,13 +2022,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return values
 
         entered = yield from lifecycle(entry, names, [])
-        fixture_fd = None
-        if len(managers) == 1:
-            manager, = managers
-            if isinstance(manager, GeneratorManager) and manager.helper.node is imports.fixture_verifier:
-                fixture_fd = FixtureDescriptor()
-                entered = {ast.Tuple(elts=[fixture_fd, FixtureExecutable(fixture_fd, named=True),
-                                           CapturedArgument({UNKNOWN_CALLABLE}), CapturedArgument({UNKNOWN_CALLABLE})])}
         if interrupted is not None:
             record_exception(interrupted, names)
         exceptions = {}
@@ -1944,13 +2034,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 outcomes.append(branch)
             names.update(join(outcomes, paths=True))
         start = len(transfers)
-        if fixture_fd is not None:
-            imports.open_fixtures.add(fixture_fd)
-        try:
-            completed = yield from with_items(node, rest, names, exceptions)
-        finally:
-            if fixture_fd is not None:
-                imports.open_fixtures.remove(fixture_fd)
+        completed = yield from with_items(node, rest, names, exceptions)
         normal_args = [ast.Constant(None)] * 3
         for _, state in transfers[start:]:
             yield from lifecycle(exit_method, state, normal_args)
@@ -1985,6 +2069,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         try:
             completed = yield from visit_node(node, names, interrupted)
         except Unsupported as error:
+            if error.lineno is None:
+                error.lineno = getattr(node, 'lineno', None)
             if source is not None and error.location is None and hasattr(node, 'lineno'):
                 error.location = source.relative_to(imports.root), node.lineno
             raise
@@ -2270,7 +2356,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                  (imports.directory / root).with_suffix('.py').is_file())
                         values = (yield from imports.resolve(symbol, ordering, targets, names)) if (source is not None or local) else {symbol}
                     else:
-                        values = {module + '.' + alias.name}
+                        name = module + '.' + alias.name
+                        values = names.get((name, 'provider'), {name})
                     bind(alias.asname or alias.name, frozenset(values))
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             if isinstance(node, ast.AnnAssign):
@@ -2366,13 +2453,13 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None):
     imports.register_fixture(tree.body, filename)
     calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=imports))
 
-    rebound = set().union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
+    rebound = imports.replacements.union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
 
     def process_arguments(node):
-        if isinstance(node, PythonExecutable):
-            if 'sys.executable' in rebound:
+        if isinstance(node, LookupExecutable):
+            if node.provider in rebound:
                 raise Unsupported('cannot resolve reassigned Python process executable')
-            return ast.Constant('python3')
+            return ast.Constant(node.program)
         if isinstance(node, ast.Call):
             owners = targets.get(node, set())
             if not rebound & owners:
@@ -2536,6 +2623,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None):
                     number = source.relative_to(imports.root), number
                 found.append((number, *rest))
         except Unsupported as error:
+            error.lineno = start
             if source is not None and error.location is None:
                 error.location = source.relative_to(imports.root), start
             raise
