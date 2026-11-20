@@ -32,7 +32,7 @@ def versions(root):
     return values
 
 
-def check_ci_tool_pins(root, values, capabilities=None):
+def check_ci_tool_pins(root, values, capabilities=None, workflows=("main", "baseline")):
     if capabilities is None:
         spec = importlib.util.spec_from_file_location("plant_tools", root / "scripts/plant_tools.py")
         capabilities = importlib.util.module_from_spec(spec)
@@ -42,7 +42,11 @@ def check_ci_tool_pins(root, values, capabilities=None):
     mutants = 'cargo-mutants@' + values['cargo_mutants']
     ci_tools = [mutants] * 3 + ['cargo-deny@' + values['cargo_deny'], 'zizmor@' + values['zizmor'],
                                 'just@' + values['just']]
-    for text, expected in ((workflow, ci_tools), (baseline, [mutants] * 2)):
+    selected = {"main": (workflow, ci_tools), "baseline": (baseline, [mutants] * 2)}
+    if not workflows or not set(workflows) <= set(selected):
+        raise ValueError("unknown workflow pin comparison")
+    for name in workflows:
+        text, expected = selected[name]
         pins = [tool for job in capabilities.workflow_jobs(text).values() for step in job['steps']
                 if (tool := capabilities.installed_tool(step, values)) is not None]
         if collections.Counter(pins) != collections.Counter(expected):

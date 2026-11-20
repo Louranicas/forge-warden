@@ -84,7 +84,26 @@ def verified_fixture(binary, receipt_path, expected_subject):
     except BaseException:
         artifact.close()
         raise
-    return artifact, receipt
+    return artifact, receipt, data
+
+
+def private_executable(directory, data):
+    path = Path(directory) / "forge-warden"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
+    try:
+        # A restrictive inherited umask must not silently make the verified private copy
+        # non-executable; fchmod also states the intended least-privilege mode exactly.
+        os.fchmod(descriptor, 0o700)
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("short write while staging verified fixture")
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return path
 
 
 def normalize(stdout):
@@ -126,27 +145,23 @@ def main():
     if destination.resolve() != destination.absolute() or not destination.is_file():
         parser.error("golden destination must be an existing regular file without symlinks")
     binary = args.binary.absolute()
-    artifact, receipt = verified_fixture(binary, args.receipt, args.subject)
+    artifact, receipt, artifact_data = verified_fixture(binary, args.receipt, args.subject)
     with artifact, tempfile.TemporaryDirectory(prefix="fw-golden-home-", dir="/tmp") as home:
-        env = {"PATH": os.defpath, "HOME": home, "LC_ALL": "C", "LANG": "C", "FORGE_WARDEN_TEST_POLICY_ROOT": home}
-        command = [f"/proc/self/fd/{artifact.fileno()}", "check", "--policy", "examples/starter.warden.toml",
+        private_executable(home, artifact_data)
+        env = {"PATH": home, "HOME": home, "LC_ALL": "C", "LANG": "C", "FORGE_WARDEN_TEST_POLICY_ROOT": home}
+        command = ["forge-warden", "check", "--policy", "examples/starter.warden.toml",
                    "--patch", "fixtures/demo.patch", "--advisory", "--rank",
                    "fixtures/demo.rank.json", "--today", "2026-11-05", "--json"]
         if golden in SURFACE:
             text = ""
-            # clap names the program in its usage lines after the file it was run as ("Usage: 3" from
-            # /proc/self/fd/3), so the verified descriptor is run through a link named forge-warden in
-            # this private home; the child resolves it to the same descriptor (passed below).
-            named = Path(home) / "forge-warden"
-            named.symlink_to(f"/proc/self/fd/{artifact.fileno()}")
             for argv in SURFACE[golden]:  # not `args`: that is the argparse namespace, read below
-                out = subprocess.run([f"{named}", *argv], cwd=ROOT, env=env, pass_fds=(artifact.fileno(),),
+                out = subprocess.run(["forge-warden", *argv], cwd=ROOT, env=env,
                                      input=b"", capture_output=True, timeout=30, check=False)
                 text += (f"=== forge-warden {' '.join(argv)} (exit {out.returncode})\n--- stdout\n"
                          f"{out.stdout.decode()}--- stderr\n{out.stderr.decode()}")
             result = text.replace(package_version(), "<version>").encode()
         elif golden == GOLDENS[0]:
-            out = subprocess.run(command, cwd=ROOT, env=env, pass_fds=(artifact.fileno(),), stdin=subprocess.DEVNULL,
+            out = subprocess.run(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                  capture_output=True, timeout=30, check=False)
             if out.returncode != 7 or out.stderr:
                 raise ValueError("golden producer did not return the expected demo judgement")
@@ -154,19 +169,20 @@ def main():
         else:
             if golden == "fixtures/cli-stderr/io.txt":
                 with open("/dev/full", "wb") as full:
-                    out = subprocess.run([f"/proc/self/fd/{artifact.fileno()}", "init"], cwd=ROOT, env=env, pass_fds=(artifact.fileno(),),
+                    out = subprocess.run(["forge-warden", "init"], cwd=ROOT, env=env,
                                          stdin=subprocess.DEVNULL, stdout=full,
                                          stderr=subprocess.PIPE, timeout=30, check=False)
                 expected = 3
             elif golden == "fixtures/cli-stderr/refused.txt":
-                out = subprocess.run([f"/proc/self/fd/{artifact.fileno()}", "lint", "."], cwd=ROOT, env=env, pass_fds=(artifact.fileno(),),
+                out = subprocess.run(["forge-warden", "lint", "."], cwd=ROOT, env=env,
                                      stdin=subprocess.DEVNULL, capture_output=True,
                                      timeout=30, check=False)
                 expected = 4
             else:
-                command.remove("--json")
-                command[command.index("fixtures/demo.rank.json")] = "-"
-                out = subprocess.run(command, cwd=ROOT, env=env, pass_fds=(artifact.fileno(),),
+                over_budget = ["forge-warden", "check", "--policy", "examples/starter.warden.toml",
+                               "--patch", "fixtures/demo.patch", "--advisory", "--rank", "-",
+                               "--today", "2026-11-05"]
+                out = subprocess.run(over_budget, cwd=ROOT, env=env,
                                      input=b" " * (67108864 + 1), capture_output=True,
                                      timeout=30, check=False)
                 expected = 4

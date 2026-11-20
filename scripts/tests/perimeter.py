@@ -351,8 +351,10 @@ class Contracts(unittest.TestCase):
             workflow.write_text(original)
             drifted = dict(versions)
             drifted["cargo_mutants"] = "9.9.9"
-            with self.assertRaisesRegex(ValueError, "CI tool pins drift from scripts/tool-versions.toml"):
-                TOOLS.check_ci_tool_pins(root, drifted)
+            for workflow_name in ("main", "baseline"):
+                with self.subTest(decoded_pin_workflow=workflow_name):
+                    with self.assertRaisesRegex(ValueError, "CI tool pins drift from scripts/tool-versions.toml"):
+                        TOOLS.check_ci_tool_pins(root, drifted, workflows=(workflow_name,))
             baseline = root / ".github/workflows/mutation-baseline.yml"
             baseline_original = baseline.read_text()
             for pin in (versions["rust"],):
@@ -1595,12 +1597,13 @@ class GateImageCommands(unittest.TestCase):
             for name, body in files.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(body.replace("'diff'", "'just'"))
-            for statement in ('from pkg.data.suite import Case', 'import pkg.data.suite'):
+                path.write_text(body.replace("'diff'", "'just'").replace("'cmp'", "'just'"))
+            for statement in ('from pkg.data.suite import Case', 'import pkg.data.suite',
+                              'import pkg', 'from pkg import run'):
                 self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': statement}, vars(COMMANDS), [], root), 'just')
             (root / 'pkg/data/__init__.py').unlink()
             with self.assertRaisesRegex(ValueError, 'cannot resolve'):
-                CAPS.just_consumer({'shell': 'python', 'run': statement}, vars(COMMANDS), [], root)
+                CAPS.just_consumer({'shell': 'python', 'run': 'import pkg.data.suite'}, vars(COMMANDS), [], root)
 
     def test_loop_reads_mutated_list_elements(self):
         for setup, update in (('[print]', 'alias.append(run)'), ('[print, print]', 'alias[1] = run'),
@@ -1617,6 +1620,21 @@ class GateImageCommands(unittest.TestCase):
                   "    launch(['just'])\n    if name == 'first': items.append(('next', run))")
         self.assertEqual(self.recorded_commands(source), [['just']])
         self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
+
+        cleared = "from subprocess import run\nitems = [run]\nitems.clear()\nfor launch in items: launch(['just'])"
+        self.assertEqual(self.recorded_commands(cleared), [])
+        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': cleared}, vars(COMMANDS), []))
+
+        replaced = ("from subprocess import run\nitems = [print]\nitems.clear()\nitems.append(run)\n"
+                    "for launch in items: launch(['just'])")
+        self.assertEqual(self.recorded_commands(replaced), [['just']])
+        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': replaced}, vars(COMMANDS), []), 'just')
+
+        conditional = ("import os\nfrom subprocess import run\nitems = [run]\n"
+                       "if os.getenv('FORGE_WARDEN_TEST_CLEAR'):\n    items.clear()\n"
+                       "for launch in items: launch(['just'])")
+        self.assertEqual(self.recorded_commands(conditional), [['just']])
+        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': conditional}, vars(COMMANDS), []), 'just')
 
     def test_stored_argv_at_process_calls(self):
         for argv in ("['cmp']", "('cmp',)"):
