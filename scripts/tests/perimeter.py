@@ -669,6 +669,26 @@ class Contracts(unittest.TestCase):
                      "github.event.merge_group.head_sha": "d" * 40 if event == "merge_group" else ""}
                     for event in events]
         bases, heads = ["a" * 40, "c" * 40], ["b" * 40, "d" * 40]
+        def invocation(command, environment, driver_version):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                driver = root / "trusted/scripts/dogfood.sh"
+                driver.parent.mkdir(parents=True)
+                record = """printf '%s\\0' "$@" "$BASE_SHA" "${HEAD_SHA-}" >> "$RECORD"\n"""
+                driver.write_text(f"# forge-warden trusted-dogfood-driver {driver_version}\n"
+                                  'set -- driver "$@"\n' + record)
+                python = root / "python3"
+                python.write_text('#!/bin/sh\nset -- python3 "$@"\n' + record)
+                python.chmod(0o700)
+                for tool in ("bash", "grep"):
+                    (root / tool).symlink_to(shutil.which(tool))
+                receipt = root / "argv"
+                env = dict(environment, RECORD=str(receipt), PATH=directory,
+                           GITHUB_WORKSPACE="/workspace", RUNNER_TEMP="/runner-temp")
+                subprocess.run(["/bin/bash", "-eo", "pipefail"], cwd=root, env=env,
+                               input=command, text=True, check=True, timeout=10)
+                return receipt.read_bytes().decode().split("\0")
+
         def check_field(mapping, key, read, expected, wrong):
             self.assertEqual(read(mapping), expected)
             with mock.patch.dict(mapping, {key: wrong}):
@@ -711,6 +731,22 @@ class Contracts(unittest.TestCase):
                 else:
                     refs = {".": [context["github.sha"] for context in contexts[:2]]}
                     env = {"BASE_SHA": bases}
+                for i, context in enumerate(contexts[:2]):
+                    environment = {key: evaluate(worker["env"][key], context) for key in env}
+                    for version in (("v1", "v2") if name == "dogfood" else ("v2",)):
+                        if name == "dogfood":
+                            mode = ["--hosted-advisory"] if version == "v2" else []
+                            expected = ["driver", *mode, bases[i], heads[i], "/workspace/candidate",
+                                        "/runner-temp/warden-evidence", bases[i], heads[i], ""]
+                            wrong = shlex.join(["bash", "trusted/scripts/dogfood.sh", *mode]) + (
+                                ' "$HEAD_SHA" "$BASE_SHA" "$GITHUB_WORKSPACE/candidate" "$RUNNER_TEMP/warden-evidence"')
+                        else:
+                            operation = "plan" if name == "mutation-plan" else "run"
+                            expected = ["python3", "-I", "scripts/mutation_ci.py", operation, "diff", bases[i], "", ""]
+                            wrong = shlex.join(["python3", "-I", "scripts/mutation_ci.py", operation, "full"])
+                        for command in (worker["run"], yaml.safe_load(literal)["run"]):
+                            self.assertEqual(invocation(command, environment, version), expected)
+                        self.assertNotEqual(invocation(wrong, environment, version), expected)
                 checkouts = [step.get("with", {}) for step in steps
                              if step.get("uses", "").partition("@")[0] == "actions/checkout"]
                 self.assertCountEqual([inputs.get("path", ".") for inputs in checkouts], refs.keys())
@@ -1025,6 +1061,76 @@ class GateImageCommands(unittest.TestCase):
             "nested.sh: not read: cannot resolve unpacked Python process keywords",
             "explicit.py:1: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)",
         ])
+
+    def test_helpers_use_bindings_at_the_call(self):
+        for owner in ("subprocess.run", "print"):
+            for helper in (
+                "def cleanup(): launch(['just'])",
+                "def inner(): launch(['just'])\ndef cleanup(): inner()",
+                "class Helper:\n    def finish(self): launch(['just'])\n    def cleanup(self): self.finish()\n"
+                "cleanup = Helper().cleanup",
+            ):
+                with self.subTest(owner=owner, helper=helper):
+                    source = (f"import subprocess\nlaunch = {owner}\n{helper}\ntry:\n    open('config')\n"
+                              "    launch = print\nfinally:\n    cleanup()")
+                    expected = "just" if owner == "subprocess.run" else None
+                    self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []), expected)
+                    found = self.problems({"t.py": source.replace("'just'", "'cmp'")})
+                    self.assertEqual(len(found), int(expected is not None), found)
+                    if expected:
+                        self.assertRegex(found[0], r"^t\.py:\d+: calls `cmp`")
+        local_call = ("from subprocess import run as launch\ndef cleanup(): launch(['just'])\n"
+                      "launch = print\ncleanup()")
+        self.assertIsNone(CAPS.just_consumer({"run": local_call, "shell": "python"}, vars(COMMANDS), []))
+
+    def test_starred_process_arguments_preserve_script_operands(self):
+        for template in (
+            "os.execvp('bash', [*ARGS])",
+            "os.spawnvp(os.P_WAIT, 'bash', [*ARGS])",
+            "os.posix_spawnp('bash', [*ARGS], {})",
+            "os.execlp('bash', *ARGS)",
+            "os.spawnlp(os.P_WAIT, 'bash', *ARGS)",
+            "subprocess.run([*ARGS])",
+            "subprocess.run(*[ARGS])",
+            "asyncio.run(asyncio.create_subprocess_exec(*ARGS))",
+        ):
+            for vector, expected in (("['bash', 'scripts/tests/dogfood.sh']", "scripts/tests/dogfood.sh"),
+                                     ("['bash', 'unrelated.sh']", None)):
+                with self.subTest(template=template, vector=vector):
+                    source = "import asyncio, os, subprocess; " + template.replace("ARGS", vector)
+                    self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []), expected)
+            unknown = template.replace("*[ARGS]", "*dynamic").replace("ARGS", "dynamic")
+            source = "import asyncio, os, subprocess; " + unknown
+            with self.subTest(unknown=unknown):
+                with self.assertRaisesRegex(ValueError, "starred Python process arguments"):
+                    CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
+                self.assertEqual(self.problems({"t.py": source}),
+                                 ["t.py: not read: cannot resolve starred Python process arguments"])
+
+    def test_effective_process_executable(self):
+        for wrapper in ("subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
+                        "subprocess.check_output", "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell"):
+            args = ("'probe', '--version'" if wrapper.endswith("_exec") else
+                    "'true'" if wrapper.endswith("_shell") else "['probe', '--version']")
+            for executable, expected in (("'just'", "just"), ("'true'", None)):
+                with self.subTest(wrapper=wrapper, executable=executable):
+                    source = f"import asyncio, subprocess; {wrapper}({args}, executable={executable})"
+                    self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []), expected)
+            for keyword, message in (("executable=dynamic", "process executable"),
+                                     ("**{'executable': 'just'}", "unpacked Python process keywords")):
+                with self.subTest(wrapper=wrapper, keyword=keyword):
+                    source = f"import asyncio, subprocess; {wrapper}({args}, {keyword})"
+                    with self.assertRaisesRegex(ValueError, message):
+                        CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
+        for call in ("subprocess.run(['probe', 'scripts/tests/dogfood.sh'], executable='/bin/bash')",
+                     "subprocess.Popen(['probe', 'scripts/tests/dogfood.sh'], -1, '/bin/bash')",
+                     "asyncio.create_subprocess_exec('probe', 'scripts/tests/dogfood.sh', executable='bash')",
+                     "subprocess.run('bash scripts/tests/dogfood.sh', shell=True, executable='bash')"):
+            source = "import asyncio, subprocess; " + call
+            self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []),
+                             "scripts/tests/dogfood.sh")
+        found = self.problems({"t.py": "import subprocess; subprocess.run(['probe'], executable='cmp')"})
+        self.assertEqual(found, ["t.py:1: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)"])
 
     def test_callable_expression_values(self):
         for value in ("None or target", "True and target", "(alias := target)",
