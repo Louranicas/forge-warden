@@ -336,7 +336,7 @@ class Contracts(unittest.TestCase):
             original = workflow.read_text()
             versions = TOOLS.versions(ROOT)
             pins = [name.replace("_", "-") + "@" + versions[name]
-                    for name in ("zizmor", "cargo_mutants", "cargo_deny")]
+                    for name in ("zizmor", "cargo_deny")]
             for pin in [*pins, versions["rust"], versions["ddf_rev"]]:
                 with self.subTest(pin=pin):
                     self.assertIn(pin, original)
@@ -344,9 +344,18 @@ class Contracts(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         TOOLS.check(root)
             workflow.write_text(original)
+            mutants = "cargo-mutants@" + versions["cargo_mutants"]
+            workflow.write_text(original.replace(mutants, "cargo-mutants@9.9.9"))
+            with self.assertRaisesRegex(ValueError, "mutation orchestration requires review"):
+                TOOLS.check(root)
+            workflow.write_text(original)
+            drifted = dict(versions)
+            drifted["cargo_mutants"] = "9.9.9"
+            with self.assertRaisesRegex(ValueError, "CI tool pins drift from scripts/tool-versions.toml"):
+                TOOLS.check_ci_tool_pins(root, drifted)
             baseline = root / ".github/workflows/mutation-baseline.yml"
             baseline_original = baseline.read_text()
-            for pin in ("cargo-mutants@" + versions["cargo_mutants"], versions["rust"]):
+            for pin in (versions["rust"],):
                 with self.subTest(baseline_pin=pin):
                     baseline.write_text(baseline_original.replace(pin, "9.9.9"))
                     with self.assertRaises(ValueError):

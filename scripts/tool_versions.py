@@ -32,6 +32,23 @@ def versions(root):
     return values
 
 
+def check_ci_tool_pins(root, values, capabilities=None):
+    if capabilities is None:
+        spec = importlib.util.spec_from_file_location("plant_tools", root / "scripts/plant_tools.py")
+        capabilities = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(capabilities)
+    workflow = (root / ".github/workflows/ci.yml").read_text()
+    baseline = (root / ".github/workflows/mutation-baseline.yml").read_text()
+    mutants = 'cargo-mutants@' + values['cargo_mutants']
+    ci_tools = [mutants] * 3 + ['cargo-deny@' + values['cargo_deny'], 'zizmor@' + values['zizmor'],
+                                'just@' + values['just']]
+    for text, expected in ((workflow, ci_tools), (baseline, [mutants] * 2)):
+        pins = [tool for job in capabilities.workflow_jobs(text).values() for step in job['steps']
+                if (tool := capabilities.installed_tool(step, values)) is not None]
+        if collections.Counter(pins) != collections.Counter(expected):
+            raise ValueError("CI tool pins drift from scripts/tool-versions.toml")
+
+
 def check(root):
     values = versions(root)
     workflow = (root / ".github/workflows/ci.yml").read_text()
@@ -42,14 +59,7 @@ def check(root):
     spec.loader.exec_module(capabilities)
     capabilities.check_ci(root)
     baseline = (root / ".github/workflows/mutation-baseline.yml").read_text()
-    mutants = 'cargo-mutants@' + values['cargo_mutants']
-    ci_tools = [mutants] * 3 + ['cargo-deny@' + values['cargo_deny'], 'zizmor@' + values['zizmor'],
-                                'just@' + values['just']]
-    for text, expected in ((workflow, ci_tools), (baseline, [mutants] * 2)):
-        pins = [tool for job in capabilities.workflow_jobs(text).values() for step in job['steps']
-                if (tool := capabilities.installed_tool(step, values)) is not None]
-        if collections.Counter(pins) != collections.Counter(expected):
-            raise ValueError("CI tool pins drift from scripts/tool-versions.toml")
+    check_ci_tool_pins(root, values, capabilities)
     baseline_compilers = re.findall(r"(?:toolchain install |rustup default )([0-9.]+)", baseline)
     if baseline_compilers != [values["rust"], values["rust"]] * 2:
         raise ValueError("baseline Rust pin drifts from rust-toolchain.toml")

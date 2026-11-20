@@ -157,6 +157,9 @@ DYNAMIC = {
     '.githooks/pre-push': {'"$root/scripts/ci_local.sh"'},
     # The dogfood driver runs the ranker it fetched (sha256-pinned) and the judge it built.
     'scripts/dogfood.sh': {'"$out/ranker/bin/deep-diff-forge"', '"$out/target/release/forge-warden"'},
+    # The golden producer executes only the descriptor returned by verified_fixture(); the
+    # descriptor stays open and is passed explicitly to every child.
+    'scripts/golden_output.py': {'/proc/self/fd/"$python_expression"', '"$python_expression"'},
     # The guest bootstrap runs the rustup-init it downloaded (sha256-pinned).
     'scripts/guest_bootstrap.sh': {'"$work/rustup-init"'},
     # gitenv and made run their own arguments; every caller passes a declared command (bash, env),
@@ -954,9 +957,11 @@ def argv_text(items, strict=False):
         raise Unsupported('cannot resolve starred Python process arguments')
     if isinstance(head, CapturedArgument):
         raise Unsupported('cannot resolve Python process executable')
-    if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
+    head_text = py_text(head)
+    if head_text is None:
         return None  # stated limit: the program is not a literal
-    return ' '.join(py_word(item, strict) for item in items)
+    return ' '.join([shlex.quote(head_text) if isinstance(head, ast.Constant) else head_text,
+                     *(py_word(item, strict) for item in items[1:])])
 
 
 class PythonHelper:
@@ -1481,11 +1486,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if any(isinstance(owner, SequenceBinding) for owner in owners):
             choices = []
             for owner in owners:
-                if (not isinstance(owner, SequenceBinding) or owner.elements is None or
-                        getattr(owner.origin, '_mutated', False) and not getattr(owner.origin, '_append_only', False)):
+                if not isinstance(owner, SequenceBinding) or owner.elements is None:
                     return CapturedArgument({UNKNOWN_CALLABLE})
-                items = [process_argument(CapturedArgument(values), names) for values in owner.elements]
-                if getattr(owner.origin, '_mutated', False):
+                mutated = getattr(owner.origin, '_mutated', False)
+                if mutated and not (getattr(owner.origin, '_append_only', False) or
+                                    getattr(owner.origin, '_head_unchanged', False)):
+                    return CapturedArgument({UNKNOWN_CALLABLE})
+                source = owner.elements if not getattr(owner.origin, '_cleared', False) else ()
+                items = [process_argument(CapturedArgument(values), names) for values in source]
+                if mutated:
                     items.append(ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE})))
                 choices.append(type(owner.origin)(elts=items, ctx=ast.Load()))
             result = choices.pop()
@@ -1496,7 +1505,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             owner, = owners
             if owner == 'sys.executable':
                 return ast.Constant('python3')
-            if isinstance(owner, ast.Constant):
+            if isinstance(owner, (ast.Constant, ast.JoinedStr)):
                 return owner
         if isinstance(value, ast.Starred):
             item = process_argument(value.value, names)
@@ -1538,6 +1547,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     parts.append(value.value)
             else:
                 return {ast.Constant(''.join(parts))}
+            return {item}
         if isinstance(item, (ast.Tuple, ast.List)):
             return {sequence_binding(item, names)}
         if (isinstance(item, ast.BinOp) and isinstance(item.op, ast.Add) and
@@ -1626,6 +1636,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         origin = owner.origin if isinstance(owner, SequenceBinding) else owner
         if not isinstance(origin, ast.List):
             return
+        if method == 'clear':
+            origin._mutated = True
+            origin._append_only = True
+            origin._cleared = True
+            origin._head_unchanged = False
+            origin._added = frozenset()
+            return
         added = set()
         if args and method in ('insert', 'append', '__setitem__'):
             added.update(element_values(args[-1], names))
@@ -1633,7 +1650,21 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                      method == '__setitem__' and isinstance(args[0], ast.Slice)):
             items = py_items(sequence_value(args[-1], names))
             added = {UNKNOWN_CALLABLE} if items is None else set().union(*(element_values(item, names) for item in items))
+        head_unchanged = method in ('append', 'extend', '__iadd__')
+        if isinstance(owner, SequenceBinding) and owner.elements:
+            head = {py_text(value) for value in owner.elements[0] if py_text(value) is not None}
+            if method == 'remove' and args and isinstance(args[0], ast.Constant):
+                head_unchanged = bool(head) and args[0].value not in head
+            elif method == '__setitem__' and args:
+                index = args[0]
+                head_unchanged = isinstance(index, ast.Constant) and isinstance(index.value, int) and index.value != 0
+                if (not head_unchanged and isinstance(index, ast.Call) and
+                        isinstance(index.func, ast.Attribute) and index.func.attr == 'index' and
+                        len(index.args) == 1 and isinstance(index.args[0], ast.Constant) and
+                        owner in qualified(index.func.value, names)):
+                    head_unchanged = bool(head) and index.args[0].value not in head
         origin._append_only = getattr(origin, '_append_only', True) and method in ('append', 'extend', '__iadd__')
+        origin._head_unchanged = getattr(origin, '_head_unchanged', True) and head_unchanged
         origin._mutated = True
         origin._added = getattr(origin, '_added', frozenset()) | added
 
@@ -2053,7 +2084,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 widened = isinstance(origin, ast.List) and getattr(origin, '_mutated', False)
                 if widened:
                     additions = origin._added
-                    initial = owner.elements if isinstance(owner, SequenceBinding) else [qualified(item, names) for item in origin.elts]
+                    initial = (() if getattr(origin, '_cleared', False) else
+                               owner.elements if isinstance(owner, SequenceBinding) else
+                               [qualified(item, names) for item in origin.elts])
                     values = additions | (frozenset().union(*initial) if initial is not None else {UNKNOWN_CALLABLE})
                     elements = None
                     candidates = [CapturedArgument({value}) for value in values or {UNKNOWN_CALLABLE}]
