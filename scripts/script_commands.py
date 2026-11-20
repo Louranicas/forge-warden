@@ -113,7 +113,7 @@ BUILTINS = frozenset("""
 """.split()) - {'eval'}
 KEYWORDS = frozenset('if then else elif fi do done while until for in case esac select function time coproc ! { }'.split())
 OPENERS = frozenset('if then else elif do while until ! { time coproc'.split())
-CLOSERS = frozenset('fi done esac }'.split())
+GROUP_END = {'if': 'fi', 'case': 'esac', 'while': 'done', 'until': 'done', 'for': 'done', 'select': 'done'}
 # Commands that run their operand. Each maps to the options that take a separate argument
 # (`exec -a NAME`, `env -C DIR`, `timeout -s KILL`): that argument is not the command.
 PREFIX_OPTIONS = {
@@ -171,7 +171,7 @@ DYNAMIC_ONCE = {
 # Markers in a reader's output for a file a call runs or sources: `bash FILE`, `python3 FILE`,
 # `. FILE`. problems() reads that file in that language (or names it as not read).
 RUNS = {'(sh)': 'shell', '(py)': 'python', '(isolated-py)': 'isolated python', '(src)': 'shell',
-        '(module-file)': 'package python'}
+        '(cwdpath-py)': 'cwdpath python', '(module-file)': 'package python'}
 PY_SHELL_TEXT = frozenset({
     'os.system', 'os.popen', 'subprocess.getoutput', 'subprocess.getstatusoutput', 'asyncio.create_subprocess_shell',
 })
@@ -667,11 +667,12 @@ def stdin_runner(script):
     return None
 
 
-def script_markers(marker, isolated):
-    alternate = {'(py)': '(isolated-py)', '(module)': '(isolated-module)'}.get(marker)
-    if alternate and isolated is not False:
-        return (marker, alternate) if isolated is None else (alternate,)
-    return (marker,)
+def script_marker(marker, isolated, cwd_path):
+    if isolated:
+        return {'(py)': '(isolated-py)', '(module)': '(isolated-module)'}.get(marker, marker)
+    if cwd_path:
+        return {'(py)': '(cwdpath-py)', '(module)': '(cwdpath-module)'}.get(marker, marker)
+    return marker
 
 
 def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env):
@@ -708,10 +709,12 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
             found.append(lexer.call(word.line, word.raw, True, directory=directory))
         elif word.literal:
             path = str(word.lexer.path(directory, word.value)) if directory is not None else word.value
-            for marker in script_markers(runner, isolated):
-                found.append(lexer.call(word.line, marker + path, True, directory=directory))
+            found.append(lexer.call(word.line, script_marker(runner, isolated, pythonpath in ('.', b'.')) + path, True, directory=directory))
 
 
+ENVIRON = {'os.environ', 'os.environb'}
+CHILD_PATH = 'os.environ.PYTHONPATH', 'provider'
+INHERITED_PATH = object()
 DEFAULT_PYTHON_PATHS = ('', '.', b'', b'.')
 
 
@@ -721,11 +724,14 @@ def check_pythonpath(value):
 
 
 def command_words(tokens, calls, lexer, directory, pythonpath=''):
-    isolated = ignore_env = python = False
+    isolated = safe_path = ignore_env = python = False
     ambient_path = pythonpath
-    conditional = any(token[0] == 'op' and token[1] in ('&&', '||', '(', '&', '|', '|&') or
-                      token[0] == 'word' and token[1].value in ('if', 'case', 'for', 'while', 'until', 'function')
-                      for token in tokens)
+    conditional_command = changes_path = False
+    groups = []
+
+    def excludes_checkout():
+        return isolated or safe_path and (ignore_env or pythonpath in ('', b''))
+
     initial_directory = directory
     found, functions = [], set()
     expect, mode, prefix, script = True, None, None, None
@@ -742,17 +748,26 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
         if kind == 'redirect':
             operator = token[1]
             descriptor = int(token[3]) if token[3] is not None else int(not operator.startswith('<'))
-            mode = ('redirect-target', mode, operator, descriptor)
+            mode = ('redirect-target', mode, operator, descriptor, token[3] is None)
             continue
         if kind == 'op':
             op = token[1]
-            if piped and expect and script is None and op == '\n':
+            if (piped or conditional_command) and expect and not changes_path and script is None and op == '\n':
                 continue
             if piped and expect and script is None and op == '(':
                 raise Unsupported('cannot resolve grouped pipe input')
             if python and not (isolated or ignore_env):
                 check_pythonpath(pythonpath)
-            flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env)
+            flush_stdin(script, inputs, found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
+            if changes_path and (expect and prefix is None or script in ('export', 'declare', 'typeset', 'local', 'readonly', 'unset')):
+                conditional = any(uncertain for _, uncertain in groups) or conditional_command or piped or op in ('|', '|&', '&')
+                ambient_path = None if conditional and ambient_path != pythonpath else pythonpath
+            changes_path = False
+            if op == '(' and not skip_parens and mode != 'array':
+                groups.append((')', True))
+            elif groups and op == groups[-1][0]:
+                groups.pop()
+            conditional_command = op in ('&&', '||')
             piped = op in ('|', '|&')
             if op == '|&':
                 pipe_outputs.discard(2)
@@ -761,15 +776,13 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             forwarded = inputs.get(0)
             if not pipe_outputs:
                 forwarded = ()
-            elif (script != 'cat' or cat_arguments or pipe_outputs != {1} or
+            elif (script != 'cat' or cat_arguments or 1 not in pipe_outputs or 2 in pipe_outputs or
                     forwarded and forwarded[0] not in ('<<<', '<<', '<<-')):
                 forwarded = None
             inputs = {0: forwarded} if piped else {}
             pipe_outputs = {1}
-            if expect and prefix is None and script is None and not piped:
-                ambient_path = None if conditional and ambient_path != pythonpath else pythonpath
             pythonpath = ambient_path
-            python = ignore_env = False
+            python = isolated = safe_path = ignore_env = False
             cat_arguments = False
             directory = initial_directory
             if mode == 'array':
@@ -818,33 +831,52 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             continue
         if mode and mode[0] in ('target', 'redirect-target'):
             if mode[0] == 'redirect-target':
-                _, _, operator, descriptor = mode
-                if operator.startswith('&>'):
-                    pipe_outputs.difference_update((1, 2))
-                if operator in ('<&', '>&'):
-                    if not word.literal and inputs:
-                        raise Unsupported('cannot resolve script input descriptor')
-                    moved = re.fullmatch(r'([0-9]+)(-?)', word.value) if word.literal else None
-                    if moved and int(moved[1]) in pipe_outputs:
-                        pipe_outputs.add(descriptor)
-                    elif word.literal:
-                        pipe_outputs.discard(descriptor)
-                    else:
-                        pipe_outputs.add(descriptor)
-                        cat_arguments = True
-                    if moved and int(moved[1]) in inputs:
-                        inputs[descriptor] = inputs[int(moved[1])]
-                    else:
-                        inputs.pop(descriptor, None)
-                    if moved and moved[2]:
-                        inputs.pop(int(moved[1]), None)
-                        pipe_outputs.discard(int(moved[1]))
-                elif operator.startswith('<'):
-                    pipe_outputs.discard(descriptor)
-                    inputs[descriptor] = operator, word, heredocs.get(index + 1)
+                _, _, operator, descriptor, implicit = mode
+                duplicate = operator in ('<&', '>&')
+                moved = re.fullmatch(r'([0-9]+)(-?)', word.value) if duplicate and word.literal else None
+                source_fd = int(moved[1]) if moved else None
+                closed = duplicate and word.literal and word.value == '-'
+                here = operator in ('<<<', '<<', '<<-')
+                if word.literal and source_fd is None and not here:
+                    source_fd = {'/dev/stdin': 0, '/dev/stdout': 1, '/dev/stderr': 2}.get(word.value)
+                    match = re.fullmatch(r'/(?:dev/fd|proc/(?:self|thread-self)/fd)/([0-9]+)', word.value)
+                    if match:
+                        source_fd = int(match[1])
+                combined = operator.startswith('&>') or operator == '>&' and implicit and not (moved or closed)
+                destinations = (1, 2) if combined else (descriptor,)
+                if source_fd is not None:
+                    connected = source_fd in pipe_outputs
+                    input_value = inputs.get(source_fd, None if descriptor == 0 else ())
+                elif closed or here:
+                    connected = False
+                    input_value = () if closed else (operator, word, heredocs.get(index + 1))
                 else:
-                    pipe_outputs.discard(descriptor)
-                    inputs.pop(descriptor, None)
+                    disconnected = word.literal and word.value == '/dev/null'
+                    if word.literal and not disconnected:
+                        context = IMPORT_SOURCE.get()
+                        root, origin = context[:2] if context else (ROOT, ROOT)
+                        base = root / directory.relative_to(WorkflowLexer.workspace) if directory is not None else origin
+                        path = base / word.value
+                        disconnected = (path.is_relative_to(root) and '..' not in path.parts and path.resolve() == path
+                                        and (not path.exists() or path.is_file()))
+                    connected = not disconnected
+                    input_value = (operator, word, None) if operator.startswith('<') else ()
+                    if connected:
+                        cat_arguments = True
+                        if duplicate and inputs and not word.literal:
+                            raise Unsupported('cannot resolve script input descriptor')
+                for dest in destinations:
+                    if connected:
+                        pipe_outputs.add(dest)
+                    else:
+                        pipe_outputs.discard(dest)
+                    if input_value == () and dest != 0:
+                        inputs.pop(dest, None)
+                    else:
+                        inputs[dest] = input_value
+                if moved and moved[2]:
+                    inputs.pop(source_fd, None)
+                    pipe_outputs.discard(source_fd)
             mode = mode[1]
             continue
         if mode == 'function-name':
@@ -862,6 +894,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             continue
         if mode == 'case-pattern':
             if word.value == 'esac':
+                if groups and groups[-1][0] == 'esac':
+                    groups.pop()
                 mode, expect = None, False
             continue
         if mode == '[[':
@@ -872,10 +906,10 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             assignment = word.value if word.literal else word.raw.lstrip('"\'')
             if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment):
                 pythonpath = assignment.removeprefix('PYTHONPATH=') if word.literal else None
-                if not expect:
-                    ambient_path = None if conditional and ambient_path != pythonpath else pythonpath
-        if script == 'unset' and word.value == 'PYTHONPATH' and not conditional:
-            ambient_path = ''
+                changes_path = True
+        if script == 'unset' and word.value == 'PYTHONPATH':
+            changes_path = True
+            pythonpath = ''
         if not expect:
             if script == 'cat':
                 cat_arguments = True
@@ -892,7 +926,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
                 elif script == 'next':
                     calls.extend(shell_calls(word.value, word.line, word.lexer, directory, pythonpath=pythonpath))
                 else:
-                    calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated,
+                    calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=excludes_checkout(),
                                               pythonpath=pythonpath, ignore_env=ignore_env))
                 script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
@@ -912,15 +946,12 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
                         isolated = True
                     elif event == 'ignore-environment':
                         ignore_env = True
-                        if isolated is None:
-                            isolated = True
                     elif event == 'safe-path':
-                        if isolated is False:
-                            isolated = True if ignore_env else None
+                        safe_path = True
                     elif event == 'shell':
                         calls.extend(external(shell_calls(text, word.line, word.lexer, directory, pythonpath=pythonpath)))
                     elif event == 'python':
-                        calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=isolated,
+                        calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=excludes_checkout(),
                                                   pythonpath=pythonpath, ignore_env=ignore_env))
                     elif event == 'dynamic':
                         if directory is not None:
@@ -929,10 +960,11 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
                     else:
                         if directory is not None and event in RUNS:
                             text = str(word.lexer.path(directory, text))
-                        for marker in script_markers(event, isolated):
-                            if marker == '(module)' and ignore_env and pythonpath not in DEFAULT_PYTHON_PATHS:
-                                marker = '(noenv-module)'
-                            found.append(lexer.call(word.line, marker + text, True, tokens, index + 1, directory))
+                        cwd_path = pythonpath in ('.', b'.') and (event == '(module)' or safe_path and not ignore_env)
+                        marker = script_marker(event, excludes_checkout(), cwd_path)
+                        if marker == '(module)' and ignore_env and pythonpath not in DEFAULT_PYTHON_PATHS:
+                            marker = '(noenv-module)'
+                        found.append(lexer.call(word.line, marker + text, True, tokens, index + 1, directory))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
@@ -994,6 +1026,14 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             if nxt and nxt[0][0] == 'word' and nxt[0][1].value == '{':
                 continue  # `coproc NAME { ...; }`: NAME names the coprocess
         if word.literal and value in KEYWORDS:
+            if value in GROUP_END:
+                groups.append((GROUP_END[value], True))
+            elif value == '{':
+                previous = tokens[index - 1][:2] if index else ()
+                groups.append(('}', conditional_command or previous == ('op', ')') or
+                               index > 0 and tokens[index - 1][0] == 'word' and tokens[index - 1][1].value in functions))
+            elif groups and value == groups[-1][0]:
+                groups.pop()
             if piped and value in ('{', 'if', 'for', 'case', 'until', 'while', 'select'):
                 raise Unsupported('cannot resolve grouped pipe input')
             if value in ('for', 'select'):
@@ -1403,7 +1443,7 @@ class SuiteImports:
         if len(candidates) != 1:
             raise Unsupported('cannot resolve unittest import ' + module)
         leaf, = candidates
-        if main and leaf.name == '__init__.py':
+        if main and leaf == stem / '__init__.py':
             yield from self.load(leaf, ordering, targets, names)
             leaf = leaf.with_name('__main__.py')
         if not (from_list and leaf in self.stack and leaf.name == '__init__.py'):
@@ -2076,7 +2116,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         elif isinstance(target, ast.Attribute):
             receivers = qualified(target.value, names)
             for receiver in receivers:
-                if isinstance(receiver, (PythonClass, PythonInstance)):
+                if isinstance(receiver, (PythonClass, PythonInstance, LocalModule)):
                     key = receiver, target.attr
                     names[key] = values if len(receivers) == 1 else values | names.get(key, {MISSING_FIELD})
         else:
@@ -2104,9 +2144,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 resolved_handler(value)
         return True
 
-    def list_change(owner, method, args, names):
-        if not isinstance(owner, SequenceBinding) or not isinstance(owner.origin, ast.List):
-            return
+    def sequence_change(owner, method, args, names):
         if len(args) < 2 and method in ('insert', '__setitem__'):
             raise Unsupported('cannot resolve list mutation arguments')
 
@@ -2201,12 +2239,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return {owner}
         return returned or {ast.Constant(None)}
 
-    def mutate(owners, method, args, names):
+    def mutate(owners, method, args, names, *, augmented=False):
         outcomes = []
         returned = set()
         for owner in owners:
             branch = names.copy() if len(owners) > 1 else names
-            returned.update(list_change(owner, method, args, branch) or {UNKNOWN_CALLABLE})
+            if augmented and isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.Tuple):
+                for state in owner.states(names):
+                    copy = SequenceBinding(owner.origin, owner.items)
+                    copy.initial = state
+                    sequence_change(copy, method, args, branch)
+                    copy.initial, = branch.pop((copy, 'contents'))
+                    allocations.append(copy)
+                    returned.add(copy)
+            elif isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List):
+                returned.update(sequence_change(owner, method, args, branch))
+            else:
+                returned.add(UNKNOWN_CALLABLE)
             if branch is not names:
                 outcomes.append(branch)
         if outcomes:
@@ -2297,6 +2346,33 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return any(not isinstance(key, ast.Constant) or key.value == attr for key in keys)
         return not (isinstance(mapping, (ast.List, ast.Tuple)) and not mapping.elts)
 
+    def affects_pythonpath(key, names):
+        key = argument(key, names)
+        return not isinstance(key, ast.Constant) or key.value in ('PYTHONPATH', b'PYTHONPATH')
+
+    def environment_change(target, call, names):
+        owner, _, method = target.rpartition('.')
+        args = call.args
+        if owner in ('os', 'posix') and method in ('putenv', 'unsetenv'):
+            method = '__setitem__' if method == 'putenv' else '__delitem__'
+        else:
+            if owner in ('operator', 'builtins.dict', 'os._Environ', 'collections.abc.MutableMapping'):
+                if not args or not ENVIRON.intersection(qualified(args[0], names)):
+                    return
+                args = args[1:]
+            elif owner not in ENVIRON:
+                return
+        if method in ('update', '__ior__', 'ior'):
+            mapping = args[0] if args else None
+            if not any(mapping_writes(mapping, call.keywords, key, names) for key in ('PYTHONPATH', b'PYTHONPATH')):
+                return
+        elif method not in ('clear', 'popitem'):
+            if method not in ('__setitem__', 'setitem', '__delitem__', 'delitem', 'setdefault', 'pop'):
+                return
+            if args and not affects_pythonpath(args[0], names):
+                return
+        names[CHILD_PATH] = frozenset({UNKNOWN_CALLABLE})
+
     def patch_provider(patch, state, enter, *, saved_as):
         for name, changes in patch.changes.items():
             field = name, 'provider'
@@ -2306,7 +2382,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if previous:
                     raise Unsupported('cannot resolve repeatedly started executable provider patch')
                 default = ast.Constant('test') if name == 'unittest.mock.patch.TEST_PREFIX' else name
-                state[saved] = state.get(field, frozenset({default}))
+                state[saved] = state.get(field, frozenset({INHERITED_PATH if field == CHILD_PATH else default}))
                 if changes:
                     state[field] = frozenset({UNKNOWN_CALLABLE})
             elif previous:
@@ -2413,7 +2489,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return mutate(owners, 'sort', call.keywords, names)
         if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
             if receiver is not None:
-                return list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
+                return sequence_change(receiver, target.rsplit('.', 1)[1], call.args, names)
             if call.args:
                 return mutate(qualified(call.args[0], names), target.rsplit('.', 1)[1], call.args[1:], names)
             return {UNKNOWN_CALLABLE}
@@ -2492,7 +2568,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not cls.test_case:
                     continue
                 if cls in imports.class_paths:
-                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source
+                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source, False
                     continue
                 members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
                 members.update(name for owner, name in fields(names) if owner in cls.lineage)
@@ -2570,6 +2646,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(path, ast.Constant) and isinstance(path.value, str):
                     owners = {path.value}
                 providers = provider_fields(owners, None, names, dictionary=True)
+                if ENVIRON.intersection(owners) and (not isinstance(clear, ast.Constant) or clear.value or
+                        any(mapping_writes(mapping, call.keywords, key, names) for key in ('PYTHONPATH', b'PYTHONPATH'))):
+                    return {PatchedProvider({CHILD_PATH[0]: True})}
                 if providers:
                     return {PatchedProvider({name: not isinstance(clear, ast.Constant) or clear.value or
                                              mapping_writes(mapping, call.keywords, name.rpartition('.')[2], names)
@@ -2588,6 +2667,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 raise Unsupported('cannot resolve overlapping executable provider patches')
             for patch in started:
                 patch_provider(patch, names, False, saved_as='started')
+        if isinstance(target, str):
+            environment_change(target, call, names)
         if isinstance(target, str) and ('.__dict__.' in target or target.startswith(('builtins.dict.', 'sys.modules.'))
                                         or target in ('operator.setitem', 'operator.delitem')):
             owner, _, method = target.rpartition('.')
@@ -2665,7 +2746,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
-            yield call, target, wrapped or require_command, source
+            yield call, target, wrapped or require_command, source, UNKNOWN_CALLABLE in names.get(CHILD_PATH, ())
             if target in PATH_CONSTRUCTORS:
                 return {FILESYSTEM_PATH}
             if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
@@ -2822,18 +2903,31 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 names[key] = values
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
             key = ast.Constant(node.attr) if isinstance(node, ast.Attribute) else node.slice
-            for name in provider_fields(qualified(node.value, names), key, names, dictionary=isinstance(node, ast.Subscript)):
+            owners = qualified(node.value, names)
+            if isinstance(node, ast.Subscript) and ENVIRON.intersection(owners) and affects_pythonpath(key, names):
+                names[CHILD_PATH] = frozenset({UNKNOWN_CALLABLE})
+            for name in provider_fields(owners, key, names, dictionary=isinstance(node, ast.Subscript)):
                 names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr):
-            for name in provider_fields(qualified(node.target, names), None, names, dictionary=True):
+            owners = qualified(node.target, names)
+            if ENVIRON.intersection(owners) and any(
+                    mapping_writes(node.value, (), key, names) for key in ('PYTHONPATH', b'PYTHONPATH')):
+                names[CHILD_PATH] = frozenset({UNKNOWN_CALLABLE})
+            for name in provider_fields(owners, None, names, dictionary=True):
                 if mapping_writes(node.value, (), name.rpartition('.')[2], names):
                     names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign):
             method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__' if isinstance(node.op, ast.Mult) else None
             owners = qualified(node.target, names)
-            if owners and all(isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) for owner in owners):
+            if any(isinstance(owner, SequenceBinding) for owner in owners):
                 yield from visit(node.value, names, interrupted)
-                mutate(owners, method, [node.value], names)
+                updated = mutate(owners, method, [node.value], names, augmented=True)
+                if any(not isinstance(owner, SequenceBinding) or isinstance(owner.origin, ast.Tuple) for owner in owners):
+                    value = CapturedArgument(updated)
+                    if isinstance(node.target, ast.Subscript):
+                        mutate(qualified(node.target.value, names), '__setitem__', [node.target.slice, value], names)
+                    else:
+                        bind_target(node.target, value, names)
                 return
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Del):
             mutate(qualified(node.value, names), '__delitem__', [node.slice], names)
@@ -3301,21 +3395,22 @@ def resolve_module_calls(calls, lexer):
     while pending:
         call = pending.pop()
         line, word = call[:2]
-        if not word.startswith(('(module)', '(isolated-module)', '(noenv-module)')):
+        if not word.startswith(('(module)', '(isolated-module)', '(noenv-module)', '(cwdpath-module)')):
             yield call
             continue
         module = word.split(')', 1)[1]
         isolated = word.startswith('(isolated-module)')
         ignore_env = word.startswith('(noenv-module)')
+        pythonpath = None if ignore_env else '.' if word.startswith('(cwdpath-module)') else ''
         arguments, directory = call[3:] if len(call) > 3 else (None, None)
         if not all(name.isidentifier() for name in module.split('.')):
             raise Unsupported('cannot resolve Python module ' + module)
         if SuiteImports(directory, isolated).has_local_root(module):
-            key = directory, module, tuple(arguments) if arguments is not None else None, ignore_env
+            key = directory, module, tuple(arguments) if arguments is not None else None, pythonpath
             if key not in inspected:
                 inspected.add(key)
                 entry = python_calls(None, line, lexer, directory, module=(module, call[3:]),
-                                     pythonpath=None if ignore_env else '', ignore_env=ignore_env)
+                                     pythonpath=pythonpath, ignore_env=ignore_env)
                 pending.extend(reversed(entry))
         elif directory is not None and module in ('unittest', 'unittest.__main__'):
             yield (line, '(module)' + module, *call[2:])
@@ -3328,10 +3423,6 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     """Read process calls as their effective executable and command line or shell payload."""
     if not (isolated or ignore_env):
         check_pythonpath(pythonpath)
-    if isolated is None:
-        return [call for mode in (False, True)
-                for call in python_calls(text, line, lexer, directory, filename=filename, isolated=mode, module=module,
-                                         pythonpath=pythonpath, ignore_env=ignore_env)]
     found = []
     targets = {}
     imports = SuiteImports(directory, isolated)
@@ -3341,8 +3432,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         stem = path.parent if path.name == '__init__.py' else path.with_suffix('')
         name = '.'.join(stem.relative_to(imports.directory).parts)
         calls = list(imports.module(name, None, False, targets, {}))
-        if path.name == '__main__.py':
-            calls.extend(imports.module(name, None, True, targets, {}, main=True))
+        entry = name + '.__init__' if path.name == '__init__.py' else name
+        calls.extend(imports.module(entry, None, True, targets, {}, main=True))
     elif module is None:
         tree = ast.parse(text)
         imports.register_fixture(tree.body, filename, text)
@@ -3381,7 +3472,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                 setattr(node, field, process_arguments(value))
         return node
 
-    def read_call(node, name, wrapped, start):
+    def read_call(node, name, wrapped, start, path_changed):
         if name.startswith('(suite)'):
             yield lexer.call(start, '(py)' + name.removeprefix('(suite)'), True, directory=directory)
             return
@@ -3514,7 +3605,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             environment = args[3]
         elif name in ('os.execle', 'os.execlpe', 'os.spawnle', 'os.spawnlpe') and args:
             environment = args[-1]
-        child_path = pythonpath
+        child_path = None if path_changed else pythonpath
         if isinstance(environment, ast.Dict):
             child_path = ''
             for key, value in zip(environment.keys, environment.values):
@@ -3543,10 +3634,10 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             else:
                 raise Unsupported('cannot resolve Python process command')
 
-    for node, name, wrapped, source in calls:
+    for node, name, wrapped, source, path_changed in calls:
         start = node.lineno if source is not None else line + node.lineno - 1
         try:
-            for number, *rest in read_call(node, name, wrapped, start):
+            for number, *rest in read_call(node, name, wrapped, start, path_changed):
                 if source is not None and isinstance(number, int):
                     number = source.relative_to(imports.root), number
                 found.append((number, *rest))
@@ -3661,7 +3752,7 @@ def problems(root):
     while position < len(order):
         name, lang = order[position]
         position += 1
-        language = 'python' if lang in ('package python', 'isolated python') else lang
+        language = 'python' if lang in ('package python', 'isolated python', 'cwdpath python') else lang
         label = name if kinds[name][0] == language else f'{name} (run as {language})'
         try:
             path = root / name
@@ -3675,7 +3766,8 @@ def problems(root):
                     calls = python_calls(None, filename=name, package_file=True)
                 else:
                     text = path.read_text(encoding='utf-8')
-                    calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name, isolated=lang == 'isolated python')
+                    calls = shell_calls(text) if lang == 'shell' else python_calls(
+                        text, filename=name, isolated=lang == 'isolated python', pythonpath='.' if lang == 'cwdpath python' else '')
                 calls = list(resolve_module_calls(calls, Lexer))
             finally:
                 IMPORT_SOURCE.reset(token)
@@ -3719,8 +3811,13 @@ def problems(root):
         if not isinstance(calls, list):
             continue
         kind, bang = kinds[name]
-        language = 'python' if lang in ('package python', 'isolated python') else lang
+        language = 'python' if lang in ('package python', 'isolated python', 'cwdpath python') else lang
         label = name if kind == language else f'{name} (run as {language})'
+        package_calls = readings.get((name, 'package python')) if lang == 'python' else None
+        if isinstance(package_calls, list):
+            reported = {(command_location(label, line), word, external) for line, word, external in package_calls}
+            calls = [(line, word, external) for line, word, external in calls
+                     if (command_location(label, line), word, external) not in reported]
         if bang and kind == language:
             calls = [(1, bang[1], True)] + calls
         functions = functions_of((name, lang), {(name, lang)})

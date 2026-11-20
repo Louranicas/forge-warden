@@ -421,6 +421,16 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
     return None
 
 
+def may_write_runner_environment(step, commands):
+    if step.get('shell', 'bash') not in ('sh', 'bash'):
+        return True
+    tokens = commands['WorkflowLexer'](step['run'].strip(), 1).tokens()
+    if any(token[0] != 'word' or not token[1].literal for token in tokens):
+        return True
+    words = [word.value for _, word in tokens]
+    return bool(words and words[0] not in (':', 'true', 'false', 'echo') and words != ['git', '--version'])
+
+
 def check_ci(root):
     """Conservative check of this repository's owned workflow shape, not a general YAML parser."""
     check_timeouts(root)
@@ -448,10 +458,12 @@ def check_ci(root):
     available = set(HOSTED)
     values = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
     commands = runpy.run_path(str(Path(__file__).with_name('script_commands.py')))
+    runner_env = {}
+    inherited = workflow.get('env', {}), gate.get('env', {}), runner_env
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
-            consumer = just_consumer(step, commands, cases, root, (workflow.get('env', {}), gate.get('env', {})))
+            consumer = just_consumer(step, commands, cases, root, inherited)
             if consumer:
                 raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
@@ -460,6 +472,8 @@ def check_ci(root):
                     r'--component rustfmt,clippy && rustup default \1', run)):
                 raise ValueError('plant CI compiler install must be unconditional with reviewed fields')
             available.update(('rustup', 'rustc', 'cargo', 'cargo-clippy'))
+        elif run and 'just' not in available and may_write_runner_environment(step, commands):
+            runner_env['PYTHONPATH'] = None
         tool = installed_tool(step, values)
         if tool is not None:
             name = tool.partition('@')[0]
@@ -467,6 +481,9 @@ def check_ci(root):
                     or step != {'uses': step['uses'], 'with': {'tool': tool}}):
                 raise ValueError('plant CI tool install must be unconditional with reviewed fields')
             available.add(name)
+        elif ('just' not in available and 'uses' in step and
+              not re.fullmatch(r'actions/checkout@[0-9a-f]{40}', step['uses'])):
+            runner_env['PYTHONPATH'] = None
     if required - available:
         raise ValueError('plant CI gate lacks required tools: ' + ', '.join(sorted(required - available)))
     return required
