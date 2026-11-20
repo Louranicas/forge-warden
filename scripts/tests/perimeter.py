@@ -1167,6 +1167,84 @@ class GateImageCommands(unittest.TestCase):
             with self.subTest(call=call), self.assertRaisesRegex(ValueError, "cannot resolve"):
                 CAPS.just_consumer({"shell": "python", "run": setup + call}, vars(COMMANDS), [])
 
+    def test_partial_arguments_keep_creation_scope_through_forwarders(self):
+        setup = "from functools import partial\nfrom subprocess import run\nprogram = 'just'\n"
+        for bind in ("partial(run, [program])", "partial(run, args=[program])",
+                     "partial(run, ['probe'], executable=program)", "partial(launch, program)",
+                     "partial(launch, tool=program)", "partial(launch, tool='true')"):
+            call = "check(tool='just')" if bind.endswith("tool='true')") else "check()"
+            source = (setup + "def launch(tool): run([tool])\ncheck = " + bind +
+                      f"\ndef start(program): {call}\nstart('true')")
+            with self.subTest(bind=bind):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), "just")
+                tracked = source.replace("'just'", "'cmp'")
+                found = self.problems({"t.py": tracked, "nested.sh": "python3 -c " + shlex.quote(tracked)})
+                self.assertEqual(len(found), 2, found)
+                self.assertTrue(all("calls `cmp`" in issue for issue in found), found)
+        for bind in ("partial(run, [program])", "partial(run, args=['bash', '-c', program])",
+                     "partial(run, executable=program)", "partial(launch, program)"):
+            source = ("from functools import partial\nfrom subprocess import run\nprogram = read_config()\n"
+                      "def launch(tool): run([tool])\ncheck = " + bind +
+                      "\ndef start(program): check()\nstart('true')")
+            with self.subTest(unknown=bind):
+                with self.assertRaisesRegex(ValueError, "cannot resolve"):
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                self.assertIn("cannot resolve", self.problems({"t.py": source})[0])
+        pure = "import functools, shlex\nfunctools.partial(shlex.split, posix=True)('ready')"
+        self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": pure}, vars(COMMANDS), []))
+        self.assertEqual(self.problems({"t.py": pure}), [])
+
+    def test_unittest_main_dispatches_only_test_cases_and_lifecycle(self):
+        setup = textwrap.dedent("""\
+            from unittest import TestCase as Case, main as discover
+            from subprocess import run
+            class Suite(Case):
+                @classmethod
+                def setUpClass(cls): run(['cmp', 'class setup'])
+                def setUp(self): self.launch = run
+                def test_probe(self): self.launch(['cmp', 'test'])
+                def tearDown(self): run(['cmp', 'teardown'])
+                @classmethod
+                def tearDownClass(cls): run(['cmp', 'class teardown'])
+                def unused(self): run(['xxd'])
+            class Ordinary:
+                def test_probe(self): run(['xxd'])
+            def entry(): discover()
+            """)
+        for invoke in ("", "if False: entry()", "entry()"):
+            with self.subTest(invoke=invoke):
+                found = self.problems({"suite.py": setup + invoke})
+                expected = [5, 7, 8, 10] if invoke == "entry()" else []
+                self.assertCountEqual(found, [f"suite.py:{line}: calls `cmp`, which the gate image does not declare "
+                                         "(scripts/script_commands.py)" for line in expected])
+                source = (setup + invoke).replace("'cmp'", "'just'")
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []),
+                                 "just" if expected else None)
+
+    def test_instance_field_overwrites_and_joins(self):
+        setup = ("from subprocess import run\nclass Task:\n    def set(self, fn): self.launch = fn\n"
+                 "    def fire(self): self.launch(['just'])\na = Task()\nb = a\na.set(run)\n")
+        for changes, expected in (
+            ("b.launch = print", None), ("b.set(print)", None),
+            ("if flag: b.set(print)", "just"), ("b.set(print)\nif flag: a.launch = run", "just"),
+            ("if flag: b.launch = print\nelse: a.set(print)", None),
+            ("for i in items: b.launch = print", "just"),
+            ("try:\n    read_config()\n    b.set(print)\nexcept OSError: pass", "just"),
+        ):
+            with self.subTest(changes=changes):
+                source = setup + changes + "\na.fire()"
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+
+    def test_unresolved_inherited_dispatch_refuses_on_use(self):
+        setup = ("from subprocess import run\nclass Base:\n    def prepare(self): run(['just'])\n"
+                 "class Child(Base):\n    def execute(self): super().prepare()\n")
+        self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": setup}, vars(COMMANDS), []))
+        for call in ("Child().execute()", "Child().prepare()"):
+            with self.subTest(call=call):
+                with self.assertRaisesRegex(ValueError, "cannot resolve"):
+                    CAPS.just_consumer({"shell": "python", "run": setup + call}, vars(COMMANDS), [])
+                self.assertIn("cannot resolve", self.problems({"t.py": setup + call})[0])
+
     def test_python_ordering_resolves_process_arguments_at_the_call(self):
         def consumer(source):
             return CAPS.just_consumer({"shell": "python", "run": "from subprocess import run\n" + source},
