@@ -366,6 +366,9 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
     return None
 
 
+READ_ONLY_PROGRAMS = {'wc', 'head', 'tail', 'cut', 'tr', 'basename', 'dirname', 'readlink', 'stat'}
+
+
 def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None):
     lexer = commands['WorkflowLexer']
     pythonpath = commands['UNSET_PATH']
@@ -390,11 +393,17 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
     files = None
     writes = set() if checkout_writes is None else checkout_writes
 
+    read_scopes = []
+    deferred_reads = {'functions': set(), 'deferred': set()}
+    functions = set()
+
     def require_original(path):
+        for _, reads in read_scopes:
+            reads.add(path)
         if None in writes or any(path.is_relative_to(changed) for changed in writes):
             raise ValueError('cannot resolve modified gate script ' + str(path.relative_to(lexer.workspace)))
 
-    def record_write(path):
+    def record_write(path, *, invocation=False):
         if path is not None:
             path = Path(os.path.normpath(path))
             if not path.is_relative_to(lexer.workspace):
@@ -403,11 +412,32 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             if (None in writes or any(path.is_relative_to(changed) for changed in writes)
                     or file.resolve() != file or file.is_file() and file.stat().st_nlink > 1):
                 path = None
+        for kind, reads in (*deferred_reads.items(), *read_scopes):
+            for read in reads:
+                if invocation and kind == 'functions':
+                    if None not in writes and not any(read.is_relative_to(changed) for changed in writes):
+                        continue
+                elif path is not None and not read.is_relative_to(path):
+                    continue
+                raise ValueError('cannot resolve modified gate script ' + str(read.relative_to(lexer.workspace)))
         writes.add(path)
 
     def inspect(calls, active):
         nonlocal files
-        for _, word, _, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
+        functions.update(word[2:] for _, word, *_ in calls if word.startswith('()'))
+        for _, word, external, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
+            if isinstance(word, commands['CheckoutScope']):
+                if word == 'end':
+                    if not read_scopes:
+                        raise ValueError('cannot resolve shell checkout read scope')
+                    kind, reads = read_scopes.pop()
+                    if kind in deferred_reads:
+                        deferred_reads[kind].update(reads)
+                else:
+                    read_scopes.append((word, set()))
+                continue
+            if word.startswith('()'):
+                continue
             if isinstance(word, commands['CheckoutRead']):
                 require_original(Path(word))
                 continue
@@ -426,16 +456,15 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             program = word if '/' not in word else target.name
             if not marker and ('/' not in word or word.startswith(commands['STANDARD_BIN'])):
                 if program in ('cp', 'mv') and arguments and len(arguments) >= 2 and all(
-                        arg and lexer.unknown not in arg and not arg.startswith('-') and not re.search(r'[?*\[~]', arg)
-                        for arg in arguments):
+                        arg and Path(arg).is_absolute() for arg in arguments):
                     for arg in arguments if program == 'mv' else arguments[-1:]:
-                        record_write(lexer.path(cwd, arg))
-                elif (program not in commands['PREFIXES'] | commands['SHELLS'] and
+                        record_write(Path(arg))
+                elif (program not in (commands['PREFIXES'] - {'xargs'}) | commands['SHELLS'] | READ_ONLY_PROGRAMS and
                       not commands['PYTHONS'].fullmatch(program) and
                       program not in (':', '.', 'source', 'true', 'false', 'echo', 'printf', 'cat', 'export', 'unset',
                                       'set', 'declare', 'typeset', 'local', 'readonly', 'test', '[', '[[', 'pwd') and
                       (program, arguments) != ('git', ['--version'])):
-                    record_write(None)
+                    record_write(None, invocation=not external and word in functions)
                 continue
             path = Path(os.path.normpath(cwd / target))
             if not path.is_relative_to(lexer.workspace):
@@ -534,7 +563,7 @@ def may_write_runner_environment(step, commands):
     if any(token[0] != 'word' or not token[1].literal for token in tokens):
         return True
     words = [word.value for _, word in tokens]
-    if not words or words[0] in (':', 'true', 'false', 'echo') or words == ['git', '--version']:
+    if not words or words[0] in READ_ONLY_PROGRAMS | {':', 'true', 'false', 'echo'} or words == ['git', '--version']:
         return False
     state = words[0]
     if commands['PYTHONS'].fullmatch(state):
@@ -604,8 +633,22 @@ def check_ci(root):
                     or step != {'uses': step['uses'], 'with': {'tool': tool}}):
                 raise ValueError('plant CI tool install must be unconditional with reviewed fields')
             available.add(name)
-        elif ('just' not in available and 'uses' in step and
-              not re.fullmatch(r'actions/checkout@[0-9a-f]{40}', step['uses'])):
+        elif 'just' not in available and 'uses' in step:
+            if step['uses'] == 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
+                inputs = step.get('with', {})
+                if (set(step) <= {'name', 'uses', 'with'} and isinstance(inputs, dict)
+                        and inputs in ({}, {'persist-credentials': 'false'})):
+                    continue
+                path = inputs.get('path', '.') if isinstance(inputs, dict) else None
+                if (set(step) <= {'name', 'uses', 'with', 'if'} and isinstance(path, str)
+                        and re.fullmatch(r'[a-zA-Z0-9_./-]+', path) and '..' not in Path(path).parts
+                        and not Path(path).is_absolute()):
+                    target = commands['WorkflowLexer'].workspace / path
+                    if (root / path).resolve() == root / path and not any(
+                            changed is None or target.is_relative_to(changed) for changed in checkout_writes):
+                        checkout_writes.add(target)
+                        continue
+            checkout_writes.add(None)
             runner_env['PYTHONPATH'] = None
     if required - available:
         raise ValueError('plant CI gate lacks required tools: ' + ', '.join(sorted(required - available)))

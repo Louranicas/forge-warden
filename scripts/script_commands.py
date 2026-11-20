@@ -407,6 +407,7 @@ class Lexer:
     def word(self):
         text, start, line = self.text, self.i, self.line
         value, literal = [], True
+        pattern = False
         while self.i < len(text):
             c = text[self.i]
             if c in ' \t\n;&|()<>':
@@ -438,11 +439,14 @@ class Lexer:
                 self.backquote()
                 literal = False
             else:
+                pattern |= c in "*?[{~"
                 value.append(c)
                 self.i += 1
         if self.i == start:
             self.error(f'cannot read {text[self.i]!r}')
-        return Word(line, text[start:self.i], ''.join(value) if literal else None, literal, type(self))
+        word = Word(line, text[start:self.i], ''.join(value) if literal else None, literal, type(self))
+        word.pattern = pattern
+        return word
 
 
 class WorkflowLexer(Lexer):
@@ -512,7 +516,12 @@ class WorkflowLexer(Lexer):
             elif token[0] == 'word':
                 if token[1].raw == PY_SPREAD:
                     return line, word, external, None, directory
-                arguments.append(token[1].argument)
+                operand = token[1]
+                arg = operand.argument
+                if (AUDIT_CHECKOUT.get() is not None and Path(word).name in ('cp', 'mv') and
+                        arg and not arg.startswith('-')):
+                    arg = checkout_destination(operand, directory)
+                arguments.append(arg)
                 start += 1
             else:
                 break
@@ -690,6 +699,20 @@ def stdin_key(stream):
 AUDIT_CHECKOUT = ContextVar('audit_checkout', default=None)
 
 
+def checkout_destination(word, directory):
+    if not word.literal or getattr(word, 'pattern', False):
+        return None
+    if word.lexer.expanded_workspace and '$' in word.value:
+        match = word.lexer.variable.match(word.value)
+        if not match or word.raw != '"' + word.value + '"' or '$' in word.value[match.end():]:
+            return None
+    return str(word.lexer.path(directory, word.value))
+
+
+class CheckoutScope(str):
+    pass
+
+
 class CheckoutRead(str):
     pass
 
@@ -749,6 +772,13 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
 
 ENVIRON = {'os.environ', 'os.environb'}
 CHILD_PATH = 'os.environ.PYTHONPATH', 'provider'
+UNREAD_STDIN = 'sys.stdin', 'unread'
+PYTHON_QUERIES = frozenset({
+    'os.getcwd', 'os.getcwdb', 'os.getenv', 'os.stat', 'os.lstat', 'os.fstat', 'os.listdir',
+    'os.readlink', 'os.access', 'os.isatty', 'shutil.which', 'pathlib.Path.resolve',
+    'pathlib.Path.with_name', 'unittest.skip', 'unittest.skipIf', 'unittest.skipUnless',
+    'builtins.len',
+})
 EnvironmentPath = namedtuple('EnvironmentPath', 'process mapping')
 DEFAULT_PYTHON_PATHS = (UNSET_PATH, '', '.', b'', b'.')
 
@@ -776,6 +806,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     workflow = AUDIT_CHECKOUT.get() is not None
+    begin = len(calls)
+    deferred = concurrent = False
     inline = []
     operands = []
     inputs = {} if stdin == () else {0: stdin}
@@ -794,15 +826,17 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if kind == 'op':
             op = token[1]
+            concurrent |= op in ('|', '|&')
+            deferred |= op == '&'
             if (piped or conditional_command) and expect and not changes_path and script is None and op == '\n':
                 continue
             if piped and expect and script is None and op == '(':
                 raise Unsupported('cannot resolve grouped pipe input')
             if python and not (isolated or ignore_env):
                 check_pythonpath(pythonpath)
-            if workflow and op == ')' and index and tokens[index - 1][:2] == ('op', '(') and found:
-                functions.add(found.pop()[1])
-            if workflow and not (op == '(' and tokens[index + 1:index + 2] and tokens[index + 1][:2] == ('op', ')')):
+            function_end = op == ')' and index > 0 and tokens[index - 1][:2] == ('op', '(')
+            function_start = op == '(' and tokens[index + 1:index + 2] and tokens[index + 1][:2] == ('op', ')')
+            if workflow and not (function_start or function_end):
                 calls.extend(found)
                 found.clear()
             stream = inputs.get(0, ())
@@ -873,7 +907,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             if skip_parens and op in ('(', ')'):
                 continue
             skip_parens = False
-            if op == ')' and index > 0 and tokens[index - 1][:2] == ('op', '(') and found:
+            if function_end and found:
                 functions.add(found.pop()[1])
                 continue
             expect, prefix, script, finding, by_find = op != ')', None, None, False, False
@@ -930,12 +964,9 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     if duplicate and inputs and not word.literal:
                         raise Unsupported('cannot resolve script input descriptor')
                 if workflow and not (source_fd is not None or closed or here or operator == '<'):
-                    if word.literal:
-                        destination = word.lexer.path(initial_directory, word.value)
-                        if destination.is_relative_to(lexer.workspace):
-                            calls.append(lexer.call(word.line, CheckoutWrite(destination), True, directory=initial_directory))
-                    elif word.raw not in ('"$GITHUB_ENV"', '"${GITHUB_ENV}"'):
-                        calls.append(lexer.call(word.line, CheckoutWrite(''), True, directory=initial_directory))
+                    if word.raw not in ('"$GITHUB_ENV"', '"${GITHUB_ENV}"'):
+                        target = checkout_destination(word, initial_directory)
+                        calls.append(lexer.call(word.line, CheckoutWrite(target or ''), True, directory=initial_directory))
                 for dest in destinations:
                     if connected is False:
                         pipe_outputs.pop(dest, None)
@@ -1125,6 +1156,9 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             if nxt and nxt[0][0] == 'word' and nxt[0][1].value == '{':
                 continue  # `coproc NAME { ...; }`: NAME names the coprocess
         if word.literal and value in KEYWORDS:
+            if workflow and (GROUP_END.get(value) == 'done' or value == 'done'):
+                scope = 'begin' if value != 'done' else 'end'
+                calls.append(lexer.call(word.line, CheckoutScope(scope), True, directory=directory))
             if value in GROUP_END:
                 groups.append((GROUP_END[value], True))
             elif value == '{':
@@ -1142,6 +1176,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             elif value == 'function':
                 mode = 'function-name'
             after_coproc = value == 'coproc'
+            deferred |= after_coproc
             expect = value in OPENERS
             continue
         if word.literal and value == '[[':
@@ -1163,10 +1198,15 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             may_consume |= value not in (':', 'true', 'false', 'echo', 'printf') or value in functions
         python = bool(owner and PYTHONS.fullmatch(owner))
         prefix = owner if owner in PREFIXES else None
+        deferred |= owner == 'trap'
         script = 'next' if owner == 'trap' else owner
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
+    if workflow and (functions or deferred or concurrent):
+        scope = 'deferred' if deferred or functions and concurrent else 'functions' if functions else 'begin'
+        calls.insert(begin, lexer.call(0, CheckoutScope(scope), True, directory=initial_directory))
+        found.append(lexer.call(0, CheckoutScope('end'), True, directory=initial_directory))
     return found + [lexer.call(0, '()' + name, False, directory=directory) for name in functions]
 
 
@@ -2091,8 +2131,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return result
         if len(owners) == 1:
             owner, = owners
-            if owner in ('os.POSIX_SPAWN_OPEN', 'os.POSIX_SPAWN_CLOSE', 'os.POSIX_SPAWN_DUP2'):
+            if owner in ('os.POSIX_SPAWN_OPEN', 'os.POSIX_SPAWN_CLOSE', 'os.POSIX_SPAWN_DUP2',
+                         'os.O_RDONLY', 'os.O_WRONLY', 'os.O_RDWR', 'os.O_CREAT', 'os.O_TRUNC'):
                 return ast.Constant(getattr(os, owner.split('.')[1]))
+            if owner in ('subprocess.PIPE', 'asyncio.subprocess.PIPE'):
+                return ast.Constant(subprocess.PIPE)
             if owner in ('subprocess.DEVNULL', 'asyncio.subprocess.DEVNULL'):
                 return ast.Constant(subprocess.DEVNULL)
             if owner == 'sys.executable':
@@ -2678,6 +2721,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             raise Unsupported('cannot resolve Python sort key invocation')
                         yield from invoke(key, callback, names, wrapped=True)
 
+    def iterate(expression, names):
+        if (UNREAD_STDIN in names and not isinstance(expression, (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
+                not all(isinstance(owner, (ast.Constant, SequenceBinding)) for owner in qualified(expression, names))):
+            names[UNREAD_STDIN] = frozenset({False})
+
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
@@ -2689,6 +2737,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(receiver, PatchedProvider) and target in ('start', 'stop'):
             patch_provider(receiver, names, target == 'start', saved_as='started')
             return {UNKNOWN_CALLABLE}
+        if UNREAD_STDIN in names and (target in (None, UNKNOWN_PROVIDER, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or
+                                      isinstance(target, (ast.arg, ImportedMember, PythonInstance))):
+            names[UNREAD_STDIN] = frozenset({False})
+        if target in ('builtins.list', 'builtins.tuple', 'builtins.sorted') and call.args:
+            iterate(call.args[0], names)
         if target is UNKNOWN_PROVIDER:
             return {UNKNOWN_PROVIDER}
         if isinstance(target, PatchedProvider):
@@ -2807,7 +2860,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not cls.test_case:
                     continue
                 if cls in imports.class_paths:
-                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source, frozenset()
+                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source, frozenset(), names.get(UNREAD_STDIN, {True}) == {True}
                     continue
                 members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
                 members.update(name for owner, name in fields(names) if owner in cls.lineage)
@@ -2985,8 +3038,19 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
+            unread = names.get(UNREAD_STDIN, {True}) == {True}
+            if UNREAD_STDIN in names and target not in PYTHON_QUERIES | PATH_CONSTRUCTORS:
+                subprocess_argv = target in PY_ARGV and PY_ARGV[target] is None
+                options = {kw.arg: kw.value for kw in call.keywords}
+                payload = options.get('input')
+                stream = call.args[3] if subprocess_argv and len(call.args) > 3 else options.get('stdin')
+                independent = (subprocess_argv or target.startswith('asyncio.create_subprocess_')) and (
+                    isinstance(payload, ast.Constant) and isinstance(payload.value, (str, bytes)) or
+                    isinstance(stream, ast.Constant) and stream.value in (subprocess.DEVNULL, subprocess.PIPE))
+                if not independent and not (target == 'builtins.print' and not options):
+                    names[UNREAD_STDIN] = frozenset({False})
             yield call, target, wrapped or require_command, source, frozenset(
-                path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None) for path in names.get(CHILD_PATH, ()))
+                path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None) for path in names.get(CHILD_PATH, ())), unread
             if target in PATH_CONSTRUCTORS:
                 return {FILESYSTEM_PATH}
             if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
@@ -3009,7 +3073,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if target.partition('.')[0] not in sys.stdlib_module_names:
                 return {UNRESOLVED_CONTEXT}
         elif AUDIT_CHECKOUT.get() is not None:
-            yield call, CheckoutWrite(''), False, source, frozenset()
+            yield call, CheckoutWrite(''), False, source, frozenset(), False
         return {UNKNOWN_CALLABLE}
 
     def record_exception(interrupted, names):
@@ -3142,6 +3206,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return completed
 
     def visit_node(node, names, interrupted):
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for generator in node.generators:
+                iterate(generator.iter, names)
+        elif isinstance(node, (ast.Starred, ast.YieldFrom)):
+            iterate(node.value, names)
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, ast.Del):
             target = yield from destination(node, names, interrupted)
             if isinstance(node, ast.Attribute):
@@ -3334,6 +3403,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 items = node.iter.keys if isinstance(node.iter, ast.Dict) else node.iter.elts
                 candidates = [captured(item, names) for item in items]
             sequence = owner if isinstance(owner, SequenceBinding) else None
+            if not isinstance(node, ast.While):
+                iterate(node.iter, names)
             initial_length = len(elements or ())
             if sequence:
                 initial_length = max(len(state.elements or ()) for state in sequence.states(names))
@@ -3661,6 +3732,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     imports = SuiteImports(import_directory if import_directory is not None else directory, exclude_checkout,
                            directory if not ignore_env and pythonpath in ('.', b'.') else None)
     startup = {CHILD_PATH: frozenset({EnvironmentPath(pythonpath, pythonpath)})}
+    if stdin:
+        startup[UNREAD_STDIN] = frozenset({True})
     if package_file:
         path = imports.root / filename
         imports.inventory_source = path
@@ -3718,7 +3791,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                 setattr(node, field, process_arguments(value))
         return node
 
-    def read_call(node, name, wrapped, start, inherited_paths):
+    def read_call(node, name, wrapped, start, inherited_paths, unread):
         if isinstance(name, CheckoutWrite):
             yield lexer.call(start, name, True, directory=directory)
             return
@@ -3744,9 +3817,9 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                 owner, _, method = name.rpartition('.')
                 if owner in ENVIRON or owner in ('os', 'posix') and method in ('putenv', 'unsetenv'):
                     return
-                if name not in PATH_CONSTRUCTORS and name not in ('pathlib.Path.resolve', 'pathlib.Path.with_name',
-                        'builtins.len', 'os.getenv', 'shutil.which', 'unittest.main',
-                        'unittest.skip', 'unittest.skipIf', 'unittest.skipUnless'):
+                if name not in PYTHON_QUERIES | PATH_CONSTRUCTORS and name not in (
+                        'unittest.main', 'os.read', 'os.pread', 'os.readv', 'os.preadv',
+                        'sys.stdin.read', 'sys.stdin.readline', 'sys.stdin.readlines'):
                     yield lexer.call(start, CheckoutWrite(''), True, directory=directory)
             return
         args = expanded_items([process_arguments(arg) for arg in node.args])
@@ -3894,23 +3967,29 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                 raise Unsupported('cannot resolve Python process directory before Just installation')
             if value.value is not None:
                 cwd = lexer.location(directory, value.value)
-        child_stdin = stdin
+        child_stdin = stdin if unread else None
         stream = args[3] if subprocess_argv and len(args) > 3 else keywords.get('stdin')
         payload = keywords.get('input')
         if name in ('os.posix_spawn', 'os.posix_spawnp') and 'file_actions' in keywords:
             actions = keywords['file_actions']
             if not (isinstance(actions, ast.Constant) and actions.value is None):
                 items_by_action = py_items(actions)
-                if items_by_action is None:
-                    child_stdin = None
-                for action in items_by_action or ():
+                for action in [None] if items_by_action is None else items_by_action:
                     items = py_items(action) or []
                     operation = items[0].value if items and isinstance(items[0], ast.Constant) else None
                     position = {os.POSIX_SPAWN_OPEN: 1, os.POSIX_SPAWN_CLOSE: 1, os.POSIX_SPAWN_DUP2: 2}.get(operation)
+                    if AUDIT_CHECKOUT.get() is not None:
+                        if position is None:
+                            yield lexer.call(start, CheckoutWrite(''), True, directory=cwd)
+                        elif operation == os.POSIX_SPAWN_OPEN:
+                            flags = items[3].value if len(items) > 3 and isinstance(items[3], ast.Constant) else None
+                            if not isinstance(flags, int) or flags & (os.O_ACCMODE | os.O_CREAT | os.O_TRUNC):
+                                path = items[2].value if len(items) > 2 and isinstance(items[2], ast.Constant) else None
+                                dest = os.fsdecode(path) if isinstance(path, (str, bytes)) else None
+                                yield lexer.call(start, CheckoutWrite(cwd / dest if dest else ''), True, directory=cwd)
                     if (position is None or len(items) <= position or not isinstance(items[position], ast.Constant)
                             or items[position].value == 0):
                         child_stdin = None
-                        break
         elif name == 'os.popen':
             mode = args[1] if len(args) > 1 else keywords.get('mode', ast.Constant('r'))
             if not isinstance(mode, ast.Constant) or mode.value != 'r':
@@ -3944,10 +4023,10 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         if isinstance(call, CheckoutRead):
             found.append(lexer.call(line, call, True, directory=directory))
             continue
-        node, name, wrapped, source, inherited_paths = call
+        node, name, wrapped, source, inherited_paths, unread = call
         start = node.lineno if source is not None else line + node.lineno - 1
         try:
-            for number, *rest in read_call(node, name, wrapped, start, inherited_paths):
+            for number, *rest in read_call(node, name, wrapped, start, inherited_paths, unread):
                 if source is not None and isinstance(number, int):
                     number = source.relative_to(imports.root), number
                 found.append((number, *rest))

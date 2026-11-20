@@ -423,6 +423,32 @@ class Contracts(unittest.TestCase):
                     else:
                         CAPS.check_ci(root)
 
+    def test_gate_script_reads_follow_checkout_actions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            path = root / '.github/workflows/ci.yml'
+            steps, _, write_steps = gate_step_fixture(path, path.read_text())
+            (root / 'child').mkdir()
+            for file in ('original', 'child/original'):
+                (root / file).write_text('true')
+            checkout = steps[0]
+            for action, script, refused in (
+                    (checkout, 'original', False),
+                    (dict(checkout, **{'with': {'ref': 'elsewhere'}}), 'original', True),
+                    (dict(checkout, **{'with': {'repository': 'example/other'}}), 'original', True),
+                    (dict(checkout, **{'with': {'path': 'child'}}), 'child/original', True),
+                    (dict(checkout, **{'with': {'path': 'child', 'ref': 'elsewhere'}}), 'original', False),
+                    (dict(checkout, **{'with': {'path': '${{ env.DIR }}'}}), 'original', True),
+                    ({'uses': 'example/other@' + 'a' * 40}, 'original', True)):
+                with self.subTest(action=action, script=script):
+                    write_steps([action, {'run': 'bash ' + script}, *steps[1:]])
+                    if refused:
+                        with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                            CAPS.check_ci(root)
+                    else:
+                        CAPS.check_ci(root)
+
     def test_gate_tool_install_cannot_be_removed_moved_or_revised(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / """O'Brien's "gate" checkout"""
@@ -1747,6 +1773,59 @@ class GateImageCommands(unittest.TestCase):
                         CAPS.just_consumer({'run': command}, vars(COMMANDS), [], root, checkout_writes=writes)
                     self.assertIsNone(CAPS.just_consumer({'run': command + '\n' + writer}, vars(COMMANDS), [], root))
 
+    def test_checkout_write_operands_keep_shell_and_spawn_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'generated').write_text('true')
+            (root / 'original').write_text('just')
+            (root / 'work').mkdir()
+            for writer in ('cp ../original "$GITHUB_WORKSPACE/generated"',
+                           'mv "${GITHUB_WORKSPACE}/generated" other', 'mv ../original "$GITHUB_WORKSPACE/generated"',
+                           "printf data > ../gen*", "printf data > ../{generated,other}"):
+                with self.subTest(writer=writer), self.assertRaisesRegex(ValueError, 'modified gate script'):
+                    CAPS.just_consumer({'working-directory': 'work', 'run': writer + '\nbash ../generated'},
+                                       vars(COMMANDS), [], root)
+            for writer in ("cp ../original '$GITHUB_WORKSPACE/generated'", "printf data > '../gen*'"):
+                self.assertIsNone(CAPS.just_consumer({'working-directory': 'work', 'run': writer + '\nbash ../generated'},
+                                                     vars(COMMANDS), [], root))
+            for spawn in ('posix_spawn', 'posix_spawnp'):
+                for actions, refused in (
+                        ("[(os.POSIX_SPAWN_OPEN, 1, 'generated', os.O_WRONLY, 0)]", True),
+                        ("[(os.POSIX_SPAWN_CLOSE, 0), (os.POSIX_SPAWN_OPEN, 2, 'generated', os.O_RDWR, 0)]", True),
+                        ("[(os.POSIX_SPAWN_OPEN, 1, 'original', os.O_WRONLY, 0)]", False),
+                        ("[(os.POSIX_SPAWN_OPEN, 3, 'generated', os.O_RDONLY, 0)]", False),
+                        ('actions', True)):
+                    run = (f"import os, subprocess\nos.{spawn}('/bin/true', ['true'], {{}}, file_actions={actions})\n"
+                           "subprocess.run(['bash', 'generated'])")
+                    with self.subTest(spawn=spawn, actions=actions):
+                        if refused:
+                            with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                                CAPS.just_consumer({'run': run, 'shell': 'python'}, vars(COMMANDS), [], root)
+                        else:
+                            self.assertIsNone(CAPS.just_consumer({'run': run, 'shell': 'python'}, vars(COMMANDS), [], root))
+
+    def test_repeated_and_deferred_checkout_reads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'generated').write_text('true')
+            (root / 'original').write_text('just')
+            (root / 'lib').write_text('reader() { bash generated; }')
+            for run in ('for i in 1 2; do bash generated; cp original generated; done',
+                        'while read i; do bash generated; cp original generated; done',
+                        'reader() { bash generated; }; cp original generated; reader',
+                        'function reader { bash generated; }; cp original generated; reader',
+                        '. ./lib; cp original generated; reader',
+                        'bash generated | cp original generated'):
+                with self.subTest(run=run), self.assertRaisesRegex(ValueError, 'modified gate script'):
+                    CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root)
+            for run in ('reader() { bash generated; }; reader', '. ./lib; reader',
+                        'for i in 1 2; do bash generated; done; cp original generated',
+                        'for i in 1 2; do bash generated; cp original other; done',
+                        'wc -l original; bash generated',
+                        "python3 -c 'import os; os.getcwd()'; bash generated"):
+                with self.subTest(run=run):
+                    self.assertIsNone(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root))
+
     def test_sourced_state_precedes_python_lookup(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2134,6 +2213,32 @@ class GateImageCommands(unittest.TestCase):
                 self.assertTrue(any('calls `cmp`' in issue for issue in issues), issues)
                 self.assertFalse(any('not read' in issue for issue in issues), issues)
 
+    def test_python_only_inherits_unconsumed_stdin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            step = {'shell': 'python', 'run': "import subprocess\nsubprocess.run(['python3', 'reader.py'], input=b'#just')"}
+            reader = root / 'reader.py'
+            for before in ('os.read(0, 1)', 'sys.stdin.buffer.read(1)', '[line for line in sys.stdin]',
+                           "subprocess.run(['head', '-c', '1'])",
+                           'def consume(): os.read(0, 1)\nconsume()'):
+                for launch, refused in (("subprocess.run(['bash', '-s'])", True),
+                                        ("subprocess.run(['bash', '-s'], input=b'true')", False)):
+                    reader.write_text('import os, sys, subprocess\n' + before + '\n' + launch)
+                    with self.subTest(before=before, launch=launch):
+                        if refused:
+                            with self.assertRaisesRegex(COMMANDS.Unsupported, 'script input'):
+                                CAPS.just_consumer(step, vars(COMMANDS), [], root)
+                            issues = self.problems({'reader.py': reader.read_text(), 'launch.py': step['run']})
+                            self.assertTrue(any('script input' in issue for issue in issues), issues)
+                        else:
+                            self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+            for before in ("subprocess.run(['cat'], input=b'other')", "subprocess.run(['cat'], stdin=subprocess.DEVNULL)",
+                           'os.getcwd()'):
+                reader.write_text("import os, subprocess\n" + before + "\nsubprocess.run(['bash', '-s'])")
+                with self.subTest(before=before):
+                    self.assertEqual(CAPS.just_consumer(dict(step, run=step['run'].replace('#just', 'just')),
+                                                        vars(COMMANDS), [], root), 'just')
+
     def test_stdin_survives_commands_that_cannot_read_it(self):
         for before in ('# setup\n', '\n', ':\n', 'true && ', 'printf done\n'):
             step = "import subprocess\nsubprocess.run(['bash', '-c', " + repr(before + "bash -s") + "], input=b'true')"
@@ -2161,6 +2266,12 @@ class GateImageCommands(unittest.TestCase):
             (root / 'worker.py').write_text("import sys, subprocess\nif len(sys.argv) == 1:\n"
                                             "    subprocess.run(['python3', '-m', 'worker', 'child'], input=b'true')")
             self.assertIsNone(CAPS.just_consumer({'run': 'python3 -m worker'}, vars(COMMANDS), [], root))
+
+            (root / 'worker.py').write_text("import subprocess\nsubprocess.run(['bash', '-s'])")
+            first = "python3 -m worker <<< 'true'"
+            second = "python3 -m worker <<< 'just --version'"
+            self.assertIsNone(CAPS.just_consumer({'run': first}, vars(COMMANDS), [], root))
+            self.assertEqual(CAPS.just_consumer({'run': first + '\n' + second}, vars(COMMANDS), [], root), 'just')
 
             (root / 'worker.py').write_text('pass')
             steps = '\n'.join(f'python3 -m worker {i}' for i in range(129))
