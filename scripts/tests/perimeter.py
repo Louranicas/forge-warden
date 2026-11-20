@@ -374,6 +374,32 @@ class Contracts(unittest.TestCase):
     def test_catalog_tools_are_provisioned_in_gate(self):
         CAPS.check_ci(ROOT)
 
+    def test_gate_pythonpath_uses_workflow_job_and_step_precedence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            path = root / '.github/workflows/ci.yml'
+            original = path.read_text()
+            for global_path, job_path, step_path, refused in (
+                    ('checkout', None, None, True), (None, 'checkout', None, True),
+                    ('checkout', '.', None, False), ('.', 'checkout', '.', False)):
+                with self.subTest(workflow=global_path, job=job_path, step=step_path):
+                    workflow = original
+                    if global_path is not None:
+                        workflow = workflow.replace('\nenv:\n', f'\nenv:\n  PYTHONPATH: {global_path}\n', 1)
+                    if job_path is not None:
+                        workflow = workflow.replace('  gate:\n', f'  gate:\n    env:\n      PYTHONPATH: {job_path}\n', 1)
+                    steps, _, write_steps = gate_step_fixture(path, workflow)
+                    run = {'run': "python3 -P -c 'import statistics'"}
+                    if step_path is not None:
+                        run['env'] = {'PYTHONPATH': step_path}
+                    write_steps([run, *steps])
+                    if refused:
+                        with self.assertRaisesRegex(ValueError, 'PYTHONPATH'):
+                            CAPS.check_ci(root)
+                    else:
+                        CAPS.check_ci(root)
+
     def test_gate_tool_install_cannot_be_removed_moved_or_revised(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / """O'Brien's "gate" checkout"""
@@ -829,12 +855,14 @@ class GateImageCommands(unittest.TestCase):
     has it, the gate image does not. Each case below hides an undeclared command in one shell
     or Python shape the reader must see, and must be named once, on its line."""
 
-    def problems(self, files):
+    def problems(self, files, executables=()):
         with tempfile.TemporaryDirectory(prefix="script-commands-") as directory:
             root = Path(directory)
             for name, text in files.items():
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_text(text)
+                if name in executables:
+                    (root / name).chmod(0o755)
             env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": directory}
             subprocess.run(["git", "init", "-q", directory], check=True, env=env, stdin=subprocess.DEVNULL)
@@ -1654,18 +1682,23 @@ class GateImageCommands(unittest.TestCase):
             (package / '__init__.py').write_text("import subprocess\nsubprocess.run(['just'])")
             for run, expected in (
                 ("env -C checkout PYTHONPATH=. python3 -BPc'import statistics'", 'just'),
-                ("env -C checkout python3 <<'A' | python3 -I -\nimport statistics\nA\n", 'just'),
-                ("env -C checkout python3 -I <<'A' | env -C checkout python3 -\nimport statistics\nA\n", None),
+                ("env -C checkout python3 <<'A' | python3 -I - <<< pass\nimport statistics\nA\n", 'just'),
+                ("env -C checkout python3 -I <<'A' | env -C checkout python3 - <<< pass\nimport statistics\nA\n", None),
                 ("<<'A' env -C checkout python3 | python3 -I <<'B'\nimport statistics\nA\npass\nB\n", 'just'),
                 ("env -C checkout python3 <<'A' <<'B'\nimport statistics\nA\npass\nB\n", None),
                 ("env -C checkout python3 3<<'A'\nimport statistics\nA\n", None),
-                ("env -C checkout python3 3<<'A' <&3 | python3 -I\nimport statistics\nA\n", 'just'),
+                ("env -C checkout python3 3<<'A' <&3 | python3 -I <<< pass\nimport statistics\nA\n", 'just'),
                 ("env -C checkout python3 3<<'A' <&3-\nimport statistics\nA\n", 'just'),
                 ("cat <<'A' | env -C checkout python3\nimport statistics\nA\n", 'just'),
                 ("cat <<'A' | env -C checkout python3 <<< pass\nimport statistics\nA\n", None),
+                ("cat <<'A' >out | env -C checkout python3\nimport statistics\nA\n", None),
+                ("cat <<'A' 3>&1 >out >&3 3>&- | env -C checkout python3\nimport statistics\nA\n", 'just'),
             ):
                 with self.subTest(run=run):
                     self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
+            for reader in ('bash', 'python3 -I -'):
+                with self.subTest(reader=reader), self.assertRaisesRegex(COMMANDS.Unsupported, 'piped script input'):
+                    CAPS.just_consumer({'run': "printf '%s' 'pass' | " + reader}, vars(COMMANDS), [], root)
             with self.assertRaisesRegex(COMMANDS.Unsupported, 'persistent script input'):
                 CAPS.just_consumer({'run': "exec 3<<'A'\nimport statistics\nA\nenv -C checkout python3 <&3"},
                                    vars(COMMANDS), [], root)
@@ -1675,6 +1708,35 @@ class GateImageCommands(unittest.TestCase):
                          {'env': {'PYTHONPATH': 'checkout'}, 'shell': 'python', 'run': 'import statistics'}):
                 with self.subTest(step=step), self.assertRaisesRegex(COMMANDS.Unsupported, 'PYTHONPATH'):
                     CAPS.just_consumer(step, vars(COMMANDS), [], root)
+
+    def test_pythonpath_applies_only_to_processes_using_it(self):
+        for run in ('git --version', "PYTHONPATH=checkout python3 -I -c 'pass'",
+                    "env -u PYTHONPATH python3 -c 'pass'", "PYTHONPATH=. python3 -c 'pass'",
+                    "env PYTHONPATH=checkout python3 -E -c 'pass'", "echo $(python3 -I -c 'pass')"):
+            with self.subTest(run=run):
+                self.assertIsNone(CAPS.just_consumer({'env': {'PYTHONPATH': 'checkout'}, 'run': run}, vars(COMMANDS), []))
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'PYTHONPATH'):
+            CAPS.just_consumer({'run': "export PYTHONPATH=checkout\necho $(python3 -c 'import statistics')"},
+                               vars(COMMANDS), [])
+        for command, environment, refused in (
+                (['python3', '-Pcimport statistics'], {'PYTHONPATH': 'checkout'}, True),
+                (['python3', '-I', '-c', 'pass'], {'PYTHONPATH': 'checkout'}, False),
+                (['python3', '-c', 'pass'], {}, False), (['git', '--version'], {'PYTHONPATH': 'checkout'}, False)):
+            source = f'import subprocess\nsubprocess.run({command!r}, env={environment!r})'
+            step = {'env': {'PYTHONPATH': 'checkout'}, 'shell': 'python3 -I {0}', 'run': source}
+            with self.subTest(command=command, environment=environment):
+                if refused:
+                    with self.assertRaisesRegex(COMMANDS.Unsupported, 'PYTHONPATH'):
+                        CAPS.just_consumer(step, vars(COMMANDS), [])
+                else:
+                    self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), []))
+
+    def test_inventory_reads_package_entry_points_without_callers(self):
+        guarded = "if __name__ == '__main__':\n    import subprocess\n    subprocess.run(['cmp'])"
+        files = {'pkg/__init__.py': 'pass', 'pkg/job.py': '#!/usr/bin/env python3\n' + guarded,
+                 'pkg/__main__.py': 'from . import support\n' + guarded, 'pkg/support.py': 'pass'}
+        issues = self.problems(files, executables=('pkg/job.py',))
+        self.assertEqual([issue.split(': calls')[0] for issue in issues], ['pkg/__main__.py:4', 'pkg/job.py:4'])
 
     def test_relative_names_and_module_entry_points(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1864,6 +1926,20 @@ class GateImageCommands(unittest.TestCase):
                 with self.subTest(sort=sort, items=items):
                     self.assertEqual(self.recorded_commands(source), expected)
                     self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], [argv[0] for argv in expected])
+            source = "items = ['aa', 'b']\n" + sort.replace('key=run', 'key=len')
+            self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_sorted_launchers_preserve_proven_positions(self):
+        for statement in ("callbacks[0](['just'])", "launch = callbacks[-1]\nlaunch(['just'])"):
+            source = 'from subprocess import run\nitems = [run]\ncallbacks = sorted(items)\nitems.clear()\n' + statement
+            with self.subTest(statement=statement):
+                self.assertEqual(self.recorded_commands(source), [['just']])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['just'])
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python callable'):
+            COMMANDS.python_calls("def dispatch(items):\n    launch = sorted(items)[0]\n    launch(['just'])")
+        for expression in ("sorted(['abc', 'just'], reverse=True)", "sorted(['other', 'just'], key=len)"):
+            source = f"import subprocess\nsubprocess.run([{expression}[0]])"
+            self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['just'])
 
     def test_sequence_growth_stops_at_element_budget(self):
         for grow in ('items = items + items', 'items = [*items, *items]', 'items.extend(items)',

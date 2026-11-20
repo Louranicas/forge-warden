@@ -201,6 +201,7 @@ class Unsupported(ValueError):
 class Word:
     def __init__(self, line, raw, value, literal, lexer):
         self.line, self.raw, self.value, self.literal = line, raw, value, literal
+        self.substitutions = []
         self.argument = value
         self.lexer = lexer
 
@@ -208,8 +209,9 @@ class Word:
 class Lexer:
     """One pass over shell text: tokens, here-document bodies and nested substitution calls."""
 
-    def __init__(self, text, line, sink):
-        self.text, self.i, self.line, self.sink = text, 0, line, sink
+    def __init__(self, text, line, substitutions=None):
+        self.text, self.i, self.line = text, 0, line
+        self.substitutions = [] if substitutions is None else substitutions
 
     @staticmethod
     def call(line, word, external, tokens=None, start=0, directory=None):
@@ -269,6 +271,9 @@ class Lexer:
                 out.append(('op', op, self.line))
             else:
                 out.append(('word', self.word()))
+            if self.substitutions and out and out[-1][0] == 'word':
+                out[-1][1].substitutions.extend(self.substitutions)
+                self.substitutions.clear()
         if closer:
             self.error('unterminated substitution')
         if pending:
@@ -294,21 +299,23 @@ class Lexer:
         body_lexer = type(self)
         if not quoted:
             body, body_lexer = self.unquoted_heredoc(body, start)
+            word.substitutions.extend(self.substitutions)
+            self.substitutions.clear()
         return ('heredoc', body, start, index, body_lexer)
 
     def unquoted_heredoc(self, body, start):
         if '$(' in body or '`' in body:
-            type(self)(body, start, self.sink).double_quoted(stop=None)
+            type(self)(body, start, self.substitutions).double_quoted(stop=None)
         return body, type(self)
 
     def substitution(self):
         start = self.line
-        nested = type(self)(self.text, self.line, self.sink)
+        nested = type(self)(self.text, self.line)
         nested.i = self.i
         tokens = nested.tokens(closer=')')
         if any(t[0] == 'word' and t[1].value == 'case' for t in tokens):
             raise Unsupported(f'line {start}: `case` inside a substitution')
-        self.sink(tokens)
+        self.substitutions.append(tokens)
         self.i, self.line = nested.i, nested.line
 
     def backquote(self):
@@ -319,7 +326,7 @@ class Lexer:
         if end < 0:
             self.error('unterminated backquote')
         inner = self.text[self.i:end]
-        self.sink(type(self)(inner, start, self.sink).tokens())
+        self.substitutions.append(type(self)(inner, start).tokens())
         self.line += inner.count('\n')
         self.i = end + 1
 
@@ -351,7 +358,7 @@ class Lexer:
                 self.error('unterminated ${')
             inner = text[i + 2:j]
             if '$(' in inner or '`' in inner:
-                type(self)(inner, self.line, self.sink).double_quoted(stop=None)
+                type(self)(inner, self.line, self.substitutions).double_quoted(stop=None)
             self.i = j + 1
             return None
         if text.startswith("$'", i):
@@ -487,7 +494,7 @@ class WorkflowLexer(Lexer):
         return word
 
     def unquoted_heredoc(self, body, start):
-        reader = type(self)(body, start, self.sink)
+        reader = type(self)(body, start, self.substitutions)
         source = reader.double_quoted(stop=None)
         if source is None or self.unknown in source:
             raise Unsupported('cannot resolve heredoc expansion before Just installation')
@@ -516,15 +523,12 @@ class ExpandedWorkflowLexer(WorkflowLexer):
     expanded_workspace = True
 
 
-def shell_calls(text, line=1, lexer=Lexer, directory=None):
+def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=''):
     """(line, word, external) for each command word of the shell text, nested substitutions
     included. external: the word is run by a prefix or by find, so no shell function can be it."""
     calls = []
 
-    def sink(tokens):
-        calls.extend(command_words(tokens, calls, lexer, directory))
-
-    sink(lexer(text, line, sink).tokens())
+    calls.extend(command_words(lexer(text, line).tokens(), calls, lexer, directory, pythonpath))
     return calls
 
 
@@ -636,8 +640,8 @@ def operand_word(state, value, raw):
         letters = value[1:]
         events = []
         for index, letter in enumerate(letters):
-            if letter in ('I', 'P'):
-                events.append(('isolated' if letter == 'I' else 'safe-path', None))
+            if letter in 'IEP':
+                events.append(({'I': 'isolated', 'E': 'ignore-environment', 'P': 'safe-path'}[letter], None))
             if letter in 'cmWX':
                 rest = letters[index + 1:]
                 if letter == 'c':
@@ -670,10 +674,10 @@ def script_markers(marker, isolated):
     return (marker,)
 
 
-def flush_stdin(script, inputs, found, calls, lexer, directory, isolated):
+def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env):
     if script == 'exec' and inputs:
         raise Unsupported('cannot resolve persistent script input descriptor')
-    if 0 not in inputs:
+    if 0 not in inputs or inputs[0] == ():
         return
     runner = stdin_runner(script)
     if inputs[0] is None:
@@ -687,15 +691,17 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated):
             runner = {'shell': '(sh)', 'python': '(py)'}.get(shebang(body.split('\n', 1)[0])[0])
             isolated = False
         if runner == '(sh)':
-            calls.extend(shell_calls(body, start, body_lexer, directory))
+            calls.extend(shell_calls(body, start, body_lexer, directory, pythonpath=pythonpath))
         elif runner == '(py)':
-            calls.extend(python_calls(body, start, body_lexer, directory, isolated=isolated))
+            calls.extend(python_calls(body, start, body_lexer, directory, isolated=isolated,
+                                      pythonpath=pythonpath, ignore_env=ignore_env))
     elif runner:
         if operator == '<<<' and word.literal:
             if runner == '(sh)':
-                calls.extend(shell_calls(word.value, word.line, word.lexer, directory))
+                calls.extend(shell_calls(word.value, word.line, word.lexer, directory, pythonpath=pythonpath))
             else:
-                calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated))
+                calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated,
+                                          pythonpath=pythonpath, ignore_env=ignore_env))
         elif directory is not None and not word.literal:
             raise Unsupported('cannot resolve gate script input before Just installation')
         elif operator == '<<<':
@@ -706,22 +712,30 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated):
                 found.append(lexer.call(word.line, marker + path, True, directory=directory))
 
 
+DEFAULT_PYTHON_PATHS = ('', '.', b'', b'.')
+
+
 def check_pythonpath(value):
-    if value not in ('', '.'):
+    if value not in DEFAULT_PYTHON_PATHS:
         raise Unsupported('cannot resolve explicit PYTHONPATH')
 
 
-def command_words(tokens, calls, lexer, directory):
-    isolated = False
+def command_words(tokens, calls, lexer, directory, pythonpath=''):
+    isolated = ignore_env = python = False
+    ambient_path = pythonpath
+    conditional = any(token[0] == 'op' and token[1] in ('&&', '||', '(', '&', '|', '|&') or
+                      token[0] == 'word' and token[1].value in ('if', 'case', 'for', 'while', 'until', 'function')
+                      for token in tokens)
     initial_directory = directory
     found, functions = [], set()
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     inputs = {}
+    pipe_outputs = {1}
     cat_arguments = False
     piped = False
     heredocs = {token[3]: token for token in tokens if token[0] == 'heredoc'}
-    for index, token in enumerate(tokens):
+    for index, token in enumerate((*tokens, ('op', ';'))):
         kind = token[0]
         if kind == 'heredoc':
             continue
@@ -734,13 +748,28 @@ def command_words(tokens, calls, lexer, directory):
             op = token[1]
             if piped and expect and script is None and op == '\n':
                 continue
-            flush_stdin(script, inputs, found, calls, lexer, directory, isolated)
-            piped = op in ('|', '|&') and (script == 'cat' or piped)
+            if piped and expect and script is None and op == '(':
+                raise Unsupported('cannot resolve grouped pipe input')
+            if python and not (isolated or ignore_env):
+                check_pythonpath(pythonpath)
+            flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env)
+            piped = op in ('|', '|&')
+            if op == '|&':
+                pipe_outputs.discard(2)
+                if 1 in pipe_outputs:
+                    pipe_outputs.add(2)
             forwarded = inputs.get(0)
-            if (script != 'cat' or cat_arguments or op == '|&' or
+            if not pipe_outputs:
+                forwarded = ()
+            elif (script != 'cat' or cat_arguments or pipe_outputs != {1} or
                     forwarded and forwarded[0] not in ('<<<', '<<', '<<-')):
                 forwarded = None
             inputs = {0: forwarded} if piped else {}
+            pipe_outputs = {1}
+            if expect and prefix is None and script is None and not piped:
+                ambient_path = None if conditional and ambient_path != pythonpath else pythonpath
+            pythonpath = ambient_path
+            python = ignore_env = False
             cat_arguments = False
             directory = initial_directory
             if mode == 'array':
@@ -767,6 +796,8 @@ def command_words(tokens, calls, lexer, directory):
                 mode = 'for-do'
             continue
         word = token[1]
+        for nested in word.substitutions:
+            calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path))
         if word.raw in (PY_SPREAD, PY_UNKNOWN) and (expect or finding or isinstance(script, tuple) or
                 script in OPERAND_STATES or script in ('next', 'next-python', 'rustup', 'rustup-toolchain') or
                 script and PYTHONS.fullmatch(script)):
@@ -780,22 +811,39 @@ def command_words(tokens, calls, lexer, directory):
             directory = word.lexer.location(directory, word.value)
             mode = None
             continue
+        if mode == 'env-unset':
+            if word.value == 'PYTHONPATH':
+                pythonpath = ''
+            mode = None
+            continue
         if mode and mode[0] in ('target', 'redirect-target'):
             if mode[0] == 'redirect-target':
                 _, _, operator, descriptor = mode
+                if operator.startswith('&>'):
+                    pipe_outputs.difference_update((1, 2))
                 if operator in ('<&', '>&'):
                     if not word.literal and inputs:
                         raise Unsupported('cannot resolve script input descriptor')
                     moved = re.fullmatch(r'([0-9]+)(-?)', word.value) if word.literal else None
+                    if moved and int(moved[1]) in pipe_outputs:
+                        pipe_outputs.add(descriptor)
+                    elif word.literal:
+                        pipe_outputs.discard(descriptor)
+                    else:
+                        pipe_outputs.add(descriptor)
+                        cat_arguments = True
                     if moved and int(moved[1]) in inputs:
                         inputs[descriptor] = inputs[int(moved[1])]
                     else:
                         inputs.pop(descriptor, None)
                     if moved and moved[2]:
                         inputs.pop(int(moved[1]), None)
+                        pipe_outputs.discard(int(moved[1]))
                 elif operator.startswith('<'):
+                    pipe_outputs.discard(descriptor)
                     inputs[descriptor] = operator, word, heredocs.get(index + 1)
                 else:
+                    pipe_outputs.discard(descriptor)
                     inputs.pop(descriptor, None)
             mode = mode[1]
             continue
@@ -823,7 +871,11 @@ def command_words(tokens, calls, lexer, directory):
         if expect or script in ('export', 'declare', 'typeset', 'local', 'readonly'):
             assignment = word.value if word.literal else word.raw.lstrip('"\'')
             if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment):
-                check_pythonpath(assignment.removeprefix('PYTHONPATH=') if word.literal else None)
+                pythonpath = assignment.removeprefix('PYTHONPATH=') if word.literal else None
+                if not expect:
+                    ambient_path = None if conditional and ambient_path != pythonpath else pythonpath
+        if script == 'unset' and word.value == 'PYTHONPATH' and not conditional:
+            ambient_path = ''
         if not expect:
             if script == 'cat':
                 cat_arguments = True
@@ -838,9 +890,10 @@ def command_words(tokens, calls, lexer, directory):
                         raise Unsupported('cannot resolve inline gate command before Just installation')
                     found.append(lexer.call(word.line, word.raw, True, directory=directory))
                 elif script == 'next':
-                    calls.extend(shell_calls(word.value, word.line, word.lexer, directory))
+                    calls.extend(shell_calls(word.value, word.line, word.lexer, directory, pythonpath=pythonpath))
                 else:
-                    calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated))
+                    calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated,
+                                              pythonpath=pythonpath, ignore_env=ignore_env))
                 script = None
             elif script == 'rustup' and word.literal and word.value == 'run':
                 script = 'rustup-toolchain'
@@ -857,13 +910,18 @@ def command_words(tokens, calls, lexer, directory):
                 for event, text in events:
                     if event == 'isolated':
                         isolated = True
+                    elif event == 'ignore-environment':
+                        ignore_env = True
+                        if isolated is None:
+                            isolated = True
                     elif event == 'safe-path':
                         if isolated is False:
-                            isolated = None
+                            isolated = True if ignore_env else None
                     elif event == 'shell':
-                        calls.extend(external(shell_calls(text, word.line, word.lexer, directory)))
+                        calls.extend(external(shell_calls(text, word.line, word.lexer, directory, pythonpath=pythonpath)))
                     elif event == 'python':
-                        calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=isolated))
+                        calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=isolated,
+                                                  pythonpath=pythonpath, ignore_env=ignore_env))
                     elif event == 'dynamic':
                         if directory is not None:
                             raise Unsupported('cannot resolve inline gate command before Just installation')
@@ -872,13 +930,19 @@ def command_words(tokens, calls, lexer, directory):
                         if directory is not None and event in RUNS:
                             text = str(word.lexer.path(directory, text))
                         for marker in script_markers(event, isolated):
+                            if marker == '(module)' and ignore_env and pythonpath not in DEFAULT_PYTHON_PATHS:
+                                marker = '(noenv-module)'
                             found.append(lexer.call(word.line, marker + text, True, tokens, index + 1, directory))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
         if prefix in PREFIXES and word.literal and word.value.startswith('-'):
             option, equals, argument = word.value.partition('=')
-            if (directory is not None and prefix == 'env' and (word.value == '-C' or
+            if prefix == 'env' and word.value in ('-', '-i', '--ignore-environment', '-uPYTHONPATH', '--unset=PYTHONPATH'):
+                pythonpath = ''
+            elif prefix == 'env' and word.value in ('-u', '--unset'):
+                mode = 'env-unset'
+            elif (directory is not None and prefix == 'env' and (word.value == '-C' or
                     (option.startswith('--') and len(option) > 2 and '--chdir'.startswith(option)))):
                 if equals:
                     directory = word.lexer.location(directory, argument)
@@ -893,7 +957,7 @@ def command_words(tokens, calls, lexer, directory):
                 expect, script = False, 'next'
             elif prefix == 'env' and word.value.startswith(('-S', '--split-string=')):
                 text = word.value[2:] if word.value.startswith('-S') else word.value.split('=', 1)[1]
-                calls.extend(external(shell_calls(text, word.line, word.lexer, directory)))
+                calls.extend(external(shell_calls(text, word.line, word.lexer, directory, pythonpath=pythonpath)))
                 expect = False
             elif prefix == 'command' and word.value in ('-v', '-V'):
                 expect, prefix = False, 'probe'
@@ -912,6 +976,8 @@ def command_words(tokens, calls, lexer, directory):
                         break
             continue
         if prefix == 'env' and ENV_ASSIGNMENT.match(word.raw):
+            if not word.literal and '$' in word.raw.partition('=')[0]:
+                pythonpath = None
             continue
         if prefix == 'timeout' and word.literal and re.fullmatch(r'[0-9.]+[smhd]?', word.value):
             continue
@@ -928,6 +994,8 @@ def command_words(tokens, calls, lexer, directory):
             if nxt and nxt[0][0] == 'word' and nxt[0][1].value == '{':
                 continue  # `coproc NAME { ...; }`: NAME names the coprocess
         if word.literal and value in KEYWORDS:
+            if piped and value in ('{', 'if', 'for', 'case', 'until', 'while', 'select'):
+                raise Unsupported('cannot resolve grouped pipe input')
             if value in ('for', 'select'):
                 mode = 'for'
             elif value == 'case':
@@ -950,12 +1018,12 @@ def command_words(tokens, calls, lexer, directory):
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
         isolated = False
         owner = value.rsplit('/', 1)[-1] if word.literal else None
+        python = bool(owner and PYTHONS.fullmatch(owner))
         prefix = owner if owner in PREFIXES else None
         script = 'next' if owner == 'trap' else owner
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
-    flush_stdin(script, inputs, found, calls, lexer, directory, isolated)
     return found + [lexer.call(0, '()' + name, False, directory=directory) for name in functions]
 
 
@@ -2097,8 +2165,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     elements *= max(0, index)
                 elif method == 'reverse':
                     elements.reverse()
-                elif method == 'sort' and len(elements) < 2:
-                    pass
+                elif method == 'sort':
+                    elements = ordered_elements(elements, args, names)
                 elif method == 'remove' and args:
                     value = literal(args[0])
                     for position, choices in enumerate(elements):
@@ -2247,6 +2315,33 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 state[field] = previous
                 state[saved] = frozenset()
 
+    def ordered_elements(elements, options, names):
+        if len(elements) < 2 or all(item == elements[0] for item in elements):
+            return elements
+        reverse = False
+        by_length = False
+        for option in options:
+            value = argument(option.value, names)
+            if option.arg == 'reverse' and isinstance(value, ast.Constant) and isinstance(value.value, int):
+                reverse = bool(value.value)
+            elif option.arg == 'key' and qualified(option.value, names) == {'builtins.len'}:
+                by_length = True
+            elif option.arg != 'key' or not isinstance(value, ast.Constant) or value.value is not None:
+                return None
+        ranked = []
+        for index, choices in enumerate(elements):
+            if len(choices) != 1:
+                return None
+            item, = choices
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, (int, float, str, bytes)):
+                return None
+            ranked.append((len(item.value) if by_length else item.value, -index if reverse else index))
+        try:
+            ranked.sort(reverse=reverse)
+        except TypeError:
+            return None
+        return [elements[abs(index)] for _, index in ranked]
+
     def sort_keys(owners, expression, call, names):
         keys = {key for key in qualified(expression, names)
                 if not (isinstance(key, ast.Constant) and key.value is None)}
@@ -2261,6 +2356,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 for item in state.elements:
                     callback = ast.copy_location(ast.Call(func=expression, args=[CapturedArgument(item)], keywords=[]), call)
                     for key in keys:
+                        if key == 'builtins.len' and all(isinstance(value, ast.Constant) and
+                                                        isinstance(value.value, (str, bytes)) for value in item):
+                            continue
                         if key not in PY_ARGV and key not in PY_SHELL_TEXT:
                             raise Unsupported('cannot resolve Python sort key invocation')
                         yield from invoke(key, callback, names, wrapped=True)
@@ -2300,6 +2398,19 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     raise Unsupported('cannot resolve unpacked Python sort keywords')
                 if keyword.arg == 'key':
                     yield from sort_keys(owners, keyword.value, call, names)
+            if target == 'builtins.sorted':
+                choices = []
+                for owner in owners:
+                    for state in owner.states(names) if isinstance(owner, SequenceBinding) else (None,):
+                        items = (ordered_elements(state.elements, call.keywords, names)
+                                 if state and state.elements is not None else None)
+                        if items is None:
+                            choices.append(((ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE})),), True, None))
+                        else:
+                            head = items[0] if items and (not state.revised or items[0] == state.head) else None
+                            choices.append((items, state.revised, head))
+                return built_sequences(ast.List(), [choices])
+            return mutate(owners, 'sort', call.keywords, names)
         if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
             if receiver is not None:
                 return list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
@@ -3190,19 +3301,21 @@ def resolve_module_calls(calls, lexer):
     while pending:
         call = pending.pop()
         line, word = call[:2]
-        if not word.startswith(('(module)', '(isolated-module)')):
+        if not word.startswith(('(module)', '(isolated-module)', '(noenv-module)')):
             yield call
             continue
         module = word.split(')', 1)[1]
         isolated = word.startswith('(isolated-module)')
+        ignore_env = word.startswith('(noenv-module)')
         arguments, directory = call[3:] if len(call) > 3 else (None, None)
         if not all(name.isidentifier() for name in module.split('.')):
             raise Unsupported('cannot resolve Python module ' + module)
         if SuiteImports(directory, isolated).has_local_root(module):
-            key = directory, module, tuple(arguments) if arguments is not None else None
+            key = directory, module, tuple(arguments) if arguments is not None else None, ignore_env
             if key not in inspected:
                 inspected.add(key)
-                entry = python_calls(None, line, lexer, directory, module=(module, call[3:]))
+                entry = python_calls(None, line, lexer, directory, module=(module, call[3:]),
+                                     pythonpath=None if ignore_env else '', ignore_env=ignore_env)
                 pending.extend(reversed(entry))
         elif directory is not None and module in ('unittest', 'unittest.__main__'):
             yield (line, '(module)' + module, *call[2:])
@@ -3210,11 +3323,15 @@ def resolve_module_calls(calls, lexer):
             raise Unsupported('cannot resolve Python module ' + module)
 
 
-def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False, module=None, package_file=False):
+def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False, module=None,
+                 package_file=False, pythonpath='', ignore_env=False):
     """Read process calls as their effective executable and command line or shell payload."""
+    if not (isolated or ignore_env):
+        check_pythonpath(pythonpath)
     if isolated is None:
         return [call for mode in (False, True)
-                for call in python_calls(text, line, lexer, directory, filename=filename, isolated=mode, module=module)]
+                for call in python_calls(text, line, lexer, directory, filename=filename, isolated=mode, module=module,
+                                         pythonpath=pythonpath, ignore_env=ignore_env)]
     found = []
     targets = {}
     imports = SuiteImports(directory, isolated)
@@ -3222,11 +3339,17 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         path = imports.root / filename
         imports.inventory_source = path
         stem = path.parent if path.name == '__init__.py' else path.with_suffix('')
-        calls = imports.module('.'.join(stem.relative_to(imports.directory).parts), None, False, targets, {})
+        name = '.'.join(stem.relative_to(imports.directory).parts)
+        calls = list(imports.module(name, None, False, targets, {}))
+        if path.name == '__main__.py':
+            calls.extend(imports.module(name, None, True, targets, {}, main=True))
     elif module is None:
         tree = ast.parse(text)
         imports.register_fixture(tree.body, filename, text)
-        calls = python_callees(tree.body, {}, directory is not None, targets, imports=imports)
+        bindings = {}
+        if filename and imports.files and (Path(filename).parent / '__init__.py').as_posix() in imports.files:
+            bindings = {'__name__': {ast.Constant('__main__')}, '__package__': {ast.Constant(None)}}
+        calls = python_callees(tree.body, bindings, directory is not None, targets, imports=imports)
     else:
         def entry_calls():
             name, context = module
@@ -3271,10 +3394,10 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         if None in keywords:
             raise Unsupported('cannot resolve unpacked Python process keywords')
         subprocess_argv = name in PY_ARGV and PY_ARGV[name] is None
-        if subprocess_argv and any(isinstance(arg, ast.Starred) for arg in args[:10]):
+        if subprocess_argv and any(isinstance(arg, ast.Starred) for arg in args[:11]):
             raise Unsupported('cannot resolve starred Python process arguments')
         for position, parameter in enumerate(('args', 'bufsize', 'executable', 'stdin', 'stdout', 'stderr',
-                                              'preexec_fn', 'close_fds', 'shell', 'cwd')):
+                                              'preexec_fn', 'close_fds', 'shell', 'cwd', 'env')):
             if subprocess_argv and len(args) > position and parameter in keywords:
                 raise Unsupported('duplicate Python subprocess argument: ' + parameter)
         override = keywords.get('executable')
@@ -3379,8 +3502,28 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                             rest = after_argv_zero(vector)
                         texts.extend(argv_text([choice, *rest], wrapped) for choice in branches(program))
                 else:
-                    texts.extend(argv_text([choice, *after_argv_zero(args[index + 1:])], wrapped) for choice in branches(program))
+                    argv = args[index + 1:-1] if name.endswith('e') else args[index + 1:]
+                    texts.extend(argv_text([choice, *after_argv_zero(argv)], wrapped) for choice in branches(program))
         cwd = directory
+        environment = keywords.get('env')
+        if subprocess_argv and len(args) > 10:
+            environment = args[10]
+        elif name in ('os.posix_spawn', 'os.posix_spawnp', 'os.execve', 'os.execvpe') and len(args) > 2:
+            environment = args[2]
+        elif name in ('os.spawnve', 'os.spawnvpe') and len(args) > 3:
+            environment = args[3]
+        elif name in ('os.execle', 'os.execlpe', 'os.spawnle', 'os.spawnlpe') and args:
+            environment = args[-1]
+        child_path = pythonpath
+        if isinstance(environment, ast.Dict):
+            child_path = ''
+            for key, value in zip(environment.keys, environment.values):
+                if not isinstance(key, ast.Constant):
+                    child_path = None
+                elif key.value in ('PYTHONPATH', b'PYTHONPATH'):
+                    child_path = value.value if isinstance(value, ast.Constant) else None
+        elif environment is not None and not (isinstance(environment, ast.Constant) and environment.value is None):
+            child_path = None
         value = args[9] if subprocess_argv and len(args) > 9 else keywords.get('cwd')
         if directory is not None and texts and value is not None:
             if not isinstance(value, ast.Constant) or (value.value is not None and not isinstance(value.value, str)):
@@ -3396,7 +3539,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                     raise Unsupported('cannot resolve inherited fixture executable')
                 yield lexer.call(start, VerifiedCommand('forge-warden'), True, directory=cwd)
             elif shell_text is not None:
-                yield from external(shell_calls(shell_text, start, lexer, cwd))
+                yield from external(shell_calls(shell_text, start, lexer, cwd, pythonpath=child_path))
             else:
                 raise Unsupported('cannot resolve Python process command')
 
@@ -3509,6 +3652,8 @@ def problems(root):
         kind, bang = kinds[name]
         if kind in ('shell', 'python'):
             want(name, 'package python' if kind == 'python' and name.endswith('.py') else kind)
+            if kind == 'python' and (bang or (root / name).is_file() and (root / name).stat().st_mode & 0o111):
+                want(name, 'python')
         elif kind == 'other':
             found.append(f'{name}: not read: line 1: its `#!` line names {bang[1]!r}, '
                          'which this reader does not read')

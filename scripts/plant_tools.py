@@ -262,7 +262,7 @@ def check_mutation_contract(root):
         raise ValueError('mutation inventory/budget driver requires review')
 
 
-def workflow_jobs(text):
+def workflow_document(text):
     import yaml
 
     class WorkflowLoader(yaml.BaseLoader):
@@ -273,14 +273,19 @@ def workflow_jobs(text):
             return mapping
 
     try:
-        jobs = yaml.load(text, Loader=WorkflowLoader)['jobs']
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+        jobs = workflow['jobs']
         if not isinstance(jobs, dict) or not all(
                 isinstance(job['steps'], list) and all(isinstance(step, dict) for step in job['steps'])
                 for job in jobs.values()):
             raise ValueError('invalid workflow steps')
-        return jobs
+        return workflow
     except (yaml.YAMLError, KeyError, TypeError) as error:
         raise ValueError('invalid workflow jobs') from error
+
+
+def workflow_jobs(text):
+    return workflow_document(text)['jobs']
 
 
 def installed_tool(step, values):
@@ -359,13 +364,11 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
     return None
 
 
-def just_consumer(step, commands, cases, root=None):
+def just_consumer(step, commands, cases, root=None, inherited_env=()):
     lexer = commands['WorkflowLexer']
-    environment = step.get('env', {})
-    if not isinstance(environment, dict):
-        raise ValueError('cannot resolve gate step environment before Just installation')
-    if 'PYTHONPATH' in environment:
-        commands['check_pythonpath'](environment['PYTHONPATH'])
+    pythonpath = ''
+    for environment in (*inherited_env, step.get('env', {})):
+        pythonpath = environment.get('PYTHONPATH', pythonpath) if isinstance(environment, dict) else None
     directory = step.get('working-directory', '.')
     if not isinstance(directory, str):
         raise ValueError('cannot resolve gate working-directory before Just installation')
@@ -385,7 +388,7 @@ def just_consumer(step, commands, cases, root=None):
     token = source.set((root or lexer.workspace, directory, None, JUST_TESTS))
     try:
         options = {'isolated': True} if arguments_format == '-I {0}' else {}
-        calls = reader(run, lexer=lexer, directory=directory, **options)
+        calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
         calls = list(commands['resolve_module_calls'](calls, lexer))
     finally:
         source.reset(token)
@@ -425,7 +428,8 @@ def check_ci(root):
     check_mutation_contract(root)
     cases = json.loads((root / 'plants/catalog.json').read_text())['cases']
     required = requirements(cases)
-    gate = workflow_jobs((root / '.github/workflows/ci.yml').read_text())['gate']
+    workflow = workflow_document((root / '.github/workflows/ci.yml').read_text())
+    gate = workflow['jobs']['gate']
     if gate.get('runs-on') != 'ubuntu-latest' or 'if' in gate:
         raise ValueError('plant CI requires the unconditional hosted gate')
     steps = gate['steps']
@@ -447,7 +451,7 @@ def check_ci(root):
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
-            consumer = just_consumer(step, commands, cases, root)
+            consumer = just_consumer(step, commands, cases, root, (workflow.get('env', {}), gate.get('env', {})))
             if consumer:
                 raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
