@@ -469,9 +469,43 @@ fixture_commit later
 named_patch="$sandbox/main-to-head.patch"
 named_head="$(git -C "$sub" rev-parse HEAD)"
 bash "$maker" "$base" "$named_head" "$sub" > "$named_patch"
-runbook_base="$(sed -nE 's@^bash make_patch\.sh ([[:alnum:]/_-]+) HEAD > .*@\1@p' "$source_root/docs/RUNBOOK.md")"
-bash "$maker" "$runbook_base" HEAD "$sub" > "$sandbox/made.patch"
-same_bytes "$named_patch" "$sandbox/made.patch"
+python3 -I - "$source_root" "$sandbox" <<'PYDOCS'
+import hashlib
+from pathlib import Path
+import re
+import sys
+
+root, sandbox = map(Path, sys.argv[1:])
+for document, marker, script, digest in (
+    ("README.md", None, "quickstart.sh", "905c18adcfb720f427f6fd50709e5b96552a961a9be0075c0539d7f6b595f76b"),
+    ("docs/RUNBOOK.md", b'judge_change() {', "runbook-setup.sh", "b3365aa941b01f7d33873d9c8d4279115bb39af434d1659efeea3026fe42642b"),
+    ("docs/RUNBOOK.md", b'--repo "$repo"', "runbook.sh", "03bdf565c278f06dc48d5fa9002cbc5d1814527751f3d060128518a21763557c"),
+):
+    blocks = re.findall(rb'^```bash\n(.*?)^```$', (root / document).read_bytes(), re.M | re.S)
+    block, = blocks[:1] if marker is None else [body for body in blocks if marker in body]
+    if hashlib.sha256(block).hexdigest() != digest:
+        sys.exit(f"review the changed {document} example before executing it")
+    (sandbox / script).write_bytes(block)
+PYDOCS
+documented() {
+ local example="$1"
+ shift
+ source "$example" || return
+ "$@"
+}
+(
+ cd "$sub"
+ cp -- "$maker" make_patch.sh
+ export TMPDIR="$sandbox"
+ documented "$sandbox/runbook-setup.sh" judge_change true
+ same_bytes "$named_patch" "$evidence/change.patch"
+ git update-ref -d refs/heads/main "$base"
+ if documented "$sandbox/runbook-setup.sh" judge_change touch "$sandbox/judged" > "$sandbox/published"; then exit 1; fi
+ [[ ! -v evidence && ! -e "$sandbox/judged" && ! -s "$sandbox/published" ]]
+ git update-ref refs/heads/main "$base"
+ if TMPDIR="$sandbox/absent" documented "$sandbox/runbook-setup.sh" judge_change touch "$sandbox/judged" > "$sandbox/published"; then exit 1; fi
+ [[ ! -v evidence && ! -e "$sandbox/judged" && ! -s "$sandbox/published" ]]
+)
 git -C "$sub" replace "$sub_base^{tree}" "$sub_head^{tree}"
 git -C "$sub" replace "$base^{tree}" 'HEAD^{tree}'
 mkdir -p "$sub/.git/info"
@@ -878,23 +912,6 @@ exit 1
 SH
  chmod +x "$sandbox/minimum-git/git" "$sandbox/bin/git-remote-probe"
  export TRANSPORT_LOG="$sandbox/transport.log" GIT_ALLOW_PROTOCOL=ssh:probe
- python3 -I - "$source_root" "$sandbox" <<'PYDOCS'
-import hashlib
-from pathlib import Path
-import re
-import sys
-
-root, sandbox = map(Path, sys.argv[1:])
-for document, marker, script, digest in (
-    ("README.md", None, "quickstart.sh", "905c18adcfb720f427f6fd50709e5b96552a961a9be0075c0539d7f6b595f76b"),
-    ("docs/RUNBOOK.md", b'--repo "$repo"', "runbook.sh", "31c5bc8304ae9db8beedb54314edf0c4ea41fcbe7e597f951f0480b33293993e"),
-):
-    blocks = re.findall(rb'^```bash\n(.*?)^```$', (root / document).read_bytes(), re.M | re.S)
-    block, = blocks[:1] if marker is None else [body for body in blocks if marker in body]
-    if hashlib.sha256(block).hexdigest() != digest:
-        sys.exit(f"review the changed {document} example before executing it")
-    (sandbox / script).write_bytes(block)
-PYDOCS
  cat > "$sandbox/bin/forge-warden" <<'SH'
 #!/usr/bin/env bash
 [[ "${GIT_ALLOW_PROTOCOL-unset}" = "" && "$GIT_NO_LAZY_FETCH" = 1 ]] || exit 93
@@ -924,13 +941,17 @@ SH
   grep -Fxq "$before" "$QUICKSTART_RECEIPT"
   grep -Fxq "$tip" "$QUICKSTART_RECEIPT"
  done
+ runbook_bound() (
+  set -C
+  documented "$sandbox/runbook.sh" bound
+ )
  DOC_EXIT=0
  printf 'previous verdict\n' > "$evidence/verdict.json"
- bash -C "$sandbox/runbook.sh"
+ runbook_bound
  [[ "$(cat "$evidence/verdict.json")" = '{}' ]]
  rm -- "$QUICKSTART_RECEIPT"
  actual=0
- (cd scripts && bash -C "$sandbox/runbook.sh") 2> "$sandbox/output" || actual=$?
+ (cd scripts && runbook_bound) 2> "$sandbox/output" || actual=$?
  [[ "$actual" = 2 && -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" && ! -e "$QUICKSTART_RECEIPT" ]]
  offline_refusal() {
   local oid="$1" object
@@ -968,7 +989,7 @@ SH
    offline_refusal "$oid" python3 -I "$source_root/scripts/checkout_just.py" judge-bound
    offline_refusal "$oid" quickstart
    printf 'previous verdict\n' > "$evidence/verdict.json"
-   offline_refusal "$oid" bash -C "$sandbox/runbook.sh"
+   offline_refusal "$oid" runbook_bound
    [[ -f "$evidence/verdict.json" && ! -s "$evidence/verdict.json" ]]
    test ! -e "$QUICKSTART_RECEIPT"
   done

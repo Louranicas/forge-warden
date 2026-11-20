@@ -118,21 +118,38 @@ The policy lives in the repository it judges and should be owned there (CODEOWNE
 instruction, through the container's root (which is the user's own uid on the host): a docs-only change gave `pass` (exit 0), a
 change to a protected path `hold` (exit 8), a wrong `[producer]` digest exit 4, and an unowned or
 unenrolled Git exit 3. That proves the commands and the refusals, not an owner-held allowlist. The
-advisory commands below were run as written.
+advisory judgment was also exercised.
 
-For either mode, first create a private evidence directory and write the patch.
+In Bash at the checkout root, define this function once. It prepares a private directory and patch,
+sets `evidence` for later inspection, then runs the judgment you select. If setup fails, the
+function returns a failure status to your shell.
 
 ```bash
-evidence="$(mktemp -d)" || exit 1
-bash make_patch.sh refs/heads/main HEAD > "$evidence/change.patch" || exit 1
+judge_change() {
+  local dir
+  unset evidence
+  dir="$(mktemp -d)" || return 1
+  if ! bash make_patch.sh refs/heads/main HEAD > "$dir/change.patch"; then
+    rm -f -- "$dir/change.patch"
+    rmdir -- "$dir"
+    return 1
+  fi
+  evidence="$dir"
+  printf 'Evidence: %s\n' "$evidence"
+  "$@"
+}
 ```
 
-For authority mode, run the following in the same Bash session.
+For authority mode, run this in the same Bash session.
 
 ```bash
-forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
-  --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json >| "${evidence:?}/verdict.json"
-echo "exit $?"
+authority() {
+  forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" \
+    --ranker "$HOME/.local/share/forge-warden/deep-diff-forge" --json >| "${evidence:?}/verdict.json"
+}
+status=0
+judge_change authority || status=$?
+echo "exit $status"
 ```
 
 `make_patch.sh` writes committed changes from the merge base of `refs/heads/main` and `HEAD`
@@ -158,10 +175,10 @@ The patch producer is therefore part of the trust boundary.
 For bound mode in unreleased 0.3.0 (ADR 0012), add `--repo DIR --base BASE --head HEAD` (full commit ids) to
 an authority-mode `check`, and forge-warden makes `git diff merge-base..head` itself, from a copy
 of the repository's objects that Git re-hashes, and refuses the run unless `--patch` is byte-equal
-(exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). With the patch from the shared setup, run the bound check at the checkout root.
+(exit 4); a repository whose objects are not what their ids name gives no verdict (exit 3). At the checkout root, define the bound judgment in the same Bash session.
 
 ```bash
-(
+bound() (
   unset "${!GIT_@}" && export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1
   bash make_patch.sh --check-worktree || exit 2
   base="$(git rev-parse --verify 'refs/heads/main^{commit}')" || exit 1
@@ -173,6 +190,14 @@ of the repository's objects that Git re-hashes, and refuses the run unless `--pa
 ) >| "${evidence:?}/verdict.json"
 ```
 
+Run it with the shared setup.
+
+```bash
+status=0
+judge_change bound || status=$?
+echo "exit $status"
+```
+
 It needs `/usr/bin/prlimit`
 (util-linux): every Git it runs has a 1 GiB data and 4 GiB address-space cap. A match records the
 claims as verified in the verdict (v3): `{base, head, merge_base, verified: true}`.
@@ -181,11 +206,16 @@ Exit 0 is `pass`, 7 `fail` and 8 `hold` (a person decides); anything else is a r
 next step on stderr. An authority refusal leaves `$evidence/verdict.json` empty. `forge-warden schema exit-codes` lists them all.
 
 Advisory mode instead (no allowlist needed; the best result is `hold`, exit 8): rank the patch
-yourself and hand the ranking over. Run the shared patch setup above first, then run these commands in that Bash session.
+yourself and hand the ranking over. Run this in the Bash session where you defined `judge_change`.
 
 ```bash
-"$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < "${evidence:?}/change.patch" >| "${evidence:?}/rank.json"
-forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" --advisory --rank "${evidence:?}/rank.json" --json >| "${evidence:?}/advisory-verdict.json"
+advisory() {
+  "$HOME/.local/share/forge-warden/deep-diff-forge" --stdin-patch --rank --json < "${evidence:?}/change.patch" >| "${evidence:?}/rank.json" || return
+  forge-warden check --policy warden.toml --patch "${evidence:?}/change.patch" --advisory --rank "${evidence:?}/rank.json" --json >| "${evidence:?}/advisory-verdict.json"
+}
+status=0
+judge_change advisory || status=$?
+echo "exit $status"
 ```
 
 ## 7. Check that the verdict is an authority verdict

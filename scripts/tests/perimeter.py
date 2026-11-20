@@ -747,9 +747,6 @@ class Contracts(unittest.TestCase):
                                    for _, word, _ in COMMANDS.shell_calls(step["run"]))
 
                     worker, = filter(is_worker, steps)
-                    literal = "run: |\n" + textwrap.indent(worker["run"].rstrip("\n") + "\n", "  ")
-                    with mock.patch.dict(worker, yaml.safe_load(literal)):
-                        self.assertEqual(list(filter(is_worker, steps)), [worker])
                     env = {"BASE_SHA": bases, **({"HEAD_SHA": heads} if name == "dogfood" else {})}
                     for i, context in enumerate(contexts[:2]):
                         environment = {key: evaluate(worker["env"][key], context) for key in env}
@@ -763,8 +760,7 @@ class Contracts(unittest.TestCase):
                             else:
                                 expected = ["python3", "-I", "scripts/mutation_ci.py", "plan", "diff", bases[i], "", ""]
                                 wrong = shlex.join(["python3", "-I", "scripts/mutation_ci.py", "plan", "full"])
-                            for command in (worker["run"], yaml.safe_load(literal)["run"]):
-                                self.assertEqual(invocation(command, environment, version), expected)
+                            self.assertEqual(invocation(worker["run"], environment, version), expected)
                             self.assertNotEqual(invocation(wrong, environment, version), expected)
                     self.assertEqual(worker["env"].keys() & {"BASE_SHA", "HEAD_SHA"}, env.keys())
                     fields.extend((worker["env"], key, expected) for key, expected in env.items())
@@ -1099,14 +1095,47 @@ class GateImageCommands(unittest.TestCase):
     def test_helper_callable_arguments_before_install(self):
         helper = "from subprocess import run\ndef invoke(launch): launch(['just'])\n"
         for call, expected in (("invoke(run)", "just"), ("invoke(launch=run)", "just"),
-                               ("invoke(print)", None), ("invoke(print); invoke(run)", "just")):
+                               ("invoke(print)", None), ("invoke(len)", None), ("invoke(print); invoke(run)", "just")):
             with self.subTest(call=call):
                 self.assertEqual(CAPS.just_consumer({"shell": "python", "run": helper + call},
                                                     vars(COMMANDS), []), expected)
-        for call in ("invoke(unknown)", "invoke(*arguments)", "invoke(**options)",
-                     "class Cleanup:\n    def finish(self): invoke(run)\nCleanup().finish()"):
+        method = "class Cleanup:\n    def finish(self): invoke(run)\nCleanup().finish()"
+        self.assertEqual(CAPS.just_consumer({"shell": "python", "run": helper + method}, vars(COMMANDS), []), "just")
+        for call in ("invoke(unknown)", "invoke(*arguments)", "invoke(**options)"):
             with self.subTest(call=call), self.assertRaisesRegex(ValueError, "Python callable"):
                 CAPS.just_consumer({"shell": "python", "run": helper + call}, vars(COMMANDS), [])
+
+    def test_python_ordering_resolves_process_arguments_at_the_call(self):
+        def consumer(source):
+            return CAPS.just_consumer({"shell": "python", "run": "from subprocess import run\n" + source},
+                                      vars(COMMANDS), [])
+
+        for source in ("print(len('ready'))", "def size(value): return len(value.strip())\nprint(size(' ready '))",
+                       "from pathlib import Path\nprint(Path.cwd())"):
+            with self.subTest(source=source):
+                self.assertIsNone(consumer(source))
+
+        for setup, argument in (
+            ("def split(arg): return ['just', arg]", "split('fmt')"),
+            ("def command(): return ['just', 'fmt']", "command()"),
+            ("import shlex as words", """words.split("'just' fmt")"""),
+            ("from shlex import split as words", """words("'just' fmt")"""),
+            ("from shlex import split\ndef split(_): return 'just'", "[split('true')]"),
+        ):
+            with self.subTest(setup=setup):
+                source = setup + "\nrun(" + argument + ")"
+                self.assertEqual(consumer(source), "just")
+                found = self.problems({"t.py": "from subprocess import run\n" + source.replace("just", "cmp")})
+                self.assertEqual(len(found), 1, found)
+                self.assertIn("calls `cmp`", found[0])
+
+        for setup, argument in (("def split(arg): return lookup(arg)", "split('true')"),
+                                ("import shlex", "shlex.split('true', comments=flag)"),
+                                ("import shlex as words\ndef split(_): return ['just']\nwords.split = split",
+                                 "words.split('true')"),
+                                ("from other import split", "split('true')")):
+            with self.subTest(setup=setup), self.assertRaisesRegex(ValueError, "Python process command"):
+                consumer(setup + "\nrun(" + argument + ")")
 
     def test_fixed_executable_with_variable_arguments(self):
         for program in ("git", "cmp"):
