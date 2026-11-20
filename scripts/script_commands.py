@@ -881,12 +881,23 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     workflow = AUDIT_CHECKOUT.get() is not None
-    list_start = pipeline_start = stage_start = len(calls)
+
+    def checkpoint():
+        return len(calls), definitions, sourced
+
+    list_start = pipeline_start = stage_start = checkpoint()
     pipeline = False
     delayed = function_name = None
 
-    def wrap(start, kind):
+    def wrap(position, kind):
+        nonlocal definitions, sourced
+        start, previous, was_sourced = position
         if workflow:
+            if kind in ('subshell', 'background', 'process-substitution', 'trap'):
+                definitions, sourced = previous, was_sourced
+            elif definitions is not previous:
+                definitions = {name: definitions.get(name) if definitions.get(name) is previous.get(name) else None
+                               for name in definitions.keys() | previous.keys()}
             marker = CheckoutScope(kind)
             calls.insert(start, lexer.call(0, marker, True, directory=initial_directory))
             calls.append(lexer.call(0, CheckoutScope('end'), True, directory=initial_directory))
@@ -898,13 +909,14 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             if allexport is not False:
                 raise Unsupported('cannot resolve shell function export')
             definition = (function_name, index, environment_writes, (shell_value, exported, allexport, ambient_path, stdin))
-        groups.append((end, uncertain, list_start, pipeline_start, stage_start, pipeline, delayed, definition, len(calls)))
-        list_start = pipeline_start = stage_start = len(calls)
+        groups.append((end, uncertain, list_start, pipeline_start, stage_start, pipeline, delayed, definition, checkpoint()))
+        list_start = pipeline_start = stage_start = checkpoint()
         pipeline = False
         delayed = function_name = None
 
     def close_group():
         nonlocal list_start, pipeline_start, stage_start, pipeline, delayed
+        nonlocal definitions, sourced
         nonlocal shell_value, exported, allexport, ambient_path, stdin, pythonpath, inputs
         end, uncertain, list_start, pipeline_start, stage_start, pipeline, delayed, definition, start = groups.pop()
         if end == 'done':
@@ -915,6 +927,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             wrap(start, 'conditional')
         if definition:
             name, opener, previous_writes, saved = definition
+            start, definitions, sourced = start
             dependencies = {word for _, word, external_call, *_ in calls[start:]
                             if isinstance(word, ScriptFile) and not external_call}
             shell_value, exported, allexport, ambient_path, stdin = saved
@@ -923,7 +936,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             function = ShellDefinition(name)
             function.writes_environment = environment_writes != previous_writes
             function.dependencies = dependencies
-            definitions[name] = function
+            definitions = {**definitions, name: function}
             function.tokens = tokens[opener:index + 1]
             calls[start:] = [lexer.call(0, function, False, directory=initial_directory)]
 
@@ -970,7 +983,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
             if op in ('|', '|&'):
                 wrap(stage_start, 'subshell')
-                stage_start = len(calls)
+                stage_start = checkpoint()
                 pipeline = True
             elif op in (';', '\n', '&&', '||', '&', ';;', ';&', ';;&', ')') and not function_end:
                 if pipeline:
@@ -982,7 +995,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     wrap(list_start if op == '&' else pipeline_start, delayed or 'background')
                 pipeline = False
                 delayed = None
-                stage_start = pipeline_start = len(calls)
+                stage_start = pipeline_start = checkpoint()
                 if op not in ('&&', '||'):
                     list_start = pipeline_start
             conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
@@ -1042,10 +1055,6 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             if skip_parens and op in ('(', ')'):
                 continue
             skip_parens = False
-            if function_end and found:
-                function_name = found.pop()[1]
-                functions.add(function_name)
-                continue
             expect, prefix, script, finding, by_find = op != ')', None, None, False, False
             if mode == 'for' and op in (';', '\n'):
                 mode = 'for-do'
@@ -1053,7 +1062,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         word = token[1]
         for substitution_kind, nested in word.substitutions:
             may_consume = True
-            start = len(calls)
+            start = checkpoint()
             calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path, (shell_value, exported, allexport), stdin, definitions))
             wrap(start, substitution_kind)
         if word.raw in (PY_SPREAD, PY_UNKNOWN) and (expect or finding or isinstance(script, tuple) or
@@ -1119,7 +1128,9 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     pipe_outputs.pop(source_fd, None)
             mode = mode[1]
             continue
-        if mode == 'function-name':
+        if mode == 'function-name' or (expect and mode is None and prefix is None and word.literal
+                and index + 2 < len(tokens) and tokens[index + 1][:2] == ('op', '(')
+                and tokens[index + 2][:2] == ('op', ')') and not ASSIGNMENT.match(word.raw)):
             # `function NAME`, with or without `()`: NAME is defined here, not called.
             function_name = word.value if word.literal else word.raw
             functions.add(function_name)
@@ -1862,10 +1873,10 @@ def loop_inputs(node, body):
     assigned = set()
     statements = [node.test, *body] if isinstance(node, ast.While) else body
     for statement in statements:
-        inputs.update(child.id for child in ast.walk(statement) if isinstance(child, ast.Name)
-                      and isinstance(child.ctx, ast.Load) and child.id not in assigned)
+        inputs.update([child.id for child in ast.walk(statement) if isinstance(child, ast.Name)
+                      and isinstance(child.ctx, ast.Load) and child.id not in assigned])
         if isinstance(statement, ast.Assign):
-            assigned.update(target.id for target in statement.targets if isinstance(target, ast.Name))
+            assigned.update([target.id for target in statement.targets if isinstance(target, ast.Name)])
         elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             assigned.add(statement.name)
         elif isinstance(statement, ast.Name) and isinstance(statement.ctx, ast.Store):
@@ -1906,7 +1917,7 @@ def literal_elements(node):
         keys = node.elts if isinstance(node, ast.Set) else node.keys
         check_sequence_length(len(keys))
         if all(isinstance(key, ast.Constant) for key in keys):
-            distinct = dict.fromkeys(key.value for key in keys)
+            distinct = dict.fromkeys([key.value for key in keys])
             if isinstance(node, ast.Dict) or len(distinct) <= 1:
                 return [ast.Constant(value) for value in distinct]
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
@@ -2038,7 +2049,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                                 exceptional_fields=exceptions, testcase_super_init=base_init, allocations=allocations,
                                                 protocol_returns=protocol_values, imports=imports, source=helper.source)
             if suspended is not None and not suspended:
-                suspended.update((key, values) for key, values in local.items() if isinstance(key, str))
+                suspended.update({key: values for key, values in local.items() if isinstance(key, str)})
             updates = fields(local)
             raised = fields(exceptions or {})
             if returned == {UNKNOWN_CALLABLE}:
@@ -2049,6 +2060,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     updates, raised = visible, failures
                     if not raised and phase is None:
                         helper.summaries[context] = [frame.copy() for frame in environment]
+            if not protocol and AUDIT_CHECKOUT.get() is not None and any(isinstance(key[0], ChildProcess) for key in updates):
+                if isinstance(function, ast.AsyncFunctionDef) or any(isinstance(part, (ast.Yield, ast.YieldFrom))
+                        for statement in function.body for part in ast.walk(statement)):
+                    if (joined_children(updates) | joined_children(raised)) - joined_children(entry):
+                        raise Unsupported('cannot establish deferred Python child join')
+                    updates = join((fields(entry), updates))
             if interrupted is not None:
                 interrupted.update(join((interrupted, raised)))
             if call is not None:
@@ -2182,8 +2199,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values.add(BoundCall('generator.' + node.attr, owner))
                 elif isinstance(owner, LocalModule):
                     members = owner.member(node.attr, names) or {UNKNOWN_CALLABLE}
-                    values.update(BoundCall(UNKNOWN_CALLABLE) if member in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
-                                  else member for member in members)
+                    values.update([BoundCall(UNKNOWN_CALLABLE) if member in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT)
+                                  else member for member in members])
                 elif isinstance(owner, ImportedMember):
                     values.add(ImportedMember(owner.module + '.' + owner.name, node.attr, owner.source))
                 elif isinstance(owner, str) and owner.partition('.')[0] not in sys.stdlib_module_names:
@@ -2468,7 +2485,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(target, (ast.Tuple, ast.List)):
             for owner in qualified(value, names):
                 if isinstance(owner, DeferredGenerator):
-                    yield from inspect_generator(owner, names, interrupted)
+                    yield from inspect_generator(owner, names, interrupted, partial=True)
             check_sequence_length(len(target.elts))
             owners = qualified(value, names)
             if len(owners) > 1 or any(isinstance(owner, SequenceBinding) and len(owner.states(names)) > 1 for owner in owners):
@@ -2726,8 +2743,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not isinstance(key, ast.Constant) or key.value == attr:
                     fields.add(name)
         if dictionary and 'sys.modules' in owners:
-            fields.update('sys.modules.' + module for module in PROVIDER_MODULES
-                          if not isinstance(key, ast.Constant) or key.value == module)
+            fields.update(['sys.modules.' + module for module in PROVIDER_MODULES
+                          if not isinstance(key, ast.Constant) or key.value == module])
         return fields
 
     def record_provider_import(module, names):
@@ -2879,10 +2896,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             raise Unsupported('cannot resolve Python sort key invocation')
                         yield from invoke(key, callback, names, wrapped=True)
 
-    def iterate(expression, names, interrupted):
+    def iterate(expression, names, interrupted, *, partial=False):
         for value in qualified(expression, names):
             if isinstance(value, DeferredGenerator):
-                yield from inspect_generator(value, names, interrupted)
+                yield from inspect_generator(value, names, interrupted, partial=partial)
         if (UNREAD_STDIN in names and not isinstance(expression, (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
                 not all(isinstance(owner, (ast.Constant, SequenceBinding, DeferredGenerator)) for owner in qualified(expression, names))):
             names[UNREAD_STDIN] = frozenset({False})
@@ -2928,11 +2945,17 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             names[UNREAD_STDIN] = frozenset({False})
         if isinstance(receiver, DeferredGenerator):
             if target in ('generator.throw', 'generator.close'):
+                names[(receiver, 'consumed')] = frozenset({True})
                 return {UNKNOWN_CALLABLE}
             if target == 'generator.send' and (len(call.args) != 1 or call.keywords or
                     not all(isinstance(arg, ast.Constant) and arg.value is None for arg in qualified(call.args[0], names))):
                 raise Unsupported('cannot resolve deferred Python generator send')
-            return (yield from inspect_generator(receiver, names, interrupted))
+            return (yield from inspect_generator(receiver, names, interrupted, partial=True))
+        if target in ('builtins.min', 'builtins.max') and any(
+                kw.arg is None or kw.arg == 'key' and not all(isinstance(key, ast.Constant) and key.value is None
+                                                              for key in qualified(kw.value, names))
+                for kw in call.keywords):
+            raise Unsupported('cannot resolve Python reduction key invocation')
         if not isinstance(target, PythonHelper):
             for index, operand in enumerate((*call.args, *(kw.value for kw in call.keywords))):
                 values = qualified(operand, names)
@@ -2951,7 +2974,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if index == 0 and target == 'builtins.next':
                     returned = set()
                     for value in generators:
-                        returned.update((yield from inspect_generator(value, names, interrupted)))
+                        returned.update((yield from inspect_generator(value, names, interrupted, partial=True)))
                     return returned | (qualified(call.args[1], names) if len(call.args) == 2 else set())
                 if target in ('builtins.min', 'builtins.max') and len(call.args) > 1:
                     raise Unsupported('cannot resolve generator comparison')
@@ -2959,7 +2982,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         'builtins.dict', 'builtins.sorted', 'builtins.sum', 'builtins.any', 'builtins.all',
                         'builtins.min', 'builtins.max', 'builtins.str.join', 'builtins.bytes.join', 'builtins.list.extend'):
                     for value in generators:
-                        yield from inspect_generator(value, names, interrupted)
+                        yield from inspect_generator(value, names, interrupted, partial=target in ('builtins.any', 'builtins.all'))
                 else:
                     raise Unsupported('cannot resolve deferred Python generator consumer')
         if target in ('builtins.list', 'builtins.tuple', 'builtins.sorted') and call.args and UNREAD_STDIN in names:
@@ -3088,7 +3111,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                            names.get(UNREAD_STDIN, {True}) == {True}, joined_children(names))
                     continue
                 members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
-                members.update(name for owner, name in fields(names) if owner in cls.lineage)
+                members.update([name for owner, name in fields(names) if owner in cls.lineage])
                 methods = {name: member(cls, name, names) for name in members}
                 tests = sorted(name for name in methods if name.startswith('test') and callable_test(methods[name]))
                 if not tests and 'runTest' in methods:
@@ -3463,11 +3486,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     inspecting_generators = set()
 
-    def inspect_generator(value, names, interrupted):
+    def inspect_generator(value, names, interrupted, *, partial=False):
         if value.scope is not scope or value in inspecting_generators:
             raise Unsupported('cannot resolve escaped Python generator')
+        if (value, 'consumed') in names:
+            raise Unsupported('cannot resolve repeated Python generator consumption')
+        if isinstance(value.node, ast.GeneratorExp) and any(value in owners for owners in names.values()):
+            names[(value, 'consumed')] = frozenset({True})
         inspecting_generators.add(value)
-        local = names.copy()
+        local = fields(names) if class_body else names.copy()
         node = value.node
         targets = {module_field(part.id) for generator in node.generators
                    for part in ast.walk(generator.target) if isinstance(part, ast.Name)}
@@ -3510,7 +3537,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         if isinstance(node, ast.DictComp):
                             yield from visit(node.value, local, interrupted)
 
-        yield from level(0)
+        for event in level(0):
+            if partial:
+                name = event[1]
+                if (name in PY_ARGV or name in PY_SHELL_TEXT or name in ('asyncio.create_subprocess_exec', 'pty.spawn')
+                        or name.startswith('(suite)') or ordering and name not in PYTHON_QUERIES):
+                    raise Unsupported('cannot establish consumed Python generator prefix')
+            else:
+                yield event
         if UNREAD_STDIN in local:
             names[UNREAD_STDIN] = local[UNREAD_STDIN]
         inspecting_generators.remove(value)
@@ -3524,12 +3558,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if any(isinstance(part, ast.NamedExpr) for part in ast.walk(value.node)):
             raise Unsupported('cannot resolve deferred Python generator mutation')
         if isinstance(node, ast.GeneratorExp):
+            if partial and (not exact or len(elements) != 1):
+                return {BoundCall(UNKNOWN_CALLABLE)}
             return frozenset().union(*(item.owners for item in elements)) or {UNKNOWN_CALLABLE}
         if not isinstance(node, ast.ListComp):
             return {UNKNOWN_CALLABLE}
         if not exact:
             elements = [ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE}))]
-        return {SequenceBinding(ast.List(), tuple(elements))}
+        return built_sequences(ast.List(), [[(elements, False, None)]])
 
     def visit_node(node, names, interrupted):
         if isinstance(node, ast.Await):
@@ -3561,10 +3597,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return
         if isinstance(node, ast.Compare):
             yield from visit(node.left, names, interrupted, allow_generator=True)
+            outcomes = []
             for operator, operand in zip(node.ops, node.comparators):
                 yield from visit(operand, names, interrupted, allow_generator=True)
                 if isinstance(operator, (ast.In, ast.NotIn)):
-                    yield from iterate(operand, names, interrupted)
+                    yield from iterate(operand, names, interrupted, partial=True)
+                if len(node.ops) > 1:
+                    outcomes.append(names.copy())
+            if outcomes:
+                names.update(join(outcomes, paths=True))
             return
         if isinstance(node, (ast.Starred, ast.YieldFrom)):
             yield from visit(node.value, names, interrupted, allow_generator=True)
@@ -3629,7 +3670,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                          class_body=True, require_command=require_command, reachable=reachable, allocations=allocations,
                                          imports=imports, source=source)
                 names.update(fields(class_namespace))
-                cls.members.update((key, values) for key, values in class_namespace.items() if isinstance(key, str))
+                cls.members.update({key: values for key, values in class_namespace.items() if isinstance(key, str)})
                 for owners in reversed(decorators):
                     if len(owners) == 1 and isinstance(patch := next(iter(owners)), PatchedProvider):
                         prefixes = names.get(('unittest.mock.patch.TEST_PREFIX', 'provider'), {ast.Constant('test')})
@@ -3763,7 +3804,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 candidates = [captured(item, names) for item in items]
             sequence = owner if isinstance(owner, SequenceBinding) else None
             if not isinstance(node, ast.While):
-                yield from iterate(node.iter, names, interrupted)
+                yield from iterate(node.iter, names, interrupted, partial=True)
             initial_length = len(elements or ())
             if sequence:
                 initial_length = max(len(state.elements or ()) for state in sequence.states(names))

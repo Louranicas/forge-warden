@@ -47,8 +47,12 @@ def check_ci_tool_pins(root, values, capabilities=None, workflows=("main", "base
         raise ValueError("unknown workflow pin comparison")
     for name in workflows:
         text, expected = selected[name]
-        pins = [tool for job in capabilities.workflow_jobs(text).values() for step in job['steps']
-                if (tool := capabilities.installed_tool(step, values)) is not None]
+        pins = []
+        for job in capabilities.workflow_jobs(text).values():
+            for step in job['steps']:
+                tool = capabilities.installed_tool(step, values)
+                if tool is not None:
+                    pins.append(tool)
         if collections.Counter(pins) != collections.Counter(expected):
             raise ValueError("CI tool pins drift from scripts/tool-versions.toml")
 
@@ -80,8 +84,8 @@ def check(root):
 # G-18. How each required local-gate tool reports its version, through the same `cargo <sub>`
 # dispatch the gate step uses, and which pin it must equal.
 LOCAL_PROBES = {
-    "cargo-deny": (["cargo", "deny", "--version"], "cargo_deny"),
-    "cargo-mutants": (["cargo", "mutants", "--version"], "cargo_mutants"),
+    "cargo-deny": ("deny", "cargo_deny"),
+    "cargo-mutants": ("mutants", "cargo_mutants"),
 }
 # Why a step may be hosted-only. A name outside this table cannot be declared hosted-only.
 HOSTED_ONLY_REASONS = {
@@ -119,9 +123,9 @@ def check_local_tools(root, env=None, timeout=15):
     values = versions(root)
     required, _ = local_gate(root)
     for name in required:
-        argv, key = LOCAL_PROBES[name]
+        subcommand, key = LOCAL_PROBES[name]
         try:
-            result = subprocess.run(argv, cwd=root, env=env, stdin=subprocess.DEVNULL,
+            result = subprocess.run(["cargo", subcommand, "--version"], cwd=root, env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=timeout, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ValueError(f"required tool unavailable: {name} (G-18)") from error

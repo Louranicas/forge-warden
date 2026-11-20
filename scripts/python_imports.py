@@ -11,12 +11,12 @@ def require_bytecode_guard(source, local_modules):
     loader_names = {'__import__', *import_ops}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            sys_names.update(a.asname or a.name for a in node.names if a.name == 'sys')
-            loader_names.update(a.asname or a.name.split('.')[0] for a in node.names
-                                if a.name.split('.')[0] in ('importlib', 'runpy'))
+            sys_names.update([a.asname or a.name for a in node.names if a.name == 'sys'])
+            loader_names.update([a.asname or a.name.split('.')[0] for a in node.names
+                                if a.name.split('.')[0] in ('importlib', 'runpy')])
         if isinstance(node, ast.ImportFrom) and ((node.module or '').startswith('importlib')
                                                or node.module == 'runpy'):
-            loader_names.update(a.asname or a.name for a in node.names)
+            loader_names.update([a.asname or a.name for a in node.names])
     hazards = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and (node.attr in import_ops or

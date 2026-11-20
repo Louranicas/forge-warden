@@ -327,7 +327,7 @@ class AgreementFixtures(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        search_path = os.pathsep.join(os.path.join(os.getcwd(), entry) for entry in os.get_exec_path())
+        search_path = os.pathsep.join([os.path.join(os.getcwd(), entry) for entry in os.get_exec_path()])
         if shutil.which("cargo", path=search_path) is None:
             raise RuntimeError("GUARDRAILS_TOOL_UNAVAILABLE: install Cargo and set PATH before running source-agreement fixtures")
         cls.cargo_env = dict(os.environ, PATH=search_path)

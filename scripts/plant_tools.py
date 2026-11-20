@@ -492,14 +492,18 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             program = word if '/' not in word else target.name
             if word in ('export', 'declare', 'typeset', 'local', 'readonly') and arguments:
                 flags = set()
+                operands = arguments
                 for arg in arguments:
                     if arg is None or lexer.unknown in arg.split('=', 1)[0]:
                         raise ValueError('cannot resolve shell function export')
-                    if arg == '--' or not arg.startswith(('-', '+')):
+                    if not arg.startswith(('-', '+')):
+                        break
+                    operands = operands[1:]
+                    if arg == '--':
                         break
                     if arg.startswith('-'):
                         flags.update(arg[1:])
-                if 'f' in flags and (word == 'export' or 'x' in flags):
+                if operands and 'f' in flags and (word == 'export' or 'x' in flags and 'p' not in flags):
                     raise ValueError('cannot resolve shell function export')
             if word == 'unset' and not external and shell[0] and arguments:
                 options = [arg for arg in arguments if arg and arg.startswith('-')]

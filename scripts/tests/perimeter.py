@@ -1899,6 +1899,18 @@ class GateImageCommands(unittest.TestCase):
                 with self.subTest(definitions=definitions), self.assertRaisesRegex(ValueError, 'PYTHONPATH'):
                     CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root)
 
+    def test_shell_function_scope_and_listings(self):
+        for listing in ('export -pf', 'declare -pfx', 'typeset -pfx', 'builtin export -fp --'):
+            with self.subTest(listing=listing):
+                self.assertIsNone(CAPS.just_consumer({'run': listing}, vars(COMMANDS), []))
+        harmless = 'restore() { true; }'
+        for nested in (f'({harmless})', f'{{ {harmless}; }} | cat', f'{{ {harmless}; }} & wait'):
+            step = {'run': f'restore() {{ export PYTHONPATH=.; }}; {nested}; unset PYTHONPATH; restore; python3 -Pc"pass"'}
+            with self.subTest(nested=nested), self.assertRaisesRegex(ValueError, 'PYTHONPATH'):
+                CAPS.just_consumer(step, vars(COMMANDS), [])
+        step = {'run': f'{harmless}; (restore() {{ export PYTHONPATH=.; }}); unset PYTHONPATH; restore; python3 -Pc"pass"'}
+        self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), []))
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1952,6 +1964,16 @@ class GateImageCommands(unittest.TestCase):
                             CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
                     else:
                         self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root))
+
+            write = "subprocess.run(['cp', 'original', 'generated'])"
+            for delay, consume in (('async def join(): child.wait()', 'asyncio.run(later)'),
+                                   ('def join():\n    child.wait()\n    yield 1', 'next(later)')):
+                source = f'import asyncio, subprocess\nchild = {spawn}\n{delay}\nlater = join()\n{write}\n{consume}'
+                with self.subTest(delay=delay), self.assertRaisesRegex(ValueError, 'deferred Python child join|modified gate script'):
+                    CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
+            source = f'import subprocess\nchild = {spawn}\n1 == 2 == child.wait()\n{write}'
+            with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
 
             joined = f"with {spawn} as child:\n    child.wait()\n    subprocess.run(['cp', 'original', 'generated'])"
             self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': 'import subprocess\n' + joined}, vars(COMMANDS), [], root))
@@ -2381,6 +2403,32 @@ class GateImageCommands(unittest.TestCase):
         source = setup + "handlers = [print]\ng = (j for i in [1] if handlers.append(run) is None for j in [])\nlist(g)"
         with self.assertRaisesRegex(COMMANDS.Unsupported, 'deferred Python generator mutation'):
             COMMANDS.python_calls(source)
+
+    def test_partial_generator_and_reduction_callbacks(self):
+        setup = "from subprocess import run\ng = (f(['just']) for f in (print, run))\n"
+        for consume in ('next(g)', 'g.__next__()', 'g.send(None)', 'all(g)', 'any(g)', 'True in g',
+                        'for item in g: break', 'g.close(); list(g)'):
+            with self.subTest(consume=consume), self.assertRaisesRegex(ValueError, 'generator (prefix|consumption)'):
+                CAPS.just_consumer({'shell': 'python', 'run': setup + consume}, vars(COMMANDS), [])
+        for reducer in ('min', 'max'):
+            for option in ('key=run', "**{'key': run}"):
+                code = f"from subprocess import run\n{reducer}((x for x in [['just']]), {option})"
+                with self.subTest(reducer=reducer, option=option), self.assertRaisesRegex(ValueError, 'reduction key'):
+                    CAPS.just_consumer({'shell': 'python', 'run': code}, vars(COMMANDS), [])
+            self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': f'{reducer}(x for x in (1, 2))'}, vars(COMMANDS), []))
+        with self.assertRaisesRegex(ValueError, 'generator consumer'):
+            COMMANDS.python_calls('unknown(x for x in (1, 2))')
+
+    def test_class_comprehension_uses_enclosing_launcher(self):
+        setup = "from subprocess import run as launch\nclass Example:\n    launch = print\n    values = "
+        for expression in ("[launch(['just']) for _ in [1]]", "{launch(['just']) for _ in [1]}",
+                           "{launch(['just']): 1 for _ in [1]}", "{1: launch(['just']) for _ in [1]}",
+                           "[1 for _ in [1] if launch(['just'])]", "[1 for _ in [1] for x in [launch(['just'])]]",
+                           "list(launch(['just']) for _ in [1])"):
+            with self.subTest(expression=expression):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + expression}, vars(COMMANDS), []), 'just')
+        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': setup + "[f(['just']) for f in (launch,)]"},
+                                             vars(COMMANDS), []))
 
     def test_python_only_inherits_unconsumed_stdin(self):
         with tempfile.TemporaryDirectory() as directory:
