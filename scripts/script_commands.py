@@ -624,8 +624,10 @@ def operand_word(state, value, raw):
     'dynamic' (a non-literal command line, named), or a RUNS marker with the file it runs."""
     if isinstance(state, tuple):
         kind = state[0]
-        if kind == 'option-argument':
-            return (state[1] if state[2] <= 1 else ('option-argument', state[1], state[2] - 1)), []
+        if kind in ('option-argument', 'bash-options'):
+            if kind == 'bash-options' and value in ('lastpipe', None):
+                raise Unsupported('cannot resolve Bash lastpipe ownership')
+            return (state[1] if state[2] <= 1 else (kind, state[1], state[2] - 1)), []
         if kind == 'file-next':
             return None, ([(state[1], value)] if value is not None else [])
         if value is None:
@@ -643,11 +645,14 @@ def operand_word(state, value, raw):
         if re.fullmatch(r'[-+][A-Za-z]+', value):
             letters = value[1:]
             count = sum(letter in 'oO' for letter in letters)  # each -o/-O takes the next word
-            if value[0] == '-' and 'c' in letters:
-                return (('option-argument', 'next', count) if count else 'next'), []
-            if value[0] == '-' and 's' in letters:
-                return 'stdin-sh', []  # the script is standard input; later words are arguments
-            return (('option-argument', state, count) if count else state), []
+            operand = state
+            if value[0] == '-':
+                if 'c' in letters:
+                    operand = 'next'
+                elif 's' in letters:
+                    operand = 'stdin-sh'
+            kind = 'bash-options' if value.startswith('-') and 'O' in letters else 'option-argument'
+            return ((kind, operand, count) if count else operand), []
         if value.startswith(('-', '+')):
             return state, []
         return None, [('(sh)', value)]
@@ -704,7 +709,7 @@ def stdin_runner(script):
     option argument pending)."""
     if isinstance(script, tuple) and script[0] == 'file-next' and script[1] in ('(sh)', '(py)'):
         return script[1]  # `bash -- < FILE`, `python3 -- < FILE`: no file came after `--`
-    base = script[1] if isinstance(script, tuple) and script[0] == 'option-argument' else script
+    base = script[1] if isinstance(script, tuple) and script[0] in ('option-argument', 'bash-options') else script
     if base in SHELLS or base == 'stdin-sh':
         return '(sh)'
     if base == 'stdin-py' or (isinstance(base, str) and PYTHONS.fullmatch(base)):
@@ -836,6 +841,12 @@ PYTHON_QUERIES = frozenset({
 })
 EnvironmentPath = namedtuple('EnvironmentPath', 'process mapping')
 DEFAULT_PYTHON_PATHS = (UNSET_PATH, '', '.', b'', b'.')
+
+
+def check_bashopts(value):
+    if value is not UNSET_PATH and (not isinstance(value, (str, bytes)) or
+            'lastpipe' in os.fsdecode(value).split(':') or '${{' in os.fsdecode(value)):
+        raise Unsupported('cannot resolve Bash lastpipe ownership')
 
 
 def check_pythonpath(value):
@@ -1181,6 +1192,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 script = None
         if expect or declaration:
             assignment = word.value if word.literal else word.raw.lstrip('"\'')
+            if assignment.startswith('BASHOPTS='):
+                check_bashopts(assignment.partition('=')[2] if word.literal else None)
             if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment) or declaration and assignment == 'PYTHONPATH':
                 if assignment == 'PYTHONPATH':
                     pythonpath = shell_value
@@ -1813,8 +1826,23 @@ class SuiteImports:
         return resolved
 
 
+def scope_nodes(body):
+    nodes = []
+    pending = list(reversed(body))
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            children = [child for field, item in ast.iter_fields(node) if field != 'body'
+                        for child in (item if isinstance(item, list) else [item]) if isinstance(child, ast.AST)]
+        else:
+            children = list(ast.iter_child_nodes(node))
+        pending.extend(reversed(children))
+    return nodes
+
+
 def generator_phases(body):
-    sites = [node for stmt in body for node in ast.walk(stmt) if isinstance(node, (ast.Yield, ast.YieldFrom))]
+    sites = [node for node in scope_nodes(body) if isinstance(node, (ast.Yield, ast.YieldFrom))]
     if len(sites) != 1 or isinstance(sites[0], ast.YieldFrom):
         raise Unsupported('cannot resolve Python context manager yield')
 
@@ -1823,7 +1851,7 @@ def generator_phases(body):
             if sites[0] not in ast.walk(stmt):
                 continue
             before, after = statements[:index], statements[index + 1:]
-            if any(isinstance(child, (ast.Return, ast.Break, ast.Continue)) for prior in before for child in ast.walk(prior)):
+            if any(isinstance(child, (ast.Return, ast.Break, ast.Continue)) for child in scope_nodes(before)):
                 raise Unsupported('cannot establish Python context manager entry')
             if isinstance(stmt, ast.Expr) and stmt.value is sites[0]:
                 return [*before, ast.copy_location(ast.Return(value=stmt.value.value), stmt)], after, []
@@ -1831,7 +1859,7 @@ def generator_phases(body):
                 start, finish, failure = split(stmt.body)
                 normal = ast.Try(body=finish, handlers=[], orelse=[], finalbody=stmt.finalbody) if finish else None
                 if any(isinstance(child, (ast.Return, ast.Break, ast.Continue))
-                       for cleanup in stmt.finalbody for child in ast.walk(cleanup)):
+                       for child in scope_nodes(stmt.finalbody)):
                     raise Unsupported('cannot resolve control transfer in generator cleanup')
                 return before + start, ([normal] if normal else stmt.finalbody) + after, failure + stmt.finalbody
             if isinstance(stmt, (ast.With, ast.AsyncWith)):
@@ -1843,6 +1871,21 @@ def generator_phases(body):
         raise Unsupported('cannot resolve conditional Python context manager yield')
 
     return split(body)
+
+
+def asyncio_main(call):
+    main = call.args[0] if len(call.args) == 1 and not isinstance(call.args[0], ast.Starred) else None
+    if call.args and main is None:
+        raise Unsupported('cannot resolve asyncio.run arguments')
+    for keyword in call.keywords:
+        if keyword.arg == 'main' and main is None:
+            main = keyword.value
+        elif (keyword.arg != 'debug' or not isinstance(keyword.value, ast.Constant)
+              or type(keyword.value.value) not in (bool, type(None))):
+            raise Unsupported('cannot resolve asyncio.run option')
+    if main is None:
+        raise Unsupported('cannot resolve asyncio.run coroutine')
+    return main
 
 
 def process_value(call, targets):
@@ -1902,28 +1945,23 @@ def loop_inputs(node, body):
 
 
 def local_bindings(body):
-    declared_globals = set()
-    yields = False
-
-    def scan(node):
-        nonlocal yields
-        if isinstance(node, (ast.Yield, ast.YieldFrom)):
-            yields = True
-        if isinstance(node, ast.Global):
-            declared_globals.update(node.names)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            yield node.name
-            return
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            yield node.id
-        if isinstance(node, ast.alias):
-            yield node.asname or node.name.partition('.')[0]
-        if isinstance(node, ast.ExceptHandler) and node.name:
-            yield node.name
-        for child in ast.iter_child_nodes(node):
-            yield from scan(child)
     if body and not hasattr(body[0], '_local_bindings'):
-        body[0]._local_bindings = {name for node in body for name in scan(node)} - declared_globals
+        declared_globals, names = set(), set()
+        yields = False
+        for node in scope_nodes(body):
+            if isinstance(node, ast.Global):
+                declared_globals.update(node.names)
+            elif isinstance(node, (ast.Yield, ast.YieldFrom)):
+                yields = True
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                names.add(node.id)
+            elif isinstance(node, ast.alias):
+                names.add(node.asname or node.name.partition('.')[0])
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+        body[0]._local_bindings = names - declared_globals
         body[0]._declared_globals = declared_globals
         body[0]._yields = yields
     return body[0]._local_bindings if body else set()
@@ -2063,7 +2101,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(receiver, PythonInstance) and receiver.owner.base == 'unittest.TestCase' and function.name == '__init__':
                 initializers = [cls.members['__init__'] for cls in receiver.owner.lineage if '__init__' in cls.members]
                 base_init = bool(initializers and initializers[-1] == {helper})
-            returns_value = any(isinstance(child, ast.Return) for statement in function.body for child in ast.walk(statement))
+            returns_value = any(isinstance(child, ast.Return) for child in scope_nodes(function.body))
             protocol_values = set() if protocol or returns_value else None
             returned = yield from python_callees(function.body if phase is None else phase, local, ordering, targets, parents, active,
                                                 require_command=strict, reachable=reachable and call is not None,
@@ -2793,6 +2831,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def write_environment(key, value, names, operation='set', native=False, *, optional=False):
         name = path_value(key, names)
+        if name == 'BASHOPTS':
+            check_bashopts(value)
         if name not in ('PYTHONPATH', None):
             return
         paths = set()
@@ -2911,13 +2951,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             raise Unsupported('cannot resolve Python sort key invocation')
                         yield from invoke(key, callback, names, wrapped=True)
 
-    def iterate(expression, names, interrupted, *, partial=False):
+    def iterate(expression, names, interrupted, *, partial=False, collect=False):
         values = qualified(expression, names)
         if len(values) > 1 and any(isinstance(value, DEFERRED) for value in values):
             raise Unsupported('cannot resolve conditional Python iterator')
         for value in values:
             if isinstance(value, DEFERRED):
-                yield from inspect_generator(value, names, interrupted, partial=partial)
+                return (yield from inspect_generator(value, names, interrupted, partial=partial, collect=collect))
         if (UNREAD_STDIN in names and not isinstance(expression, (ast.List, ast.Tuple, ast.Set, ast.Dict)) and
                 not all(isinstance(owner, (ast.Constant, SequenceBinding, *DEFERRED)) for owner in qualified(expression, names))):
             names[UNREAD_STDIN] = frozenset({False})
@@ -2953,8 +2993,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(child, ChildProcess) and child.launcher.startswith(('os.spawn', 'os.posix_spawn')):
                     names[(child, 'joined')] = frozenset({True})
                     return {UNKNOWN_CALLABLE}
-        if target == 'asyncio.run' and len(call.args) == 1 and not call.keywords:
-            values = qualified(call.args[0], names)
+        if target == 'asyncio.run':
+            values = qualified(asyncio_main(call), names)
             if len(values) == 1:
                 value, = values
                 if isinstance(value, DeferredCall):
@@ -3542,12 +3582,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     inspecting_generators = set()
 
-    def inspect_generator(value, names, interrupted, *, partial=False):
+    def inspect_generator(value, names, interrupted, *, partial=False, collect=False):
         if isinstance(value, DeferredGenerator) and value.scope is not scope or value in inspecting_generators:
             raise Unsupported('cannot resolve escaped Python generator')
         state = names.get((value, 'consumed'), ())
         if state == {'exhausted'}:
-            return set()
+            return [] if collect else set()
         if state:
             raise Unsupported('cannot resolve repeated Python generator consumption')
         if isinstance(value, DeferredCall) or isinstance(value.node, ast.GeneratorExp):
@@ -3561,7 +3601,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if not partial:
                 yield from read_helper(value.helper, names, value.call, value.receiver, strict=value.strict,
                                        interrupted=interrupted, protocol=True)
-            return {BoundCall(UNKNOWN_CALLABLE)}
+            return None if collect else {BoundCall(UNKNOWN_CALLABLE)}
         inspecting_generators.add(value)
         local = fields(names) if class_body else names.copy()
         node = value.node
@@ -3577,10 +3617,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             iterable = CapturedArgument(value.iterable) if not index else generator.iter
             if index:
                 yield from visit(iterable, local, interrupted, allow_generator=True)
-            yield from iterate(iterable, local, interrupted)
+            items = literal_elements(sequence_value(iterable, local))
+            consumed = yield from iterate(iterable, local, interrupted, collect=True)
+            if consumed is not None:
+                items = consumed
             if not isinstance(generator.target, (ast.Name, ast.Tuple, ast.List)):
                 raise Unsupported('cannot resolve Python comprehension target')
-            items = literal_elements(sequence_value(iterable, local))
             if items is None:
                 exact = False
                 items = [CapturedArgument({UNKNOWN_CALLABLE})]
@@ -3621,11 +3663,16 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if key in targets or local[key] == names.get(key):
                 continue
             owner, field = key
+            if isinstance(owner, DEFERRED) and field == 'consumed':
+                names[key] = frozenset({'partial'}) if partial else local[key]
+                continue
             if isinstance(owner, SequenceBinding) and field == 'contents' and owner.states(local) == owner.states(names):
                 continue
             raise Unsupported('cannot resolve deferred Python generator mutation')
         if any(isinstance(part, ast.NamedExpr) for part in ast.walk(value.node)):
             raise Unsupported('cannot resolve deferred Python generator mutation')
+        if collect:
+            return elements if exact else None
         if isinstance(node, ast.GeneratorExp):
             if partial and (not exact or len(elements) != 1):
                 return {BoundCall(UNKNOWN_CALLABLE)}
@@ -3634,21 +3681,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return {UNKNOWN_CALLABLE}
         if not exact:
             elements = [ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE}))]
-        return built_sequences(ast.List(), [[(elements, False, None)]])
+        if not hasattr(node, '_list_origin'):
+            node._list_origin = ast.List()
+        return built_sequences(node._list_origin, [[(elements, False, None)]])
 
     def comparison(left, op, right):
         if len(left) != 1 or len(right) != 1:
             return None
         lhs, = left
         rhs, = right
-        if isinstance(op, (ast.Is, ast.IsNot)) and isinstance(lhs, str) and isinstance(rhs, str):
-            objects = []
-            for name in (lhs, rhs):
-                module, _, attr = name.rpartition('.')
-                if module in sys.stdlib_module_names and module in sys.modules:
-                    objects.append(vars(sys.modules[module]).get(attr, MISSING_FIELD))
-            if len(objects) == 2 and all(obj is not MISSING_FIELD for obj in objects):
-                return (objects[0] is objects[1]) != isinstance(op, ast.IsNot)
         if not isinstance(lhs, ast.Constant) or not isinstance(rhs, ast.Constant):
             return None
         if isinstance(op, (ast.Is, ast.IsNot)):
@@ -3665,6 +3706,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return None
 
     def visit_node(node, names, interrupted):
+        if isinstance(node, ast.Lambda):
+            yield from visit(node.args, names, interrupted)
+            result = ast.copy_location(ast.Return(value=node.body), node.body)
+            function = ast.copy_location(ast.FunctionDef(name='<lambda>', args=node.args, body=[result],
+                                                         decorator_list=[], returns=None, type_params=[]), node)
+            results[node] = {PythonHelper(function, frames(names), None, source)}
+            return
         if isinstance(node, ast.Await):
             yield from visit(node.value, names, interrupted, allow_generator=True)
             values = qualified(node.value, names)
@@ -3919,7 +3967,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 candidates = [captured(item, names) for item in items]
             sequence = owner if isinstance(owner, SequenceBinding) else None
             if not isinstance(node, ast.While):
-                yield from iterate(node.iter, names, interrupted, partial=True)
+                drains = isinstance(node.target, ast.Name) and all(isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in node.body)
+                yielded = yield from iterate(node.iter, names, interrupted, partial=not drains, collect=drains)
+                if drains and yielded is not None:
+                    elements = yielded
             initial_length = len(elements or ())
             if sequence:
                 initial_length = max(len(state.elements or ()) for state in sequence.states(names))
@@ -4322,10 +4373,11 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             return
         if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
-        if (name == 'asyncio.run' and len(node.args) == 1 and not node.keywords
-                and targets.get(node.args[0]) and targets[node.args[0]] <= {'asyncio.create_subprocess_exec', 'asyncio.create_subprocess_shell',
-                                                        'asyncio.subprocess.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_shell'}):
-            return
+        if name == 'asyncio.run':
+            coroutine = targets.get(asyncio_main(node))
+            if coroutine and coroutine <= {'asyncio.create_subprocess_exec', 'asyncio.create_subprocess_shell',
+                                           'asyncio.subprocess.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_shell'}:
+                return
         if name not in PY_SHELL_TEXT and name not in PY_ARGV and name not in ('pty.spawn', 'asyncio.create_subprocess_exec'):
             if AUDIT_CHECKOUT.get() is not None:
                 if name in ('builtins.open', 'io.open'):
@@ -4483,6 +4535,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             for key, value in zip(environment.keys, environment.values):
                 if not isinstance(key, ast.Constant):
                     child_path = None
+                elif key.value in ('BASHOPTS', b'BASHOPTS'):
+                    check_bashopts(value.value if isinstance(value, ast.Constant) else None)
                 elif key.value in ('PYTHONPATH', b'PYTHONPATH'):
                     child_path = value.value if isinstance(value, ast.Constant) else None
         elif environment is not None and not (isinstance(environment, ast.Constant) and environment.value is None):

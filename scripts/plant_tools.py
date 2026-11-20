@@ -16,21 +16,22 @@ import tomllib
 
 sys.dont_write_bytecode = True
 
-PROBES = {
-    'bash': ['bash', '--version'],
-    'cargo': ['cargo', '--version'],
-    'cargo-clippy': ['cargo', 'clippy', '--version'],
-    'cargo-mutants': ['cargo', 'mutants', '--version'],
-    'coreutils': ['env', '--version'],
-    'git': ['git', '--version'],
-    'just': ['just', '--version'],
-    'python3': ['python3', '--version'],
-    'rustc': ['rustc', '--version'],
-    'rustup': ['rustup', '--version'],
-    'sh': ['sh', '-c', 'exit 0'],
+PROBES = (
+    ('bash', ('bash', '--version')),
+    ('cargo', ('cargo', '--version')),
+    ('cargo-clippy', ('cargo', 'clippy', '--version')),
+    ('cargo-mutants', ('cargo', 'mutants', '--version')),
+    ('coreutils', ('env', '--version')),
+    ('git', ('git', '--version')),
+    ('just', ('just', '--version')),
+    ('python3', ('python3', '-I', '--version')),
+    ('rustc', ('rustc', '--version')),
+    ('rustup', ('rustup', '--version')),
+    ('sh', ('sh', '-c', 'exit 0')),
     # ssh-keygen has no portable --version; an option parse is not an availability proof.
-    'ssh-keygen': ['ssh-keygen', '-Y', 'find-principals', '-f', '/dev/null', '-s', '/dev/null'],
-}
+    ('ssh-keygen', ('ssh-keygen', '-Y', 'find-principals', '-f', '/dev/null', '-s', '/dev/null')),
+)
+PROBE_NAMES = {name for name, _ in PROBES}
 HOSTED = {'bash', 'coreutils', 'git', 'python3', 'sh', 'ssh-keygen'}
 JUST_CONSUMERS = {
     'scripts/tests/dogfood.sh',
@@ -86,7 +87,7 @@ def requirements(cases):
     for case in cases:
         names = case.get('required_tools')
         if (not isinstance(names, list) or not names or any(not isinstance(n, str) for n in names)
-                or len(names) != len(set(names)) or set(names) - PROBES.keys()):
+                or len(names) != len(set(names)) or set(names) - PROBE_NAMES):
             raise ValueError('invalid required_tools for plant ' + str(case.get('id')))
         if 'cargo' in case and 'cargo' not in names:
             raise ValueError('cargo recipe omits cargo: ' + case['id'])
@@ -102,11 +103,14 @@ def requirements(cases):
 
 def preflight(required, root, env):
     versions = tomllib.loads((root / 'scripts/tool-versions.toml').read_text())
-    for name in sorted(required):
-        if name not in PROBES:
-            raise ValueError('plant preflight: unknown tool ' + name)
+    unknown = set(required) - PROBE_NAMES
+    if unknown:
+        raise ValueError('plant preflight: unknown tool ' + min(unknown))
+    for name, argv in PROBES:
+        if name not in required:
+            continue
         try:
-            result = subprocess.run(PROBES[name], cwd=root, env=env, stdin=subprocess.DEVNULL,
+            result = subprocess.run(argv, cwd=root, env=env, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, timeout=15, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ValueError('plant preflight: unavailable tool ' + name) from error
@@ -190,7 +194,7 @@ def check_timeouts(root):
         job = None
         in_jobs = False
         fields = set()
-        for line in workflow_lines(text):
+        for line in list(workflow_lines(text)):
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
             if "\t" in line[:len(line) - len(line.lstrip())]:
@@ -377,9 +381,12 @@ def check_checkout_write(path, reads, workspace):
 
 def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None, pending_reads=None):
     lexer = commands['WorkflowLexer']
-    pythonpath = commands['UNSET_PATH']
+    pythonpath = bashopts = commands['UNSET_PATH']
     for environment in (*inherited_env, step.get('env', {})):
         pythonpath = environment.get('PYTHONPATH', pythonpath) if isinstance(environment, dict) else None
+        if isinstance(environment, dict):
+            bashopts = environment.get('BASHOPTS', bashopts)
+    commands['check_bashopts'](bashopts)
     directory = step.get('working-directory', '.')
     if not isinstance(directory, str):
         raise ValueError('cannot resolve gate working-directory before Just installation')
@@ -487,6 +494,12 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 if consumer:
                     return consumer
                 continue
+            if word == 'shopt':
+                args = arguments or ()
+                unknown = arguments is None or any(arg is None or lexer.unknown in arg for arg in args)
+                enables = any(arg and arg.startswith('-') and 's' in arg for arg in args)
+                if unknown or enables and 'lastpipe' in args:
+                    raise ValueError('cannot resolve Bash lastpipe ownership')
             if target.name == 'just':
                 return 'just'
             program = word if '/' not in word else target.name

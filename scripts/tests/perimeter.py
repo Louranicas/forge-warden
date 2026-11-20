@@ -1926,6 +1926,19 @@ class GateImageCommands(unittest.TestCase):
                 with self.subTest(child=child):
                     self.assertEqual(CAPS.just_consumer({'run': script}, vars(COMMANDS), [], root), 'just')
 
+    def test_lastpipe_requires_known_stage_ownership(self):
+        for pipe in ('|', '|&'):
+            for stage in ('export PYTHONPATH=.', 'redefine', 'wait'):
+                for setup in ('shopt -s lastpipe', 'builtin shopt -s lastpipe'):
+                    step = {'run': f'redefine() {{ task() {{ true; }}; }}; {setup}; true {pipe} {stage}'}
+                    with self.subTest(step=step), self.assertRaisesRegex(ValueError, 'lastpipe'):
+                        CAPS.just_consumer(step, vars(COMMANDS), [])
+        for step in ({'run': "bash -O lastpipe -c 'true | wait'"}, {'run': 'true | wait', 'env': {'BASHOPTS': 'lastpipe'}},
+                     {'run': "env BASHOPTS=lastpipe bash -c 'true | wait'"}):
+            with self.subTest(step=step), self.assertRaisesRegex(ValueError, 'lastpipe'):
+                CAPS.just_consumer(step, vars(COMMANDS), [])
+        self.assertIsNone(CAPS.just_consumer({'run': 'shopt -u lastpipe; true | wait'}, vars(COMMANDS), []))
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2419,6 +2432,55 @@ class GateImageCommands(unittest.TestCase):
                     self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': prefix + body}, vars(COMMANDS), []), expected)
                     commands = [word for _, word, _ in COMMANDS.python_calls(prefix + body)]
                     self.assertEqual('just' in commands, expected == 'just')
+
+    def test_nested_yields_belong_to_their_function(self):
+        for nested in ('unused = lambda: (yield 1)', 'def unused(): yield 1',
+                       'class Nested:\n        def unused(self): yield 1'):
+            source = f"from subprocess import run\ndef setup():\n    {nested}\n    run(['just'])\nsetup()"
+            with self.subTest(nested=nested):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
+            source = ("from subprocess import run\nfrom contextlib import contextmanager\n@contextmanager\n"
+                      f"def manager():\n    {nested}\n    yield\n    run(['just'])\nwith manager(): pass")
+            with self.subTest(manager=nested):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
+
+    def test_asyncio_run_binds_main_with_debug(self):
+        setup = "import asyncio, subprocess\nasync def task(): subprocess.run(['just'])\n"
+        for args in ('task(), debug=True', 'main=task(), debug=False', 'debug=None, main=task()',
+                     "asyncio.create_subprocess_exec('just'), debug=True", "main=asyncio.create_subprocess_shell('just'), debug=False"):
+            with self.subTest(args=args):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + 'asyncio.run(' + args + ')'},
+                                                     vars(COMMANDS), []), 'just')
+        for option in ('debug=external', 'loop_factory=external'):
+            with self.subTest(option=option), self.assertRaisesRegex(ValueError, 'asyncio.run option'):
+                COMMANDS.python_calls(setup + 'asyncio.run(task(), ' + option + ')')
+
+    def test_comprehensions_bind_fresh_iterator_elements(self):
+        setup = "from subprocess import run\ng = (f for f in (print, run))\n"
+        for expression in ("[f(['just']) for f in g]", "{f(['just']) for f in g}",
+                           "{x: f(['just']) for x in (1,) for f in g}", "list(f(['just']) for f in g)",
+                           "[f for f in g][1](['just'])"):
+            with self.subTest(expression=expression):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + expression}, vars(COMMANDS), []), 'just')
+        code = setup + "first = [f for f in g]\n[f(['just']) for f in g]"
+        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': code}, vars(COMMANDS), []))
+
+    def test_generator_loop_distinguishes_exhaustion_from_break(self):
+        setup = "from subprocess import run\ndef reader():\n    yield 1\n    run(['just'])\n"
+        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + 'for x in reader(): pass'},
+                                             vars(COMMANDS), []), 'just')
+        with self.assertRaisesRegex(ValueError, 'generator prefix'):
+            CAPS.just_consumer({'shell': 'python', 'run': setup + 'for x in reader(): break'}, vars(COMMANDS), [])
+
+    def test_stream_identity_uses_audited_context(self):
+        for target, stream in (('stdout', 'stderr'), ('stderr', 'stdout')):
+            prefix = f'import contextlib, subprocess, sys\nwith contextlib.redirect_{target}(sys.{stream}):\n    '
+            for test in ("sys.stdout is sys.stderr and CALL", "sys.stdout is not sys.stderr or CALL",
+                         "if sys.stdout is sys.stderr: CALL", "CALL if sys.stdout is sys.stderr else None",
+                         "sys.stdout is sys.stderr is CALL"):
+                source = prefix + test.replace('CALL', "subprocess.run(['just'])")
+                with self.subTest(target=target, test=test):
+                    self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
 
     def test_short_circuit_preserves_reachable_commands(self):
         for condition, expected in (('False and CALL', None), ('True or CALL', None), ('1 == 2 == CALL', None),
