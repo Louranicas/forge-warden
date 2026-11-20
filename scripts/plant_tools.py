@@ -369,7 +369,13 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
 READ_ONLY_PROGRAMS = {'wc', 'head', 'tail', 'cut', 'tr', 'basename', 'dirname', 'readlink', 'stat'}
 
 
-def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None):
+def check_checkout_write(path, reads, workspace):
+    for read in reads:
+        if path is None or read.is_relative_to(path):
+            raise ValueError('cannot resolve modified gate script ' + str(read.relative_to(workspace)))
+
+
+def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None, pending_reads=None):
     lexer = commands['WorkflowLexer']
     pythonpath = commands['UNSET_PATH']
     for environment in (*inherited_env, step.get('env', {})):
@@ -393,12 +399,14 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
     files = None
     writes = set() if checkout_writes is None else checkout_writes
 
+    if pending_reads is None:
+        pending_reads = set()
     read_scopes = []
     deferred_reads = {}
-    functions = {}
+    invocations = 0
 
     def require_original(path):
-        for _, reads in read_scopes:
+        for reads in read_scopes:
             reads.add(path)
         if None in writes or any(path.is_relative_to(changed) for changed in writes):
             raise ValueError('cannot resolve modified gate script ' + str(path.relative_to(lexer.workspace)))
@@ -412,30 +420,40 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             if (None in writes or any(path.is_relative_to(changed) for changed in writes)
                     or file.resolve() != file or file.is_file() and file.stat().st_nlink > 1):
                 path = None
-        for reads in (*deferred_reads.values(), *(reads for kind, reads in read_scopes if not kind.startswith('function:'))):
-            for read in reads:
-                if path is None or read.is_relative_to(path):
-                    raise ValueError('cannot resolve modified gate script ' + str(read.relative_to(lexer.workspace)))
+        for reads in (pending_reads, *deferred_reads.values(), *read_scopes):
+            check_checkout_write(path, reads, lexer.workspace)
         writes.add(path)
 
-    def inspect(calls, active):
-        nonlocal files
+    def inspect(calls, active, shell=None, conditional=False):
+        nonlocal files, invocations
+        owns_shell = shell is None
+        if owns_shell:
+            shell = {}, object()
+        frames = []
         for _, word, external, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
+            if isinstance(word, commands['ShellDefinition']):
+                shell[0][word] = None if conditional else word
+                continue
             if isinstance(word, commands['CheckoutScope']):
                 if word == 'wait':
-                    if 'wait' in functions:
-                        continue
-                    deferred_reads.pop(('background', word.shell), None)
+                    if not conditional and 'wait' not in shell[0]:
+                        deferred_reads.pop(('background', shell[1]), None)
                 elif word == 'end':
-                    if not read_scopes:
-                        raise ValueError('cannot resolve shell checkout read scope')
-                    kind, reads = read_scopes.pop()
-                    if kind.startswith('function:'):
-                        functions.setdefault(kind.removeprefix('function:'), set()).update(reads)
-                    elif kind in ('trap', 'background'):
-                        deferred_reads.setdefault((kind, kind.shell), set()).update(reads)
+                    finished = shell
+                    kind, shell, conditional = frames.pop()
+                    if finished is not shell:
+                        deferred_reads.pop(('trap', finished[1]), None)
+                    if kind in ('begin', 'trap', 'background', 'pending-child'):
+                        reads = read_scopes.pop()
+                        if kind != 'begin':
+                            deferred_reads.setdefault((kind, shell[1]), set()).update(reads)
                 else:
-                    read_scopes.append((word, set()))
+                    frames.append((word, shell, conditional))
+                    if word in ('begin', 'trap', 'background', 'pending-child'):
+                        read_scopes.append(set())
+                    if word in ('child', 'pending-child', 'background', 'subshell'):
+                        shell = ({} if word in ('child', 'pending-child') else shell[0].copy()), object()
+                    conditional |= word in ('conditional', 'begin', 'trap')
                 continue
             if word.startswith('()'):
                 continue
@@ -452,14 +470,29 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 continue
             marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
             target = Path(word.removeprefix(marker))
+            if not external and not marker and word in shell[0]:
+                definition = shell[0][word]
+                invocation = ('function', word)
+                invocations += 1
+                if definition is None or invocation in active or len(active) >= 12 or invocations > 128:
+                    raise ValueError('cannot resolve conditional or recursive gate function ' + word)
+                consumer = inspect(definition.calls(word, lexer, cwd), (*active, invocation), shell, conditional)
+                if consumer:
+                    return consumer
+                continue
             if target.name == 'just':
                 return 'just'
             program = word if '/' not in word else target.name
-            if not external and not marker and word in functions:
-                for read in functions[word]:
-                    require_original(read)
-                record_write(None)
-                continue
+            if word == 'unset' and not external and shell[0] and arguments:
+                options = [arg for arg in arguments if arg and arg.startswith('-')]
+                if not any('v' in flag for flag in options):
+                    unknown = any(arg is None or lexer.unknown in arg for arg in arguments)
+                    for name in list(shell[0]):
+                        if unknown or name in arguments:
+                            if conditional or unknown or '-f' not in options:
+                                shell[0][name] = None
+                            else:
+                                del shell[0][name]
             if not marker and ('/' not in word or word.startswith(commands['STANDARD_BIN'])):
                 if program in ('cp', 'mv') and arguments and len(arguments) >= 2 and all(
                         arg and Path(arg).is_absolute() for arg in arguments):
@@ -532,9 +565,12 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             else:
                 nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path,
                                                  shell_state=getattr(word, 'shell_state', None), stdin=stdin)
-            consumer = inspect(nested, (*active, path))
+            consumer = inspect(nested, (*active, path), shell if marker == '(src)' else None, conditional)
             if consumer:
                 return consumer
+
+        if owns_shell:
+            deferred_reads.pop(('trap', shell[1]), None)
 
     source = commands['IMPORT_SOURCE']
     token = source.set((root, directory, None, JUST_TESTS))
@@ -546,7 +582,11 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                        'runner_environment': all(isinstance(env, dict) and 'GITHUB_ENV' not in env
                                                  for env in (*inherited_env, step.get('env', {})))})
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
-        return inspect(calls, ())
+        consumer = inspect(calls, ())
+        for (kind, _), reads in deferred_reads.items():
+            if kind in ('background', 'pending-child'):
+                pending_reads.update(reads)
+        return consumer
     finally:
         audit.reset(audit_token)
         source.reset(token)
@@ -616,12 +656,13 @@ def check_ci(root):
     commands = runpy.run_path(str(Path(__file__).with_name('script_commands.py')))
     runner_env = {}
     checkout_writes = set()
+    pending_reads = set()
     inherited = workflow.get('env', {}), gate.get('env', {}), runner_env
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
             step_writes = checkout_writes.copy()
-            consumer = just_consumer(step, commands, cases, root, inherited, step_writes)
+            consumer = just_consumer(step, commands, cases, root, inherited, step_writes, pending_reads)
             if consumer:
                 raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
@@ -654,8 +695,10 @@ def check_ci(root):
                     target = commands['WorkflowLexer'].workspace / path
                     if (root / path).resolve() == root / path and not any(
                             changed is None or target.is_relative_to(changed) for changed in checkout_writes):
+                        check_checkout_write(target, pending_reads, commands['WorkflowLexer'].workspace)
                         checkout_writes.add(target)
                         continue
+            check_checkout_write(None, pending_reads, commands['WorkflowLexer'].workspace)
             checkout_writes.add(None)
             runner_env['PYTHONPATH'] = None
     if required - available:

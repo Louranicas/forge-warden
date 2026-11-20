@@ -1796,6 +1796,12 @@ class GateImageCommands(unittest.TestCase):
             for target in ('"$GITHUB_ENV"', '"${GITHUB_ENV}"'):
                 run = 'printf just >> ' + target + '; bash generated'
                 self.assertIsNone(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root))
+                for operator in ('>', '>>'):
+                    sequence = f"echo A=one {operator} {target}\nprintf '%s\\n' B=two {operator} {target}\nbash generated"
+                    self.assertIsNone(CAPS.just_consumer({'run': sequence}, vars(COMMANDS), [], root))
+                    changed = sequence.replace("printf", "GITHUB_ENV=generated; printf")
+                    with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                        CAPS.just_consumer({'run': changed}, vars(COMMANDS), [], root)
                 for step in ({'run': 'GITHUB_ENV=generated; ' + run}, {'run': run, 'env': {'GITHUB_ENV': 'generated'}}):
                     with self.subTest(step=step), self.assertRaisesRegex(ValueError, 'modified gate script'):
                         CAPS.just_consumer(step, vars(COMMANDS), [], root)
@@ -1848,6 +1854,76 @@ class GateImageCommands(unittest.TestCase):
                         "python3 -c 'import os; os.getcwd()'; bash generated"):
                 with self.subTest(run=run):
                     self.assertIsNone(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root))
+
+    def test_shell_function_effects_follow_invocation_and_shell_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'generated').write_text('true')
+            (root / 'original').write_text('just')
+            (root / 'lib').write_text('reader() { bash generated; }')
+            for setup in ('reader() { bash generated; }', '. ./lib'):
+                for body, refused in (('reader; reader', False), ('cp original generated; reader', True)):
+                    script = setup + '; ' + body
+                    for step in ({'run': script}, {'run': 'bash -c ' + shlex.quote(script)},
+                                 {'shell': 'python', 'run': f"import subprocess\nsubprocess.run(['bash', '-c', {script!r}])"}):
+                        with self.subTest(step=step):
+                            if refused:
+                                with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                                    CAPS.just_consumer(step, vars(COMMANDS), [], root)
+                            else:
+                                self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+            for definition in ('change() { cp original generated; }', 'change() { just; }'):
+                self.assertIsNone(CAPS.just_consumer({'run': definition + '; bash generated'}, vars(COMMANDS), [], root))
+            with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                CAPS.just_consumer({'run': 'change() { cp original generated; }; change; bash generated'}, vars(COMMANDS), [], root)
+            self.assertEqual(CAPS.just_consumer({'run': 'use() { just; }; use'}, vars(COMMANDS), [], root), 'just')
+            self.assertEqual(CAPS.just_consumer({'run': 'just() { true; }; unset -f just; just'}, vars(COMMANDS), [], root), 'just')
+
+    def test_wait_releases_only_jobs_of_the_executing_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'generated').write_text('true')
+            (root / 'jobs').write_text('bash generated &')
+            (root / 'join').write_text('wait')
+            for run, refused in (('{ bash generated & }; wait', False), ('bash generated & { wait; }', False),
+                                 ('reader() { :; }; bash generated & wait', False), ('. ./jobs; wait', False),
+                                 ('bash generated & . ./join', False), ('(bash generated &); wait', True),
+                                 ('bash generated & (wait)', True), ('bash generated & false && . ./join', True),
+                                 ('bash generated & wait | cat', True), ('bash generated & bash join', True)):
+                step = {'run': run + '; cp original generated'}
+                with self.subTest(run=run):
+                    if refused:
+                        with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                            CAPS.just_consumer(step, vars(COMMANDS), [], root)
+                    else:
+                        self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+
+    def test_pending_python_child_checkout_reads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'generated').write_text('true')
+            (root / 'original').write_text('just')
+            for launch, pending in (("subprocess.Popen(['bash', 'generated'])", True), ("os.popen('bash generated')", True),
+                                    ("asyncio.run(asyncio.create_subprocess_exec('bash', 'generated'))", True),
+                                    ("asyncio.run(asyncio.create_subprocess_shell('bash generated'))", True),
+                                    ("os.posix_spawnp('bash', ['bash', 'generated'], {})", True),
+                                    ("os.spawnlp(os.P_NOWAIT, 'bash', 'bash', 'generated')", True),
+                                    ("os.spawnvp(os.P_WAIT, 'bash', ['bash', 'generated'])", False),
+                                    ("subprocess.run(['bash', 'generated'])", False)):
+                source = f"import asyncio, os, subprocess\n{launch}\nsubprocess.run(['cp', 'original', 'generated'])"
+                with self.subTest(launch=launch):
+                    if pending:
+                        with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                            CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
+                    else:
+                        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root))
+
+            reads = set()
+            child = {'shell': 'python', 'run': "import subprocess\nsubprocess.Popen(['bash', 'generated'])"}
+            self.assertIsNone(CAPS.just_consumer(child, vars(COMMANDS), [], root, pending_reads=reads))
+            self.assertIsNone(CAPS.just_consumer({'run': 'cp original other'}, vars(COMMANDS), [], root, pending_reads=reads))
+            with self.assertRaisesRegex(ValueError, 'modified gate script'):
+                CAPS.just_consumer({'run': 'cp original generated'}, vars(COMMANDS), [], root, pending_reads=reads)
 
     def test_sourced_state_precedes_python_lookup(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2235,6 +2311,24 @@ class GateImageCommands(unittest.TestCase):
                 issues = self.problems(files, executables=('reader.sh',))
                 self.assertTrue(any('calls `cmp`' in issue for issue in issues), issues)
                 self.assertFalse(any('not read' in issue for issue in issues), issues)
+
+    def test_generator_construction_preserves_launcher_bindings(self):
+        prefix = 'from subprocess import run\nhandlers = [run]\n'
+        launch = "\nfor handler in handlers: handler(['just'])"
+        for expression in ('(handlers.clear() for i in [1])', '(i for i in [1] if handlers.clear())',
+                           '(j for i in [1] for j in handlers.pop())', '(i for handlers[0] in [print])'):
+            source = prefix + 'later = ' + expression + launch
+            with self.subTest(expression=expression):
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
+                self.assertIn('just', [word for _, word, _ in COMMANDS.python_calls(source)])
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'deferred Python generator mutation'):
+            COMMANDS.python_calls(prefix + 'later = (handlers.clear() for i in [1])\nnext(later)' + launch)
+        source = prefix + 'later = (i for i in [handlers.clear()])' + launch
+        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []))
+
+        source = "import struct, subprocess\npairs = ((1, 7), (2, 5))\n"
+        source += "b''.join(struct.pack('<BB', tag, mode) for tag, mode in pairs)\nsubprocess.run(['true'])"
+        self.assertIn('true', [word for _, word, _ in COMMANDS.python_calls(source)])
 
     def test_python_only_inherits_unconsumed_stdin(self):
         with tempfile.TemporaryDirectory() as directory:
