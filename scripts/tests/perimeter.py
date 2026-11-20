@@ -1489,6 +1489,10 @@ class GateImageCommands(unittest.TestCase):
     def test_literal_loop_targets_and_duplicate_keys(self):
         for loop, expected in (
             ("for launch in (print, run): launch(['just'])", [['just']]),
+            ("launchers = (print, run)\nfor launch in launchers: launch(['just'])", [['just']]),
+            ("launchers = [('just', (run,))]\nitems = launchers\nrun = print\n"
+             "for label, [launch] in items: launch([label])", [['just']]),
+            ("items = [print, run]\nfirst, *rest = items\nfor launch in rest: launch(['just'])", [['just']]),
             ("for launch in {print, run}: launch(['just'])", [['just']]),
             ("for [label, (launch,)] in [('just', (run,))]: launch([label])", [['just']]),
             ("for i in {'setup', 'setup'}:\n    launch(['just'])\n    launch = run", []),
@@ -1502,7 +1506,7 @@ class GateImageCommands(unittest.TestCase):
                 tracked = source.replace("'just'", "'cmp'")
                 found = self.problems({'t.py': tracked, 'nested.sh': 'python3 -c ' + shlex.quote(tracked)})
                 self.assertEqual(sum('calls `cmp`' in issue for issue in found), 2 if expected else 0, found)
-        source = "for launch in [unknown()]: launch(['just'])"
+        source = "launchers = [unknown()]\nfor launch in launchers: launch(['just'])"
         with self.assertRaisesRegex(ValueError, 'cannot resolve'):
             CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
         self.assertIn('cannot resolve', self.problems({'t.py': source})[0])
@@ -1546,6 +1550,79 @@ class GateImageCommands(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cannot resolve'):
             CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
         self.assertIn('cannot resolve', self.problems({'t.py': source})[0])
+
+    def test_discovery_resolves_imported_suite_bindings(self):
+        for path, cls in (('.claude/hooks/test_guard.py', 'Guard'), ('scripts/tests/managed_review_bundle.py', 'ReviewBundle')):
+            fixture = Path(path)
+            source = f'from {fixture.stem} import {cls} as Alias\nimport unittest\nunittest.main()'
+            for step in ({'shell': 'python', 'run': source}, {'run': 'python3 -c ' + shlex.quote(source)}):
+                with self.subTest(path=path, step=step):
+                    self.assertEqual(CAPS.just_consumer(dict(step, **{'working-directory': str(fixture.parent)}),
+                                                        vars(COMMANDS), []), path)
+        suite = "from unittest import TestCase\nfrom subprocess import run\nclass Case(TestCase):\n    def test_command(self): run(['cmp'])"
+        source = "from exposed import Case as Alias\nimport unittest\nunittest.main()"
+        found = self.problems({'support.py': suite, 'exposed.py': 'from support import Case',
+                               'entry.py': source, 'embedded.sh': 'python3 -c ' + shlex.quote(source)})
+        self.assertCountEqual([problem.partition(':')[0] for problem in found if 'calls `cmp`' in problem],
+                              ['entry.py', 'embedded.sh'])
+        for other in ('from absent import Case', 'from exposed import Case'):
+            refused = self.problems({'entry.py': source, 'exposed.py': other})
+            self.assertTrue(any('cannot resolve' in issue for issue in refused), refused)
+
+    def test_generator_managers_suspend_around_the_body(self):
+        for prefix, decorator, keyword in (('', 'contextmanager', 'with'), ('async ', 'asynccontextmanager', 'async with')):
+            for transfer in ('return', 'raise ValueError'):
+                source = (f"import asyncio\nfrom contextlib import {decorator}, suppress\nfrom subprocess import run\n"
+                          "class State: pass\nstate = State()\nstate.launch = print\n"
+                          f"@{decorator}\n{prefix}def manager(launch):\n    state.launch = launch\n"
+                          "    try:\n        yield launch\n    finally:\n        launch(['diff'])\n        state.launch = print\n"
+                          f"{prefix}def check():\n    {keyword} manager(run) as invoke:\n"
+                          f"        state.launch(['cmp'])\n        invoke(['xxd'])\n        {transfer}\n"
+                          "with suppress(ValueError): " + ("asyncio.run(check())" if prefix else "check()")
+                          + "\nstate.launch(['late'])")
+                with self.subTest(decorator=decorator, transfer=transfer):
+                    self.assertEqual(self.recorded_commands(source), [['cmp'], ['xxd'], ['diff']])
+                    for command in ('cmp', 'xxd', 'diff'):
+                        script = source.replace(repr(command), "'just'")
+                        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': script}, vars(COMMANDS), []), 'just')
+                    found = self.problems({'suite.py': source})
+                    for command in ('cmp', 'xxd', 'diff'):
+                        self.assertTrue(any(f'calls `{command}`' in issue for issue in found), found)
+        source = textwrap.dedent("""\
+            from contextlib import contextmanager
+            from subprocess import run
+            class State:
+                @contextmanager
+                def active(self):
+                    self.launch = run
+                    yield self.launch
+                    self.launch = print
+            state = State()
+            with state.active() as launch:
+                launch(['cmp'])
+            state.launch(['just'])
+            """)
+        self.assertEqual(self.recorded_commands(source), [['cmp']])
+        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []))
+        found = self.problems({'suite.py': source})
+        self.assertEqual(len(found), 1, found)
+        self.assertIn('calls `cmp`', found[0])
+        for body in ('pass', 'yield 1\n    yield 2', 'if flag: yield 1'):
+            source = f'from contextlib import contextmanager\n@contextmanager\ndef manager():\n    {body}\nwith manager(): pass'
+            with self.assertRaisesRegex(ValueError, 'yield'):
+                CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [])
+
+    def test_standard_contexts_preserve_process_classification(self):
+        prefix = "from contextlib import redirect_stdout, redirect_stderr, closing\nfrom io import StringIO\nfrom subprocess import Popen\n"
+        for statement, expected in (("with Popen(['git', '--version']) as child: child.wait()", None),
+                                    ("with Popen(['just']) as child: child.wait()", 'just'),
+                                    ("with closing(StringIO()) as out, redirect_stdout(out), redirect_stderr(out): print('just')", None)):
+            source = prefix + statement
+            self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), expected)
+        source = prefix + "class Item:\n    def close(self): Popen(['just'])\nwith closing(Item()): pass"
+        with self.assertRaisesRegex(ValueError, 'context manager'):
+            CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [])
+        self.assertIn('context manager', self.problems({'close.py': source})[0])
 
     def test_expansion_at_positional_cwd_is_refused(self):
         source = ("from subprocess import run\nrun(['bash', 'dogfood.sh'], -1, None, None, None, None, "

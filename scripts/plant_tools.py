@@ -359,7 +359,7 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
     return None
 
 
-def just_consumer(step, commands, cases):
+def just_consumer(step, commands, cases, root=None):
     lexer = commands['WorkflowLexer']
     directory = step.get('working-directory', '.')
     if not isinstance(directory, str):
@@ -376,7 +376,13 @@ def just_consumer(step, commands, cases):
         reader = commands['python_calls']
     else:
         raise ValueError('unsupported gate shell before Just installation')
-    for _, word, _, arguments, cwd in reader(run, lexer=lexer, directory=directory):
+    source = commands['IMPORT_SOURCE']
+    token = source.set((root or lexer.workspace, directory, None, JUST_TESTS))
+    try:
+        calls = reader(run, lexer=lexer, directory=directory)
+    finally:
+        source.reset(token)
+    for _, word, _, arguments, cwd in calls:
         marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
         if word.startswith('(module)'):
             module = word.removeprefix('(module)')
@@ -438,7 +444,7 @@ def check_ci(root):
     for step in steps[:entry]:
         run = step.get('run', '')
         if 'just' not in available:
-            consumer = just_consumer(step, commands, cases)
+            consumer = just_consumer(step, commands, cases, root)
             if consumer:
                 raise ValueError('gate must install Just before running ' + consumer)
         if 'rustup toolchain install' in run and '--component' in run:
