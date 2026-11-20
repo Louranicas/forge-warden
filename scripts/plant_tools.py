@@ -380,10 +380,20 @@ def check_checkout_write(path, reads, workspace):
 
 
 class GateShell:
-    def __init__(self, lastpipe, interpreter, functions=None):
-        self.lastpipe = lastpipe
+    def __init__(self, options, interpreter, functions=None):
+        self.lastpipe, self.exported = options
         self.interpreter = interpreter
         self.functions = {} if functions is None else functions
+
+    def child_options(self, word):
+        startup = getattr(word, 'lastpipe', None)
+        enabled, exported = self.lastpipe and self.exported, self.exported
+        if startup is not None:
+            if startup.environment is not None:
+                enabled, exported = startup.environment
+            if startup.option is not None:
+                enabled = startup.option
+        return enabled, exported
 
 
 def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None, pending_reads=None):
@@ -438,11 +448,11 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             check_checkout_write(path, reads, lexer.workspace)
         writes.add(path)
 
-    def inspect(calls, active, shell=None, conditional=False, joined=frozenset(), lastpipe=False, interpreter=None):
+    def inspect(calls, active, shell=None, conditional=False, joined=frozenset(), options=(False, False), interpreter=None):
         nonlocal files, invocations
         owns_shell = shell is None
         if owns_shell:
-            shell = GateShell(lastpipe, interpreter)
+            shell = GateShell(options, interpreter)
         frames = []
         for _, word, external, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
             if isinstance(word, commands['ShellDefinition']):
@@ -451,7 +461,9 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             if isinstance(word, commands['CheckoutScope']):
                 if word == 'bashopts-assignment':
                     if shell.interpreter in ('sh', 'dash', None):
-                        shell.lastpipe = True
+                        shell.lastpipe = word.enabled or (conditional or shell.interpreter != 'dash') and shell.lastpipe
+                        if word.autoexport:
+                            shell.exported = True
                 elif word == 'joined-child':
                     deferred_reads.pop(('pending-child', word.owner), None)
                 elif word == 'wait':
@@ -475,12 +487,10 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         read_scopes.append(set())
                     if word == 'pipeline-stage' and shell.interpreter != 'dash' and shell.lastpipe:
                         raise ValueError('cannot resolve Bash lastpipe ownership')
-                    if word in ('child', 'pending-child', 'background', 'process-substitution', 'subshell', 'pipeline-stage'):
-                        override = getattr(word, 'lastpipe', None)
-                        child = word in ('child', 'pending-child')
-                        shell = GateShell(shell.lastpipe if override is None else override,
-                                          getattr(word, 'interpreter', None) if child else shell.interpreter,
-                                          None if child else shell.functions.copy())
+                    if word in ('child', 'pending-child'):
+                        shell = GateShell(shell.child_options(word), getattr(word, 'interpreter', None))
+                    elif word in ('background', 'process-substitution', 'subshell', 'pipeline-stage'):
+                        shell = GateShell((shell.lastpipe, shell.exported), shell.interpreter, shell.functions.copy())
                     conditional |= word in ('conditional', 'begin', 'trap')
                 continue
             if word.startswith('()'):
@@ -521,8 +531,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 return 'just'
             program = word if '/' not in word else target.name
             if word in ('export', 'declare', 'typeset', 'local', 'readonly') and arguments:
-                if shell.interpreter in ('sh', 'dash', None) and getattr(word, 'lastpipe', False):
-                    shell.lastpipe = True
+                export = True if word == 'export' else None
                 flags = set()
                 operands = arguments
                 for arg in arguments:
@@ -535,8 +544,28 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         break
                     if arg.startswith('-'):
                         flags.update(arg[1:])
+                    if 'x' in arg[1:]:
+                        export = arg.startswith('-')
+                    if word == 'export' and 'n' in arg[1:]:
+                        export = arg.startswith('+')
+                if 'f' not in flags and 'p' not in flags:
+                    for operand in operands:
+                        key, equals, value = (operand or lexer.unknown).partition('=')
+                        uncertain = lexer.unknown in key
+                        if not uncertain and key != 'BASHOPTS':
+                            continue
+                        if (equals or uncertain) and shell.interpreter in ('sh', 'dash', None):
+                            enabled = uncertain or lexer.unknown in value or commands['may_enable_lastpipe'](value)
+                            shell.lastpipe = enabled or (conditional or shell.interpreter != 'dash') and shell.lastpipe
+                            if getattr(word, 'shell_state', (None, None, False))[2] is not False:
+                                shell.exported = True
+                        if export is not None:
+                            shell.exported = export or (conditional or uncertain) and shell.exported
                 if operands and 'f' in flags and (word == 'export' or 'x' in flags and 'p' not in flags):
                     raise ValueError('cannot resolve shell function export')
+            if (word == 'unset' and not external and arguments and 'BASHOPTS' in arguments
+                    and shell.interpreter == 'dash' and not conditional and '-f' not in arguments):
+                shell.lastpipe = shell.exported = False
             if word == 'unset' and not external and shell.functions and arguments:
                 options = [arg for arg in arguments if arg and arg.startswith('-')]
                 if not any('v' in flag for flag in options):
@@ -593,8 +622,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 files = set(commands['tracked'](root))
             if path not in files:
                 raise ValueError('cannot resolve untracked gate script ' + path)
-            override = getattr(word, 'lastpipe', None)
-            child_lastpipe = shell.lastpipe if override is None else override
+            options = shell.child_options(word)
             env_path = getattr(word, 'pythonpath', pythonpath)
             ignore_env = getattr(word, 'ignore_env', False)
             stdin = getattr(word, 'stdin', ())
@@ -609,7 +637,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         interpreter = first.readline().strip()[2:]
                     nested = commands['shell_calls'](interpreter + ' ' + shlex.quote(str(lexer.workspace / path)),
                                                      lexer=lexer, directory=cwd, pythonpath=env_path, stdin=stdin)
-                    consumer = inspect(nested, (*active, ('shebang', path)), joined=joined, lastpipe=child_lastpipe)
+                    consumer = inspect(nested, (*active, ('shebang', path)), joined=joined, options=options)
                     if consumer:
                         return consumer
                     continue
@@ -622,7 +650,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path,
                                                  shell_state=getattr(word, 'shell_state', None), stdin=stdin)
             consumer = inspect(nested, (*active, path), shell if marker == '(src)' else None, conditional, joined,
-                               child_lastpipe, getattr(word, 'interpreter', None))
+                               options, getattr(word, 'interpreter', None))
             if consumer:
                 return consumer
 
@@ -639,7 +667,8 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                        'runner_environment': all(isinstance(env, dict) and 'GITHUB_ENV' not in env
                                                  for env in (*inherited_env, step.get('env', {})))})
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
-        consumer = inspect(calls, (), lastpipe=commands['may_enable_lastpipe'](bashopts), interpreter=program)
+        consumer = inspect(calls, (), options=(commands['may_enable_lastpipe'](bashopts), bashopts is not commands['UNSET_PATH']),
+                           interpreter=program)
         for (kind, _), reads in deferred_reads.items():
             if kind in ('background', 'process-substitution', 'pending-child'):
                 pending_reads.update(reads)

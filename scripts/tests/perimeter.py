@@ -1972,6 +1972,29 @@ class GateImageCommands(unittest.TestCase):
         source = "import subprocess\nsubprocess.run(" + bash + ", env={})"
         self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source, 'env': env}, vars(COMMANDS), []))
 
+    def test_fresh_bash_reads_only_exported_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'reader').write_text('#!/bin/bash\ntrue | wait\n')
+            (root / 'reader').chmod(0o755)
+            for child in ("bash -c 'true | wait'", "bash -s <<< 'true | wait'", 'bash reader', './reader',
+                          "python3 -c \"import subprocess; subprocess.run(['bash', 'reader'])\""):
+                step = {'run': 'shopt -s lastpipe; ' + child}
+                with self.subTest(child=child):
+                    self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+                    step['run'] = 'export BASHOPTS; ' + step['run']
+                    with self.assertRaisesRegex(ValueError, 'lastpipe'):
+                        CAPS.just_consumer(step, vars(COMMANDS), [], root)
+        for child in ("bash +O lastpipe -c 'true | wait'", "env -u BASHOPTS bash -c 'true | wait'",
+                      "export -n BASHOPTS; bash -c 'true | wait'"):
+            step = {'run': child, 'env': {'BASHOPTS': 'lastpipe'}}
+            with self.subTest(child=child):
+                self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), []))
+        with self.assertRaisesRegex(ValueError, 'lastpipe'):
+            CAPS.just_consumer({'run': 'shopt -s lastpipe; (true | wait)'}, vars(COMMANDS), [])
+        self.assertIsNone(CAPS.just_consumer({'shell': 'dash {0}', 'run': "BASHOPTS=lastpipe; bash -c 'true | wait'"},
+                                             vars(COMMANDS), []))
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2512,6 +2535,17 @@ class GateImageCommands(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'interleaved'):
             COMMANDS.python_calls(reader + 'for f in reader(): pass')
 
+    def test_conditional_comprehension_preserves_possible_consumption(self):
+        setup = "import os\nfrom subprocess import run\ng = (f for f in (print, run))\n"
+        for clauses in ("for x in (1,) if os.getenv('FLAG') for f in g", "for x in os.getenv('ITEMS') for f in g"):
+            for fmt in ('[f {}]', '{{f {}}}', '{{x: f {}}}', 'list(f {})'):
+                expr = fmt.format(clauses)
+                with self.subTest(expr=expr), self.assertRaisesRegex(ValueError, 'generator consumption'):
+                    COMMANDS.python_calls(setup + expr + "\n[f(['cmp']) for f in g]")
+        for flag, expected in (('False', ['cmp']), ('True', [])):
+            body = f"[f for x in (1,) if {flag} for f in g]\n[f(['cmp']) for f in g]"
+            self.assertEqual([word for _, word, _ in COMMANDS.python_calls(setup + body)], expected)
+
     def test_default_launchers_bind_at_definition(self):
         setup = "from subprocess import run\nlaunch = run\n"
         for definition in ("cb = lambda f=launch: f(['cmp'])", "cb = lambda *, f=launch: f(['cmp'])",
@@ -2522,6 +2556,27 @@ class GateImageCommands(unittest.TestCase):
                     self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
         with self.assertRaisesRegex(ValueError, 'callable'):
             COMMANDS.python_calls("cb = lambda f=unknown: f(['cmp'])\ncb()")
+
+    def test_mixed_defaults_capture_left_to_right(self):
+        setup = "import asyncio\nfrom subprocess import run\nlaunch = print\n"
+        for definition, call in (("def cb(x=(launch := run), *, f=launch): f(['cmp'])", 'cb()'),
+                                 ("async def cb(x=(launch := run), *, f=launch): f(['cmp'])", 'asyncio.run(cb())'),
+                                 ("cb = lambda x=(launch := run), *, f=launch: f(['cmp'])", 'cb()'),
+                                 ("def cb(f=run, *, x=(f := print)): f(['cmp'])", 'cb()')):
+            with self.subTest(definition=definition):
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(setup + definition + '\n' + call)], ['cmp'])
+
+    def test_unpacking_preserves_unaffected_helper_arguments(self):
+        setup = "from subprocess import run\ndef cb(message='ok', *, launch=run): launch(['cmp'])\n"
+        for call, expected in (('cb(**{})', ['cmp']), ('cb(*unknown)', ['cmp']),
+                               ("cb(**{'launch': print})", []), ('cb(**unknown, launch=print)', [])):
+            with self.subTest(call=call):
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(setup + call)], expected)
+        with self.assertRaisesRegex(ValueError, 'callable'):
+            COMMANDS.python_calls(setup + 'cb(**unknown)')
+        for args in ('**{}', '*unknown', '**unknown'):
+            with self.subTest(args=args):
+                self.assertEqual(COMMANDS.python_calls(f"def log(msg='ok'): print(msg)\nlog({args})"), [])
 
     def test_generator_loop_distinguishes_exhaustion_from_break(self):
         setup = "from subprocess import run\ndef reader():\n    yield 1\n    run(['just'])\n"

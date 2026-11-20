@@ -32,11 +32,7 @@ def versions(root):
     return values
 
 
-def check_ci_tool_pins(root, values, capabilities=None, workflows=("main", "baseline")):
-    if capabilities is None:
-        spec = importlib.util.spec_from_file_location("plant_tools", root / "scripts/plant_tools.py")
-        capabilities = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(capabilities)
+def check_ci_tool_pins(root, values, capabilities, workflows=("main", "baseline")):
     workflow = (root / ".github/workflows/ci.yml").read_text()
     baseline = (root / ".github/workflows/mutation-baseline.yml").read_text()
     mutants = 'cargo-mutants@' + values['cargo_mutants']

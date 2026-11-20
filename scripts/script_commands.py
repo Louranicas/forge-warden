@@ -626,9 +626,12 @@ def operand_word(state, value, raw):
     'dynamic' (a non-literal command line, named), or a RUNS marker with the file it runs."""
     if isinstance(state, tuple):
         kind = state[0]
-        if kind in ('option-argument', 'bash-options'):
-            events = [('lastpipe', None)] if kind == 'bash-options' and value in ('lastpipe', None) else []
-            return (state[1] if state[2] <= 1 else (kind, state[1], state[2] - 1)), events
+        if kind == 'option-argument':
+            flag, remaining = state[2][0], state[2][1:]
+            events = []
+            if flag == '-O' and value in ('lastpipe', None) or flag == '+O' and value == 'lastpipe':
+                events.append(('lastpipe', flag == '-O'))
+            return (('option-argument', state[1], remaining) if remaining else state[1]), events
         if kind == 'file-next':
             return None, ([(state[1], value)] if value is not None else [])
         if value is None:
@@ -642,18 +645,17 @@ def operand_word(state, value, raw):
         if value == '--':
             return ('file-next', '(sh)'), []
         if value in ('--rcfile', '--init-file'):
-            return ('option-argument', state, 1), []
+            return ('option-argument', state, (value,)), []
         if re.fullmatch(r'[-+][A-Za-z]+', value):
             letters = value[1:]
-            count = sum(letter in 'oO' for letter in letters)  # each -o/-O takes the next word
+            options = tuple(value[0] + letter for letter in letters if letter in 'oO')
             operand = state
             if value[0] == '-':
                 if 'c' in letters:
                     operand = 'next'
                 elif 's' in letters:
                     operand = 'stdin-sh'
-            kind = 'bash-options' if value.startswith('-') and 'O' in letters else 'option-argument'
-            return ((kind, operand, count) if count else operand), []
+            return (('option-argument', operand, options) if options else operand), []
         if value.startswith(('-', '+')):
             return state, []
         return None, [('(sh)', value)]
@@ -676,7 +678,7 @@ def operand_word(state, value, raw):
                     rest = letters[index + 1:]
                     if letter in TAR_SHORT_PROGRAM:
                         return (state, [('shell', rest)]) if rest else (('program-option', state), [])
-                    return (state if rest else ('option-argument', state, 1)), []
+                    return (state if rest else ('option-argument', state, (letter,))), []
         return state, []
     # Python.
     if value == '--':
@@ -684,7 +686,7 @@ def operand_word(state, value, raw):
     if value == '-':
         return 'stdin-py', []  # the script is standard input; later words are arguments
     if value in PYTHON_LONG_ARGUMENT:
-        return ('option-argument', state, 1), []
+        return ('option-argument', state, (value,)), []
     if value.startswith('--'):
         return state, []
     if value.startswith('-'):
@@ -699,7 +701,7 @@ def operand_word(state, value, raw):
                     return (None, events + [('python', rest)]) if rest else ('next-python', events)
                 if letter == 'm':
                     return (None, events + [('(module)', rest)]) if rest else (('file-next', '(module)'), events)
-                return (state if rest else ('option-argument', state, 1)), events
+                return (state if rest else ('option-argument', state, (letter,))), events
         return state, events
     return None, [('(py)', value)]
 
@@ -710,7 +712,7 @@ def stdin_runner(script):
     option argument pending)."""
     if isinstance(script, tuple) and script[0] == 'file-next' and script[1] in ('(sh)', '(py)'):
         return script[1]  # `bash -- < FILE`, `python3 -- < FILE`: no file came after `--`
-    base = script[1] if isinstance(script, tuple) and script[0] in ('option-argument', 'bash-options') else script
+    base = script[1] if isinstance(script, tuple) and script[0] == 'option-argument' else script
     if base in SHELLS or base == 'stdin-sh':
         return '(sh)'
     if base == 'stdin-py' or (isinstance(base, str) and PYTHONS.fullmatch(base)):
@@ -844,6 +846,7 @@ PYTHON_QUERIES = frozenset({
     'pathlib.Path.with_name', 'unittest.skip', 'unittest.skipIf', 'unittest.skipUnless',
     'builtins.len',
 })
+BashStartup = namedtuple('BashStartup', 'environment option', defaults=(None, None))
 EnvironmentPath = namedtuple('EnvironmentPath', 'process mapping')
 DEFAULT_PYTHON_PATHS = (UNSET_PATH, '', '.', b'', b'.')
 
@@ -897,7 +900,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     workflow = AUDIT_CHECKOUT.get() is not None
-    child_lastpipe = interpreter = None
+    child_lastpipe, interpreter = BashStartup(), None
 
     def checkpoint():
         return len(calls), definitions, sourced, (shell_value, exported, allexport, ambient_path, environment_writes)
@@ -1005,9 +1008,12 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             if not defining:
                 flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(),
                             pythonpath, ignore_env, child_lastpipe, interpreter)
-            if workflow and child_lastpipe and expect and prefix is None and not defining:
-                calls.append(lexer.call(0, CheckoutScope('bashopts-assignment'), True, directory=directory))
-            child_lastpipe = interpreter = None
+            if workflow and child_lastpipe.environment is not None and expect and prefix is None and not defining:
+                assignment = CheckoutScope('bashopts-assignment')
+                assignment.enabled = child_lastpipe.environment[0]
+                assignment.autoexport = allexport is not False
+                calls.append(lexer.call(0, assignment, True, directory=directory))
+            child_lastpipe, interpreter = BashStartup(), None
             conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
             if auto_flag is not None:
                 environment_writes += 1
@@ -1107,7 +1113,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if mode == 'env-unset':
             if word.value == 'BASHOPTS':
-                child_lastpipe = False
+                child_lastpipe = BashStartup((False, False))
             if word.value == 'PYTHONPATH':
                 pythonpath = UNSET_PATH
             mode = None
@@ -1207,7 +1213,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         if expect or declaration:
             assignment = word.value if word.literal else word.raw.lstrip('"\'')
             if assignment.startswith('BASHOPTS='):
-                child_lastpipe = may_enable_lastpipe(assignment.partition('=')[2] if word.literal else None)
+                child_lastpipe = BashStartup((may_enable_lastpipe(assignment.partition('=')[2] if word.literal else None), True))
             if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment) or declaration and assignment == 'PYTHONPATH':
                 if assignment == 'PYTHONPATH':
                     pythonpath = shell_value
@@ -1251,7 +1257,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 script, events = operand_word(script, word.value if word.literal else None, word.raw)
                 for event, text in events:
                     if event == 'lastpipe':
-                        child_lastpipe = True
+                        child_lastpipe = child_lastpipe._replace(option=text)
                     elif event == 'isolated':
                         isolated = True
                     elif event == 'ignore-environment':
@@ -1288,7 +1294,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         if prefix in PREFIXES and word.literal and word.value.startswith('-'):
             option, equals, argument = word.value.partition('=')
             if prefix == 'env' and word.value in ('-', '-i', '--ignore-environment', '-uBASHOPTS', '--unset=BASHOPTS'):
-                child_lastpipe = False
+                child_lastpipe = BashStartup((False, False))
             if prefix == 'env' and word.value in ('-', '-i', '--ignore-environment', '-uPYTHONPATH', '--unset=PYTHONPATH'):
                 pythonpath = UNSET_PATH
             elif prefix == 'env' and word.value in ('-u', '--unset'):
@@ -1328,7 +1334,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if prefix == 'env' and ENV_ASSIGNMENT.match(word.raw):
             if not word.literal and '$' in word.raw.partition('=')[0]:
-                child_lastpipe = True
+                child_lastpipe = BashStartup((True, True))
                 pythonpath = None
             continue
         if prefix == 'timeout' and word.literal and re.fullmatch(r'[0-9.]+[smhd]?', word.value):
@@ -2058,13 +2064,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def frames(names):
         return enclosing if class_body else (*enclosing, (scope, names))
 
-    def helper_defaults(args, names):
+    def helper_defaults(args, names, interrupted):
         positional = args.posonlyargs + args.args
         pairs = [*zip(positional[len(positional) - len(args.defaults):], args.defaults),
                  *zip(args.kwonlyargs, args.kw_defaults)]
         defaults = []
         for param, value in pairs:
             if value is not None:
+                yield from visit(value, names, interrupted, allow_generator=True)
                 owners = qualified(value, names)
                 defaults.append((param.arg, frozenset(BoundCall(UNKNOWN_CALLABLE)
                     if item in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(item, ast.arg) else item
@@ -2096,16 +2103,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
                     local[parameter.arg] = frozenset({literal})
 
-            for parameter, value in zip(positional, expanded_items(call.args)):
-                if isinstance(value, ast.Starred):
-                    if helper.defaults:
-                        raise Unsupported('cannot resolve unpacked Python helper defaults')
+            uncertain = frozenset({BoundCall(UNKNOWN_CALLABLE)})
+            supplied = set()
+            if receiver is not None and not function.args.posonlyargs and function.args.args:
+                supplied.add(function.args.args[0].arg)
+            for index, value in enumerate(expanded_items(call.args)):
+                if index >= len(positional):
                     break
+                if isinstance(value, ast.Starred):
+                    for parameter in positional[index:]:
+                        local[parameter.arg] = uncertain
+                    break
+                parameter = positional[index]
+                supplied.add(parameter.arg)
                 bind_argument(parameter, value)
             named = {arg.arg: arg for arg in function.args.args + function.args.kwonlyargs}
+            if any(kw.arg is None for kw in call.keywords):
+                for name in named.keys() - supplied:
+                    local[name] = uncertain
             for keyword in call.keywords:
-                if keyword.arg is None and helper.defaults:
-                    raise Unsupported('cannot resolve unpacked Python helper defaults')
                 if keyword.arg in named:
                     bind_argument(named[keyword.arg], keyword.value)
         if suspended:
@@ -3009,9 +3025,26 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                        interrupted=interrupted, protocol=True))
 
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
+        if any(kw.arg is None for kw in call.keywords):
+            helper = target
+            while isinstance(helper, BoundCall):
+                helper = helper.target
+            if isinstance(helper, PythonHelper):
+                keywords = []
+                for kw in call.keywords:
+                    if (kw.arg is None and isinstance(kw.value, ast.Dict) and
+                            all(isinstance(key, ast.Constant) and isinstance(key.value, str) for key in kw.value.keys)):
+                        keywords.extend(ast.keyword(arg=key.value, value=value)
+                                        for key, value in zip(kw.value.keys, kw.value.values))
+                    else:
+                        keywords.append(kw)
+                call = ast.copy_location(ast.Call(func=call.func, args=call.args, keywords=keywords), call)
         if isinstance(target, BoundCall):
             if target.args or target.keywords:
-                keywords = {kw.arg: kw for kw in (*target.keywords, *call.keywords)}
+                keywords = {kw.arg: kw for kw in target.keywords}
+                if any(kw.arg is None for kw in call.keywords):
+                    keywords.clear()
+                keywords.update({kw.arg: kw for kw in call.keywords})
                 call = ast.copy_location(ast.Call(func=call.func, args=[*target.args, *call.args],
                                                   keywords=list(keywords.values())), call)
             return (yield from invoke(target.target, call, names, target.receiver or receiver,
@@ -3172,7 +3205,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(target, PythonHelper):
             if target.decorator in GENERATOR_DECORATORS or target.generator or isinstance(target.node, ast.AsyncFunctionDef):
                 target.called = True
-                frozen = ast.copy_location(ast.Call(func=call.func, args=[captured(arg, names) for arg in call.args],
+                frozen = ast.copy_location(ast.Call(func=call.func, args=[captured(arg, names) for arg in expanded_items(call.args)],
                     keywords=[ast.keyword(arg=kw.arg, value=captured(kw.value, names)) for kw in call.keywords]), call)
                 if target.decorator in GENERATOR_DECORATORS:
                     return {GeneratorManager(target, frozen, receiver)}
@@ -3439,6 +3472,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
+            if target == 'builtins.bool' and not call.keywords and len(call.args) <= 1:
+                operand = argument(call.args[0], names) if call.args else ast.Constant(False)
+                if isinstance(operand, ast.Constant):
+                    return {ast.Constant(bool(operand.value))}
             if target == 'builtins.print' and all(isinstance(argument(arg, names), ast.Constant) or
                     all(isinstance(value, DEFERRED) for value in qualified(arg, names)) for arg in call.args):
                 if all((kw.arg in ('sep', 'end', 'flush') and isinstance(argument(kw.value, names), ast.Constant)) or
@@ -3688,12 +3725,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 items = consumed
             if not isinstance(generator.target, (ast.Name, ast.Tuple, ast.List)):
                 raise Unsupported('cannot resolve Python comprehension target')
-            if items is None:
+            optional_item = items is None
+            if optional_item:
                 exact = False
                 items = [CapturedArgument({UNKNOWN_CALLABLE})]
             if producer is not None and items:
                 local[(producer, 'consumed')] = frozenset({'iterating'})
             for item in items:
+                skipped = [local.copy()] if optional_item else []
                 iterations += 1
                 check_sequence_length(iterations)
                 if (yield from bind_target(generator.target, item, local, interrupted)) is False:
@@ -3703,8 +3742,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values = qualified(test, local)
                     if values and all(isinstance(v, ast.Constant) and not v.value for v in values):
                         break
-                    if not all(isinstance(v, ast.Constant) and v.value for v in values):
+                    if not values or not all(isinstance(v, ast.Constant) and v.value for v in values):
                         exact = False
+                        skipped.append(local.copy())
                 else:
                     if index + 1 < len(node.generators):
                         yield from level(index + 1)
@@ -3714,6 +3754,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         elements.append(CapturedArgument(qualified(item, local)))
                         if isinstance(node, ast.DictComp):
                             yield from visit(node.value, local, interrupted)
+                if skipped:
+                    local.update(join([local, *skipped], paths=True))
 
             if producer is not None and items:
                 local[(producer, 'consumed')] = frozenset({'exhausted'})
@@ -3777,11 +3819,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def visit_node(node, names, interrupted):
         if isinstance(node, ast.Lambda):
-            yield from visit(node.args, names, interrupted)
+            defaults = yield from helper_defaults(node.args, names, interrupted)
             result = ast.copy_location(ast.Return(value=node.body), node.body)
             function = ast.copy_location(ast.FunctionDef(name='<lambda>', args=node.args, body=[result],
                                                          decorator_list=[], returns=None, type_params=[]), node)
-            results[node] = {PythonHelper(function, frames(names), None, source, helper_defaults(node.args, names))}
+            results[node] = {PythonHelper(function, frames(names), None, source, defaults)}
             return
         if isinstance(node, ast.Await):
             yield from visit(node.value, names, interrupted, allow_generator=True)
@@ -3876,8 +3918,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 write_field(target, values, names)
             return
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for expression in node.decorator_list:
+                yield from visit(expression, names, interrupted)
+            if not isinstance(node, ast.ClassDef):
+                defaults = yield from helper_defaults(node.args, names, interrupted)
+                for arg in ast.iter_child_nodes(node.args):
+                    if isinstance(arg, ast.arg) and arg.annotation is not None:
+                        yield from visit(arg.annotation, names, interrupted)
             for child in ast.iter_child_nodes(node):
-                if not isinstance(child, ast.stmt):
+                if not isinstance(child, (ast.stmt, ast.arguments)) and child not in node.decorator_list:
                     yield from visit(child, names, interrupted)
             skipped = False
             decorators = []
@@ -3944,7 +3993,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         decorator, = decorators[0]
                     else:
                         decorator = UNKNOWN_CALLABLE
-                defaults = helper_defaults(node.args, names)
                 key = node, decorator, defaults
                 managers = [owner for group in decorators for owner in group if isinstance(owner, (GeneratorManager, PatchedProvider))]
                 if managers:
@@ -4289,6 +4337,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         owners.add(UNKNOWN_CALLABLE)
                 results[node] = frozenset(owners)
             return
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if key is not None:
+                    yield from visit(key, names, interrupted)
+                yield from visit(value, names, interrupted)
+            return
         elif isinstance(node, ast.Call):
             yield from visit(node.func, names, interrupted)
             callees = qualified(node.func, names)
@@ -4632,7 +4686,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
         elif environment is not None and not (isinstance(environment, ast.Constant) and environment.value is None):
             child_path = None
             opts = {None}
-        lastpipe = None if opts == {INHERIT_BASHOPTS} else any(may_enable_lastpipe(value) for value in opts)
+        lastpipe = BashStartup() if opts == {INHERIT_BASHOPTS} else BashStartup(
+            (any(may_enable_lastpipe(value) for value in opts), opts != {UNSET_PATH}))
         value = args[9] if subprocess_argv and len(args) > 9 else keywords.get('cwd')
         if directory is not None and texts and value is not None:
             if not isinstance(value, ast.Constant) or (value.value is not None and not isinstance(value.value, str)):
