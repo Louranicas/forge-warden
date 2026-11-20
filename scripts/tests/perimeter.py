@@ -669,15 +669,12 @@ class Contracts(unittest.TestCase):
                      "github.event.merge_group.head_sha": "d" * 40 if event == "merge_group" else ""}
                     for event in events]
         bases, heads = ["a" * 40, "c" * 40], ["b" * 40, "d" * 40]
-        workers = {"mutation-plan": "python3 -I scripts/mutation_ci.py plan diff",
-                   "mutation-shards": "python3 -I scripts/mutation_ci.py run diff"}
-
         def check_field(mapping, key, read, expected, wrong):
             self.assertEqual(read(mapping), expected)
             with mock.patch.dict(mapping, {key: wrong}):
                 self.assertNotEqual(read(mapping), expected)
 
-        for name in (*workers, "dogfood"):
+        for name in ("mutation-plan", "mutation-shards", "dogfood"):
             job = jobs[name]
             steps = job["steps"]
             with self.subTest(job=name):
@@ -693,14 +690,25 @@ class Contracts(unittest.TestCase):
                         return [evaluate(condition, context) for context in contexts]
                     check_field(job, "if", active, [True, True, False], "false")
 
+                def is_worker(step):
+                    if "run" not in step:
+                        return False
+                    if name == "mutation-plan":
+                        matrix = job["outputs"]["matrix"].removeprefix("${{").removesuffix("}}").strip()
+                        return "id" in step and matrix == f"steps.{step['id']}.outputs.matrix"
+                    if name == "mutation-shards":
+                        return "SHARD_INDEX" in step.get("env", {})
+                    return any(word == "(sh)trusted/scripts/dogfood.sh"
+                               for _, word, _ in COMMANDS.shell_calls(step["run"]))
+
+                worker, = filter(is_worker, steps)
+                literal = "run: |\n" + textwrap.indent(worker["run"].rstrip("\n") + "\n", "  ")
+                with mock.patch.dict(worker, yaml.safe_load(literal)):
+                    self.assertEqual(list(filter(is_worker, steps)), [worker])
                 if name == "dogfood":
-                    worker, = (step for step in steps if any(
-                        word == "(sh)trusted/scripts/dogfood.sh"
-                        for _, word, _ in COMMANDS.shell_calls(step.get("run", ""))))
                     refs = {"trusted": bases, "candidate": heads}
                     env = {"BASE_SHA": bases, "HEAD_SHA": heads}
                 else:
-                    worker, = (step for step in steps if step.get("run") == workers[name])
                     refs = {".": [context["github.sha"] for context in contexts[:2]]}
                     env = {"BASE_SHA": bases}
                 checkouts = [step.get("with", {}) for step in steps
@@ -1017,6 +1025,66 @@ class GateImageCommands(unittest.TestCase):
             "nested.sh: not read: cannot resolve unpacked Python process keywords",
             "explicit.py:1: calls `cmp`, which the gate image does not declare (scripts/script_commands.py)",
         ])
+
+    def test_callable_expression_values(self):
+        for value in ("None or target", "True and target", "(alias := target)",
+                      "(alias := module) and alias.run", "(module := module.run)"):
+            for assigned in (False, True):
+                for process in (True, False):
+                    with self.subTest(value=value, assigned=assigned, process=process):
+                        owner = "subprocess" if process else "Local"
+                        expression = value
+                        source = ("import subprocess\nclass Local:\n    run = print\n"
+                                  f"module = {owner}\ntarget = module.run\n")
+                        if assigned:
+                            source += "launch = " + expression + "\n"
+                            expression = "launch"
+                        source += f"({expression})(['just'])"
+                        consumer = CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                        self.assertEqual(consumer, "just" if process else None)
+
+    def test_finally_sees_interrupted_bindings_without_leaking_them(self):
+        cases = (
+            "cleanup = run\ntry:\n    open('config')\n    cleanup = print",
+            "try:\n    if enabled:\n        cleanup = run\n        open('config')\n        cleanup = print",
+            "try:\n    pass\nexcept ValueError:\n    pass\nelse:\n    cleanup = run\n    open('config')\n    cleanup = print",
+            "try:\n    open('config')\nexcept OSError:\n    cleanup = run\n    open('fallback')\n    cleanup = print",
+            "try:\n    open('config')\nexcept* OSError:\n    cleanup = run\n    raise",
+        )
+        for protected in cases:
+            with self.subTest(protected=protected):
+                source = ("from subprocess import run\nenabled = True\ncleanup = print\n" + protected +
+                          "\nfinally:\n    cleanup(['cmp'])\ncleanup(['xxd'])")
+                found = self.problems({"t.py": source})
+                self.assertEqual(found, [f"t.py:{len(source.splitlines()) - 1}: calls `cmp`, which the gate image "
+                                         "does not declare (scripts/script_commands.py)"])
+        for final, expected in (("cleanup = print", None), ("cleanup = run", "just")):
+            source = ("from subprocess import run\ncleanup = run\ntry:\n    open('config')\nfinally:\n    "
+                      + final + "\ncleanup(['just'])")
+            self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+
+    def test_named_os_process_program_and_argv(self):
+        for api in ("execvp", "execvpe", "execve", "spawnv", "spawnve", "spawnvp", "spawnvpe"):
+            file, args = ("path", "argv") if api == "execve" else ("file", "args")
+            mode = "os.P_WAIT, " if api.startswith("spawn") else ""
+            env = ", env={}" if api.endswith("e") else ""
+            for program, argv, expected in (
+                (f"{file}='just'", "['just', '--version']", "just"),
+                ("'bash'", "['bash', 'scripts/tests/dogfood.sh']", "scripts/tests/dogfood.sh"),
+                (f"{file}='bash'", "['bash', 'scripts/tests/dogfood.sh']", "scripts/tests/dogfood.sh"),
+                (f"{file}='true'", "['true']", None),
+            ):
+                with self.subTest(api=api, program=program, argv=argv):
+                    source = f"import os; os.{api}({mode}{program}, {args}={argv}{env})"
+                    step = {"shell": "python", "run": source}
+                    self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), []), expected)
+            with self.subTest(api=api, dynamic=True):
+                source = f"import os; os.{api}({mode}{file}=unknown, {args}=['just']{env})"
+                with self.assertRaisesRegex(ValueError, "cannot resolve Python process command"):
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                source = f"import os; os.{api}({mode}{file}='bash', {args}=unknown{env})"
+                with self.assertRaisesRegex(ValueError, "cannot resolve gate script operand"):
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
 
     def test_a_file_a_call_runs_is_read_in_that_language(self):
         """Round 3 (Bastion): a tracked file run or sourced by a literal path is read in the

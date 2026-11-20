@@ -166,9 +166,6 @@ DYNAMIC_ONCE = {
 # Markers in a reader's output for a file a call runs or sources: `bash FILE`, `python3 FILE`,
 # `. FILE`. problems() reads that file in that language (or names it as not read).
 RUNS = {'(sh)': 'shell', '(py)': 'python', '(src)': 'shell'}
-# Python process calls, by where the command is: (index of the program, index where its
-# arguments start, whether those arguments are one list or spread out). Shell-text calls read
-# their first argument as shell text.
 PY_SHELL_TEXT = frozenset({
     'os.system', 'os.popen', 'subprocess.getoutput', 'subprocess.getstatusoutput', 'asyncio.create_subprocess_shell',
 })
@@ -177,14 +174,16 @@ PY_ARGV = {
     'subprocess.run': None, 'subprocess.call': None, 'subprocess.check_call': None,
     'subprocess.check_output': None, 'subprocess.Popen': None,
     # os.exec*/posix_spawn*: program, then an argv list whose first item is only argv[0].
-    'os.execv': (0, 1, 'list'), 'os.execve': (0, 1, 'list'), 'os.execvp': (0, 1, 'list'),
-    'os.execvpe': (0, 1, 'list'), 'os.posix_spawn': (0, 1, 'list'), 'os.posix_spawnp': (0, 1, 'list'),
-    'os.execl': (0, 1, 'spread'), 'os.execle': (0, 1, 'spread'), 'os.execlp': (0, 1, 'spread'),
-    'os.execlpe': (0, 1, 'spread'),
+    'os.execv': (0, 'list', None, None), 'os.execve': (0, 'list', 'path', 'argv'),
+    'os.execvp': (0, 'list', 'file', 'args'), 'os.execvpe': (0, 'list', 'file', 'args'),
+    'os.posix_spawn': (0, 'list', None, None), 'os.posix_spawnp': (0, 'list', None, None),
+    'os.execl': (0, 'spread', None, None), 'os.execle': (0, 'spread', None, None),
+    'os.execlp': (0, 'spread', None, None), 'os.execlpe': (0, 'spread', None, None),
     # os.spawn*: mode first, then the program.
-    'os.spawnv': (1, 2, 'list'), 'os.spawnve': (1, 2, 'list'), 'os.spawnvp': (1, 2, 'list'),
-    'os.spawnvpe': (1, 2, 'list'), 'os.spawnl': (1, 2, 'spread'), 'os.spawnle': (1, 2, 'spread'),
-    'os.spawnlp': (1, 2, 'spread'), 'os.spawnlpe': (1, 2, 'spread'),
+    'os.spawnv': (1, 'list', 'file', 'args'), 'os.spawnve': (1, 'list', 'file', 'args'),
+    'os.spawnvp': (1, 'list', 'file', 'args'), 'os.spawnvpe': (1, 'list', 'file', 'args'),
+    'os.spawnl': (1, 'spread', None, None), 'os.spawnle': (1, 'spread', None, None),
+    'os.spawnlp': (1, 'spread', None, None), 'os.spawnlpe': (1, 'spread', None, None),
 }
 
 
@@ -944,13 +943,17 @@ def argv_text(items):
 
 
 def python_callees(body, bindings):
-    functions = []
+    functions = {}
 
     def qualified(node, names):
         if isinstance(node, ast.Name):
             return names.get(node.id, frozenset())
         if isinstance(node, ast.Attribute):
             return frozenset(owner + '.' + node.attr for owner in qualified(node.value, names))
+        if isinstance(node, ast.BoolOp):
+            return frozenset().union(*(qualified(value, names) for value in node.values))
+        if isinstance(node, ast.NamedExpr):
+            return qualified(node.target, names)
         if isinstance(node, ast.IfExp):
             return qualified(node.body, names) | qualified(node.orelse, names)
         return frozenset()
@@ -962,115 +965,140 @@ def python_callees(body, bindings):
                 merged[key] = merged.get(key, frozenset()) | values
         return merged
 
-    def alternatives(paths, names):
+    def suite(statements, names, interrupted):
+        for child in statements:
+            if (yield from visit(child, names, interrupted)) is False:
+                return False
+        return True
+
+    def alternatives(paths, names, interrupted):
         outcomes = []
         for path in paths:
             branch = names.copy()
-            for child in path:
-                yield from visit(child, branch)
-            outcomes.append(branch)
-        names.clear()
-        names.update(join(outcomes))
+            if (yield from suite(path, branch, interrupted)):
+                outcomes.append(branch)
+        if outcomes:
+            names.clear()
+            names.update(join(outcomes))
+        return bool(outcomes)
 
-    def visit(node, names):
+    def visit(node, names, interrupted=None):
+        def bind(key, values):
+            names[key] = values
+            if interrupted is not None:
+                interrupted[key] = interrupted.get(key, frozenset()) | values
+
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for child in ast.iter_child_nodes(node):
                 if not isinstance(child, ast.stmt):
-                    yield from visit(child, names)
+                    yield from visit(child, names, interrupted)
             names.pop(node.name, None)
             if isinstance(node, ast.ClassDef):
                 members = names.copy()
                 for statement in node.body:
                     yield from visit(statement, members)
             else:
-                functions.append(node)
+                functions[node] = None
             return
         if isinstance(node, (ast.If, ast.IfExp)):
-            yield from visit(node.test, names)
+            yield from visit(node.test, names, interrupted)
             paths = (node.body, node.orelse) if isinstance(node, ast.If) else ([node.body], [node.orelse])
-            yield from alternatives(paths, names)
-            return
+            return (yield from alternatives(paths, names, interrupted))
         if isinstance(node, ast.BoolOp):
-            yield from visit(node.values[0], names)
+            yield from visit(node.values[0], names, interrupted)
             outcomes = [names.copy()]
             for value in node.values[1:]:
-                yield from visit(value, names)
+                yield from visit(value, names, interrupted)
                 outcomes.append(names.copy())
             names.update(join(outcomes))
             return
-        if isinstance(node, getattr(ast, 'Match', ())):
-            yield from visit(node.subject, names)
+        if isinstance(node, ast.Match):
+            yield from visit(node.subject, names, interrupted)
             paths = [[case] for case in node.cases]
             last = node.cases[-1]
             if last.guard or not isinstance(last.pattern, ast.MatchAs) or last.pattern.pattern is not None:
                 paths.append([])
-            yield from alternatives(paths, names)
-            return
+            return (yield from alternatives(paths, names, interrupted))
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
             if isinstance(node, ast.While):
-                yield from visit(node.test, names)
+                yield from visit(node.test, names, interrupted)
                 body = node.body
             else:
-                yield from visit(node.iter, names)
+                yield from visit(node.iter, names, interrupted)
                 body = [node.target, *node.body]
-            yield from alternatives(([], body), names)
-            yield from alternatives(([], node.orelse), names)
+            yield from alternatives(([], body), names, interrupted)
+            yield from alternatives(([], node.orelse), names, interrupted)
             return
-        if isinstance(node, ast.Try) or isinstance(node, getattr(ast, 'TryStar', ())):
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            exits = names.copy()
             success = names.copy()
-            interrupted = [names.copy()]
-            for child in node.body:
-                yield from visit(child, success)
-                interrupted.append(success.copy())
-            for child in node.orelse:
-                yield from visit(child, success)
-            outcomes = [success]
-            if node.handlers:
-                handled = join(interrupted)
-                yield from alternatives(([handler] for handler in node.handlers), handled)
-                outcomes.append(handled)
+            normal = []
+            completed = yield from suite(node.body, success, exits)
+            handler_entry = exits.copy()
+            if completed and (yield from suite(node.orelse, success, exits)):
+                normal.append(success)
+            for handler in node.handlers:
+                handled = handler_entry.copy()
+                if handler.type:
+                    yield from visit(handler.type, handled, exits)
+                handled.pop(handler.name, None)
+                if (yield from suite(handler.body, handled, exits)):
+                    handled.pop(handler.name, None)
+                    normal.append(handled)
+                if isinstance(node, ast.TryStar):
+                    handler_entry = join((handler_entry, exits))
             names.clear()
-            names.update(join(outcomes))
-            for child in node.finalbody:
-                yield from visit(child, names)
-            return
+            names.update(join(normal) if normal else exits)
+            if interrupted is not None:
+                interrupted.update(join((interrupted, exits)))
+            if node.finalbody and (not normal or exits != names):
+                yield from suite(node.finalbody, exits, interrupted)
+            if normal:
+                return (yield from suite(node.finalbody, names, interrupted))
+            return False
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split('.')[0]
-                names[alias.asname or root] = frozenset({alias.name if alias.asname else root})
+                bind(alias.asname or root, frozenset({alias.name if alias.asname else root}))
         elif isinstance(node, ast.ImportFrom):
             module = '.' * node.level + (node.module or '')
             for alias in node.names:
                 if alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty'):
                     for exported in import_module(module).__all__:
-                        names[exported] = frozenset({module + '.' + exported})
+                        bind(exported, frozenset({module + '.' + exported}))
                 else:
-                    names[alias.asname or alias.name] = frozenset({module + '.' + alias.name})
+                    bind(alias.asname or alias.name, frozenset({module + '.' + alias.name}))
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             if isinstance(node, ast.AnnAssign):
-                yield from visit(node.annotation, names)
+                yield from visit(node.annotation, names, interrupted)
                 if node.value is None:
                     return
-            yield from visit(node.value, names)
+            yield from visit(node.value, names, interrupted)
             values = qualified(node.value, names)
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
-                yield from visit(target, names)
+                yield from visit(target, names, interrupted)
                 if isinstance(target, ast.Name) and values:
-                    names[target.id] = values
+                    bind(target.id, values)
             return
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.pop(node.id, None)
         elif isinstance(node, ast.Call):
+            yield from visit(node.func, names, interrupted)
             for name in sorted(qualified(node.func, names)):
                 if name.startswith('asyncio.subprocess.'):
                     name = 'asyncio.' + name.removeprefix('asyncio.subprocess.')
                 yield node, name
+            for argument in (*node.args, *node.keywords):
+                yield from visit(argument, names, interrupted)
+            return
         for child in ast.iter_child_nodes(node):
-            yield from visit(child, names)
+            yield from visit(child, names, interrupted)
 
-    for statement in body:
-        yield from visit(statement, bindings)
+        if isinstance(node, (ast.Raise, ast.Return)):
+            return False
+
+    yield from suite(body, bindings, None)
     for function in functions:
         local = bindings.copy()
         for argument in ast.iter_child_nodes(function.args):
@@ -1084,7 +1112,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
     turned into the shell text or command line it runs, which shell_calls reads."""
     tree = ast.parse(text)
     found = []
-    for node, name in python_callees(tree.body, {}):
+    for node, name in dict.fromkeys(python_callees(tree.body, {})):
         if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
         if name not in PY_SHELL_TEXT and name not in PY_ARGV and name not in ('pty.spawn', 'asyncio.create_subprocess_exec'):
@@ -1117,17 +1145,18 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                     else:
                         texts.append(argv_text(listed if listed is not None else [branch]))
             else:
-                program, start, shape = spec
-                if len(args) <= program:
+                index, shape, program_key, argv_key = spec
+                program = args[index] if len(args) > index else keywords.get(program_key)
+                if program is None:
                     continue
                 if shape == 'list':
-                    lists = branches(args[start]) if len(args) > start else [None]
-                    for listed in lists:
+                    argv = args[index + 1] if len(args) > index + 1 else keywords.get(argv_key)
+                    for listed in branches(argv):
                         rest = [] if listed is None else py_items(listed)
                         rest = [None] if rest is None else rest[1:]
-                        texts.append(argv_text([args[program]] + rest))
+                        texts.extend(argv_text([choice, *rest]) for choice in branches(program))
                 else:
-                    texts.append(argv_text([args[program]] + args[start + 1:]))
+                    texts.extend(argv_text([choice, *args[index + 2:]]) for choice in branches(program))
         cwd = directory
         if directory is not None and texts and keywords.get('cwd') is not None:
             value = keywords['cwd']
