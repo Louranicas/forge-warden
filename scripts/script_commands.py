@@ -1562,7 +1562,23 @@ class LookupExecutable(ast.expr):
 
 class KeywordArguments:
     def __init__(self, entries):
-        self.entries = entries
+        self.initial = entries
+
+    def entries(self, names):
+        if names.get((self, 'escaped')):
+            return None
+        changed = names.get((self, 'changed keys'), ())
+        if not changed:
+            return self.initial
+        return {key: CapturedArgument({UNKNOWN_KEYWORD}) if key in changed else value
+                for key, value in self.initial.items()}
+
+    def invalidate(self, keys, names):
+        if keys is None or None in keys or not keys <= self.initial.keys():
+            names[(self, 'escaped')] = frozenset({True})
+        elif keys:
+            field = self, 'changed keys'
+            names[field] = names.get(field, frozenset()) | keys
 
     @staticmethod
     def overlay(entries, overrides):
@@ -1583,6 +1599,8 @@ UNKNOWN_CALLABLE = object()
 UNKNOWN_KEYWORD = object()
 KeywordView = namedtuple('KeywordView', 'mapping method')
 KEYWORD_METHODS = {'get', '__getitem__', '__contains__', 'keys', 'items', 'values', 'copy'}
+KEYWORD_MUTATORS = {'__setitem__', '__ior__', 'update'}
+KEYWORD_WRITES = {'builtins.dict.' + method for method in KEYWORD_MUTATORS} | {'operator.setitem'}
 KEYWORD_READERS = {'builtins.dict.' + method for method in KEYWORD_METHODS} | {
     'builtins.len', 'builtins.dict', 'copy.copy', 'operator.getitem', 'operator.contains'}
 UNKNOWN_PROVIDER = object()
@@ -1595,7 +1613,8 @@ STANDARD_CONTEXT = object()
 UNRESOLVED_CONTEXT = object()
 LIST_MUTATIONS = frozenset({'append', 'extend', 'insert', 'pop', 'remove', 'clear', 'sort', 'reverse',
                             '__iadd__', '__imul__', '__setitem__', '__delitem__'})
-ITERABLE_CONSUMERS = {'builtins.list', 'builtins.tuple', 'builtins.set', 'builtins.frozenset', 'builtins.dict',
+HASH_COLLECTIONS = {'builtins.set', 'builtins.frozenset', 'builtins.dict', 'builtins.dict.fromkeys'}
+ITERABLE_CONSUMERS = HASH_COLLECTIONS | {'builtins.list', 'builtins.tuple',
                       'builtins.sorted', 'builtins.sum', 'builtins.any', 'builtins.all', 'builtins.min', 'builtins.max',
                       'builtins.str.join', 'builtins.bytes.join', 'builtins.list.extend'}
 FILE_CONTEXT = object()
@@ -2273,31 +2292,32 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             raise Unsupported('cannot resolve Python keyword lookup key')
 
     def check_keyword_repr(mapping, keys_only, names):
-        if not names.get((mapping, 'escaped')) and None not in mapping.entries:
-            if keys_only:
-                return
-            if all(isinstance(owner, ast.Constant) or isinstance(owner, PythonHelper) and owner.decorator is None
+        entries = mapping.entries(names)
+        if entries is not None and None not in entries:
+            if keys_only or all(isinstance(owner, ast.Constant) or isinstance(owner, PythonHelper) and owner.decorator is None
                    or owner in PY_ARGV or owner in PY_SHELL_TEXT or owner == 'builtins.print'
-                   for value in mapping.entries.values() for owner in qualified(value, names)):
+                   for value in entries.values() for owner in qualified(value, names)):
                 return
         raise Unsupported('cannot resolve Python keyword view representation')
 
     def keyword_value(mapping, key, names, default):
         keys = qualified(key, names)
         check_keyword_keys(keys)
-        if len(keys) != 1 or names.get((mapping, 'escaped')):
+        entries = mapping.entries(names)
+        if len(keys) != 1 or entries is None:
             return {UNKNOWN_KEYWORD}
         key, = keys
-        if key.value not in mapping.entries or key.value is None:
-            return {UNKNOWN_KEYWORD} if None in mapping.entries else default
+        if key.value not in entries or key.value is None:
+            return {UNKNOWN_KEYWORD} if None in entries else default
         return {UNKNOWN_KEYWORD if value in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(value, ast.arg)
-                else value for value in qualified(mapping.entries[key.value], names)}
+                else value for value in qualified(entries[key.value], names)}
 
     def keyword_entries(node, names):
         owners = qualified(node, names)
         if len(owners) == 1 and isinstance(mapping := next(iter(owners)), KeywordArguments):
-            if not names.get((mapping, 'escaped')):
-                return mapping.entries
+            entries = mapping.entries(names)
+            if entries is not None:
+                return entries
         elif isinstance(node, ast.Dict) and all(isinstance(key, ast.Constant) and isinstance(key.value, str)
                                                 for key in node.keys):
             return {key.value: captured(value, names) for key, value in zip(node.keys, node.values)}
@@ -2306,8 +2326,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def known_keyword_names(node, names):
         keys = set()
         for mapping in qualified(node, names):
-            if isinstance(mapping, KeywordArguments) and not names.get((mapping, 'escaped')):
-                keys.update(mapping.entries)
+            if isinstance(mapping, KeywordArguments):
+                keys.update(mapping.entries(names) or {})
         if isinstance(node, ast.Dict):
             for key, value in zip(node.keys, node.values):
                 if key is None:
@@ -2318,6 +2338,50 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         keys.add(key.value)
         keys.discard(None)
         return keys
+
+    def sequence_members(owners, names):
+        pending = list(owners)
+        seen = set()
+        while pending:
+            owner = pending.pop()
+            if owner in seen:
+                continue
+            seen.add(owner)
+            if isinstance(owner, SequenceBinding):
+                for state in owner.states(names):
+                    if state.elements is None:
+                        for item in owner.items:
+                            if isinstance(item, CapturedArgument):
+                                pending.extend(item.owners)
+                    else:
+                        for choices in state.elements:
+                            pending.extend(choices)
+        return seen
+
+    def check_hash(keys, names):
+        for key in sequence_members(keys, names):
+            if (isinstance(key, PythonClass) and key.base is UNKNOWN_CALLABLE
+                    or isinstance(key, PythonInstance) and
+                    (member(key.owner, '__hash__', names) or member(key.owner, '__eq__', names))):
+                raise Unsupported('cannot resolve local Python collection key protocol')
+
+    def check_inserted_items(target, items, names):
+        if target == 'builtins.dict':
+            for row in items:
+                check_expansion({row})
+                if isinstance(row, SequenceBinding):
+                    for state in row.states(names):
+                        if state.elements is None:
+                            raise Unsupported('cannot resolve local Python collection key protocol')
+                        if state.elements:
+                            check_hash(state.elements[0], names)
+        else:
+            check_hash(items, names)
+
+    def check_mapping_render(owners, names):
+        for owner in sequence_members(owners, names):
+            if isinstance(owner, KeywordArguments):
+                check_keyword_repr(owner, False, names)
 
     def check_expansion(owners):
         if any(isinstance(value, (PythonInstance, PythonClass)) for value in owners):
@@ -2389,7 +2453,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 elif owner is FILESYSTEM_PATH and node.attr in ('resolve', 'with_name'):
                     values.add('pathlib.Path.' + node.attr)
                 elif isinstance(owner, KeywordArguments):
-                    values.add(BoundCall('builtins.dict.' + node.attr, owner) if node.attr in KEYWORD_METHODS else UNKNOWN_KEYWORD)
+                    values.add(BoundCall('builtins.dict.' + node.attr, owner)
+                               if node.attr in KEYWORD_METHODS | KEYWORD_MUTATORS else UNKNOWN_KEYWORD)
                 elif owner is UNKNOWN_KEYWORD:
                     values.add(UNKNOWN_KEYWORD)
                 elif owner is UNKNOWN_PROVIDER:
@@ -2497,10 +2562,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def process_argument(value, names, seen=frozenset()):
         owners = qualified(value, names)
         if len(owners) == 1 and isinstance(mapping := next(iter(owners)), KeywordArguments):
-            if names.get((mapping, 'escaped')):
+            entries = mapping.entries(names)
+            if entries is None:
                 return CapturedArgument({UNKNOWN_CALLABLE})
-            return ast.Dict(keys=[ast.Constant(key) if key is not None else None for key in mapping.entries],
-                            values=[process_argument(value, names, seen) for value in mapping.entries.values()])
+            return ast.Dict(keys=[ast.Constant(key) if key is not None else None for key in entries],
+                            values=[process_argument(value, names, seen) for value in entries.values()])
         if owners and owners <= ENVIRON:
             return CapturedArgument(owners)
         if isinstance(value, (ast.List, ast.Tuple)) and all(isinstance(item, ast.Constant) for item in value.elts):
@@ -2589,9 +2655,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def star_items(star, names, interrupted):
         value = CapturedArgument(qualified(star.value, names))
         if len(value.owners) == 1 and isinstance(mapping := next(iter(value.owners)), KeywordArguments):
-            if not names.get((mapping, 'escaped')) and None not in mapping.entries:
-                check_sequence_length(len(mapping.entries))
-                return [ast.Constant(key) for key in mapping.entries]
+            entries = mapping.entries(names)
+            if entries is not None and None not in entries:
+                check_sequence_length(len(entries))
+                return [ast.Constant(key) for key in entries]
         items = literal_elements(sequence_value(star.value, names))
         yielded = yield from iterate(value, names, interrupted, collect=True)
         if yielded is not None:
@@ -2668,8 +2735,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def destination(target, names, interrupted):
         if not isinstance(target, (ast.Attribute, ast.Subscript)):
             return target
-        read_index = isinstance(target, ast.Subscript) and isinstance(target.ctx, ast.Load)
-        yield from visit(target.value, names, interrupted, allow_keywords=read_index)
+        yield from visit(target.value, names, interrupted, allow_keywords=isinstance(target, ast.Subscript))
         receiver = CapturedArgument(qualified(target.value, names))
         if isinstance(target, ast.Attribute):
             return ast.Attribute(value=receiver, attr=target.attr, ctx=target.ctx)
@@ -2701,8 +2767,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if indexed:
             deleting = isinstance(target.ctx, ast.Del)
-            if any(isinstance(owner, KeywordArguments) for owner in owners):
-                check_keyword_keys(qualified(key, names))
+            for owner in owners:
+                if isinstance(owner, KeywordArguments):
+                    keys = qualified(key, names)
+                    check_keyword_keys(keys)
+                    owner.invalidate(None if deleting else {key.value for key in keys}, names)
             value = CapturedArgument(values)
             if ENVIRON.intersection(owners):
                 path = UNSET_PATH if deleting else path_value(value, names)
@@ -3169,14 +3238,18 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return args
         if target in ('builtins.list.extend', 'builtins.str.join', 'builtins.bytes.join'):
             return args[-1:]
-        if target in ('builtins.filter', 'builtins.map'):
-            return args[1:]
-        if target in ('builtins.iter', 'builtins.min', 'builtins.max') and len(args) != 1:
+        if target in ('builtins.filter', 'builtins.map') or target == 'builtins.iter' and len(args) != 1:
+            raise Unsupported('cannot resolve Python iterator callback')
+        if target in ('builtins.bytes', 'builtins.bytearray'):
+            return args[:1] or [kw.value for kw in call.keywords if kw.arg == 'source']
+        if target in ('operator.contains', 'operator.countOf', 'operator.indexOf'):
+            return args[:1]
+        if target in ('builtins.min', 'builtins.max') and len(args) != 1:
             return ()
         if target == 'builtins.enumerate' and not args:
             return [kw.value for kw in call.keywords if kw.arg == 'iterable']
         if target in ITERABLE_CONSUMERS | {'builtins.iter', 'builtins.next', 'builtins.aiter', 'builtins.anext',
-                                          'builtins.enumerate', 'builtins.reversed', 'builtins.dict.fromkeys'}:
+                                          'builtins.enumerate', 'builtins.reversed'}:
             return args[:1]
         return ()
 
@@ -3187,8 +3260,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 owners = qualified(kw.value, names)
                 if (kw.arg is None and helper_target(target) != 'builtins.dict' and len(owners) == 1
                         and isinstance(mapping := next(iter(owners)), KeywordArguments)
-                        and not names.get((mapping, 'escaped'))):
-                    keywords.extend(ast.keyword(arg=key, value=value) for key, value in mapping.entries.items())
+                        and (entries := mapping.entries(names)) is not None):
+                    keywords.extend(ast.keyword(arg=key, value=value) for key, value in entries.items())
                 elif (kw.arg is None and isinstance(helper_target(target), PythonHelper) and isinstance(kw.value, ast.Dict)
                       and all(isinstance(key, ast.Constant) and isinstance(key.value, str) for key in kw.value.keys)):
                     keywords.extend(ast.keyword(arg=key.value, value=value)
@@ -3216,7 +3289,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return (yield from invoke(target.target, call, names, target.receiver or receiver,
                                       wrapped or target.receiver is None, interrupted))
         if target == 'builtins.dict' and any(isinstance(owner, KeywordArguments)
-                for value in (*call.args, *(kw.value for kw in call.keywords)) for owner in qualified(value, names)):
+                for value in (*call.args, *(kw.value for kw in call.keywords))
+                for owner in sequence_members(qualified(value, names), names)):
             if len(call.args) > 1:
                 raise Unsupported('cannot resolve collected Python keyword copy')
             entries = dict(keyword_entries(call.args[0], names)) if call.args else {}
@@ -3226,20 +3300,35 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 else:
                     entries[kw.arg] = captured(kw.value, names)
             return {KeywordArguments(entries)}
-        if receiver is None and target in KEYWORD_READERS and call.args:
+        if receiver is None and target in KEYWORD_READERS | KEYWORD_WRITES and call.args:
             owners = qualified(call.args[0], names)
             if any(isinstance(owner, KeywordArguments) for owner in owners):
                 if target == 'copy.copy' and len(call.args) == 1 and not call.keywords:
                     return {KeywordArguments(dict(keyword_entries(call.args[0], names)))}
                 if target in ('operator.getitem', 'operator.contains'):
                     target = 'builtins.dict.__getitem__' if target == 'operator.getitem' else 'builtins.dict.__contains__'
+                if target == 'operator.setitem':
+                    target = 'builtins.dict.__setitem__'
                 if target.startswith('builtins.dict.'):
                     if len(owners) != 1:
                         raise Unsupported('cannot resolve collected Python keyword receiver')
                     receiver, = owners
                     call = ast.copy_location(ast.Call(func=call.func, args=call.args[1:], keywords=call.keywords), call)
-        if target in ('builtins.dict.pop', 'builtins.dict.setdefault', 'builtins.dict.__setitem__',
-                      'builtins.dict.__delitem__', 'operator.setitem', 'operator.delitem') and len(call.args) >= 2:
+        if isinstance(receiver, KeywordArguments) and target in KEYWORD_WRITES:
+            if target == 'builtins.dict.__setitem__' and len(call.args) == 2 and not call.keywords:
+                keys = qualified(call.args[0], names)
+                check_keyword_keys(keys)
+                receiver.invalidate({key.value for key in keys}, names)
+            elif (target == 'builtins.dict.update' and len(call.args) <= 1
+                  or target == 'builtins.dict.__ior__' and len(call.args) == 1 and not call.keywords):
+                keys = set(keyword_entries(call.args[0], names)) if call.args else set()
+                keys.update(kw.arg for kw in call.keywords)
+                receiver.invalidate(keys, names)
+            else:
+                raise Unsupported('cannot resolve collected Python keyword update')
+            return {receiver} if target == 'builtins.dict.__ior__' else {ast.Constant(None)}
+        if (target in ('builtins.dict.pop', 'builtins.dict.setdefault', 'builtins.dict.__delitem__', 'operator.delitem')
+                and len(call.args) >= 2):
             if any(isinstance(owner, KeywordArguments) for owner in qualified(call.args[0], names)):
                 check_keyword_keys(qualified(call.args[1], names))
         if isinstance(receiver, KeywordArguments) and target in ('builtins.dict.__getitem__', 'builtins.dict.__contains__'):
@@ -3256,13 +3345,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {KeywordArguments(dict(keyword_entries(CapturedArgument({receiver}), names)))}
             if target in ('builtins.dict.keys', 'builtins.dict.values', 'builtins.dict.items'):
                 return {KeywordView(receiver, target)}
-        if target in ('builtins.print', 'builtins.str', 'builtins.repr', 'builtins.ascii'):
+        if target in ('builtins.print', 'builtins.str', 'builtins.repr', 'builtins.ascii', 'builtins.format'):
             for arg in call.args:
-                for view in qualified(arg, names):
-                    if isinstance(view, KeywordView):
-                        check_keyword_repr(view.mapping, view.method == 'builtins.dict.keys', names)
-                    elif isinstance(view, KeywordArguments):
-                        check_keyword_repr(view, False, names)
+                owners = qualified(arg, names)
+                check_mapping_render(owners, names)
+                if target == 'builtins.print':
+                    for view in owners:
+                        if isinstance(view, KeywordView):
+                            check_keyword_repr(view.mapping, view.method == 'builtins.dict.keys', names)
         if isinstance(receiver, ChildProcess):
             if ((receiver.launcher == 'os.popen' and target == 'close' or
                  receiver.launcher == 'subprocess.Popen' and target in ('wait', 'communicate'))
@@ -3333,7 +3423,18 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     yield from sort_keys({SequenceBinding(ast.Tuple(), items)}, reduction_key, call, names)
         if not isinstance(target, PythonHelper):
             for operand in iteration_arguments(target, call):
-                check_expansion(qualified(operand, names))
+                owners = qualified(operand, names)
+                check_expansion(owners)
+                if target in HASH_COLLECTIONS:
+                    for owner in owners:
+                        if isinstance(owner, SequenceBinding):
+                            for state in owner.states(names):
+                                if state.elements is None:
+                                    raise Unsupported('cannot resolve local Python collection key protocol')
+                                for items in state.elements:
+                                    check_inserted_items(target, items, names)
+                        elif isinstance(owner, DeferredCall):
+                            raise Unsupported('cannot resolve local Python collection key protocol')
             for index, operand in enumerate((*call.args, *(kw.value for kw in call.keywords))):
                 values = qualified(operand, names)
                 generators = [value for value in values if isinstance(value, DEFERRED)]
@@ -3364,6 +3465,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if index == 0 and target in ITERABLE_CONSUMERS:
                     for value in generators:
                         items = yield from inspect_generator(value, names, interrupted, partial=target in ('builtins.any', 'builtins.all'))
+                        if target in HASH_COLLECTIONS:
+                            check_inserted_items(target, items, names)
                         if reduction_key is not None and not all(isinstance(item, ast.Constant) and
                                                                  isinstance(item.value, (str, bytes)) for item in items):
                             raise Unsupported('cannot resolve Python reduction key inputs')
@@ -3870,7 +3973,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     isinstance(node, (ast.UnaryOp, ast.JoinedStr, ast.NamedExpr, ast.IfExp))):
                 results[node] = qualified(node, names)
             if not allow_keywords:
-                for owner in results.get(node, ()):
+                for owner in sequence_members(results.get(node, ()), names):
                     if isinstance(owner, KeywordArguments):
                         names[(owner, 'escaped')] = frozenset({True})
             if not allow_view and any(isinstance(value, KeywordView) for value in results.get(node, ())):
@@ -3971,9 +4074,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     else:
                         item = node.key if isinstance(node, ast.DictComp) else node.elt
                         yield from visit(item, local, interrupted)
-                        elements.append(CapturedArgument(qualified(item, local)))
+                        element = CapturedArgument(qualified(item, local))
+                        elements.append(element)
                         if isinstance(node, ast.DictComp):
-                            yield from visit(node.value, local, interrupted)
+                            yield from visit(node.value, local, interrupted, allow_keywords=True)
+                            if any(isinstance(part, KeywordArguments)
+                                   for part in sequence_members(qualified(node.value, local), local)):
+                                raise Unsupported('cannot resolve collected Python keyword copy')
+                        if isinstance(node, (ast.SetComp, ast.DictComp)):
+                            check_hash(element.owners, local)
                 if skipped:
                     local.update(join([local, *skipped], paths=True))
 
@@ -4088,9 +4197,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             outcomes = []
             values = set()
             for index, (op, operand) in enumerate(zip(node.ops, node.comparators)):
-                yield from visit(operand, names, interrupted, allow_generator=True)
+                membership = isinstance(op, (ast.In, ast.NotIn))
+                yield from visit(operand, names, interrupted, allow_generator=True, allow_keywords=membership)
                 right = qualified(operand, names)
-                if isinstance(op, (ast.In, ast.NotIn)):
+                if membership:
                     if any(isinstance(owner, KeywordArguments) for owner in right):
                         check_keyword_keys(left)
                     yield from iterate(operand, names, interrupted, partial=True)
@@ -4122,11 +4232,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 owners = copy_sequences(target.value.owners, names, sequence_slice(target.slice, names))
             else:
                 owners = qualified(target, names)
-            yield from visit(node.value, names, interrupted)
+            yield from visit(node.value, names, interrupted, allow_keywords=isinstance(node.op, ast.BitOr))
             if isinstance(node.op, ast.BitOr):
                 for owner in owners:
                     if isinstance(owner, KeywordArguments):
-                        names[(owner, 'escaped')] = frozenset({True})
+                        check_expansion(qualified(node.value, names))
+                        owner.invalidate(set(keyword_entries(node.value, names)), names)
                 if owners and all(isinstance(owner, KeywordArguments) for owner in owners):
                     return
                 if ENVIRON.intersection(owners):
@@ -4225,7 +4336,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 key = node, decorator, defaults
                 managers = [owner for group in decorators for owner in group if isinstance(owner, (GeneratorManager, PatchedProvider))]
                 if managers:
-                    key = node, tuple(map(frozenset, decorators)), defaults
+                    key = node, tuple(frozenset(group) for group in decorators), defaults
                 if key not in functions:
                     helper = PythonHelper(node, frames(bindings), decorator, source, defaults)
                     if managers:
@@ -4534,7 +4645,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             names.pop(node.id, None)
             if isinstance(node.ctx, ast.Del) and (key := module_field(node.id)) is not None:
                 names[key] = frozenset()
-        elif isinstance(node, ast.Attribute) and node.attr in KEYWORD_METHODS and isinstance(node.ctx, ast.Load):
+        elif isinstance(node, ast.Attribute) and node.attr in KEYWORD_METHODS | KEYWORD_MUTATORS and isinstance(node.ctx, ast.Load):
             yield from visit(node.value, names, interrupted, allow_keywords=True)
             return
         elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
@@ -4544,11 +4655,34 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             else:
                 results[node] = qualified(field, names)
             return
+        elif isinstance(node, ast.FormattedValue):
+            yield from visit(node.value, names, interrupted, allow_keywords=True)
+            if node.format_spec is not None:
+                yield from visit(node.format_spec, names, interrupted)
+            check_mapping_render(qualified(node.value, names), names)
+            return
+        elif isinstance(node, ast.Set):
+            for item in node.elts:
+                if isinstance(item, ast.Starred):
+                    yield from visit(item.value, names, interrupted, allow_generator=True)
+                    keys = yield from iterate(item.value, names, interrupted, collect=True)
+                    if keys is None:
+                        owners = qualified(item.value, names)
+                        if any(isinstance(owner, DEFERRED) for owner in owners):
+                            raise Unsupported('cannot resolve local Python collection key protocol')
+                        check_hash(owners, names)
+                    else:
+                        for key in keys:
+                            check_hash(qualified(key, names), names)
+                else:
+                    yield from visit(item, names, interrupted)
+                    check_hash(qualified(item, names), names)
+            return
         elif isinstance(node, (ast.List, ast.Tuple)) and isinstance(node.ctx, ast.Load):
             check_sequence_length(len(node.elts))
             parts = []
             for item in node.elts:
-                yield from visit(item, names, interrupted)
+                yield from visit(item, names, interrupted, allow_keywords=True)
                 if isinstance(item, ast.Starred):
                     parts.append(expanded_sequence(qualified(item.value, names), names))
                 else:
@@ -4590,12 +4724,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 owners = qualified(value, names)
                 if key is None:
                     check_expansion(owners)
-                if any(isinstance(owner, KeywordArguments) for owner in owners):
+                else:
+                    check_hash(qualified(key, names), names)
+                if any(isinstance(owner, KeywordArguments) for owner in sequence_members(owners, names)):
                     collected = True
                     if key is None and len(owners) == 1:
                         mapping, = owners
-                        if not names.get((mapping, 'escaped')):
-                            KeywordArguments.overlay(entries, mapping.entries)
+                        if isinstance(mapping, KeywordArguments) and (overrides := mapping.entries(names)) is not None:
+                            KeywordArguments.overlay(entries, overrides)
                             continue
                 if not isinstance(literal, ast.Constant):
                     entries.clear()
@@ -4628,14 +4764,18 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     else:
                         flat_args.extend(items)
 
-            single_star = bool(helpers) and len(node.args) == 1 and isinstance(node.args[0], ast.Starred)
-            for operand in node.args:
-                if helpers and isinstance(operand, ast.Starred):
+            expand = bool(helpers) or targets_here == {'builtins.print'}
+            single_star = expand and len(node.args) == 1 and isinstance(node.args[0], ast.Starred)
+            for index, operand in enumerate(node.args):
+                if expand and isinstance(operand, ast.Starred):
                     yield from visit(operand.value, names, interrupted, allow_generator=True, allow_keywords=True)
                     if not single_star:
                         yield from expand_star(operand)
                 else:
-                    yield from visit(operand, names, interrupted, allow_generator=True, allow_keywords=read_only or view_reader,
+                    receiver_write = index == 0 and targets_here <= KEYWORD_WRITES and all(
+                        not isinstance(target, BoundCall) for target in callees)
+                    yield from visit(operand, names, interrupted, allow_generator=True,
+                                     allow_keywords=read_only or view_reader or receiver_write,
                                      allow_view=view_reader)
                     args.append(operand)
                     if flat_launchers:
@@ -4657,8 +4797,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     raise Unsupported('duplicate Python call keyword')
                 supplied_keywords.update(keys)
                 if (kw.arg is None and len(owners) == 1 and isinstance(mapping := next(iter(owners)), KeywordArguments)
-                        and not names.get((mapping, 'escaped'))):
-                    keywords.append(ast.keyword(arg=None, value=CapturedArgument({KeywordArguments(dict(mapping.entries))})))
+                        and (entries := mapping.entries(names)) is not None):
+                    keywords.append(ast.keyword(arg=None, value=CapturedArgument({KeywordArguments(dict(entries))})))
                 else:
                     keywords.append(kw)
             call = node

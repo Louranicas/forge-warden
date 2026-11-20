@@ -863,7 +863,7 @@ class Contracts(unittest.TestCase):
                         return any(word == "(sh)trusted/scripts/dogfood.sh"
                                    for _, word, _ in COMMANDS.shell_calls(step["run"]))
 
-                    worker, = filter(is_worker, steps)
+                    worker, = [step for step in steps if is_worker(step)]
                     env = {"BASE_SHA": bases, **({"HEAD_SHA": heads} if name == "dogfood" else {})}
                     for i, context in enumerate(contexts[:2]):
                         environment = {key: evaluate(worker["env"][key], context) for key in env}
@@ -2674,11 +2674,86 @@ class GateImageCommands(unittest.TestCase):
                         exec(source, state)
                         renders = method != 'keys' and use == 'print(view)'
                         self.assertEqual(state['seen'], ['repr'] if renders else [])
-                        if renders or mutate and use == 'print(view)':
+                        if renders:
                             with self.assertRaisesRegex(ValueError, 'keyword (view|copy)'):
                                 COMMANDS.python_calls(source)
                         else:
                             self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_nested_keyword_rendering_checks_representation(self):
+        prefix = ("seen = []\nclass Item:\n    def __repr__(self): seen.append('repr'); return 'item'\n"
+                  "def display(**kw):\n    wrapped = [(kw,)]\n    ")
+        for expr in ("print([kw])", "print((kw,))", "print(wrapped)", "print({'nested': wrapped})",
+                     "print(dict(nested=wrapped))",
+                     "f'{kw}'", "f'{wrapped!r}'", "f'{kw!a}'", "print(*wrapped)"):
+            source = prefix + expr + "\ndisplay(item=Item())"
+            state = {}
+            with self.subTest(expr=expr), redirect_stdout(StringIO()):
+                exec(source, state)
+                self.assertEqual(state['seen'], ['repr'])
+                with self.assertRaisesRegex(ValueError, 'keyword view representation'):
+                    COMMANDS.python_calls(source)
+        self.assertEqual(COMMANDS.python_calls(prefix + "print(wrapped, f'{kw}')\ndisplay(item=1)"), [])
+        for renderer in ('repr', 'str', 'ascii'):
+            source = prefix + renderer + "(kw.values())\ndisplay(item=Item())"
+            state = {}
+            with self.subTest(renderer=renderer):
+                exec(source, state)
+                self.assertEqual(state['seen'], ['repr'])
+                with self.assertRaisesRegex(ValueError, 'keyword view use'):
+                    COMMANDS.python_calls(source)
+
+    def test_keyword_membership_and_replacements_preserve_keys(self):
+        prefix = "import operator\nfrom subprocess import run\ndef check(**kw):\n    alias = kw\n    "
+        for read in ("'launch' in alias", "'absent' not in alias", "0 < 1 and 'launch' in kw",
+                     "operator.contains(alias, 'launch')", "dict.__contains__(kw, 'launch')"):
+            source = prefix + read + "\n    kw['launch'](['cmp'])\ncheck(launch=run)"
+            with self.subTest(read=read):
+                self.assertEqual(self.recorded_commands(source), [['cmp']])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['cmp'])
+        for write in ("alias['launch'] = run", "operator.setitem(alias, 'launch', run)",
+                      "dict.__setitem__(alias, 'launch', run)", "alias.update(launch=run)",
+                      "alias |= {'launch': run}"):
+            source = prefix + "view = kw.keys()\n    " + write + "\n    print(view)\ncheck(launch=print)"
+            with self.subTest(write=write):
+                out = StringIO()
+                with redirect_stdout(out):
+                    exec(source, {})
+                self.assertEqual(out.getvalue(), "dict_keys(['launch'])\n")
+                self.assertEqual(COMMANDS.python_calls(source), [])
+        source = prefix + "alias['label'] = 'new'\n    copied = kw.copy()\n    copied['launch'](['cmp'])\ncheck(launch=run, label='old')"
+        self.assertEqual(self.recorded_commands(source), [['cmp']])
+        self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['cmp'])
+
+    def test_collection_insertion_checks_key_protocol(self):
+        prefix = ("seen = []\nclass Key:\n    def __hash__(self): seen.append('hash'); return 7\n"
+                  "key = Key()\ndef build(**kw):\n    ")
+        for expr in ("{**kw, key: 1}", "{key: 1}", "{(key,): 1}", "{x: 1 for x in [key]}",
+                     "{key}", "{*[(key,)]}", "{x for x in [key]}", "set([key])",
+                     "frozenset((key,))", "dict([(key, 1)])", "dict.fromkeys([key])"):
+            source = prefix + expr + "\nbuild(value=1)"
+            state = {}
+            with self.subTest(expr=expr):
+                exec(source, state)
+                self.assertEqual(state['seen'], ['hash'])
+                with self.assertRaisesRegex(ValueError, 'collection key protocol'):
+                    COMMANDS.python_calls(source)
+        source = prefix + "dict([('value', key)])\nbuild()"
+        self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_iterator_adapters_require_proven_callback_effects(self):
+        prefix = ("seen = []\ndef callback(*args): seen.append(args); return 1\n"
+                  "from functools import partial\n")
+        for expr in ("list(map(callback, [1]))", "list(filter(callback, [1]))", "list(iter(callback, 1))",
+                     "factory = partial(map, callback)\nlist(factory([1]))"):
+            source = prefix + expr
+            state = {}
+            with self.subTest(expr=expr):
+                exec(source, state)
+                self.assertEqual(len(state['seen']), 1)
+                with self.assertRaisesRegex(ValueError, 'iterator callback'):
+                    COMMANDS.python_calls(source)
+        self.assertEqual(COMMANDS.python_calls('list(iter((1,)))'), [])
 
     def test_collected_keyword_lookup_checks_discarded_keys(self):
         prefix = ("seen = []\nclass Key:\n    def __hash__(self): seen.append('hash'); return 7\n"
@@ -2727,6 +2802,8 @@ class GateImageCommands(unittest.TestCase):
                                      ('(nested,), = [(items,)]\n*rest, = nested', ['iter']),
                                      ('for item in items: pass', ['iter']), ('[x for x in items]', ['iter']),
                                      ('1 in items', ['iter']), ('list(items)', ['iter']), ('tuple(items)', ['iter']),
+                                     ('bytes(items)', ['iter']), ('bytearray(source=items)', ['iter']),
+                                     ('import operator\noperator.contains(items, 1)', ['iter']),
                                      ('rest = []\nrest[:] = items', ['iter']), ('rest = []\nrest += items', ['iter']),
                                      ('def stream(): yield from items\nlist(stream())', ['iter'])):
             with self.subTest(expression=expression):
