@@ -381,20 +381,17 @@ def just_consumer(step, commands, cases, root=None):
     try:
         options = {'isolated': True} if arguments_format == '-I {0}' else {}
         calls = reader(run, lexer=lexer, directory=directory, **options)
+        calls = list(commands['resolve_module_calls'](calls, lexer))
     finally:
         source.reset(token)
     for _, word, _, arguments, cwd in calls:
-        marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
         if word.startswith('(module)'):
-            module = word.removeprefix('(module)')
-            if module in ('unittest', 'unittest.__main__'):
-                consumer = unittest_consumer(arguments, cwd.relative_to(lexer.workspace), None, lexer.unknown)
-                if consumer:
-                    return consumer
-                continue
-            target = Path(module.replace('.', '/') + '.py')
-        else:
-            target = Path(word.removeprefix(marker))
+            consumer = unittest_consumer(arguments, cwd.relative_to(lexer.workspace), None, lexer.unknown)
+            if consumer:
+                return consumer
+            continue
+        marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
+        target = Path(word.removeprefix(marker))
         if target.name == 'just':
             return 'just'
         path = Path(os.path.normpath(cwd / target))

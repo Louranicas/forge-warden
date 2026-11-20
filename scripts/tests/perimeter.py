@@ -1646,6 +1646,48 @@ class GateImageCommands(unittest.TestCase):
                         self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
                 self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root), 'just')
 
+    def test_safe_path_and_heredocs_use_the_owning_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'checkout' / 'statistics'
+            package.mkdir(parents=True)
+            (package / '__init__.py').write_text("import subprocess\nsubprocess.run(['just'])")
+            for run, expected in (
+                ("env -C checkout PYTHONPATH=. python3 -BPc'import statistics'", 'just'),
+                ("env -C checkout python3 <<'A' | python3 -I -\nimport statistics\nA\n", 'just'),
+                ("env -C checkout python3 -I <<'A' | env -C checkout python3 -\nimport statistics\nA\n", None),
+                ("<<'A' env -C checkout python3 | python3 -I <<'B'\nimport statistics\nA\npass\nB\n", 'just'),
+                ("env -C checkout python3 <<'A' <<'B'\nimport statistics\nA\npass\nB\n", None),
+                ("env -C checkout python3 3<<'A'\nimport statistics\nA\n", None),
+                ("env -C checkout python3 3<<'A' <&3 | python3 -I\nimport statistics\nA\n", 'just'),
+            ):
+                with self.subTest(run=run):
+                    self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
+
+    def test_relative_names_and_module_entry_points(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'pkg'
+            child = package / 'data'
+            child.mkdir(parents=True)
+            (package / '__init__.py').write_text('from .data import child')
+            (child / '__init__.py').write_text('pass')
+            (child / 'child.py').write_text("if __name__ == 'pkg.data.child':\n"
+                                            "    import subprocess\n    subprocess.run(['just'])")
+            (package / '__main__.py').write_text('pass')
+            for run in ("python3 -c 'import pkg'", 'python3 -m pkg', 'python3 -mpkg.data.child'):
+                with self.subTest(run=run):
+                    self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), 'just')
+            (package / '__init__.py').write_text('pass')
+            (child / 'child.py').write_text("if __name__ == '__main__':\n    if __package__ == 'pkg.data':\n"
+                                            "        import subprocess\n        subprocess.run(['just'])")
+            self.assertIsNone(CAPS.just_consumer({'run': "python3 -c 'import pkg.data.child'"}, vars(COMMANDS), [], root))
+            self.assertEqual(CAPS.just_consumer({'run': 'python3 -m pkg.data.child'}, vars(COMMANDS), [], root), 'just')
+            self.assertIsNone(CAPS.just_consumer({'run': 'python3 -m pkg'}, vars(COMMANDS), [], root))
+            (root / 'unittest.py').write_text("import subprocess\nsubprocess.run(['just'])")
+            self.assertEqual(CAPS.just_consumer({'run': 'python3 -m unittest -h'}, vars(COMMANDS), [], root), 'just')
+            self.assertNotEqual(CAPS.just_consumer({'run': 'python3 -I -m unittest -h'}, vars(COMMANDS), [], root), 'just')
+
     def test_imported_globals_and_initialization_follow_each_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1766,6 +1808,31 @@ class GateImageCommands(unittest.TestCase):
         with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python callable'):
             COMMANDS.python_calls(prefix + "import os\nitems[int(os.getenv('POSITION', '1'))](['just'])")
 
+    def test_shallow_copies_keep_indexed_launchers(self):
+        for expression, index in (('items.copy()', 1), ('duplicate()', -1), ('list.copy(items)', 1),
+                                  ('items[:]', 1), ('items[::-1]', 0), ('items[1:]', 0),
+                                  ('list(items)', 1), ('tuple(items)', -1), ('copy.copy(items)', 1)):
+            source = ("import copy, subprocess\nitems = [print, [print]]\nduplicate = items.copy\n"
+                      f"saved = {expression}\nitems[1][0] = subprocess.run\nitems.clear()\n"
+                      f"launch = saved[{index}][0]\nlaunch(['just'])")
+            with self.subTest(expression=expression):
+                self.assertEqual(self.recorded_commands(source), [['just']])
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
+        with self.assertRaisesRegex(COMMANDS.Unsupported, 'cannot resolve Python callable'):
+            COMMANDS.python_calls("import os, subprocess\nitems = [subprocess.run]\n"
+                                  "saved = items[int(os.getenv('START', '0')):]\nsaved[0](['just'])")
+
+    def test_sequence_growth_stops_at_element_budget(self):
+        for grow in ('items = items + items', 'items = [*items, *items]', 'items.extend(items)',
+                     'items += items', 'items[0:0] = items', 'items *= 2'):
+            body = "    items = ['git']\n" + ('    ' + grow + '\n') * 10
+            with self.subTest(grow=grow):
+                prefix = 'import subprocess\ndef job():\n'
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(prefix + body + '    subprocess.run(items)')],
+                                 ['git'])
+                with self.assertRaisesRegex(COMMANDS.Unsupported, 'element budget'):
+                    COMMANDS.python_calls(prefix + body + '    ' + grow)
+
     def test_stored_argv_at_process_calls(self):
         for argv in ("['cmp']", "('cmp',)"):
             base = "from subprocess import run\nclass Task: argv = " + argv + "\n"
@@ -1827,6 +1894,25 @@ class GateImageCommands(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'artifact digest mismatch'):
                 with producer.verified_fixture(binary, manifest, subject):
                     self.fail('opened a replacement artifact')
+
+    def test_fixture_options_use_one_validated_namespace(self):
+        import argparse
+
+        producer = load('golden_output')
+        argv = ['golden_output', '--binary', 'tool', '--receipt', 'manifest', '--subject', 'build',
+                '--write', '--backup-dir', '/backup']
+        with patch.object(sys, 'argv', argv):
+            _, args, binary, receipt, subject = producer.parse_options()
+        self.assertEqual((binary, receipt, subject), (Path('tool').absolute(), Path('manifest'), 'build'))
+        self.assertEqual((args.binary.absolute(), args.receipt, args.subject), (binary, receipt, subject))
+        self.assertEqual((args.write, args.backup_dir), (True, Path('/backup')))
+        with patch.object(sys, 'argv', argv[:7]), patch.object(producer, 'verified_fixture', side_effect=EOFError) as verify, \
+                patch.object(argparse.ArgumentParser, 'parse_known_args', autospec=True,
+                             side_effect=argparse.ArgumentParser.parse_known_args) as parse:
+            with self.assertRaises(EOFError):
+                producer.main()
+        self.assertEqual(parse.call_count, 1)
+        verify.assert_called_once_with(binary, receipt, subject)
 
     def test_only_open_fixture_executables_are_admitted(self):
         filename = 'scripts/golden_output.py'

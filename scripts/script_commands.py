@@ -567,7 +567,7 @@ def long_option(value, names):
     return hits[0] if len(hits) == 1 else None
 
 
-def operand_word(state, value, raw, workflow=False):
+def operand_word(state, value, raw):
     """One word after a program that runs a file or a command line it is given: a shell, Python,
     `.`/`source`, tar or sort, read as that program's own option parser reads it (option groups,
     attached arguments, `--`, long-option prefixes). value is None for a non-literal word.
@@ -636,16 +636,14 @@ def operand_word(state, value, raw, workflow=False):
         letters = value[1:]
         events = []
         for index, letter in enumerate(letters):
-            if letter in 'IP':
-                events.append(('isolated', None))
+            if letter in ('I', 'P'):
+                events.append(('isolated' if letter == 'I' else 'safe-path', None))
             if letter in 'cmWX':
                 rest = letters[index + 1:]
                 if letter == 'c':
                     return (None, events + [('python', rest)]) if rest else ('next-python', events)
                 if letter == 'm':
-                    if workflow:
-                        return (None, events + [('(module)', rest)]) if rest else (('file-next', '(module)'), events)
-                    return None, events
+                    return (None, events + [('(module)', rest)]) if rest else (('file-next', '(module)'), events)
                 return (state if rest else ('option-argument', state, 1)), events
         return state, events
     return None, [('(py)', value)]
@@ -665,57 +663,64 @@ def stdin_runner(script):
     return None
 
 
-def flush_stdin(script, stdin_words, found, calls, lexer, directory, isolated):
-    """At the end of a simple command: `bash < FILE`, `< FILE bash`, `0< FILE sh` run FILE, and
-    `bash <<< 'TEXT'` runs TEXT. Returns the emptied list."""
-    runner = stdin_runner(script) if stdin_words else None
-    for operator, word in stdin_words if runner else []:
+def script_markers(marker, isolated):
+    alternate = {'(py)': '(isolated-py)', '(module)': '(isolated-module)'}.get(marker)
+    if alternate and isolated is not False:
+        return (marker, alternate) if isolated is None else (alternate,)
+    return (marker,)
+
+
+def flush_stdin(script, inputs, found, calls, lexer, directory, isolated):
+    if 0 not in inputs:
+        return
+    runner = stdin_runner(script)
+    operator, word, heredoc = inputs[0]
+    if heredoc:
+        _, body, start, _, body_lexer = heredoc
+        if runner is None and body.startswith('#!'):
+            runner = {'shell': '(sh)', 'python': '(py)'}.get(shebang(body.split('\n', 1)[0])[0])
+            isolated = False
+        if runner == '(sh)':
+            calls.extend(shell_calls(body, start, body_lexer, directory))
+        elif runner == '(py)':
+            calls.extend(python_calls(body, start, body_lexer, directory, isolated=isolated))
+    elif runner:
         if operator == '<<<' and word.literal:
-            text = word.value
             if runner == '(sh)':
-                calls.extend(shell_calls(text, word.line, word.lexer, directory))
+                calls.extend(shell_calls(word.value, word.line, word.lexer, directory))
             else:
-                calls.extend(python_calls(text, word.line, word.lexer, directory, isolated=isolated))
+                calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated))
         elif directory is not None and not word.literal:
             raise Unsupported('cannot resolve gate script input before Just installation')
         elif operator == '<<<':
-            found.append(lexer.call(word.line, word.raw, True, directory=directory))  # a dynamic script text is named
+            found.append(lexer.call(word.line, word.raw, True, directory=directory))
         elif word.literal:
             path = str(word.lexer.path(directory, word.value)) if directory is not None else word.value
-            found.append(lexer.call(word.line, ('(isolated-py)' if isolated and runner == '(py)' else runner) + path, True, directory=directory))
-    return []
+            for marker in script_markers(runner, isolated):
+                found.append(lexer.call(word.line, marker + path, True, directory=directory))
 
 
 def command_words(tokens, calls, lexer, directory):
     isolated = False
-    initial_directory = heredoc_directory = directory
+    initial_directory = directory
     found, functions = [], set()
-    expect, mode, prefix, owner, script = True, None, None, None, None
+    expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
-    stdin_words = []  # (operator, word) of `<`/`<>`/`<<<` in the current simple command
+    inputs = {}
+    heredocs = {token[3]: token for token in tokens if token[0] == 'heredoc'}
     for index, token in enumerate(tokens):
         kind = token[0]
         if kind == 'heredoc':
-            body, start, consumer = token[1], token[2], owner
-            body_lexer = token[4]
-            first = body.split('\n', 1)[0]
-            if first.startswith('#!'):
-                consumer = {'shell': 'bash', 'python': 'python3'}.get(shebang(first)[0])
-            if consumer in SHELLS:
-                calls.extend(shell_calls(body, start, body_lexer, heredoc_directory))
-            elif consumer and PYTHONS.fullmatch(consumer):
-                calls.extend(python_calls(body, start, body_lexer, heredoc_directory, isolated=isolated))
             continue
         if kind == 'redirect':
-            # Standard input (`<`, `0<`, `<>`, `0<>`, `<<<`), before or after the command word: decided at the
-            # end of the simple command, when it is known whether a shell or Python got a script.
-            stdin = token[1] in ('<', '<>', '<<<') and (len(token) < 4 or token[3] in (None, '0'))
-            mode = ('stdin-target', mode, token[1]) if stdin else ('target', mode)
+            operator = token[1]
+            descriptor = int(token[3]) if token[3] is not None else int(not operator.startswith('<'))
+            mode = ('redirect-target', mode, operator, descriptor)
             continue
         if kind == 'op':
             op = token[1]
-            heredoc_directory = directory
-            stdin_words = flush_stdin(script, stdin_words, found, calls, lexer, directory, isolated)
+            flush_stdin(script, inputs, found, calls, lexer, directory, isolated)
+            inputs.clear()
             directory = initial_directory
             if mode == 'array':
                 if op == ')':
@@ -754,9 +759,21 @@ def command_words(tokens, calls, lexer, directory):
             directory = word.lexer.location(directory, word.value)
             mode = None
             continue
-        if mode and mode[0] in ('target', 'stdin-target'):
-            if mode[0] == 'stdin-target':
-                stdin_words.append((mode[2], word))
+        if mode and mode[0] in ('target', 'redirect-target'):
+            if mode[0] == 'redirect-target':
+                _, _, operator, descriptor = mode
+                if operator in ('<&', '>&'):
+                    if not word.literal and inputs:
+                        raise Unsupported('cannot resolve script input descriptor')
+                    copied = inputs.get(int(word.value)) if word.literal and re.fullmatch(r'[0-9]+', word.value) else None
+                    if copied is None:
+                        inputs.pop(descriptor, None)
+                    else:
+                        inputs[descriptor] = copied
+                elif operator.startswith('<'):
+                    inputs[descriptor] = operator, word, heredocs.get(index + 1)
+                else:
+                    inputs.pop(descriptor, None)
             mode = mode[1]
             continue
         if mode == 'function-name':
@@ -807,10 +824,13 @@ def command_words(tokens, calls, lexer, directory):
                         isinstance(script, str) and PYTHONS.fullmatch(script) or
                         isinstance(script, tuple) and script[0] == 'file-next'):
                     raise Unsupported('cannot resolve gate script operand before Just installation')
-                script, events = operand_word(script, word.value if word.literal else None, word.raw, directory is not None)
+                script, events = operand_word(script, word.value if word.literal else None, word.raw)
                 for event, text in events:
                     if event == 'isolated':
                         isolated = True
+                    elif event == 'safe-path':
+                        if isolated is False:
+                            isolated = None
                     elif event == 'shell':
                         calls.extend(external(shell_calls(text, word.line, word.lexer, directory)))
                     elif event == 'python':
@@ -820,13 +840,10 @@ def command_words(tokens, calls, lexer, directory):
                             raise Unsupported('cannot resolve inline gate command before Just installation')
                         found.append(lexer.call(word.line, text, True, directory=directory))
                     else:
-                        if isolated and event == '(py)':
-                            event = '(isolated-py)'
-                        if isolated and event == '(module)' and text not in sys.stdlib_module_names and text != 'unittest.__main__':
-                            raise Unsupported('cannot resolve isolated Python module ' + text)
                         if directory is not None and event in RUNS:
                             text = str(word.lexer.path(directory, text))
-                        found.append(lexer.call(word.line, event + text, True, tokens, index + 1, directory))
+                        for marker in script_markers(event, isolated):
+                            found.append(lexer.call(word.line, marker + text, True, tokens, index + 1, directory))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
@@ -909,7 +926,7 @@ def command_words(tokens, calls, lexer, directory):
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
-    flush_stdin(script, stdin_words, found, calls, lexer, directory, isolated)
+    flush_stdin(script, inputs, found, calls, lexer, directory, isolated)
     return found + [lexer.call(0, '()' + name, False, directory=directory) for name in functions]
 
 
@@ -920,14 +937,19 @@ def branches(node):
     return [node]
 
 
+def check_sequence_length(length):
+    if length > 1024:
+        raise Unsupported('cannot resolve Python sequence beyond element budget')
+
+
 def expanded_items(items):
+    check_sequence_length(len(items))
     result = []
     for item in items:
-        if isinstance(item, ast.Starred):
-            expanded = py_items(item.value)
-            result.extend([item] if expanded is None else expanded)
-        else:
-            result.append(item)
+        expanded = py_items(item.value) if isinstance(item, ast.Starred) else None
+        segment = [item] if expanded is None else expanded
+        check_sequence_length(len(result) + len(segment))
+        result.extend(segment)
     return result
 
 
@@ -940,7 +962,9 @@ def py_items(node):
             right = py_items(node.right)
             if right is None and not left:
                 return None
-            return left + (right if right is not None else [ast.Starred(value=node.right)])
+            suffix = right if right is not None else [ast.Starred(value=node.right)]
+            check_sequence_length(len(left) + len(suffix))
+            return left + suffix
     return None
 
 
@@ -1081,7 +1105,7 @@ PATH_CONSTRUCTORS = {'pathlib.Path', 'pathlib.PosixPath', 'pathlib.WindowsPath',
 PROVIDER_FIELDS = {'sys.executable', 'shutil.which', 'sys.modules', 'tempfile.TemporaryDirectory',
                    'unittest.mock.patch.TEST_PREFIX'} | PATH_CONSTRUCTORS
 PROVIDER_MODULES = {name.partition('.')[0] for name in PROVIDER_FIELDS}
-FIXTURE_OPTIONS_SHA256 = '0bf88dd8180c62d751c58b1192fa456d492ec2320ce26aaebef2694f217ba150'
+FIXTURE_OPTIONS_SHA256 = '04f29a49f8645375c9779614ed43ca5317c4fa359a49f8bb39545b31405ed2fa'
 FixtureInput = namedtuple('FixtureInput', 'source option')
 FIXTURE_VERIFIER_SHA256 = '738ecf280222d99f9d5042d41f37129fc7cb924ca2481fafe605f9c93918447a'
 
@@ -1102,7 +1126,7 @@ def join(states, *, paths=False):
     return merged
 
 
-class LocalModule(namedtuple('LocalModule', 'path')):
+class LocalModule(namedtuple('LocalModule', 'path main', defaults=(False,))):
     def member(self, name, state):
         values = state.get((self, name), frozenset())
         return (values - {MISSING_FIELD}) | ({UNKNOWN_CALLABLE} if MISSING_FIELD in values else set())
@@ -1118,6 +1142,7 @@ SequenceState = namedtuple('SequenceState', 'elements head revised', defaults=(F
 
 class SequenceBinding:
     def __init__(self, origin, items):
+        check_sequence_length(len(items))
         self.origin = origin
         self.items = items
         exact = all(not isinstance(item, ast.Starred) for item in items)
@@ -1131,6 +1156,33 @@ class SequenceBinding:
 
 
 IMPORT_SOURCE = ContextVar('script_import_source', default=None)
+
+
+def auxiliary_option(node):
+    if not isinstance(node, ast.Expr) or not isinstance(call := node.value, ast.Call):
+        return False
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == 'add_argument'
+            and isinstance(call.func.value, ast.Name) and call.func.value.id == 'parser' and len(call.args) == 1):
+        return False
+    flag = call.args[0]
+    if not (isinstance(flag, ast.Constant) and isinstance(flag.value, str)
+            and re.fullmatch(r'--[a-z][a-z0-9-]*', flag.value) and flag.value not in ('--binary', '--receipt', '--subject')):
+        return False
+    for kw in call.keywords:
+        value = kw.value
+        if kw.arg == 'action' and isinstance(value, ast.Constant) and value.value in ('store', 'store_true', 'store_false'):
+            continue
+        if kw.arg == 'type' and isinstance(value, ast.Name) and value.id == 'Path':
+            continue
+        if kw.arg in ('default', 'help', 'choices') and isinstance(value, ast.Constant):
+            continue
+        if kw.arg == 'choices' and isinstance(value, ast.Name) and value.id == 'GOLDENS':
+            continue
+        if (kw.arg == 'default' and isinstance(value, ast.Subscript) and isinstance(value.value, ast.Name)
+                and value.value.id == 'GOLDENS' and isinstance(value.slice, ast.Constant) and type(value.slice.value) is int):
+            continue
+        return False
+    return True
 
 
 class SuiteImports:
@@ -1149,27 +1201,35 @@ class SuiteImports:
         if filename == 'scripts/golden_output.py':
             definitions = [node for node in body if isinstance(node, ast.FunctionDef)]
             for name, field in (('verified_fixture', 'fixture_manager'), ('verify_artifact', 'fixture_verifier'),
-                                ('fixture_options', 'fixture_options')):
+                                ('parse_options', 'fixture_options')):
                 matches = [node for node in definitions if node.name == name]
                 if len(matches) != 1:
                     continue
                 definition, = matches
-                if field != 'fixture_manager':
+                if field == 'fixture_options':
+                    nodes = [definition.args, *(statement for statement in definition.body if not auxiliary_option(statement))]
+                    operation = '\n'.join(ast.unparse(node) for node in nodes).encode()
+                    digest = FIXTURE_OPTIONS_SHA256
+                elif field == 'fixture_verifier':
                     lines = (source.encode() if isinstance(source, str) else source).splitlines(keepends=True)
                     operation = b''.join(lines[definition.lineno - 1:definition.end_lineno])
-                    digest = FIXTURE_VERIFIER_SHA256 if field == 'fixture_verifier' else FIXTURE_OPTIONS_SHA256
-                    if definition.decorator_list or hashlib.sha256(operation).hexdigest() != digest:
-                        raise Unsupported('reviewed fixture verification operation changed')
+                    digest = FIXTURE_VERIFIER_SHA256
+                if field != 'fixture_manager' and (definition.decorator_list or hashlib.sha256(operation).hexdigest() != digest):
+                    raise Unsupported('reviewed fixture verification operation changed')
                 setattr(self, field, definition)
 
-    def load(self, path, module, ordering, targets, names):
-        reference = LocalModule(path)
+    def load(self, path, ordering, targets, names, *, main=False):
+        reference = LocalModule(path, main)
         marker = reference, MODULE_INITIALIZED
         prior = names.get(marker, ())
         if prior == {True}:
             return
+        stem = path.parent if path.name == '__init__.py' else path.with_suffix('')
+        if not stem.is_relative_to(self.directory):
+            raise Unsupported('cannot resolve relative import beyond the top-level package')
+        module = '.'.join(stem.relative_to(self.directory).parts)
         relative = path.relative_to(self.root).as_posix()
-        if (relative not in self.files or path.resolve() != path or not path.is_file()
+        if (not module or relative not in self.files or path.resolve() != path or not path.is_file()
                 or path in self.stack or len(self.stack) >= 12):
             raise Unsupported('cannot resolve unsafe or recursive unittest import ' + module)
         if path not in self.trees:
@@ -1177,7 +1237,9 @@ class SuiteImports:
             self.trees[path] = ast.parse(data, filename=relative)
             self.register_fixture(self.trees[path].body, relative, data)
         namespace = {key: values for key, values in names.items() if isinstance(key, tuple) and key[0] != reference}
-        namespace[(reference, '__name__')] = frozenset({ast.Constant(module)})
+        namespace[(reference, '__name__')] = frozenset({ast.Constant('__main__' if main else module)})
+        package_name = module if path.name == '__init__.py' else module.rpartition('.')[0]
+        namespace[(reference, '__package__')] = frozenset({ast.Constant(package_name)})
         self.stack.append(path)
         try:
             yield from python_callees(self.trees[path].body, namespace, ordering, targets, imports=self,
@@ -1187,7 +1249,7 @@ class SuiteImports:
         namespace[marker] = frozenset({True})
         parent = path.parent.parent if path.name == '__init__.py' else path.parent
         package = LocalModule(parent / '__init__.py')
-        if package.path in self.stack or (package, MODULE_INITIALIZED) in namespace:
+        if not main and (package.path in self.stack or (package, MODULE_INITIALIZED) in namespace):
             name = path.parent.name if path.name == '__init__.py' else path.stem
             namespace[(package, name)] = frozenset({reference})
         updates = {key: values for key, values in namespace.items() if isinstance(key, tuple)}
@@ -1209,7 +1271,7 @@ class SuiteImports:
         return (stem.with_suffix('.py').is_file() or (stem / '__init__.py').is_file() or
                 root not in sys.stdlib_module_names and stem.is_dir())
 
-    def module(self, module, source, ordering, targets, names, *, bind_root=False, from_list=False):
+    def module(self, module, source, ordering, targets, names, *, bind_root=False, from_list=False, main=False):
         if self.isolated:
             raise Unsupported('cannot resolve isolated Python import ' + module)
         absolute = module.lstrip('.')
@@ -1219,6 +1281,8 @@ class SuiteImports:
             if source is None:
                 raise Unsupported('cannot resolve relative unittest import')
             parent = source.parent
+            if levels > len(parent.relative_to(self.directory).parts):
+                raise Unsupported('cannot resolve relative import beyond the top-level package')
             for _ in range(levels - 1):
                 parent = parent.parent
         parts = absolute.split('.') if absolute else []
@@ -1228,12 +1292,12 @@ class SuiteImports:
         if self.files is None:
             self.files = set(tracked(self.root))
         chain = []
-        for index, part in enumerate(parts[:-1], 1):
+        for part in parts[:-1]:
             parent = parent / part
             initializer = parent / '__init__.py'
             chain.append(initializer)
             if initializer not in self.stack:
-                yield from self.load(initializer, '.'.join(parts[:index]), ordering, targets, names)
+                yield from self.load(initializer, ordering, targets, names)
         paths = [stem / '__init__.py']
         if absolute:
             paths.append(stem.with_suffix('.py'))
@@ -1241,8 +1305,11 @@ class SuiteImports:
         if len(candidates) != 1:
             raise Unsupported('cannot resolve unittest import ' + module)
         leaf, = candidates
+        if main and leaf.name == '__init__.py':
+            yield from self.load(leaf, ordering, targets, names)
+            leaf = leaf.with_name('__main__.py')
         if not (from_list and leaf in self.stack and leaf.name == '__init__.py'):
-            yield from self.load(leaf, module, ordering, targets, names)
+            yield from self.load(leaf, ordering, targets, names, main=main)
         chain.append(leaf)
         return LocalModule(chain[0] if bind_root else leaf)
 
@@ -1387,11 +1454,13 @@ def literal_elements(node):
             return items
     if isinstance(node, (ast.Set, ast.Dict)):
         keys = node.elts if isinstance(node, ast.Set) else node.keys
+        check_sequence_length(len(keys))
         if all(isinstance(key, ast.Constant) for key in keys):
             distinct = dict.fromkeys(key.value for key in keys)
             if isinstance(node, ast.Dict) or len(distinct) <= 1:
                 return [ast.Constant(value) for value in distinct]
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        check_sequence_length(len(node.value))
         return [ast.Constant(value) for value in node.value]
     return None
 
@@ -1605,7 +1674,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 else:
                     return frozenset({None})
             return frozenset({ast.Constant(''.join(parts))})
-        if isinstance(node, ast.BinOp) and node in results:
+        if isinstance(node, (ast.BinOp, ast.Subscript)) and node in results:
             return results[node]
         if isinstance(node, (ast.Call, ast.List, ast.Tuple)):
             return results.get(node, frozenset({UNKNOWN_CALLABLE}))
@@ -1641,7 +1710,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     values.add(UNKNOWN_PROVIDER)
                 elif isinstance(owner, PatchedProvider) and node.attr in ('start', 'stop'):
                     values.add(BoundCall(node.attr, owner))
-                elif isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) and node.attr in LIST_MUTATIONS:
+                elif isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List) and (node.attr in LIST_MUTATIONS or node.attr == 'copy'):
                     values.add(BoundCall('builtins.list.' + node.attr, owner))
                 elif owner == 'unittest.TestCase.super()' and node.attr == '__init__':
                     values.add('unittest.TestCase.__init__')
@@ -1807,7 +1876,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if isinstance(owner, SequenceBinding):
                 for state in owner.states(names):
                     if state.elements is not None:
-                        items = tuple(CapturedArgument(values) for values in state.elements)
+                        items = state.elements
                     elif state.revised:
                         items = (ChangedTail(value=CapturedArgument({UNKNOWN_CALLABLE})),)
                         if state.head:
@@ -1824,7 +1893,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         for index, combination in enumerate(product(*parts)):
             if index >= 256:
                 raise Unsupported('cannot resolve Python sequence alternatives')
-            items = tuple(item for segment, _, _ in combination for item in segment)
+            check_sequence_length(sum(len(segment) for segment, _, _ in combination))
+            items = tuple(CapturedArgument(item) if isinstance(item, (set, frozenset)) else item
+                          for segment, _, _ in combination for item in segment)
             owner = SequenceBinding(origin, items)
             if any(revised for _, revised, _ in combination):
                 head = next((first for segment, _, first in combination if segment), None)
@@ -1833,8 +1904,42 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             owners.add(owner)
         return frozenset(owners)
 
+    def sequence_slice(node, names):
+        bounds = []
+        for part in (node.lower, node.upper, node.step):
+            if part is None:
+                bounds.append(None)
+                continue
+            try:
+                bound = ast.literal_eval(argument(part, names))
+            except (ValueError, TypeError, SyntaxError):
+                return None
+            if bound is not None and not isinstance(bound, int):
+                return None
+            bounds.append(bound)
+        return slice(*bounds) if bounds[2] != 0 else None
+
+    def copy_sequences(owners, names, section=slice(None), constructor=None):
+        copies = set()
+        for owner in owners:
+            origin = constructor or (owner.origin if isinstance(owner, SequenceBinding) else ast.List())
+            choices = expanded_sequence({owner}, names)
+            if section != slice(None):
+                sliced = []
+                for items, revised, head in choices:
+                    if section is None or any(isinstance(item, ast.Starred) for item in items):
+                        sliced.append(((ast.Starred(value=CapturedArgument({UNKNOWN_CALLABLE})),), True, None))
+                    else:
+                        selected = items[section]
+                        head = head if selected and selected[0] is items[0] else None
+                        sliced.append((selected, revised, head))
+                choices = sliced
+            copies.update(built_sequences(origin, [choices]))
+        return copies
+
     def bind_target(target, value, names):
         if isinstance(target, (ast.Tuple, ast.List)):
+            check_sequence_length(len(target.elts))
             owners = qualified(value, names)
             if len(owners) > 1 or any(isinstance(owner, SequenceBinding) and len(owner.states(names)) > 1 for owner in owners):
                 outcomes = []
@@ -1915,8 +2020,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
         index = literal(args[0]) if args else -1
         if args and isinstance(args[0], ast.Slice):
-            bounds = [literal(node) if node else None for node in (args[0].lower, args[0].upper, args[0].step)]
-            index = slice(*bounds) if all(value is None or type(value) is int for value in bounds) else None
+            index = sequence_slice(args[0], names)
         if type(index) not in (int, slice):
             index = None
         states = set()
@@ -1935,6 +2039,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 elif elements is None:
                     pass
                 elif method == 'append' and args:
+                    check_sequence_length(len(elements) + 1)
                     elements.append(qualified(args[0], names))
                 elif method in ('extend', '__iadd__') or method == '__setitem__' and isinstance(index, slice):
                     more = literal_elements(sequence_value(args[-1], names)) if args else None
@@ -1944,17 +2049,21 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             preserves_head = 0 not in selected and selected.start != 0
                         elements = None
                     else:
-                        elements[index if method == '__setitem__' else slice(len(elements), None)] = [
+                        section = index if method == '__setitem__' else slice(len(elements), None)
+                        check_sequence_length(len(elements) - len(range(*section.indices(len(elements)))) + len(more))
+                        elements[section] = [
                             qualified(item, names) for item in more]
                 elif method == '__setitem__' and isinstance(index, int):
                     elements[index] = qualified(args[1], names)
                 elif method == 'insert' and isinstance(index, int):
+                    check_sequence_length(len(elements) + 1)
                     elements.insert(index, qualified(args[1], names))
                 elif method == '__delitem__' and index is not None:
                     del elements[index]
                 elif method == 'pop' and isinstance(index, int):
                     returned.update(elements.pop(index))
-                elif method == '__imul__' and isinstance(index, int) and len(elements) * index <= 1024:
+                elif method == '__imul__' and isinstance(index, int):
+                    check_sequence_length(len(elements) * index)
                     elements *= max(0, index)
                 elif method == 'reverse':
                     elements.reverse()
@@ -1974,6 +2083,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         preserves_head = True
                 else:
                     elements = None
+            except Unsupported:
+                raise
             except (IndexError, ValueError, OverflowError):
                 elements, head = None, None
             if method == 'pop' and elements is None:
@@ -2119,6 +2230,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return {UNKNOWN_PROVIDER}
         if isinstance(target, PatchedProvider):
             raise Unsupported('cannot resolve executable provider patch application')
+        if target in ('builtins.list.copy', 'copy.copy', 'builtins.list', 'builtins.tuple') and not call.keywords:
+            if receiver is not None and not call.args:
+                return copy_sequences({receiver}, names)
+            if receiver is None and len(call.args) == 1:
+                owners = qualified(call.args[0], names)
+                if any(isinstance(owner, SequenceBinding) for owner in owners):
+                    constructor = ast.List() if target == 'builtins.list' else ast.Tuple() if target == 'builtins.tuple' else None
+                    return copy_sequences(owners, names, constructor=constructor)
         if isinstance(target, str) and target.startswith('builtins.list.') and target.rsplit('.', 1)[1] in LIST_MUTATIONS:
             if receiver is not None:
                 return list_change(receiver, target.rsplit('.', 1)[1], call.args, names)
@@ -2133,12 +2252,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {GeneratorManager(target, frozen, receiver)}
             returned = yield from read_helper(target, names, call, receiver, strict=wrapped or require_command,
                                               interrupted=interrupted)
-            if (target.node is imports.fixture_options and not call.args and len(call.keywords) == 1
-                    and call.keywords[0].arg == 'extract' and isinstance(call.keywords[0].value, ast.Constant)
-                    and call.keywords[0].value.value is True):
+            if target.node is imports.fixture_options and not call.args and not call.keywords:
                 invocation = object()
                 items = [CapturedArgument({FixtureInput(invocation, key)}) for key in ('binary', 'receipt', 'subject')]
-                return {ast.Tuple(elts=items)}
+                return {ast.Tuple(elts=[CapturedArgument({UNKNOWN_CALLABLE}), CapturedArgument({UNKNOWN_CALLABLE}), *items])}
             if target.node is imports.fixture_verifier and imports.fixture_manager in active:
                 if len(call.args) != 5 or call.keywords or not isinstance(call.args[1], ast.Name):
                     raise Unsupported('cannot resolve verified fixture arguments')
@@ -2642,10 +2759,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, (ast.If, ast.IfExp)):
             yield from visit(node.test, names, interrupted)
             test = node.test
-            if (source is not None and isinstance(test, ast.Compare) and isinstance(test.left, ast.Name)
-                    and test.left.id == '__name__' and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
-                    and isinstance(test.comparators[0], ast.Constant) and test.comparators[0].value == '__main__'):
-                return (yield from suite(node.orelse if isinstance(node, ast.If) else [node.orelse], names, interrupted))
             if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
                 left, right = qualified(test.left, names), qualified(test.comparators[0], names)
                 if len(left) == len(right) == 1:
@@ -2927,7 +3040,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 for owner in qualified(node.value, names):
                     if isinstance(owner, LocalModule):
                         names[(owner, node.attr)] = frozenset()
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and isinstance(node.slice, ast.Slice):
+            yield from visit(node.value, names, interrupted)
+            owners = qualified(node.value, names)
+            yield from visit(node.slice, names, interrupted)
+            if any(isinstance(owner, SequenceBinding) for owner in owners):
+                results[node] = frozenset(copy_sequences(owners, names, sequence_slice(node.slice, names)))
+            return
         elif isinstance(node, (ast.List, ast.Tuple)) and isinstance(node.ctx, ast.Load):
+            check_sequence_length(len(node.elts))
             parts = []
             for item in node.elts:
                 yield from visit(item, names, interrupted)
@@ -3000,14 +3121,54 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     return {UNKNOWN_CALLABLE}
 
 
-def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False):
+def resolve_module_calls(calls, lexer):
+    pending = list(reversed(calls))
+    inspected = set()
+    while pending:
+        call = pending.pop()
+        line, word = call[:2]
+        if not word.startswith(('(module)', '(isolated-module)')):
+            yield call
+            continue
+        module = word.split(')', 1)[1]
+        isolated = word.startswith('(isolated-module)')
+        arguments, directory = call[3:] if len(call) > 3 else (None, None)
+        if not all(name.isidentifier() for name in module.split('.')):
+            raise Unsupported('cannot resolve Python module ' + module)
+        if SuiteImports(directory, isolated).has_local_root(module):
+            key = directory, module, tuple(arguments) if arguments is not None else None
+            if key not in inspected:
+                inspected.add(key)
+                entry = python_calls(None, line, lexer, directory, module=(module, call[3:]))
+                pending.extend(reversed(entry))
+        elif module.partition('.')[0] not in sys.stdlib_module_names:
+            raise Unsupported('cannot resolve Python module ' + module)
+        elif directory is not None and module in ('unittest', 'unittest.__main__'):
+            yield (line, '(module)' + module, *call[2:])
+
+
+def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False, module=None):
     """Read process calls as their effective executable and command line or shell payload."""
-    tree = ast.parse(text)
+    if isolated is None:
+        return [call for mode in (False, True)
+                for call in python_calls(text, line, lexer, directory, filename=filename, isolated=mode, module=module)]
     found = []
     targets = {}
     imports = SuiteImports(directory, isolated)
-    imports.register_fixture(tree.body, filename, text)
-    calls = dict.fromkeys(python_callees(tree.body, {}, directory is not None, targets, imports=imports))
+    if module is None:
+        tree = ast.parse(text)
+        imports.register_fixture(tree.body, filename, text)
+        calls = python_callees(tree.body, {}, directory is not None, targets, imports=imports)
+    else:
+        def entry_calls():
+            name, context = module
+            entry = yield from imports.module(name, None, True, targets, {}, main=True)
+            path = entry.path.relative_to(imports.root)
+            if directory is not None:
+                path = WorkflowLexer.workspace / path
+            found.append((line, '(py)' + str(path), True, *context))
+        calls = entry_calls()
+    calls = dict.fromkeys(calls)
 
     rebound = set().union(*(owners for node, owners in targets.items() if isinstance(node, ast.Attribute)))
 
@@ -3292,6 +3453,7 @@ def problems(root):
             token = IMPORT_SOURCE.set((root, origin, tracked_files, {}))
             try:
                 calls = shell_calls(text) if lang == 'shell' else python_calls(text, filename=name, isolated=lang == 'isolated python')
+                calls = list(resolve_module_calls(calls, Lexer))
             finally:
                 IMPORT_SOURCE.reset(token)
         except (Unsupported, SyntaxError, UnicodeDecodeError) as error:

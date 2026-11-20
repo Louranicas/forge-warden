@@ -110,33 +110,23 @@ def normalize(stdout):
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
 
 
-def fixture_options(*, extract=False):
+def parse_options():
     import argparse
     from pathlib import Path
 
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--subject", required=True, help="expected source-sha256 build-input subject")
-    if extract:
-        args, _ = parser.parse_known_args()
-        return args.binary.absolute(), args.receipt, args.subject
-    return parser
-
-
-def parse_options():
-    import argparse
-
-    parser = argparse.ArgumentParser(description=__doc__, parents=[fixture_options()])
     parser.add_argument("--golden", choices=GOLDENS, default=GOLDENS[0], help="reviewed output to check or regenerate")
     parser.add_argument("--write", action="store_true", help="operator-only explicit regeneration")
     parser.add_argument("--backup-dir", type=Path, help="existing private outside-root backup directory")
-    return parser, parser.parse_args()
+    args = parser.parse_args()
+    return parser, args, args.binary.absolute(), args.receipt, args.subject
 
 
 def main():
-    parser, args = parse_options()
-    binary, receipt_path, subject = fixture_options(extract=True)
+    parser, args, binary, receipt_path, subject = parse_options()
     if args.write and ("CI" in os.environ or "GITHUB_ACTIONS" in os.environ):
         parser.error("golden regeneration is refused in CI")
     if args.write:
