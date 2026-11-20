@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reviewed plant capabilities and fail-closed runtime/hosted provisioning checks."""
 import argparse
+import ast
 import fnmatch
 import hashlib
 import json
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -366,7 +368,7 @@ def unittest_consumer(arguments, cwd, fixture, unknown):
 
 def just_consumer(step, commands, cases, root=None, inherited_env=()):
     lexer = commands['WorkflowLexer']
-    pythonpath = ''
+    pythonpath = commands['UNSET_PATH']
     for environment in (*inherited_env, step.get('env', {})):
         pythonpath = environment.get('PYTHONPATH', pythonpath) if isinstance(environment, dict) else None
     directory = step.get('working-directory', '.')
@@ -384,51 +386,126 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
         reader = commands['python_calls']
     else:
         raise ValueError('unsupported gate shell before Just installation')
+    root = root or lexer.workspace
+    files = None
+
+    def inspect(calls, active):
+        nonlocal files
+        for _, word, _, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
+            if word.startswith('(module)'):
+                consumer = unittest_consumer(arguments, cwd.relative_to(lexer.workspace), None, lexer.unknown)
+                if consumer:
+                    return consumer
+                continue
+            marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
+            target = Path(word.removeprefix(marker))
+            if target.name == 'just':
+                return 'just'
+            path = Path(os.path.normpath(cwd / target))
+            if not path.is_relative_to(lexer.workspace):
+                if marker:
+                    raise ValueError('cannot resolve gate script outside the workspace before Just installation')
+                continue
+            path = path.relative_to(lexer.workspace).as_posix()
+            if path in JUST_TESTS:
+                if unittest_consumer(arguments, cwd.relative_to(lexer.workspace), path, lexer.unknown):
+                    return path
+                continue
+            if path == '.claude/hooks/guard.py':
+                if arguments is None or (len(arguments) == 1 and
+                        (arguments[0] in ('stop', None) or lexer.unknown in arguments[0])):
+                    return path
+                continue
+            if path == 'plants/run.py':
+                if plant_needs_just(arguments, cases, lexer.unknown):
+                    return path
+                continue
+            if path in JUST_CONSUMERS:
+                return path
+            if marker == '(module-file)' or not marker and '/' not in word:
+                continue
+            file = root / path
+            if file.is_symlink() or file.resolve() != file:
+                raise ValueError('cannot resolve linked gate script before Just installation')
+            if not file.exists():
+                continue
+            if not file.is_file() or path in active or len(active) >= 12:
+                raise ValueError('cannot resolve unsafe or recursive gate script ' + path)
+            if files is None:
+                files = set(commands['tracked'](root))
+            if path not in files:
+                raise ValueError('cannot resolve untracked gate script ' + path)
+            env_path = getattr(word, 'pythonpath', pythonpath)
+            ignore_env = getattr(word, 'ignore_env', False)
+            if not marker:
+                kind, bang = commands['classify'](root, path)
+                if bang and kind not in ('python', 'shell'):
+                    raise ValueError('cannot resolve gate script interpreter ' + path)
+                if bang:
+                    if ('shebang', path) in active:
+                        raise ValueError('cannot resolve recursive gate script interpreter ' + path)
+                    with file.open(encoding='utf-8') as first:
+                        interpreter = first.readline().strip()[2:]
+                    nested = commands['shell_calls'](interpreter + ' ' + shlex.quote(str(lexer.workspace / path)),
+                                                     lexer=lexer, directory=cwd, pythonpath=env_path)
+                    consumer = inspect(nested, (*active, ('shebang', path)))
+                    if consumer:
+                        return consumer
+                    continue
+            body = file.read_text(encoding='utf-8')
+            if marker in ('(py)', '(isolated-py)', '(cwdpath-py)'):
+                origin = cwd if getattr(word, 'cwd_imports', False) else (lexer.workspace / path).parent
+                nested = commands['python_calls'](body, lexer=lexer, directory=cwd, filename=path, import_directory=origin,
+                                                  pythonpath=env_path, ignore_env=ignore_env, isolated=marker == '(isolated-py)')
+            else:
+                nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path)
+            consumer = inspect(nested, (*active, path))
+            if consumer:
+                return consumer
+
     source = commands['IMPORT_SOURCE']
-    token = source.set((root or lexer.workspace, directory, None, JUST_TESTS))
+    token = source.set((root, directory, None, JUST_TESTS))
     try:
         options = {'isolated': True} if arguments_format == '-I {0}' else {}
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
-        calls = list(commands['resolve_module_calls'](calls, lexer))
+        return inspect(calls, ())
     finally:
         source.reset(token)
-    for _, word, _, arguments, cwd in calls:
-        if word.startswith('(module)'):
-            consumer = unittest_consumer(arguments, cwd.relative_to(lexer.workspace), None, lexer.unknown)
-            if consumer:
-                return consumer
-            continue
-        marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
-        target = Path(word.removeprefix(marker))
-        if target.name == 'just':
-            return 'just'
-        path = Path(os.path.normpath(cwd / target))
-        if not path.is_relative_to(lexer.workspace):
-            if marker:
-                raise ValueError('cannot resolve gate script outside the workspace before Just installation')
-            continue
-        path = path.relative_to(lexer.workspace).as_posix()
-        if path in JUST_TESTS and unittest_consumer(arguments, cwd.relative_to(lexer.workspace), path, lexer.unknown):
-            return path
-        if path == '.claude/hooks/guard.py':
-            if arguments is None or (len(arguments) == 1 and
-                    (arguments[0] in ('stop', None) or lexer.unknown in arguments[0])):
-                return path
-        if path == 'plants/run.py' and plant_needs_just(arguments, cases, lexer.unknown):
-            return path
-        if path in JUST_CONSUMERS:
-            return path
-    return None
 
 
 def may_write_runner_environment(step, commands):
-    if step.get('shell', 'bash') not in ('sh', 'bash'):
-        return True
+    def python_writes(source):
+        for statement in ast.parse(source).body:
+            if isinstance(statement, ast.Pass) or isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+                continue
+            if isinstance(statement, ast.Expr) and isinstance(call := statement.value, ast.Call):
+                if (isinstance(call.func, ast.Name) and call.func.id == 'print' and not call.keywords and
+                        all(isinstance(arg, ast.Constant) for arg in call.args)):
+                    continue
+            return True
+        return False
+
+    shell = step.get('shell', 'bash').split()[0]
+    if commands['PYTHONS'].fullmatch(shell):
+        return python_writes(step['run'])
     tokens = commands['WorkflowLexer'](step['run'].strip(), 1).tokens()
     if any(token[0] != 'word' or not token[1].literal for token in tokens):
         return True
     words = [word.value for _, word in tokens]
-    return bool(words and words[0] not in (':', 'true', 'false', 'echo') and words != ['git', '--version'])
+    if not words or words[0] in (':', 'true', 'false', 'echo') or words == ['git', '--version']:
+        return False
+    state = words[0]
+    if commands['PYTHONS'].fullmatch(state):
+        for word in words[1:]:
+            if state == 'next-python':
+                return python_writes(word)
+            state, events = commands['operand_word'](state, word, word)
+            for kind, value in events:
+                if kind == 'python':
+                    return python_writes(value)
+            if state is None:
+                break
+    return True
 
 
 def check_ci(root):

@@ -410,6 +410,9 @@ class Contracts(unittest.TestCase):
             lookup = {'run': "python3 -P -c 'import statistics'"}
             for before, refused in (([writer, lookup], True), ([lookup, writer], False),
                                     ([{'run': 'git --version'}, lookup], False),
+                                    ([{'run': "python3 -P -c 'pass'"}, lookup], False),
+                                    ([{'shell': 'python', 'run': 'print("ready")'}, lookup], False),
+                                    ([{'shell': 'python', 'run': 'import os\nopen(os.environ["GITHUB_ENV"], "a").write("PYTHONPATH=.")'}, lookup], True),
                                     ([writer, dict(lookup, env={'PYTHONPATH': '.'})], False),
                                     ([writer, {'run': "python3 -I -c 'import statistics'"}], False)):
                 with self.subTest(before=before):
@@ -1656,6 +1659,19 @@ class GateImageCommands(unittest.TestCase):
             for statement in ('from pkg.data.suite import Case', 'import pkg.data.suite',
                               'import pkg', 'from pkg import run'):
                 self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': statement}, vars(COMMANDS), [], root), 'just')
+            (root / 'wrap.sh').write_text('python3 entry.py')
+            (root / 'pkg' / 'job.py').write_text("import subprocess\nsubprocess.run(['bash', 'wrap.sh'])")
+            for run in ('python3 entry.py', 'bash wrap.sh', 'python3 <entry.py',
+                        'PYTHONPATH=. python3 pkg/job.py'):
+                with self.subTest(run=run):
+                    self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), 'just')
+            (root / 'pkg' / 'job.py').write_text('import statistics')
+            (root / 'pkg' / 'statistics.py').write_text("import subprocess\nsubprocess.run(['just'])")
+            for run, expected in (('python3 pkg/job.py', 'just'), ('python3 -I pkg/job.py', None),
+                                  ('PYTHONPATH=. python3 -P pkg/job.py', None),
+                                  ('env -C pkg python3 <pkg/job.py', 'just')):
+                with self.subTest(run=run):
+                    self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
             (root / 'pkg/data/__init__.py').unlink()
             with self.assertRaisesRegex(ValueError, 'cannot resolve'):
                 CAPS.just_consumer({'shell': 'python', 'run': 'import pkg.data.suite'}, vars(COMMANDS), [], root)
@@ -1714,15 +1730,17 @@ class GateImageCommands(unittest.TestCase):
                 ("cat <<'A' >/dev/stdout | env -C checkout python3\nimport statistics\nA\n", 'just'),
                 ("cat <<'A' 3>&1 >out >>/dev/fd/3 | env -C checkout python3\nimport statistics\nA\n", 'just'),
                 ("cat <<'A' >/proc/self/fd/1 | env -C checkout python3 </dev/stdin\nimport statistics\nA\n", 'just'),
-                ("cat <<'A' >out | env -C checkout python3\nimport statistics\nA\n", None),
+                ("cat <<'A' >/dev/null | env -C checkout python3\nimport statistics\nA\n", None),
                 ("cat <<'A' 3>&1 >out >&3 3>&- | env -C checkout python3\nimport statistics\nA\n", 'just'),
             ):
                 with self.subTest(run=run):
                     self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
-            for redirect in ('&>/dev/stdout', '&>>/proc/self/fd/1', '>"$destination"'):
+            for redirect in ('&>/dev/stdout', '&>>/proc/self/fd/1', '>"$destination"', '>out', '&>>out'):
                 with self.subTest(redirect=redirect), self.assertRaisesRegex(COMMANDS.Unsupported, 'piped script input'):
                     CAPS.just_consumer({'run': "cat <<'A' " + redirect + " | python3\npass\nA\n"},
                                        vars(COMMANDS), [], root)
+            run = "env -C scripts/tests bash -s 3<scripts/tests/dogfood.sh <&3"
+            self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), 'scripts/tests/dogfood.sh')
             for reader in ('bash', 'python3 -I -'):
                 with self.subTest(reader=reader), self.assertRaisesRegex(COMMANDS.Unsupported, 'piped script input'):
                     CAPS.just_consumer({'run': "printf '%s' 'pass' | " + reader}, vars(COMMANDS), [], root)
@@ -1792,6 +1810,23 @@ class GateImageCommands(unittest.TestCase):
                                   ("git --version && true\nunset PYTHONPATH\npython3 -Pc'import statistics'", None)):
                 with self.subTest(run=run):
                     self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
+            for command, expected in (('PYTHONPATH=.', None), ('declare PYTHONPATH=.', None),
+                                      ('readonly PYTHONPATH=.', None), ('export PYTHONPATH=.', 'just'),
+                                      ('declare -x PYTHONPATH=.', 'just'), ('set -a\nPYTHONPATH=.', 'just'),
+                                      ('PYTHONPATH=.\nexport PYTHONPATH', 'just'),
+                                      ('export PYTHONPATH=.\nexport -n PYTHONPATH', None)):
+                run = "unset PYTHONPATH\n" + command + "\npython3 -Pc'import statistics'"
+                with self.subTest(command=command):
+                    self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
+            child = "subprocess.run(['python3', '-P', '-c', 'import statistics'])"
+            for mutation, expected in (("os.environ.pop('PYTHONPATH', None)", None), ("os.environ.clear()", None),
+                                       ("del os.environ['PYTHONPATH']", None), ("os.unsetenv('PYTHONPATH')", None),
+                                       ("os.environ['PYTHONPATH'] = '.'", 'just'), ("os.putenv(b'PYTHONPATH', b'.')", 'just'),
+                                       ("os.environ.update(PYTHONPATH='.')", 'just'), ("os.environ |= {'PYTHONPATH': '.'}", 'just')):
+                step = {'shell': 'python3 -I {0}', 'env': {'PYTHONPATH': 'checkout'},
+                        'run': 'import os, subprocess\n' + mutation + '\n' + child}
+                with self.subTest(mutation=mutation):
+                    self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), [], root), expected)
             with self.assertRaisesRegex(COMMANDS.Unsupported, 'PYTHONPATH'):
                 CAPS.just_consumer({'run': "git status && export PYTHONPATH=.\npython3 -Pc'import statistics'"},
                                    vars(COMMANDS), [], root)
@@ -1993,6 +2028,27 @@ class GateImageCommands(unittest.TestCase):
                 self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['just'])
         source = 'from subprocess import run\nitems = (print,)\nold = items\nitems += (run,)\nold[-1](["just"])'
         self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_augmented_writeback_uses_the_original_destination(self):
+        for setup, change, invoke in (
+                ('batches = [[run], [print]]', 'batches[0] += batches.pop(0)', 'batches[0][0]'),
+                ('batches = [[run], [print]]', 'batches[:1] += [batches.pop(0)]', 'batches[0][0]'),
+                ('batches = [(run,), (print,)]', 'batches[0] += batches.pop(0)', 'batches[0][0]'),
+                ('batches = [[run], [print]]\nindices = [0, 1]',
+                 'batches[indices.pop(0)] += batches.pop(0)', 'batches[0][0]'),
+                ('class Box: pass\na = Box()\nb = Box()\na.items = (print,)\nb.items = (print,)\nboxes = [a, b]',
+                 'boxes[0].items += (boxes.pop(0), run)', 'a.items[-1]')):
+            source = f'from subprocess import run\n{setup}\n{change}\n{invoke}(["just"])'
+            with self.subTest(change=change):
+                self.assertEqual(self.recorded_commands(source), [['just']])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['just'])
+
+    def test_augmented_tuples_preserve_interpreter_arguments(self):
+        for start, operation in (("('bash',)", "cmd += ('-c', 'true')"),
+                                 ("('bash', '-c', 'true')", 'cmd *= 2')):
+            source = f'import subprocess\ncmd = {start}\n{operation}\nsubprocess.run(cmd)'
+            with self.subTest(operation=operation):
+                self.assertCountEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['bash', 'true'])
 
     def test_sort_keys_visit_reachable_commands(self):
         for sort in ('items.sort(key=run)', 'order = items.sort\norder(key=run)', 'list.sort(items, key=run)',

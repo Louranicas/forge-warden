@@ -523,7 +523,10 @@ class ExpandedWorkflowLexer(WorkflowLexer):
     expanded_workspace = True
 
 
-def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=''):
+UNSET_PATH = object()
+
+
+def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=UNSET_PATH):
     """(line, word, external) for each command word of the shell text, nested substitutions
     included. external: the word is run by a prefix or by find, so no shell function can be it."""
     calls = []
@@ -675,6 +678,15 @@ def script_marker(marker, isolated, cwd_path):
     return marker
 
 
+class ScriptFile(str):
+    def __new__(cls, word, pythonpath, ignore_env, cwd_imports):
+        result = super().__new__(cls, word)
+        result.pythonpath = pythonpath
+        result.ignore_env = ignore_env
+        result.cwd_imports = cwd_imports
+        return result
+
+
 def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env):
     if script == 'exec' and inputs:
         raise Unsupported('cannot resolve persistent script input descriptor')
@@ -685,7 +697,7 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
         if runner:
             raise Unsupported('cannot resolve piped script input')
         return
-    operator, word, heredoc = inputs[0]
+    operator, word, heredoc, opener = inputs[0]
     if heredoc:
         _, body, start, _, body_lexer = heredoc
         if runner is None and body.startswith('#!'):
@@ -708,14 +720,17 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
         elif operator == '<<<':
             found.append(lexer.call(word.line, word.raw, True, directory=directory))
         elif word.literal:
-            path = str(word.lexer.path(directory, word.value)) if directory is not None else word.value
-            found.append(lexer.call(word.line, script_marker(runner, isolated, pythonpath in ('.', b'.')) + path, True, directory=directory))
+            path = str(word.lexer.path(opener, word.value)) if opener is not None else word.value
+            operand = script_marker(runner, isolated, pythonpath in ('.', b'.')) + path
+            if directory is not None:
+                operand = ScriptFile(operand, pythonpath, ignore_env, True)
+            found.append(lexer.call(word.line, operand, True, directory=directory))
 
 
 ENVIRON = {'os.environ', 'os.environb'}
 CHILD_PATH = 'os.environ.PYTHONPATH', 'provider'
-INHERITED_PATH = object()
-DEFAULT_PYTHON_PATHS = ('', '.', b'', b'.')
+EnvironmentPath = namedtuple('EnvironmentPath', 'process mapping')
+DEFAULT_PYTHON_PATHS = (UNSET_PATH, '', '.', b'', b'.')
 
 
 def check_pythonpath(value):
@@ -723,21 +738,25 @@ def check_pythonpath(value):
         raise Unsupported('cannot resolve explicit PYTHONPATH')
 
 
-def command_words(tokens, calls, lexer, directory, pythonpath=''):
+def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_state=None):
     isolated = safe_path = ignore_env = python = False
+    if shell_state is None:
+        shell_state = pythonpath, None if pythonpath is None else pythonpath is not UNSET_PATH, False
+    shell_value, exported, allexport = shell_state
     ambient_path = pythonpath
+    export_flag = auto_flag = None
     conditional_command = changes_path = False
     groups = []
 
     def excludes_checkout():
-        return isolated or safe_path and (ignore_env or pythonpath in ('', b''))
+        return isolated or safe_path and (ignore_env or pythonpath in (UNSET_PATH, '', b''))
 
     initial_directory = directory
     found, functions = [], set()
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     inputs = {}
-    pipe_outputs = {1}
+    pipe_outputs = {1: True}
     cat_arguments = False
     piped = False
     heredocs = {token[3]: token for token in tokens if token[0] == 'heredoc'}
@@ -759,9 +778,17 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             if python and not (isolated or ignore_env):
                 check_pythonpath(pythonpath)
             flush_stdin(script, inputs, found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
+            conditional = any(uncertain for _, uncertain in groups) or conditional_command or piped or op in ('|', '|&', '&')
+            if auto_flag is not None:
+                allexport = None if conditional and allexport != auto_flag else auto_flag
             if changes_path and (expect and prefix is None or script in ('export', 'declare', 'typeset', 'local', 'readonly', 'unset')):
-                conditional = any(uncertain for _, uncertain in groups) or conditional_command or piped or op in ('|', '|&', '&')
-                ambient_path = None if conditional and ambient_path != pythonpath else pythonpath
+                new_export = export_flag
+                if new_export is None:
+                    new_export = True if True in (exported, allexport) else None if None in (exported, allexport) else False
+                shell_value = None if conditional and shell_value != pythonpath else pythonpath
+                exported = None if conditional and exported != new_export else new_export
+                ambient_path = UNSET_PATH if exported is False else shell_value if exported is True else None
+            export_flag = auto_flag = None
             changes_path = False
             if op == '(' and not skip_parens and mode != 'array':
                 groups.append((')', True))
@@ -770,17 +797,17 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             conditional_command = op in ('&&', '||')
             piped = op in ('|', '|&')
             if op == '|&':
-                pipe_outputs.discard(2)
+                pipe_outputs.pop(2, None)
                 if 1 in pipe_outputs:
-                    pipe_outputs.add(2)
+                    pipe_outputs[2] = pipe_outputs[1]
             forwarded = inputs.get(0)
             if not pipe_outputs:
                 forwarded = ()
-            elif (script != 'cat' or cat_arguments or 1 not in pipe_outputs or 2 in pipe_outputs or
+            elif (script != 'cat' or cat_arguments or not pipe_outputs.get(1) or 2 in pipe_outputs or
                     forwarded and forwarded[0] not in ('<<<', '<<', '<<-')):
                 forwarded = None
             inputs = {0: forwarded} if piped else {}
-            pipe_outputs = {1}
+            pipe_outputs = {1: True}
             pythonpath = ambient_path
             python = isolated = safe_path = ignore_env = False
             cat_arguments = False
@@ -810,7 +837,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             continue
         word = token[1]
         for nested in word.substitutions:
-            calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path))
+            calls.extend(command_words(nested, calls, lexer, initial_directory, ambient_path, (shell_value, exported, allexport)))
         if word.raw in (PY_SPREAD, PY_UNKNOWN) and (expect or finding or isinstance(script, tuple) or
                 script in OPERAND_STATES or script in ('next', 'next-python', 'rustup', 'rustup-toolchain') or
                 script and PYTHONS.fullmatch(script)):
@@ -826,7 +853,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             continue
         if mode == 'env-unset':
             if word.value == 'PYTHONPATH':
-                pythonpath = ''
+                pythonpath = UNSET_PATH
             mode = None
             continue
         if mode and mode[0] in ('target', 'redirect-target'):
@@ -845,38 +872,29 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
                 combined = operator.startswith('&>') or operator == '>&' and implicit and not (moved or closed)
                 destinations = (1, 2) if combined else (descriptor,)
                 if source_fd is not None:
-                    connected = source_fd in pipe_outputs
+                    connected = pipe_outputs.get(source_fd, False)
                     input_value = inputs.get(source_fd, None if descriptor == 0 else ())
                 elif closed or here:
                     connected = False
-                    input_value = () if closed else (operator, word, heredocs.get(index + 1))
+                    input_value = () if closed else (operator, word, heredocs.get(index + 1), initial_directory)
                 else:
                     disconnected = word.literal and word.value == '/dev/null'
-                    if word.literal and not disconnected:
-                        context = IMPORT_SOURCE.get()
-                        root, origin = context[:2] if context else (ROOT, ROOT)
-                        base = root / directory.relative_to(WorkflowLexer.workspace) if directory is not None else origin
-                        path = base / word.value
-                        disconnected = (path.is_relative_to(root) and '..' not in path.parts and path.resolve() == path
-                                        and (not path.exists() or path.is_file()))
-                    connected = not disconnected
-                    input_value = (operator, word, None) if operator.startswith('<') else ()
-                    if connected:
-                        cat_arguments = True
-                        if duplicate and inputs and not word.literal:
-                            raise Unsupported('cannot resolve script input descriptor')
+                    connected = False if disconnected else None
+                    input_value = (operator, word, None, initial_directory) if operator.startswith('<') else ()
+                    if duplicate and inputs and not word.literal:
+                        raise Unsupported('cannot resolve script input descriptor')
                 for dest in destinations:
-                    if connected:
-                        pipe_outputs.add(dest)
+                    if connected is False:
+                        pipe_outputs.pop(dest, None)
                     else:
-                        pipe_outputs.discard(dest)
+                        pipe_outputs[dest] = connected
                     if input_value == () and dest != 0:
                         inputs.pop(dest, None)
                     else:
                         inputs[dest] = input_value
                 if moved and moved[2]:
                     inputs.pop(source_fd, None)
-                    pipe_outputs.discard(source_fd)
+                    pipe_outputs.pop(source_fd, None)
             mode = mode[1]
             continue
         if mode == 'function-name':
@@ -902,14 +920,31 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             if word.value == ']]':
                 mode, expect = None, False
             continue
-        if expect or script in ('export', 'declare', 'typeset', 'local', 'readonly'):
+        declaration = script in ('export', 'declare', 'typeset', 'local', 'readonly')
+        if declaration and word.literal and re.fullmatch(r'[-+][a-zA-Z]+', word.value):
+            if 'x' in word.value or script == 'export' and 'n' in word.value:
+                export_flag = word.value.startswith('-') and 'n' not in word.value
+        if script == 'set' and word.literal:
+            if re.fullmatch(r'[-+][a-zA-Z]*a[a-zA-Z]*', word.value):
+                auto_flag = word.value.startswith('-')
+            elif word.value == 'allexport' and index and tokens[index - 1][0] == 'word':
+                option = tokens[index - 1][1].value
+                if option in ('-o', '+o'):
+                    auto_flag = option == '-o'
+        if expect or declaration:
             assignment = word.value if word.literal else word.raw.lstrip('"\'')
-            if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment):
-                pythonpath = assignment.removeprefix('PYTHONPATH=') if word.literal else None
+            if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment) or declaration and assignment == 'PYTHONPATH':
+                if assignment == 'PYTHONPATH':
+                    pythonpath = shell_value
+                else:
+                    pythonpath = assignment.removeprefix('PYTHONPATH=') if word.literal and assignment.startswith('PYTHONPATH=') else None
                 changes_path = True
+                if script == 'export' and export_flag is None:
+                    export_flag = True
         if script == 'unset' and word.value == 'PYTHONPATH':
             changes_path = True
-            pythonpath = ''
+            export_flag = False
+            pythonpath = UNSET_PATH
         if not expect:
             if script == 'cat':
                 cat_arguments = True
@@ -964,14 +999,17 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
                         marker = script_marker(event, excludes_checkout(), cwd_path)
                         if marker == '(module)' and ignore_env and pythonpath not in DEFAULT_PYTHON_PATHS:
                             marker = '(noenv-module)'
-                        found.append(lexer.call(word.line, marker + text, True, tokens, index + 1, directory))
+                        operand = marker + text
+                        if directory is not None and event in RUNS:
+                            operand = ScriptFile(operand, pythonpath, ignore_env or isolated, safe_path)
+                        found.append(lexer.call(word.line, operand, True, tokens, index + 1, directory))
             elif script == 'shopt' and word.literal and word.value == 'expand_aliases':
                 raise Unsupported(f'line {word.line}: `shopt expand_aliases` (aliases are not read)')
             continue
         if prefix in PREFIXES and word.literal and word.value.startswith('-'):
             option, equals, argument = word.value.partition('=')
             if prefix == 'env' and word.value in ('-', '-i', '--ignore-environment', '-uPYTHONPATH', '--unset=PYTHONPATH'):
-                pythonpath = ''
+                pythonpath = UNSET_PATH
             elif prefix == 'env' and word.value in ('-u', '--unset'):
                 mode = 'env-unset'
             elif (directory is not None and prefix == 'env' and (word.value == '-C' or
@@ -1052,7 +1090,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=''):
             raise Unsupported(f'line {word.line}: eval')
         command = value if word.literal else word.raw
         if directory is not None and '/' in command:
-            command = str(word.lexer.path(directory, command))
+            command = ScriptFile(str(word.lexer.path(directory, command)), pythonpath, False, False)
         found.append(lexer.call(word.line, command, prefix is not None or by_find,
                                 tokens, index + 1, directory))
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
@@ -1323,10 +1361,14 @@ def auxiliary_option(node):
 
 
 class SuiteImports:
-    def __init__(self, directory, isolated):
+    def __init__(self, directory, isolated, extra_directory=None):
         self.isolated = isolated
         self.root, origin, self.files, self.reviewed = IMPORT_SOURCE.get() or (ROOT, ROOT, None, {})
         self.directory = origin if directory is None else self.root / directory.relative_to(WorkflowLexer.workspace)
+        self.directories = [self.directory]
+        if extra_directory is not None and extra_directory != directory:
+            self.directories.append(self.root / extra_directory.relative_to(WorkflowLexer.workspace))
+        self.origins = {}
         self.trees = {}
         self.inventory_source = None
         self.stack = []
@@ -1356,16 +1398,18 @@ class SuiteImports:
                     raise Unsupported('reviewed fixture verification operation changed')
                 setattr(self, field, definition)
 
-    def load(self, path, ordering, targets, names, *, main=False):
+    def load(self, path, origin, ordering, targets, names, *, main=False):
+        if self.origins.setdefault(path, origin) != origin:
+            raise Unsupported('cannot resolve overlapping Python import roots')
         reference = LocalModule(path, main)
         marker = reference, MODULE_INITIALIZED
         prior = names.get(marker, ())
         if prior == {True}:
             return
         stem = path.parent if path.name == '__init__.py' else path.with_suffix('')
-        if not stem.is_relative_to(self.directory):
+        if not stem.is_relative_to(origin):
             raise Unsupported('cannot resolve relative import beyond the top-level package')
-        module = '.'.join(stem.relative_to(self.directory).parts)
+        module = '.'.join(stem.relative_to(origin).parts)
         relative = path.relative_to(self.root).as_posix()
         if (not module or relative not in self.files or path.resolve() != path or not path.is_file()
                 or path in self.stack or len(self.stack) >= 12):
@@ -1401,25 +1445,31 @@ class SuiteImports:
                 if isinstance(cls, PythonClass):
                     self.class_paths[cls] = WorkflowLexer.workspace / relative
 
-    def has_local_root(self, module):
+    def import_root(self, module):
         root = module.partition('.')[0]
-        stem = self.directory / root
         if self.isolated or not root or _imp.is_builtin(root) or _imp.is_frozen(root):
-            return False
-        return (stem.with_suffix('.py').is_file() or (stem / '__init__.py').is_file() or
-                root not in sys.stdlib_module_names and stem.is_dir())
+            return None
+        namespace = None
+        for directory in self.directories:
+            stem = directory / root
+            if stem.with_suffix('.py').is_file() or (stem / '__init__.py').is_file():
+                return directory
+            if namespace is None and root not in sys.stdlib_module_names and stem.is_dir():
+                namespace = directory
+        return namespace
 
     def module(self, module, source, ordering, targets, names, *, bind_root=False, from_list=False, main=False):
         if self.isolated:
             raise Unsupported('cannot resolve isolated Python import ' + module)
         absolute = module.lstrip('.')
         levels = len(module) - len(absolute)
-        parent = self.directory
+        origin = self.origins.get(source, self.directory) if levels else self.import_root(module) or self.directory
+        parent = origin
         if levels:
             if source is None:
                 raise Unsupported('cannot resolve relative unittest import')
             parent = source.parent
-            if levels > len(parent.relative_to(self.directory).parts):
+            if levels > len(parent.relative_to(origin).parts):
                 raise Unsupported('cannot resolve relative import beyond the top-level package')
             for _ in range(levels - 1):
                 parent = parent.parent
@@ -1435,7 +1485,7 @@ class SuiteImports:
             initializer = parent / '__init__.py'
             chain.append(initializer)
             if initializer not in self.stack:
-                yield from self.load(initializer, ordering, targets, names)
+                yield from self.load(initializer, origin, ordering, targets, names)
         paths = [stem / '__init__.py']
         if absolute:
             paths.append(stem.with_suffix('.py'))
@@ -1444,10 +1494,10 @@ class SuiteImports:
             raise Unsupported('cannot resolve unittest import ' + module)
         leaf, = candidates
         if main and leaf == stem / '__init__.py':
-            yield from self.load(leaf, ordering, targets, names)
+            yield from self.load(leaf, origin, ordering, targets, names)
             leaf = leaf.with_name('__main__.py')
         if not (from_list and leaf in self.stack and leaf.name == '__init__.py'):
-            yield from self.load(leaf, ordering, targets, names, main=main)
+            yield from self.load(leaf, origin, ordering, targets, names, main=main)
         chain.append(leaf)
         return LocalModule(chain[0] if bind_root else leaf)
 
@@ -1934,6 +1984,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def process_argument(value, names, seen=frozenset()):
         owners = qualified(value, names)
+        if owners and owners <= ENVIRON:
+            return CapturedArgument(owners)
         if isinstance(value, (ast.List, ast.Tuple)) and all(isinstance(item, ast.Constant) for item in value.elts):
             return value
         if any(isinstance(owner, SequenceBinding) for owner in owners):
@@ -2245,13 +2297,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         for owner in owners:
             branch = names.copy() if len(owners) > 1 else names
             if augmented and isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.Tuple):
-                for state in owner.states(names):
-                    copy = SequenceBinding(owner.origin, owner.items)
-                    copy.initial = state
-                    sequence_change(copy, method, args, branch)
-                    copy.initial, = branch.pop((copy, 'contents'))
-                    allocations.append(copy)
-                    returned.add(copy)
+                parts = expanded_sequence({owner}, names)
+                if method == '__iadd__':
+                    right = expanded_sequence(qualified(args[0], names), names)
+                    returned.update(built_sequences(owner.origin, [parts, right]))
+                elif method == '__imul__':
+                    try:
+                        count = ast.literal_eval(argument(args[0], names))
+                    except (ValueError, TypeError):
+                        count = None
+                    if not isinstance(count, int):
+                        raise Unsupported('cannot resolve tuple repetition')
+                    repeated = []
+                    for items, revised, head in parts:
+                        length = len(items) * max(0, count)
+                        check_sequence_length(length)
+                        repeated.append((items * count if length else (), revised and length > 0, head if length else None))
+                    returned.update(built_sequences(owner.origin, [repeated]))
+                else:
+                    raise Unsupported('cannot resolve augmented tuple operation')
             elif isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.List):
                 returned.update(sequence_change(owner, method, args, branch))
             else:
@@ -2346,32 +2410,67 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return any(not isinstance(key, ast.Constant) or key.value == attr for key in keys)
         return not (isinstance(mapping, (ast.List, ast.Tuple)) and not mapping.elts)
 
-    def affects_pythonpath(key, names):
-        key = argument(key, names)
-        return not isinstance(key, ast.Constant) or key.value in ('PYTHONPATH', b'PYTHONPATH')
+    def path_value(node, names):
+        owners = qualified(node, names)
+        if len(owners) == 1:
+            value, = owners
+            if isinstance(value, ast.Constant) and isinstance(value.value, (bytes, str)):
+                return os.fsdecode(value.value)
+        return None
+
+    def write_environment(key, value, names, operation='set', native=False, *, optional=False):
+        name = path_value(key, names)
+        if name not in ('PYTHONPATH', None):
+            return
+        paths = set()
+        for prior in names.get(CHILD_PATH, (None,)):
+            if not isinstance(prior, EnvironmentPath):
+                prior = EnvironmentPath(None, None)
+            if name is None or optional:
+                paths.add(prior)
+            if operation in ('setdefault', 'pop', 'clear'):
+                if prior.mapping is None and (operation == 'setdefault' or prior.process != prior.mapping):
+                    paths.add(prior)
+                if (operation == 'setdefault' and prior.mapping not in (None, UNSET_PATH) or
+                        operation in ('pop', 'clear') and prior.mapping is UNSET_PATH):
+                    paths.add(prior)
+                    continue
+            paths.add(EnvironmentPath(value, prior.mapping if native else value))
+        names[CHILD_PATH] = frozenset(paths)
+
+    def update_environment(mapping, keywords, names, *, optional=False):
+        mapping = argument(mapping, names)
+        if isinstance(mapping, ast.Dict):
+            for key, value in zip(mapping.keys, mapping.values):
+                write_environment(key, path_value(value, names), names, optional=optional)
+        elif mapping is not None:
+            write_environment(None, None, names, optional=optional)
+        for kw in keywords:
+            write_environment(ast.Constant(kw.arg), path_value(kw.value, names), names, optional=optional)
 
     def environment_change(target, call, names):
         owner, _, method = target.rpartition('.')
         args = call.args
-        if owner in ('os', 'posix') and method in ('putenv', 'unsetenv'):
-            method = '__setitem__' if method == 'putenv' else '__delitem__'
-        else:
+        native = owner in ('os', 'posix') and method in ('putenv', 'unsetenv')
+        optional = False
+        if not native:
             if owner in ('operator', 'builtins.dict', 'os._Environ', 'collections.abc.MutableMapping'):
-                if not args or not ENVIRON.intersection(qualified(args[0], names)):
+                if not args or not ENVIRON.intersection(receivers := qualified(args[0], names)):
                     return
+                optional = bool(receivers - ENVIRON)
                 args = args[1:]
             elif owner not in ENVIRON:
                 return
+        key = args[0] if args else None
         if method in ('update', '__ior__', 'ior'):
-            mapping = args[0] if args else None
-            if not any(mapping_writes(mapping, call.keywords, key, names) for key in ('PYTHONPATH', b'PYTHONPATH')):
-                return
-        elif method not in ('clear', 'popitem'):
-            if method not in ('__setitem__', 'setitem', '__delitem__', 'delitem', 'setdefault', 'pop'):
-                return
-            if args and not affects_pythonpath(args[0], names):
-                return
-        names[CHILD_PATH] = frozenset({UNKNOWN_CALLABLE})
+            update_environment(key, call.keywords, names, optional=optional)
+        elif method in ('__setitem__', 'setitem', 'putenv', 'setdefault'):
+            value = path_value(args[1], names) if len(args) > 1 else None
+            write_environment(key, value, names, method, native, optional=optional)
+        elif method in ('__delitem__', 'delitem', 'unsetenv', 'pop', 'clear', 'popitem'):
+            if method == 'clear':
+                key = ast.Constant('PYTHONPATH')
+            write_environment(key, UNSET_PATH, names, method, native, optional=optional)
 
     def patch_provider(patch, state, enter, *, saved_as):
         for name, changes in patch.changes.items():
@@ -2382,7 +2481,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if previous:
                     raise Unsupported('cannot resolve repeatedly started executable provider patch')
                 default = ast.Constant('test') if name == 'unittest.mock.patch.TEST_PREFIX' else name
-                state[saved] = state.get(field, frozenset({INHERITED_PATH if field == CHILD_PATH else default}))
+                state[saved] = state.get(field, frozenset({EnvironmentPath(None, None) if field == CHILD_PATH else default}))
                 if changes:
                     state[field] = frozenset({UNKNOWN_CALLABLE})
             elif previous:
@@ -2568,7 +2667,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if not cls.test_case:
                     continue
                 if cls in imports.class_paths:
-                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source, False
+                    yield call, '(suite)' + str(imports.class_paths[cls]), False, source, frozenset()
                     continue
                 members = {key for ancestor in cls.lineage for key in ancestor.members if isinstance(key, str)}
                 members.update(name for owner, name in fields(names) if owner in cls.lineage)
@@ -2746,7 +2845,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
-            yield call, target, wrapped or require_command, source, UNKNOWN_CALLABLE in names.get(CHILD_PATH, ())
+            yield call, target, wrapped or require_command, source, frozenset(
+                path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None) for path in names.get(CHILD_PATH, ()))
             if target in PATH_CONSTRUCTORS:
                 return {FILESYSTEM_PATH}
             if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
@@ -2904,31 +3004,58 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
             key = ast.Constant(node.attr) if isinstance(node, ast.Attribute) else node.slice
             owners = qualified(node.value, names)
-            if isinstance(node, ast.Subscript) and ENVIRON.intersection(owners) and affects_pythonpath(key, names):
-                names[CHILD_PATH] = frozenset({UNKNOWN_CALLABLE})
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Del) and ENVIRON.intersection(owners):
+                write_environment(key, UNSET_PATH, names, optional=bool(owners - ENVIRON))
             for name in provider_fields(owners, key, names, dictionary=isinstance(node, ast.Subscript)):
                 names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
-        if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr):
-            owners = qualified(node.target, names)
-            if ENVIRON.intersection(owners) and any(
-                    mapping_writes(node.value, (), key, names) for key in ('PYTHONPATH', b'PYTHONPATH')):
-                names[CHILD_PATH] = frozenset({UNKNOWN_CALLABLE})
-            for name in provider_fields(owners, None, names, dictionary=True):
-                if mapping_writes(node.value, (), name.rpartition('.')[2], names):
-                    names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign):
-            method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__' if isinstance(node.op, ast.Mult) else None
-            owners = qualified(node.target, names)
+            target = node.target
+            if isinstance(target, (ast.Subscript, ast.Attribute)):
+                yield from visit(target.value, names, interrupted)
+                receiver = CapturedArgument(qualified(target.value, names))
+                if isinstance(target, ast.Subscript):
+                    yield from visit(target.slice, names, interrupted)
+                    index = argument(target.slice, names)
+                    if isinstance(index, ast.Slice):
+                        section = sequence_slice(index, names)
+                        index = (ast.Slice(*(ast.Constant(n) for n in (section.start, section.stop, section.step)))
+                                 if section else CapturedArgument({UNKNOWN_CALLABLE}))
+                    elif not isinstance(index, (ast.Constant, ast.UnaryOp)):
+                        index = process_argument(captured(index, names), names)
+                    target = ast.Subscript(value=receiver, slice=index, ctx=ast.Store())
+                else:
+                    target = ast.Attribute(value=receiver, attr=target.attr, ctx=ast.Store())
+            if isinstance(target, ast.Subscript) and isinstance(node.target.slice, ast.Slice):
+                owners = copy_sequences(receiver.owners, names, section)
+            else:
+                owners = qualified(target, names)
+            yield from visit(node.value, names, interrupted)
+            if isinstance(node.op, ast.BitOr):
+                if ENVIRON.intersection(owners):
+                    update_environment(node.value, (), names, optional=bool(owners - ENVIRON))
+                for name in provider_fields(owners, None, names, dictionary=True):
+                    if mapping_writes(node.value, (), name.rpartition('.')[2], names):
+                        names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
+                if owners and owners <= ENVIRON:
+                    return
             if any(isinstance(owner, SequenceBinding) for owner in owners):
-                yield from visit(node.value, names, interrupted)
-                updated = mutate(owners, method, [node.value], names, augmented=True)
-                if any(not isinstance(owner, SequenceBinding) or isinstance(owner.origin, ast.Tuple) for owner in owners):
-                    value = CapturedArgument(updated)
-                    if isinstance(node.target, ast.Subscript):
-                        mutate(qualified(node.target.value, names), '__setitem__', [node.target.slice, value], names)
-                    else:
-                        bind_target(node.target, value, names)
-                return
+                method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__' if isinstance(node.op, ast.Mult) else None
+                updated = CapturedArgument(mutate(owners, method, [node.value], names, augmented=True))
+                if isinstance(target, ast.Subscript):
+                    mutate(target.value.owners, '__setitem__', [target.slice, updated], names)
+                else:
+                    bind_target(target, updated, names)
+            elif isinstance(target, ast.Subscript):
+                if ENVIRON.intersection(target.value.owners):
+                    write_environment(target.slice, None, names, optional=bool(target.value.owners - ENVIRON))
+                mutate(target.value.owners, '__setitem__', [target.slice, CapturedArgument({UNKNOWN_CALLABLE})], names)
+            else:
+                bind_target(target, CapturedArgument({UNKNOWN_CALLABLE}), names)
+            if isinstance(target, (ast.Attribute, ast.Subscript)):
+                key = ast.Constant(target.attr) if isinstance(target, ast.Attribute) else target.slice
+                for name in provider_fields(target.value.owners, key, names, dictionary=isinstance(target, ast.Subscript)):
+                    names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
+            return
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Del):
             mutate(qualified(node.value, names), '__delitem__', [node.slice], names)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -3228,7 +3355,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split('.')[0]
-                if imports.has_local_root(root):
+                if imports.import_root(root):
                     value = yield from imports.module(alias.name, source, ordering, targets, names, bind_root=not alias.asname)
                 elif record_provider_import(root, names):
                     value = alias.name if alias.asname else root
@@ -3237,7 +3364,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 bind(alias.asname or root, frozenset({value}))
         elif isinstance(node, ast.ImportFrom):
             module = '.' * node.level + (node.module or '')
-            local = node.level or imports.has_local_root(module)
+            local = node.level or imports.import_root(module)
             available = local or record_provider_import(module.partition('.')[0], names)
             for alias in node.names:
                 if alias.name == '*' and local:
@@ -3287,7 +3414,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     if bind_target(target, CapturedArgument(values), names) is False:
                         return False
                 elif isinstance(target, ast.Subscript):
-                    mutate(qualified(target.value, names), '__setitem__', [target.slice, node.value], names)
+                    owners = qualified(target.value, names)
+                    if ENVIRON.intersection(owners):
+                        write_environment(target.slice, path_value(node.value, names), names, optional=bool(owners - ENVIRON))
+                    mutate(owners, '__setitem__', [target.slice, node.value], names)
                 elif isinstance(target, ast.Attribute):
                     owners = qualified(target.value, names)
                     if owners == {'unittest.mock.patch'} and target.attr == 'TEST_PREFIX':
@@ -3401,11 +3531,11 @@ def resolve_module_calls(calls, lexer):
         module = word.split(')', 1)[1]
         isolated = word.startswith('(isolated-module)')
         ignore_env = word.startswith('(noenv-module)')
-        pythonpath = None if ignore_env else '.' if word.startswith('(cwdpath-module)') else ''
+        pythonpath = None if ignore_env else '.' if word.startswith('(cwdpath-module)') else UNSET_PATH
         arguments, directory = call[3:] if len(call) > 3 else (None, None)
         if not all(name.isidentifier() for name in module.split('.')):
             raise Unsupported('cannot resolve Python module ' + module)
-        if SuiteImports(directory, isolated).has_local_root(module):
+        if SuiteImports(directory, isolated).import_root(module):
             key = directory, module, tuple(arguments) if arguments is not None else None, pythonpath
             if key not in inspected:
                 inspected.add(key)
@@ -3419,36 +3549,38 @@ def resolve_module_calls(calls, lexer):
 
 
 def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, isolated=False, module=None,
-                 package_file=False, pythonpath='', ignore_env=False):
+                 package_file=False, pythonpath=UNSET_PATH, ignore_env=False, import_directory=None):
     """Read process calls as their effective executable and command line or shell payload."""
     if not (isolated or ignore_env):
         check_pythonpath(pythonpath)
     found = []
     targets = {}
-    imports = SuiteImports(directory, isolated)
+    imports = SuiteImports(import_directory if import_directory is not None else directory, isolated,
+                           directory if not ignore_env and pythonpath in ('.', b'.') else None)
+    startup = {CHILD_PATH: frozenset({EnvironmentPath(pythonpath, pythonpath)})}
     if package_file:
         path = imports.root / filename
         imports.inventory_source = path
         stem = path.parent if path.name == '__init__.py' else path.with_suffix('')
         name = '.'.join(stem.relative_to(imports.directory).parts)
-        calls = list(imports.module(name, None, False, targets, {}))
+        calls = list(imports.module(name, None, False, targets, startup.copy()))
         entry = name + '.__init__' if path.name == '__init__.py' else name
-        calls.extend(imports.module(entry, None, True, targets, {}, main=True))
+        calls.extend(imports.module(entry, None, True, targets, startup.copy(), main=True))
     elif module is None:
         tree = ast.parse(text)
         imports.register_fixture(tree.body, filename, text)
-        bindings = {}
-        if filename and imports.files and (Path(filename).parent / '__init__.py').as_posix() in imports.files:
-            bindings = {'__name__': {ast.Constant('__main__')}, '__package__': {ast.Constant(None)}}
+        bindings = startup.copy()
+        if filename and (directory is not None or imports.files and (Path(filename).parent / '__init__.py').as_posix() in imports.files):
+            bindings.update({'__name__': {ast.Constant('__main__')}, '__package__': {ast.Constant(None)}})
         calls = python_callees(tree.body, bindings, directory is not None, targets, imports=imports)
     else:
         def entry_calls():
             name, context = module
-            entry = yield from imports.module(name, None, True, targets, {}, main=True)
+            entry = yield from imports.module(name, None, True, targets, startup.copy(), main=True)
             path = entry.path.relative_to(imports.root)
             if directory is not None:
                 path = WorkflowLexer.workspace / path
-            found.append((line, ('(py)' if directory is not None else '(module-file)') + str(path), True, *context))
+            found.append((line, '(module-file)' + str(path), True, *context))
         calls = entry_calls()
     calls = dict.fromkeys(calls)
 
@@ -3472,7 +3604,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                 setattr(node, field, process_arguments(value))
         return node
 
-    def read_call(node, name, wrapped, start, path_changed):
+    def read_call(node, name, wrapped, start, inherited_paths):
         if name.startswith('(suite)'):
             yield lexer.call(start, '(py)' + name.removeprefix('(suite)'), True, directory=directory)
             return
@@ -3605,9 +3737,13 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             environment = args[3]
         elif name in ('os.execle', 'os.execlpe', 'os.spawnle', 'os.spawnlpe') and args:
             environment = args[-1]
-        child_path = None if path_changed else pythonpath
-        if isinstance(environment, ast.Dict):
-            child_path = ''
+        path_values = {path.process for path in inherited_paths}
+        child_path = next(iter(path_values)) if len(path_values) == 1 else None
+        if isinstance(environment, CapturedArgument) and environment.owners and environment.owners <= ENVIRON:
+            mapping_values = {path.mapping for path in inherited_paths}
+            child_path = next(iter(mapping_values)) if len(mapping_values) == 1 else None
+        elif isinstance(environment, ast.Dict):
+            child_path = UNSET_PATH
             for key, value in zip(environment.keys, environment.values):
                 if not isinstance(key, ast.Constant):
                     child_path = None
@@ -3634,10 +3770,10 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             else:
                 raise Unsupported('cannot resolve Python process command')
 
-    for node, name, wrapped, source, path_changed in calls:
+    for node, name, wrapped, source, inherited_paths in calls:
         start = node.lineno if source is not None else line + node.lineno - 1
         try:
-            for number, *rest in read_call(node, name, wrapped, start, path_changed):
+            for number, *rest in read_call(node, name, wrapped, start, inherited_paths):
                 if source is not None and isinstance(number, int):
                     number = source.relative_to(imports.root), number
                 found.append((number, *rest))
@@ -3767,7 +3903,7 @@ def problems(root):
                 else:
                     text = path.read_text(encoding='utf-8')
                     calls = shell_calls(text) if lang == 'shell' else python_calls(
-                        text, filename=name, isolated=lang == 'isolated python', pythonpath='.' if lang == 'cwdpath python' else '')
+                        text, filename=name, isolated=lang == 'isolated python', pythonpath='.' if lang == 'cwdpath python' else UNSET_PATH)
                 calls = list(resolve_module_calls(calls, Lexer))
             finally:
                 IMPORT_SOURCE.reset(token)
