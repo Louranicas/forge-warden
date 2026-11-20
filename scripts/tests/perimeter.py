@@ -1105,6 +1105,68 @@ class GateImageCommands(unittest.TestCase):
             with self.subTest(call=call), self.assertRaisesRegex(ValueError, "Python callable"):
                 CAPS.just_consumer({"shell": "python", "run": helper + call}, vars(COMMANDS), [])
 
+    def test_only_invoked_methods_contribute_process_commands(self):
+        setup = textwrap.dedent("""\
+            from subprocess import run
+            class Cleanup:
+                def __init__(self, launch):
+                    self.launch = launch
+                def run(self):
+                    run(['just'])
+                def forward(self, program):
+                    self.launch([program])
+                def finish(self, program):
+                    self.forward(program)
+            """)
+        for call, expected in (
+            ("Cleanup(run)", None),
+            ("item = Cleanup(print); bound = item.run", None),
+            ("Cleanup(print).run()", "just"),
+            ("bound = Cleanup(print).run; bound()", "just"),
+            ("Cleanup(run).finish(program='just')", "just"),
+            ("Cleanup(print).finish('just')", None),
+            ("def outer(run): Cleanup(print).run()\nouter(print)", "just"),
+            ("class Local:\n    def run(self):\n        run = print\n        run(['just'])\nLocal().run()", None),
+            ("class Chain:\n    def run(self):\n        if again: self.run()\n        run(['just'])\nChain().run()", "just"),
+            ("class Start:\n    def __init__(self): Cleanup(print).run()\nStart()", "just"),
+        ):
+            with self.subTest(call=call):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": setup + call},
+                                                    vars(COMMANDS), []), expected)
+        nested = ("def outer(run):\n    class Inner:\n        def run(self): run(['just'])\n"
+                  "    Inner().run()\n")
+        for launcher, expected in (("print", None), ("run", "just")):
+            source = setup + nested + f"outer({launcher})"
+            with self.subTest(launcher=launcher):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+
+    def test_wrapped_launchers_resolve_at_invocation(self):
+        setup = "import functools, subprocess\nfrom functools import partial as wrap\n"
+        for call, expected in (
+            ("launch = functools.partial(subprocess.run, check=True)\nlaunch(['just'])", "just"),
+            ("wrap(subprocess.run, ['probe'], executable='just')()", "just"),
+            ("wrap(subprocess.run, args=['just'])()", "just"),
+            ("wrap(subprocess.run, ['probe'], executable='just')(executable='true')", None),
+            ("def factory(): return subprocess.run\nlaunch = factory()\nlaunch(['just'])", "just"),
+            ("def factory(launch): return launch\nfactory(subprocess.run)(['just'])", "just"),
+            ("wrap(print, end='')('just')", None),
+            ("def factory(): return print\nfactory()(['just'])", None),
+            ("wrap(subprocess.run, ['just'])", None),
+        ):
+            source = setup + call
+            with self.subTest(call=call):
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                tracked = source.replace("'just'", "'cmp'")
+                found = self.problems({"t.py": tracked, "nested.sh": "python3 -c " + shlex.quote(tracked)})
+                self.assertEqual(len(found), 2 if expected else 0, found)
+                for issue in found:
+                    self.assertIn("calls `cmp`", issue)
+        for call in ("def factory(): return lookup()\nfactory()(['just'])",
+                     "wrap(unknown)(['just'])", "wrap(subprocess.run)(arguments)",
+                     "wrap(subprocess.run, ['probe'], executable=choice)()"):
+            with self.subTest(call=call), self.assertRaisesRegex(ValueError, "cannot resolve"):
+                CAPS.just_consumer({"shell": "python", "run": setup + call}, vars(COMMANDS), [])
+
     def test_python_ordering_resolves_process_arguments_at_the_call(self):
         def consumer(source):
             return CAPS.just_consumer({"shell": "python", "run": "from subprocess import run\n" + source},

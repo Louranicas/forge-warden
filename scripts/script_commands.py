@@ -67,6 +67,7 @@ usage: python3 -I scripts/script_commands.py     (exit 1 names each undeclared c
 """
 import ast
 import builtins
+from dataclasses import dataclass
 from importlib import import_module
 import os
 from pathlib import Path
@@ -951,6 +952,44 @@ def argv_text(items):
     return ' '.join(py_word(item) for item in items)
 
 
+class PythonHelper:
+    def __init__(self, node, frames, decorator):
+        self.node = node
+        self.decorator = decorator
+        self.frames = frames
+        self.called = False
+
+
+class PythonClass:
+    def __init__(self, base):
+        self.base = base
+        self.members = {}
+
+    def lookup(self, name, missing):
+        if name in self.members:
+            return self.members[name]
+        if isinstance(self.base, PythonClass):
+            return self.base.lookup(name, missing)
+        return missing
+
+
+class PythonInstance:
+    def __init__(self, owner):
+        self.owner = owner
+        self.fields = {}
+
+
+@dataclass(frozen=True)
+class BoundCall:
+    target: object
+    receiver: object = None
+    args: tuple = ()
+    keywords: tuple = ()
+
+
+UNKNOWN_CALLABLE = object()
+
+
 def process_value(call, targets):
     if len(targets) != 1:
         return call
@@ -966,8 +1005,8 @@ def process_value(call, targets):
                 return ast.List(elts=[ast.Constant(part) for part in shlex.split(argument.value)])
             except ValueError:
                 return call
-    if isinstance(target, tuple):
-        helper = target[-1]
+    if isinstance(target, PythonHelper):
+        helper = target.node
         params = helper.args.posonlyargs + helper.args.args
         if (isinstance(helper, ast.FunctionDef) and not helper.decorator_list and len(helper.body) == 1
                 and isinstance(helper.body[0], ast.Return) and not call.keywords
@@ -982,24 +1021,41 @@ def process_value(call, targets):
     return call
 
 
-def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), analyzed=None, class_body=False):
-    if analyzed is None:
-        analyzed = {}
+def python_callees(body, bindings, ordering, targets, enclosing=(), active=None, class_body=False):
+    if active is None:
+        active = {}
+    scope = object()
     functions = []
+    results = {}
 
-    def read_helper(helper, names, call=None):
-        function = helper[-1]
-        frames = (*enclosing, names)[:len(helper)]
-        local = frames[-1].copy()
-        for argument in ast.iter_child_nodes(function.args):
-            if isinstance(argument, ast.arg):
-                local[argument.arg] = frozenset({argument})
+    def frames(names):
+        return enclosing if class_body else (*enclosing, (scope, names))
+
+    def read_helper(helper, names, call=None, receiver=None):
+        function = helper.node
+        live = dict(frames(names))
+        parents = tuple((key, live.get(key, frame)) for key, frame in helper.frames)
+        local = {}
+        for parameter in ast.iter_child_nodes(function.args):
+            if isinstance(parameter, ast.arg):
+                local[parameter.arg] = frozenset({parameter})
+        positional = function.args.posonlyargs + function.args.args
+        if receiver is not None and positional:
+            local[positional[0].arg] = frozenset({receiver})
+            positional = positional[1:]
         if call is not None:
             def bind_argument(parameter, value):
                 local[parameter.arg] = frozenset(parameter if target is None else target
                                                  for target in qualified(value, names))
+                if not ordering and receiver is None:
+                    return
+                literal = argument(value, names)
+                if (isinstance(literal, ast.Constant) and isinstance(literal.value, str) or
+                        isinstance(literal, (ast.Tuple, ast.List)) and len(function.body) == 1 and
+                        isinstance(function.body[0], (ast.Return, ast.Expr)) and
+                        all(isinstance(item, ast.Constant) for item in literal.elts)):
+                    local[parameter.arg] = frozenset({literal})
 
-            positional = function.args.posonlyargs + function.args.args
             for parameter, value in zip(positional, expanded_items(call.args)):
                 if isinstance(value, ast.Starred):
                     break
@@ -1008,25 +1064,58 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
             for keyword in call.keywords:
                 if keyword.arg in named:
                     bind_argument(named[keyword.arg], keyword.value)
-        entry = tuple(frozenset(frame.items()) for frame in (*frames[:-1], local))
-        entries = analyzed.setdefault(helper, set())
-        if entry in entries:
-            return
-        entries.add(entry)
-        yield from python_callees(function.body, local, ordering, targets, helper, frames, analyzed)
+        helper.called = True
+        if function in active:
+            if ordering and active[function] != local:
+                raise Unsupported('cannot resolve recursive Python callable before Just installation')
+            return {UNKNOWN_CALLABLE}
+        active[function] = local.copy()
+        try:
+            returned = yield from python_callees(function.body, local, ordering, targets, parents, active)
+        finally:
+            del active[function]
+        if helper.decorator is UNKNOWN_CALLABLE or not isinstance(function, ast.FunctionDef):
+            return {UNKNOWN_CALLABLE}
+        return returned
+
+    def member(owner, name):
+        if isinstance(owner, PythonInstance) and name in owner.fields:
+            return owner.fields[name]
+        cls = owner.owner if isinstance(owner, PythonInstance) else owner
+        bound = set()
+        for value in cls.lookup(name, {UNKNOWN_CALLABLE}):
+            if isinstance(value, PythonHelper):
+                if value.decorator is UNKNOWN_CALLABLE:
+                    value = UNKNOWN_CALLABLE
+                elif value.decorator == 'builtins.classmethod':
+                    value = BoundCall(value, cls)
+                elif value.decorator is None and isinstance(owner, PythonInstance):
+                    value = BoundCall(value, owner)
+            bound.add(value)
+        return bound
 
     def qualified(node, names):
         if isinstance(node, ast.Constant):
             return frozenset()
+        if isinstance(node, ast.Call):
+            return results.get(node, frozenset({UNKNOWN_CALLABLE}))
         if isinstance(node, ast.Name):
             if node.id in names:
                 return names[node.id]
+            for _, parent in reversed(enclosing):
+                if node.id in parent:
+                    return parent[node.id]
             return frozenset({'builtins.' + node.id if node.id in vars(builtins) else None})
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) and node.attr == 'split':
                 return frozenset({'str.split'})
-            return frozenset(owner + '.' + node.attr if isinstance(owner, str) else None
-                             for owner in qualified(node.value, names))
+            values = set()
+            for owner in qualified(node.value, names):
+                if isinstance(owner, (PythonClass, PythonInstance)):
+                    values.update(member(owner, node.attr))
+                else:
+                    values.add(owner + '.' + node.attr if isinstance(owner, str) else None)
+            return frozenset(values)
         if isinstance(node, ast.BoolOp):
             return frozenset().union(*(qualified(value, names) for value in node.values))
         if isinstance(node, ast.NamedExpr):
@@ -1059,6 +1148,64 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
             names.update(join(outcomes))
         return bool(outcomes)
 
+    def argument(value, names):
+        if isinstance(value, (ast.Name, ast.Attribute)):
+            owners = qualified(value, names)
+            if len(owners) == 1:
+                owner, = owners
+                if isinstance(owner, (ast.Constant, ast.Tuple, ast.List)):
+                    return owner
+        if isinstance(value, (ast.List, ast.Tuple)):
+            items = [argument(item, names) for item in value.elts]
+            if items != value.elts:
+                return type(value)(elts=items, ctx=ast.Load())
+        return value
+
+    def invoke(target, call, names, receiver=None, wrapped=False):
+        if isinstance(target, BoundCall):
+            if target.args or target.keywords:
+                keywords = {kw.arg: kw for kw in (*target.keywords, *call.keywords)}
+                call = ast.copy_location(ast.Call(func=call.func, args=[*target.args, *call.args],
+                                                  keywords=list(keywords.values())), call)
+            return (yield from invoke(target.target, call, names, target.receiver or receiver, True))
+        if isinstance(target, PythonHelper):
+            returned = yield from read_helper(target, names, call, receiver)
+            return {BoundCall(value) if value is UNKNOWN_CALLABLE or isinstance(value, ast.arg) else value
+                    for value in returned}
+        if isinstance(target, PythonClass):
+            instance = PythonInstance(target)
+            if ordering and (target.base is UNKNOWN_CALLABLE or target.lookup('__new__', ())):
+                raise Unsupported('cannot resolve Python constructor before Just installation')
+            if target.lookup('__init__', ()):
+                for method in member(instance, '__init__'):
+                    yield from invoke(method, call, names)
+            return {instance}
+        if target == 'functools.partial':
+            args = expanded_items(call.args)
+            if not args or isinstance(args[0], ast.Starred) or any(kw.arg is None for kw in call.keywords):
+                return {BoundCall(UNKNOWN_CALLABLE)}
+            origins = qualified(args[0], names) or {None}
+            return {BoundCall(origin if origin is not None else UNKNOWN_CALLABLE,
+                              args=tuple(argument(arg, names) for arg in args[1:]),
+                              keywords=tuple(ast.keyword(arg=kw.arg, value=argument(kw.value, names))
+                                             for kw in call.keywords)) for origin in origins}
+        if target is UNKNOWN_CALLABLE or isinstance(target, (ast.arg, PythonInstance)):
+            if ordering or wrapped:
+                raise Unsupported('cannot resolve Python callable')
+        if isinstance(target, str):
+            if target.startswith('asyncio.subprocess.'):
+                target = 'asyncio.' + target.removeprefix('asyncio.subprocess.')
+            if target in PY_ARGV or target in PY_SHELL_TEXT or target in ('asyncio.create_subprocess_exec', 'pty.spawn'):
+                args = [argument(value, names) for value in call.args]
+                keyword_values = [argument(kw.value, names) for kw in call.keywords]
+                if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
+                    keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
+                    call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
+            elif wrapped and not target.startswith('builtins.'):
+                raise Unsupported('cannot resolve wrapped Python callable')
+            yield call, target, wrapped
+        return {UNKNOWN_CALLABLE}
+
     def visit(node, names, interrupted=None):
         def bind(key, values):
             names[key] = values
@@ -1069,12 +1216,25 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
             for child in ast.iter_child_nodes(node):
                 if not isinstance(child, ast.stmt):
                     yield from visit(child, names, interrupted)
-            helper = (*scope, node)
             if isinstance(node, ast.ClassDef):
-                yield from python_callees(node.body, names.copy(), ordering, targets, scope, enclosing,
-                                         analyzed, class_body=True)
-                bind(node.name, frozenset({None}))
+                base = None
+                if node.bases or node.keywords or node.decorator_list:
+                    bases = qualified(node.bases[0], names) if len(node.bases) == 1 else ()
+                    base = next(iter(bases)) if len(bases) == 1 else UNKNOWN_CALLABLE
+                    if node.keywords or node.decorator_list or not isinstance(base, PythonClass) and base != 'builtins.object':
+                        base = UNKNOWN_CALLABLE
+                cls = PythonClass(base)
+                yield from python_callees(node.body, cls.members, ordering, targets, frames(names), active,
+                                         class_body=True)
+                bind(node.name, frozenset({cls}))
             else:
+                decorator = None
+                if node.decorator_list:
+                    owners = qualified(node.decorator_list[0], names)
+                    decorator = next(iter(owners)) if len(owners) == len(node.decorator_list) == 1 else None
+                    if decorator not in ('builtins.classmethod', 'builtins.staticmethod'):
+                        decorator = UNKNOWN_CALLABLE
+                helper = PythonHelper(node, frames(names), decorator)
                 functions.append(helper)
                 bind(node.name, frozenset({helper}))
             return
@@ -1141,7 +1301,7 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
         elif isinstance(node, ast.ImportFrom):
             module = '.' * node.level + (node.module or '')
             for alias in node.names:
-                if alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty', 'shlex'):
+                if alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty', 'shlex', 'functools'):
                     for exported in import_module(module).__all__:
                         bind(exported, frozenset({module + '.' + exported}))
                 else:
@@ -1157,6 +1317,10 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
                 yield from visit(target, names, interrupted)
                 if isinstance(target, ast.Name):
                     bind(target.id, values)
+                elif isinstance(target, ast.Attribute):
+                    for owner in qualified(target.value, names):
+                        if isinstance(owner, PythonInstance):
+                            owner.fields[target.attr] = owner.fields.get(target.attr, frozenset()) | values
             return
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.pop(node.id, None)
@@ -1168,16 +1332,10 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
             targets.setdefault(node, set()).update(callees or {None})
             for argument in (*node.args, *node.keywords):
                 yield from visit(argument, names, interrupted)
+            returned = set()
             for name in callees:
-                if isinstance(name, ast.arg):
-                    if ordering:
-                        raise Unsupported('cannot resolve Python callable before Just installation')
-                elif isinstance(name, tuple):
-                    yield from read_helper(name, names, node)
-                elif isinstance(name, str):
-                    if name.startswith('asyncio.subprocess.'):
-                        name = 'asyncio.' + name.removeprefix('asyncio.subprocess.')
-                    yield node, name
+                returned.update((yield from invoke(name, node, names)))
+            results[node] = frozenset(returned or {UNKNOWN_CALLABLE})
             return
         for child in ast.iter_child_nodes(node):
             yield from visit(child, names, interrupted)
@@ -1187,8 +1345,13 @@ def python_callees(body, bindings, ordering, targets, scope=(), enclosing=(), an
 
     yield from suite(body, bindings, None)
     for helper in functions:
-        if (class_body or not ordering) and helper not in analyzed:
+        if not class_body and not ordering and not helper.called:
             yield from read_helper(helper, bindings)
+    if len(body) == 1 and isinstance(body[0], ast.Return):
+        return frozenset(BoundCall(value) if isinstance(value, str) else
+                         UNKNOWN_CALLABLE if value is None else value
+                         for value in qualified(body[0].value, bindings)) or {UNKNOWN_CALLABLE}
+    return {UNKNOWN_CALLABLE}
 
 
 def python_calls(text, line=1, lexer=Lexer, directory=None):
@@ -1210,7 +1373,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
             return replacement
 
     values = ProcessValues()
-    for node, name in calls:
+    for node, name, wrapped in calls:
         if directory is not None and name in ('os.chdir', 'os.fchdir'):
             raise Unsupported('cannot resolve Python directory changes before Just installation')
         if name not in PY_SHELL_TEXT and name not in PY_ARGV and name not in ('pty.spawn', 'asyncio.create_subprocess_exec'):
@@ -1303,8 +1466,8 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         for shell_text in texts:
             if shell_text is not None:
                 found.extend(external(shell_calls(shell_text, line + node.lineno - 1, lexer, cwd)))
-            elif directory is not None:
-                raise Unsupported('cannot resolve Python process command before Just installation')
+            elif directory is not None or wrapped:
+                raise Unsupported('cannot resolve Python process command')
     return found
 
 
