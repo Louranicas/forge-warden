@@ -962,13 +962,42 @@ class PythonHelper:
         self.decorator = decorator
         self.frames = frames
         self.called = False
+        self.summaries = {}
 
 
 class PythonClass:
-    def __init__(self, base, skipped):
-        self.skipped = skipped or isinstance(base, PythonClass) and base.skipped
-        self.lineage = (self, *base.lineage) if isinstance(base, PythonClass) else (self,)
-        self.base = base.base if isinstance(base, PythonClass) else base
+    def __init__(self, node, bases, skipped):
+        self.line = node.lineno
+        custom = bool(node.keywords)
+        possible = set().union(*bases)
+        self.test_case = any(base == 'unittest.TestCase' or isinstance(base, PythonClass)
+                             and base.test_case is True for base in possible)
+        self.skipped = skipped or any(isinstance(base, PythonClass) and base.skipped for base in possible)
+        self.lineage = (self,)
+        self.base = 'builtins.object'
+        for choices in bases:
+            if len(choices) != 1:
+                custom = True
+                continue
+            base, = choices
+            if isinstance(base, PythonClass):
+                if any(ancestor in self.lineage for ancestor in base.lineage):
+                    custom = True
+                if self.base != 'builtins.object' and any(
+                        self.base != 'unittest.TestCase' or hasattr(unittest.TestCase, name)
+                        for cls in base.lineage for name in cls.members if isinstance(name, str)):
+                    custom = True
+                self.lineage += base.lineage
+                base = base.base
+            if base != 'builtins.object':
+                if self.base != 'builtins.object':
+                    custom = True
+                self.base = base
+        if custom:
+            self.base = UNKNOWN_CALLABLE
+        if not self.test_case and self.base not in ('builtins.object', 'builtins.str', 'builtins.ValueError',
+                                                    'builtins.OSError', 'ast.expr'):
+            self.test_case = None
         self.members = {}
 
 
@@ -987,6 +1016,7 @@ BoundCall = namedtuple('BoundCall', ('target', 'receiver', 'args', 'keywords'), 
 
 UNKNOWN_CALLABLE = object()
 MISSING_FIELD = object()
+EXCEPTION = object()
 
 
 def process_value(call, targets):
@@ -1020,12 +1050,38 @@ def process_value(call, targets):
     return call
 
 
+class PythonScope:
+    def __init__(self):
+        self.captured = set()
+
+
+def loop_inputs(node, body):
+    if hasattr(node, '_command_inputs'):
+        return node._command_inputs
+    inputs = set()
+    assigned = set()
+    statements = [node.test, *body] if isinstance(node, ast.While) else body
+    for statement in statements:
+        inputs.update(child.id for child in ast.walk(statement) if isinstance(child, ast.Name)
+                      and isinstance(child.ctx, ast.Load) and child.id not in assigned)
+        if isinstance(statement, ast.Assign):
+            assigned.update(target.id for target in statement.targets if isinstance(target, ast.Name))
+        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            assigned.add(statement.name)
+        elif isinstance(statement, ast.Name) and isinstance(statement.ctx, ast.Store):
+            assigned.add(statement.id)
+    node._command_inputs = inputs
+    return inputs
+
+
 def python_callees(body, bindings, ordering, targets, enclosing=(), active=None, class_body=False,
-                   require_command=False, reachable=True, exceptional_fields=None):
+                   require_command=False, reachable=True, exceptional_fields=None, testcase_super_init=False, allocations=None):
     if active is None:
         active = {}
-    scope = object()
-    functions = []
+    if allocations is None:
+        allocations = []
+    scope = PythonScope()
+    functions = {}
     results = {}
     transfers = []
 
@@ -1070,16 +1126,36 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if (ordering or strict) and active[function] != local:
                 raise Unsupported('cannot resolve recursive Python callable before Just installation')
             return {UNKNOWN_CALLABLE}
-        active[function] = local.copy()
+        entry = local.copy()
+        context = (call, receiver, strict, reachable, interrupted is not None, tuple(active))
+        environment = [entry, *(frame for _, frame in parents), *active.values()]
+        if helper.summaries.get(context) == environment:
+            return {UNKNOWN_CALLABLE}
+        first_allocation = len(allocations)
+        active[function] = entry
         try:
             exceptions = {} if interrupted is not None else None
+            base_init = False
+            if isinstance(receiver, PythonInstance) and receiver.owner.base == 'unittest.TestCase' and function.name == '__init__':
+                initializers = [cls.members['__init__'] for cls in receiver.owner.lineage if '__init__' in cls.members]
+                base_init = bool(initializers and initializers[-1] == {helper})
             returned = yield from python_callees(function.body, local, ordering, targets, parents, active,
                                                 require_command=strict, reachable=reachable and call is not None,
-                                                exceptional_fields=exceptions)
+                                                exceptional_fields=exceptions, testcase_super_init=base_init, allocations=allocations)
+            updates = fields(local)
+            raised = fields(exceptions or {})
+            if returned == {UNKNOWN_CALLABLE}:
+                fresh = set(allocations[first_allocation:])
+                visible = {key: value for key, value in updates.items() if key[0] not in fresh}
+                failures = {key: value for key, value in raised.items() if key[0] not in fresh}
+                if visible == fields(entry) and all(value <= entry.get(key, frozenset()) for key, value in failures.items()):
+                    updates, raised = visible, failures
+                    if not raised:
+                        helper.summaries[context] = [frame.copy() for frame in environment]
             if interrupted is not None:
-                interrupted.update(join((interrupted, fields(exceptions))))
+                interrupted.update(join((interrupted, raised)))
             if call is not None:
-                names.update(fields(local))
+                names.update(updates)
         finally:
             del active[function]
         if helper.decorator is UNKNOWN_CALLABLE or not isinstance(function, ast.FunctionDef):
@@ -1132,7 +1208,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.Name):
             if node.id in names:
                 return names[node.id]
-            for _, parent in reversed(enclosing):
+            for parent_scope, parent in reversed(enclosing):
+                parent_scope.captured.add(node.id)
                 if node.id in parent:
                     return parent[node.id]
             return frozenset({'builtins.' + node.id if node.id in vars(builtins) else None})
@@ -1143,7 +1220,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             for owner in qualified(node.value, names):
                 if isinstance(owner, (PythonClass, PythonInstance)):
                     values.update(member(owner, node.attr, names))
-                elif owner == 'builtins.super()':
+                elif owner == 'unittest.TestCase.super()' and node.attr == '__init__':
+                    values.add('unittest.TestCase.__init__')
+                elif owner in ('builtins.super()', 'unittest.TestCase.super()'):
                     values.add(BoundCall(UNKNOWN_CALLABLE))
                 else:
                     values.add(owner + '.' + node.attr if isinstance(owner, str) else None)
@@ -1221,6 +1300,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     for value in returned}
         if isinstance(target, PythonClass):
             instance = PythonInstance(target)
+            allocations.append(instance)
             if (target.base not in ('builtins.object', 'builtins.str', 'builtins.ValueError', 'builtins.OSError',
                                     'unittest.TestCase', 'ast.expr') or
                     any('__new__' in cls.members or (cls, '__new__') in names or (cls, '__init__') in names
@@ -1228,10 +1308,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 raise Unsupported('cannot resolve Python constructor')
             if any('__init__' in cls.members for cls in target.lineage):
                 for method in member(instance, '__init__', names):
+                    if method is UNKNOWN_CALLABLE:
+                        raise Unsupported('cannot resolve Python initializer')
                     yield from invoke(method, call, names, interrupted=interrupted)
             return {instance}
         if target == 'builtins.super':
-            return {'builtins.super()'}
+            return {'unittest.TestCase.super()' if testcase_super_init and not call.args and not call.keywords
+                    else 'builtins.super()'}
         if target == 'unittest.main' and reachable:
             if call.args or any(kw.arg not in ('exit', 'verbosity', 'failfast', 'buffer', 'catchbreak', 'warnings')
                                 for kw in call.keywords):
@@ -1239,14 +1322,24 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             module = frames(names)[0][1]
             classes = {cls for key, values in module.items() if isinstance(key, str)
                        for cls in values if isinstance(cls, PythonClass)}
-            for cls in classes:
-                if cls.base != 'unittest.TestCase' or cls.skipped:
+            suites = []
+            for cls in sorted(classes, key=lambda cls: cls.line):
+                if cls.test_case is None or cls.test_case and cls.base != 'unittest.TestCase':
+                    raise Unsupported('cannot resolve unittest discovery')
+                if not cls.test_case:
                     continue
                 methods = {name: values for ancestor in reversed(cls.lineage) for name, values in ancestor.members.items()}
                 tests = sorted(name for name in methods if isinstance(name, str) and name.startswith('test'))
                 if not tests and 'runTest' in methods:
                     tests = ['runTest']
-                if not tests or methods.get('setUpClass') == frozenset():
+                cases = []
+                for method in tests:
+                    constructor = ast.copy_location(ast.Call(func=call.func, args=[ast.Constant(method)], keywords=[]), call)
+                    instance, = yield from invoke(cls, constructor, names, interrupted=interrupted)
+                    cases.append((method, instance))
+                suites.append((cls, methods, cases))
+            for cls, methods, cases in suites:
+                if not cases or cls.skipped or methods.get('setUpClass') == frozenset():
                     continue
 
                 dispatch_call = ast.copy_location(ast.Call(func=call.func, args=[], keywords=[]), call)
@@ -1257,10 +1350,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             yield from invoke(handler, dispatch_call, names, interrupted=interrupted)
 
                 yield from dispatch(cls, 'setUpClass')
-                for method in tests:
+                for method, instance in cases:
                     if not methods[method] or methods.get('setUp') == frozenset():
                         continue
-                    instance = PythonInstance(cls)
                     for phase in ('setUp', method, 'tearDown'):
                         yield from dispatch(instance, phase)
                 yield from dispatch(cls, 'tearDownClass')
@@ -1291,8 +1383,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def visit(node, names, interrupted=None):
         def bind(key, values):
             names[key] = values
-            if interrupted is not None:
-                interrupted[key] = interrupted.get(key, frozenset()) | values
+        if interrupted is not None and isinstance(node, (ast.Call, ast.Raise, ast.Attribute, ast.Subscript,
+                                                         ast.BinOp, ast.Compare, ast.Await, ast.Import, ast.ImportFrom)):
+            interrupted.update(join((interrupted, names)))
+            interrupted.setdefault(EXCEPTION, frozenset())
 
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for child in ast.iter_child_nodes(node):
@@ -1302,6 +1396,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             decorators = []
             for expression in node.decorator_list:
                 if isinstance(expression, ast.Call):
+                    if qualified(expression.func, names) == {'unittest.skip'}:
+                        skipped = True
+                        continue
                     owners = qualified(expression.func, names)
                     if owners in ({'unittest.skipIf'}, {'unittest.skipUnless'}):
                         condition = (expression.args[0] if expression.args else
@@ -1311,14 +1408,20 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         continue
                 decorators.append(qualified(expression, names))
             if isinstance(node, ast.ClassDef):
-                bases = {owner for base in node.bases for owner in qualified(base, names)}
-                base = 'builtins.object'
-                if node.bases or node.keywords or decorators:
-                    base = (next(iter(bases)) if len(node.bases) == len(bases) == 1
-                            and not node.keywords and not decorators else UNKNOWN_CALLABLE)
-                cls = PythonClass(base, skipped)
+                bases = [qualified(base, names) for base in node.bases]
+                cls = PythonClass(node, bases, skipped)
+                allocations.append(cls)
                 yield from python_callees(node.body, cls.members, ordering, targets, frames(names), active,
-                                         class_body=True, require_command=require_command, reachable=reachable)
+                                         class_body=True, require_command=require_command, reachable=reachable, allocations=allocations)
+                for owners in reversed(decorators):
+                    application = ast.copy_location(ast.Call(func=node, args=[CapturedArgument({cls})], keywords=[]), node)
+                    for owner in owners or {UNKNOWN_CALLABLE}:
+                        if isinstance(owner, PythonHelper):
+                            returned = yield from invoke(owner, application, names, interrupted=interrupted)
+                            if returned == {cls}:
+                                continue
+                        cls.base = UNKNOWN_CALLABLE
+                        cls.test_case = None
                 bind(node.name, frozenset({cls}))
             else:
                 if skipped:
@@ -1330,8 +1433,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         decorator, = decorators[0]
                     else:
                         decorator = UNKNOWN_CALLABLE
-                helper = PythonHelper(node, frames(names), decorator)
-                functions.append(helper)
+                key = node, decorator
+                if key not in functions:
+                    functions[key] = PythonHelper(node, frames(bindings), decorator)
+                helper = functions[key]
                 bind(node.name, frozenset({helper}))
             return
         if isinstance(node, (ast.If, ast.IfExp)):
@@ -1352,7 +1457,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 yield from visit(item, names, interrupted)
-            return (yield from suite(node.body, names, interrupted))
+            exceptions = {}
+            completed = yield from suite(node.body, names, exceptions)
+            if exceptions:
+                if interrupted is not None:
+                    interrupted.update(join((interrupted, exceptions)))
+                exceptions.pop(EXCEPTION, None)
+                names.update(join((names, exceptions)) if completed else exceptions)
+                return True
+            return completed
         if isinstance(node, ast.match_case):
             yield from visit(node.pattern, names, interrupted)
             if node.guard:
@@ -1372,27 +1485,31 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             else:
                 yield from visit(node.iter, names, interrupted)
                 body = [node.target, *node.body]
+            inputs = loop_inputs(node, body)
             broken = []
-            for iteration in range(2):
+            for _ in range(8):
+                first_allocation = len(allocations)
                 start = len(transfers)
                 branch = names.copy()
                 completed = yield from suite(body, branch, interrupted)
                 loop_exits = transfers[start:]
                 transfers[start:] = [transfer for transfer in loop_exits if transfer[0] is ast.Return]
-                continued = [state for kind, state, _ in loop_exits if kind is ast.Continue]
-                broken.extend(state for kind, state, _ in loop_exits if kind is ast.Break)
-                next_entry = join([names, *continued])
-                repeat = next_entry != names and any(kind is ast.Continue and finalized
-                                                     for kind, _, finalized in loop_exits)
+                back_edges = [state for kind, state in loop_exits if kind is ast.Continue]
+                broken.extend(state for kind, state in loop_exits if kind is ast.Break)
                 if completed:
-                    next_entry = join((next_entry, branch))
+                    back_edges.append(branch)
+                next_entry = join([names, *back_edges])
+                fresh = set(allocations[first_allocation:])
+                changed = any(values != names.get(key) and
+                              (key in inputs or key in scope.captured or isinstance(key, tuple) and key[0] not in fresh)
+                              for key, values in next_entry.items())
                 names.update(next_entry)
-                if not repeat:
+                if not changed:
                     break
-                if iteration:
-                    raise Unsupported('cannot resolve changing Python continue bindings')
                 if isinstance(node, ast.While):
                     yield from visit(node.test, names, interrupted)
+            else:
+                raise Unsupported('cannot resolve changing Python loop bindings')
             if (yield from suite(node.orelse, names, interrupted)):
                 broken.append(names.copy())
             if broken:
@@ -1420,9 +1537,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     handler_entry = join((handler_entry, exits))
             pending = transfers[start:]
             del transfers[start:]
-            for kind, state, finalized in pending:
+            for kind, state in pending:
                 if (yield from suite(node.finalbody, state, interrupted)):
-                    transfers.append((kind, state, finalized or bool(node.finalbody)))
+                    transfers.append((kind, state))
             if node.finalbody or interrupted is not None:
                 if (yield from suite(node.finalbody, exits, interrupted)) and interrupted is not None:
                     interrupted.update(join((interrupted, exits)))
@@ -1487,18 +1604,18 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             yield from visit(child, names, interrupted)
 
         if isinstance(node, (ast.Return, ast.Break, ast.Continue)):
-            transfers.append((type(node), names.copy(), False))
+            transfers.append((type(node), names.copy()))
             return False
         if isinstance(node, ast.Raise):
             return False
 
     completed = yield from suite(body, bindings, exceptional_fields)
-    returned = [fields(state) for kind, state, _ in transfers if kind is ast.Return]
+    returned = [fields(state) for kind, state in transfers if kind is ast.Return]
     if returned:
         if completed:
             returned.append(fields(bindings))
         bindings.update(join(returned))
-    for helper in functions:
+    for helper in functions.values():
         if not class_body and not ordering and not helper.called:
             yield from read_helper(helper, bindings)
     if len(body) == 1 and isinstance(body[0], ast.Return):
@@ -1566,13 +1683,30 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
         def process_argv(items):
             return [argv_text([exe, *after_argv_zero(items)] if exe is not None else items, strict) for exe in executables]
 
+        def shell_invocations(payload, rest):
+            if isinstance(payload, ast.Starred):
+                raise Unsupported('cannot resolve starred Python process arguments')
+            invocations = []
+            for exe in executables:
+                if exe is None:
+                    invocations.append(py_text(payload))
+                    continue
+                interpreter = posixpath.basename(exe.value)
+                if interpreter not in SHELLS and not PYTHONS.fullmatch(interpreter):
+                    raise Unsupported('cannot resolve Python shell interpreter')
+                if not isinstance(payload, ast.Constant) or not isinstance(payload.value, str):
+                    raise Unsupported('cannot resolve interpreter payload')
+                invocations.append(argv_text([exe, ast.Constant('-c'), payload, *rest], True))
+            return invocations
+
         texts = []
         if name in PY_SHELL_TEXT:
             first = args[0] if args else keywords.get('cmd', keywords.get('command'))
             if isinstance(first, ast.Starred):
                 raise Unsupported('cannot resolve starred Python process arguments')
-            texts = [py_text(branch) for branch in branches(first)] if first is not None else []
-            texts.extend(argv_text([exe]) for exe in executables if exe is not None)
+            if first is not None:
+                for branch in branches(first):
+                    texts.extend(shell_invocations(branch, ()))
         elif name == 'asyncio.create_subprocess_exec':
             program = args[0] if args else keywords.get('program')
             for branch in branches(program) if program is not None else []:
@@ -1593,15 +1727,12 @@ def python_calls(text, line=1, lexer=Lexer, directory=None):
                     listed = py_items(branch)
                     if shell_on is not False:
                         payload = branch if listed is None else (listed[0] if listed else None)
-                        if isinstance(payload, ast.Starred):
-                            raise Unsupported('cannot resolve starred Python process arguments')
-                        texts.append(py_text(payload))
+                        texts.extend(shell_invocations(payload, listed[1:] if listed else ()))
                     if shell_on is not True:
                         if listed is None and py_text(branch) is None and any(executables):
                             listed = [ast.Starred(value=branch)]
                         texts.extend(process_argv(listed if listed is not None else [branch]))
-                if shell_on is not False:
-                    texts.extend(argv_text([exe]) for exe in executables if exe is not None)
+
             else:
                 index, shape, program_key, argv_key = spec
                 if any(isinstance(arg, ast.Starred) for arg in args[:index + 1]):

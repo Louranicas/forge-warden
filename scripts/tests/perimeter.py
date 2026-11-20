@@ -1323,6 +1323,88 @@ class GateImageCommands(unittest.TestCase):
                    "    try: continue\n    finally: launch = run")
         self.assertEqual(CAPS.just_consumer({"shell": "python", "run": carried}, vars(COMMANDS), []), "just")
 
+    def test_interpreter_override_reads_the_effective_payload(self):
+        prefix = "import asyncio, subprocess\nfrom functools import partial\n"
+        for executable, payload in (("python3", "import subprocess; subprocess.run(['just'])"),
+                                    ("/bin/sh", "just --version"), ("python3", "print('just')")):
+            for invocation in (
+                "subprocess.Popen([PAYLOAD], shell=True, executable=EXE)",
+                "subprocess.run([PAYLOAD], shell=mode, executable=EXE)",
+                "partial(subprocess.Popen, [PAYLOAD], executable=EXE)(shell=True)",
+                "asyncio.run(asyncio.create_subprocess_shell(PAYLOAD, executable=EXE))",
+            ):
+                source = prefix + invocation.replace("PAYLOAD", repr(payload)).replace("EXE", repr(executable))
+                expected = None if payload.startswith("print") else "just"
+                with self.subTest(source=source):
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                    tracked = source.replace('just', 'cmp')
+                    found = self.problems({"t.py": tracked, "nested.sh": "python3 -c " + shlex.quote(tracked)})
+                    self.assertEqual(sum("calls `cmp`" in issue for issue in found), 2 if expected else 0, found)
+        for executable, payload in (("'other'", "'text'"), ("'python3'", "dynamic")):
+            with self.subTest(executable=executable, payload=payload):
+                source = prefix + f"subprocess.run({payload}, shell=True, executable={executable})"
+                with self.assertRaisesRegex(ValueError, "cannot resolve"):
+                    CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+                self.assertIn("cannot resolve", self.problems({"t.py": source})[0])
+
+    def test_loop_back_edges_see_finalized_bindings(self):
+        for loop in ("for i in (1, 2):", "async for i in items:", "while active:"):
+            for transfer in ("", "continue"):
+                for launcher, expected in (("run", "just"), ("print", None)):
+                    body = ("launch = print\n" + loop + "\n    launch(['just'])\n    try: pass\n"
+                            f"    finally: launch = {launcher}\n    {transfer}")
+                    source = "from subprocess import run\n"
+                    if loop.startswith("async"):
+                        source += "import asyncio\nasync def check(items):\n" + textwrap.indent(body, "    ")
+                        source += "\nasyncio.run(check(items))"
+                    else:
+                        source += body
+                    with self.subTest(loop=loop, transfer=transfer, launcher=launcher):
+                        self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+                        found = self.problems({"t.py": source.replace("'just'", "'cmp'")})
+                        self.assertEqual(bool(found), bool(expected), found)
+                        self.assertTrue(all("calls `cmp`" in issue for issue in found), found)
+
+    def test_discovery_constructs_cases_before_skips(self):
+        imports = "from unittest import TestCase, main, skipIf\nfrom subprocess import run\n"
+        prefix = ("def identity(cls): return cls\nclass Mixin: pass\nclass Parent(TestCase):\n"
+                  "    def __init__(self, method):\n        run([method])\n        super().__init__(method)\n")
+        for decorator in ("", "@skipIf(True, 'skip')\n", "@identity\n"):
+            source = (imports + prefix + decorator + "class Suite(Mixin, Parent):\n"
+                      "    @skipIf(True, 'skip')\n    def test_constructor(self): run(['xxd'])\nmain()")
+            with self.subTest(decorator=decorator):
+                found = self.problems({"suite.py": source})
+                self.assertEqual(len(found), 1, found)
+                self.assertIn("calls `test_constructor`", found[0])
+                workflow = source.replace("run([method])", "run(['just'])")
+                self.assertEqual(CAPS.just_consumer({"shell": "python", "run": workflow}, vars(COMMANDS), []), "just")
+        for body, expected in (("run(['just'])", "just"), ("print('just')", None)):
+            source = (imports + "class Mixin: pass\ndef identity(cls): return cls\n@identity\n"
+                      f"class Suite(Mixin, TestCase):\n    def test_it(self): {body}\nmain()")
+            self.assertEqual(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []), expected)
+        for header in ("@unknown\nclass Suite(TestCase):", "class Suite(external, TestCase):"):
+            source = imports + header + "\n    def test_it(self): pass\nmain()"
+            with self.subTest(header=header), self.assertRaisesRegex(ValueError, "cannot resolve"):
+                CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), [])
+
+    def test_context_manager_suppression_preserves_continuation(self):
+        prefix = "from subprocess import run\nfrom contextlib import suppress\nimport asyncio, unittest\n"
+        for source in (
+            "with suppress(ValueError): raise ValueError\nrun(['just'])",
+            "class Suite(unittest.TestCase):\n    def test_it(self):\n        with self.assertRaises(ValueError):"
+            " raise ValueError\n        run(['just'])\nunittest.main()",
+            "async def check(manager):\n    async with manager: raise ValueError\n    run(['just'])\nasyncio.run(check(manager))",
+        ):
+            for launcher, expected in (("run", "just"), ("print", None)):
+                script = prefix + source.replace("run(['just'])", f"{launcher}(['just'])")
+                with self.subTest(script=script):
+                    self.assertEqual(CAPS.just_consumer({"shell": "python", "run": script}, vars(COMMANDS), []), expected)
+                    found = self.problems({"t.py": script.replace("'just'", "'cmp'")})
+                    self.assertEqual(bool(found), bool(expected), found)
+                    self.assertTrue(all("calls `cmp`" in issue for issue in found), found)
+        source = prefix + "def finished():\n    with suppress(ValueError): return\n    run(['just'])\nfinished()"
+        self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []))
+
     def test_python_ordering_resolves_process_arguments_at_the_call(self):
         def consumer(source):
             return CAPS.just_consumer({"shell": "python", "run": "from subprocess import run\n" + source},
@@ -1415,7 +1497,11 @@ class GateImageCommands(unittest.TestCase):
             for executable, expected in (("'just'", "just"), ("'true'", None)):
                 with self.subTest(wrapper=wrapper, executable=executable):
                     source = f"import asyncio, subprocess; {wrapper}({args}, executable={executable})"
-                    self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []), expected)
+                    if wrapper.endswith("_shell"):
+                        with self.assertRaisesRegex(ValueError, "interpreter"):
+                            CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [])
+                    else:
+                        self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []), expected)
             for keyword, message in (("executable=dynamic", "process executable"),
                                      ("**{'executable': 'just'}", "unpacked Python process keywords")):
                 with self.subTest(wrapper=wrapper, keyword=keyword):
