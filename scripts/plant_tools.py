@@ -379,14 +379,19 @@ def check_checkout_write(path, reads, workspace):
             raise ValueError('cannot resolve modified gate script ' + str(read.relative_to(workspace)))
 
 
+class GateShell:
+    def __init__(self, lastpipe, interpreter, functions=None):
+        self.lastpipe = lastpipe
+        self.interpreter = interpreter
+        self.functions = {} if functions is None else functions
+
+
 def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_writes=None, pending_reads=None):
     lexer = commands['WorkflowLexer']
     pythonpath = bashopts = commands['UNSET_PATH']
     for environment in (*inherited_env, step.get('env', {})):
         pythonpath = environment.get('PYTHONPATH', pythonpath) if isinstance(environment, dict) else None
-        if isinstance(environment, dict):
-            bashopts = environment.get('BASHOPTS', bashopts)
-    commands['check_bashopts'](bashopts)
+        bashopts = environment.get('BASHOPTS', bashopts) if isinstance(environment, dict) else None
     directory = step.get('working-directory', '.')
     if not isinstance(directory, str):
         raise ValueError('cannot resolve gate working-directory before Just installation')
@@ -433,31 +438,34 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             check_checkout_write(path, reads, lexer.workspace)
         writes.add(path)
 
-    def inspect(calls, active, shell=None, conditional=False, joined=frozenset()):
+    def inspect(calls, active, shell=None, conditional=False, joined=frozenset(), lastpipe=False, interpreter=None):
         nonlocal files, invocations
         owns_shell = shell is None
         if owns_shell:
-            shell = {}, object()
+            shell = GateShell(lastpipe, interpreter)
         frames = []
         for _, word, external, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
             if isinstance(word, commands['ShellDefinition']):
-                shell[0][word] = None if conditional else word
+                shell.functions[word] = None if conditional else word
                 continue
             if isinstance(word, commands['CheckoutScope']):
-                if word == 'joined-child':
+                if word == 'bashopts-assignment':
+                    if shell.interpreter in ('sh', 'dash', None):
+                        shell.lastpipe = True
+                elif word == 'joined-child':
                     deferred_reads.pop(('pending-child', word.owner), None)
                 elif word == 'wait':
-                    if not conditional and 'wait' not in shell[0]:
-                        deferred_reads.pop(('background', shell[1]), None)
+                    if not conditional and 'wait' not in shell.functions:
+                        deferred_reads.pop(('background', shell), None)
                 elif word == 'end':
                     finished = shell
                     kind, shell, conditional, joined = frames.pop()
                     if finished is not shell:
-                        deferred_reads.pop(('trap', finished[1]), None)
+                        deferred_reads.pop(('trap', finished), None)
                     if kind in ('begin', 'trap', 'background', 'process-substitution', 'pending-child'):
                         reads = read_scopes.pop()
                         if kind != 'begin':
-                            owner = getattr(kind, 'owner', None) or shell[1]
+                            owner = getattr(kind, 'owner', None) or shell
                             deferred_reads.setdefault((kind, owner), set()).update(reads)
                 else:
                     frames.append((word, shell, conditional, joined))
@@ -465,8 +473,14 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         joined |= word.owners
                     if word in ('begin', 'trap', 'background', 'process-substitution', 'pending-child'):
                         read_scopes.append(set())
-                    if word in ('child', 'pending-child', 'background', 'process-substitution', 'subshell'):
-                        shell = ({} if word in ('child', 'pending-child') else shell[0].copy()), object()
+                    if word == 'pipeline-stage' and shell.interpreter != 'dash' and shell.lastpipe:
+                        raise ValueError('cannot resolve Bash lastpipe ownership')
+                    if word in ('child', 'pending-child', 'background', 'process-substitution', 'subshell', 'pipeline-stage'):
+                        override = getattr(word, 'lastpipe', None)
+                        child = word in ('child', 'pending-child')
+                        shell = GateShell(shell.lastpipe if override is None else override,
+                                          getattr(word, 'interpreter', None) if child else shell.interpreter,
+                                          None if child else shell.functions.copy())
                     conditional |= word in ('conditional', 'begin', 'trap')
                 continue
             if word.startswith('()'):
@@ -484,26 +498,31 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 continue
             marker = next((prefix for prefix in commands['RUNS'] if word.startswith(prefix)), '')
             target = Path(word.removeprefix(marker))
-            if not external and not marker and word in shell[0]:
-                definition = shell[0][word]
+            if not external and not marker and word in shell.functions:
+                definition = shell.functions[word]
                 invocation = ('function', word)
                 invocations += 1
                 if definition is None or invocation in active or len(active) >= 12 or invocations > 128:
                     raise ValueError('cannot resolve conditional or recursive gate function ' + word)
-                consumer = inspect(definition.calls(word, lexer, cwd, shell[0]), (*active, invocation), shell, conditional, joined)
+                consumer = inspect(definition.calls(word, lexer, cwd, shell.functions), (*active, invocation), shell, conditional, joined)
                 if consumer:
                     return consumer
                 continue
-            if word == 'shopt':
+            if word == 'shopt' and shell.interpreter != 'dash':
                 args = arguments or ()
                 unknown = arguments is None or any(arg is None or lexer.unknown in arg for arg in args)
                 enables = any(arg and arg.startswith('-') and 's' in arg for arg in args)
                 if unknown or enables and 'lastpipe' in args:
-                    raise ValueError('cannot resolve Bash lastpipe ownership')
+                    shell.lastpipe = True
+                elif args == ['-u', 'lastpipe'] and not conditional:
+                    shell.lastpipe = False
+                continue
             if target.name == 'just':
                 return 'just'
             program = word if '/' not in word else target.name
             if word in ('export', 'declare', 'typeset', 'local', 'readonly') and arguments:
+                if shell.interpreter in ('sh', 'dash', None) and getattr(word, 'lastpipe', False):
+                    shell.lastpipe = True
                 flags = set()
                 operands = arguments
                 for arg in arguments:
@@ -518,16 +537,16 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         flags.update(arg[1:])
                 if operands and 'f' in flags and (word == 'export' or 'x' in flags and 'p' not in flags):
                     raise ValueError('cannot resolve shell function export')
-            if word == 'unset' and not external and shell[0] and arguments:
+            if word == 'unset' and not external and shell.functions and arguments:
                 options = [arg for arg in arguments if arg and arg.startswith('-')]
                 if not any('v' in flag for flag in options):
                     unknown = any(arg is None or lexer.unknown in arg for arg in arguments)
-                    for name in list(shell[0]):
+                    for name in list(shell.functions):
                         if unknown or name in arguments:
                             if conditional or unknown or '-f' not in options:
-                                shell[0][name] = None
+                                shell.functions[name] = None
                             else:
-                                del shell[0][name]
+                                del shell.functions[name]
             if not marker and ('/' not in word or word.startswith(commands['STANDARD_BIN'])):
                 if program in ('cp', 'mv') and arguments and len(arguments) >= 2 and all(
                         arg and Path(arg).is_absolute() for arg in arguments):
@@ -574,6 +593,8 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 files = set(commands['tracked'](root))
             if path not in files:
                 raise ValueError('cannot resolve untracked gate script ' + path)
+            override = getattr(word, 'lastpipe', None)
+            child_lastpipe = shell.lastpipe if override is None else override
             env_path = getattr(word, 'pythonpath', pythonpath)
             ignore_env = getattr(word, 'ignore_env', False)
             stdin = getattr(word, 'stdin', ())
@@ -588,7 +609,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                         interpreter = first.readline().strip()[2:]
                     nested = commands['shell_calls'](interpreter + ' ' + shlex.quote(str(lexer.workspace / path)),
                                                      lexer=lexer, directory=cwd, pythonpath=env_path, stdin=stdin)
-                    consumer = inspect(nested, (*active, ('shebang', path)), joined=joined)
+                    consumer = inspect(nested, (*active, ('shebang', path)), joined=joined, lastpipe=child_lastpipe)
                     if consumer:
                         return consumer
                     continue
@@ -600,12 +621,13 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             else:
                 nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path,
                                                  shell_state=getattr(word, 'shell_state', None), stdin=stdin)
-            consumer = inspect(nested, (*active, path), shell if marker == '(src)' else None, conditional, joined)
+            consumer = inspect(nested, (*active, path), shell if marker == '(src)' else None, conditional, joined,
+                               child_lastpipe, getattr(word, 'interpreter', None))
             if consumer:
                 return consumer
 
         if owns_shell:
-            deferred_reads.pop(('trap', shell[1]), None)
+            deferred_reads.pop(('trap', shell), None)
 
     source = commands['IMPORT_SOURCE']
     token = source.set((root, directory, None, JUST_TESTS))
@@ -617,7 +639,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                        'runner_environment': all(isinstance(env, dict) and 'GITHUB_ENV' not in env
                                                  for env in (*inherited_env, step.get('env', {})))})
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
-        consumer = inspect(calls, ())
+        consumer = inspect(calls, (), lastpipe=commands['may_enable_lastpipe'](bashopts), interpreter=program)
         for (kind, _), reads in deferred_reads.items():
             if kind in ('background', 'process-substitution', 'pending-child'):
                 pending_reads.update(reads)
@@ -709,7 +731,7 @@ def check_ci(root):
         elif run and 'just' not in available:
             checkout_writes = step_writes
             if may_write_runner_environment(step, commands):
-                runner_env['PYTHONPATH'] = None
+                runner_env.update({'PYTHONPATH': None, 'BASHOPTS': None})
         tool = installed_tool(step, values)
         if tool is not None:
             name = tool.partition('@')[0]
@@ -735,7 +757,7 @@ def check_ci(root):
                         continue
             check_checkout_write(None, pending_reads, commands['WorkflowLexer'].workspace)
             checkout_writes.add(None)
-            runner_env['PYTHONPATH'] = None
+            runner_env.update({'PYTHONPATH': None, 'BASHOPTS': None})
     if required - available:
         raise ValueError('plant CI gate lacks required tools: ' + ', '.join(sorted(required - available)))
     return required

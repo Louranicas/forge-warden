@@ -423,6 +423,20 @@ class Contracts(unittest.TestCase):
                     else:
                         CAPS.check_ci(root)
 
+    def test_runner_environment_lastpipe_reaches_later_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.copy_ci_fixture(root)
+            path = root / '.github/workflows/ci.yml'
+            steps, _, write_steps = gate_step_fixture(path, path.read_text())
+            writer = {'run': 'echo BASHOPTS=lastpipe >> "$GITHUB_ENV"'}
+            pipeline = {'run': 'true | wait'}
+            write_steps([writer, pipeline, *steps])
+            with self.assertRaisesRegex(ValueError, 'lastpipe'):
+                CAPS.check_ci(root)
+            write_steps([writer, dict(pipeline, env={'BASHOPTS': ''}), *steps])
+            CAPS.check_ci(root)
+
     def test_gate_script_reads_follow_checkout_actions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1939,6 +1953,25 @@ class GateImageCommands(unittest.TestCase):
                 CAPS.just_consumer(step, vars(COMMANDS), [])
         self.assertIsNone(CAPS.just_consumer({'run': 'shopt -u lastpipe; true | wait'}, vars(COMMANDS), []))
 
+    def test_lastpipe_is_checked_at_pipeline_execution(self):
+        env = {'BASHOPTS': 'lastpipe'}
+        bash = "['bash', '-c', 'true | wait']"
+        for body in ("print('ready')", "import os\nos.environ['BASHOPTS'] = 'lastpipe'",
+                     "import subprocess\nsubprocess.run(['true'], env={'BASHOPTS': 'lastpipe'})",
+                     "import subprocess\nsubprocess.run(['bash', '-O', 'lastpipe', '-c', 'true'])"):
+            self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': body, 'env': env}, vars(COMMANDS), []))
+        for expression in ("dict(BASHOPTS='lastpipe')", "{**other}", "{'BASHOPTS': 'lastpipe'}", "os.environ"):
+            source = ("import os, subprocess\nos.environ['BASHOPTS'] = 'lastpipe'\nother = dict(os.environ)\n"
+                      + f"subprocess.run({bash}, env={expression})")
+            with self.subTest(expression=expression), self.assertRaisesRegex(ValueError, 'lastpipe'):
+                CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [])
+        self.assertIsNone(CAPS.just_consumer({'run': "dash -c 'true | wait'", 'env': env}, vars(COMMANDS), []))
+        for assignment in ("export BASHOPTS=lastpipe", "BASHOPTS=lastpipe; export BASHOPTS"):
+            with self.subTest(assignment=assignment), self.assertRaisesRegex(ValueError, 'lastpipe'):
+                CAPS.just_consumer({'shell': 'dash {0}', 'run': assignment + "; bash -c 'true | wait'"}, vars(COMMANDS), [])
+        source = "import subprocess\nsubprocess.run(" + bash + ", env={})"
+        self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': source, 'env': env}, vars(COMMANDS), []))
+
     def test_wait_releases_only_jobs_of_the_executing_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2451,6 +2484,9 @@ class GateImageCommands(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + 'asyncio.run(' + args + ')'},
                                                      vars(COMMANDS), []), 'just')
+        for flag in ('False', 'True', 'None'):
+            source = setup + f'flag = {flag}\nasyncio.run(task(), debug=flag)'
+            self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), []), 'just')
         for option in ('debug=external', 'loop_factory=external'):
             with self.subTest(option=option), self.assertRaisesRegex(ValueError, 'asyncio.run option'):
                 COMMANDS.python_calls(setup + 'asyncio.run(task(), ' + option + ')')
@@ -2465,12 +2501,36 @@ class GateImageCommands(unittest.TestCase):
         code = setup + "first = [f for f in g]\n[f(['just']) for f in g]"
         self.assertIsNone(CAPS.just_consumer({'shell': 'python', 'run': code}, vars(COMMANDS), []))
 
+    def test_shared_generator_consumers_require_known_order(self):
+        setup = "from subprocess import run\ng = (f for f in (print, run))\nother = g\n"
+        for expr in ("[b(['just']) for a in g for b in other]", "{b(['just']) for a in g for b in other}",
+                     "{b(['just']): a for a in g for b in other}", "{a: b(['just']) for a in g for b in other}",
+                     "list(b(['just']) for a in g for b in other)", "[a for a in g if next(other)]"):
+            with self.subTest(expr=expr), self.assertRaisesRegex(ValueError, 'interleaved'):
+                CAPS.just_consumer({'shell': 'python', 'run': setup + expr}, vars(COMMANDS), [])
+        reader = "from subprocess import run\nf = print\ndef reader():\n    yield run\n    f(['just'])\n"
+        with self.assertRaisesRegex(ValueError, 'interleaved'):
+            COMMANDS.python_calls(reader + 'for f in reader(): pass')
+
+    def test_default_launchers_bind_at_definition(self):
+        setup = "from subprocess import run\nlaunch = run\n"
+        for definition in ("cb = lambda f=launch: f(['cmp'])", "cb = lambda *, f=launch: f(['cmp'])",
+                           "def cb(f=launch, /): f(['cmp'])", "def cb(*, f=launch): f(['cmp'])"):
+            for call, expected in (("cb()", ['cmp']), ("cb(f=print)" if '/' not in definition else "cb(print)", [])):
+                source = setup + definition + "\nlaunch = print\n" + call
+                with self.subTest(definition=definition, call=call):
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+        with self.assertRaisesRegex(ValueError, 'callable'):
+            COMMANDS.python_calls("cb = lambda f=unknown: f(['cmp'])\ncb()")
+
     def test_generator_loop_distinguishes_exhaustion_from_break(self):
         setup = "from subprocess import run\ndef reader():\n    yield 1\n    run(['just'])\n"
         self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + 'for x in reader(): pass'},
                                              vars(COMMANDS), []), 'just')
         with self.assertRaisesRegex(ValueError, 'generator prefix'):
             CAPS.just_consumer({'shell': 'python', 'run': setup + 'for x in reader(): break'}, vars(COMMANDS), [])
+        code = "from subprocess import run\ndef reader():\n    yield 'true'\n    yield 'just'\nfor program in reader(): pass\nrun([program])"
+        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': code}, vars(COMMANDS), []), 'just')
 
     def test_stream_identity_uses_audited_context(self):
         for target, stream in (('stdout', 'stderr'), ('stderr', 'stdout')):

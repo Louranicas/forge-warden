@@ -573,10 +573,12 @@ def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=UNSET_P
     return calls
 
 
-def external(calls, lexer, directory, scope='child', owner=None):
+def external(calls, lexer, directory, scope='child', owner=None, lastpipe=None, interpreter=None):
     if AUDIT_CHECKOUT.get() is not None:
         marker = CheckoutScope(scope)
         marker.owner = owner
+        marker.lastpipe = lastpipe
+        marker.interpreter = interpreter
         return [lexer.call(0, marker, True, directory=directory), *calls,
                 lexer.call(0, CheckoutScope('end'), True, directory=directory)]
     return [(line, word, True, *args) for line, word, _, *args in calls if not word.startswith('()')]
@@ -625,9 +627,8 @@ def operand_word(state, value, raw):
     if isinstance(state, tuple):
         kind = state[0]
         if kind in ('option-argument', 'bash-options'):
-            if kind == 'bash-options' and value in ('lastpipe', None):
-                raise Unsupported('cannot resolve Bash lastpipe ownership')
-            return (state[1] if state[2] <= 1 else (kind, state[1], state[2] - 1)), []
+            events = [('lastpipe', None)] if kind == 'bash-options' and value in ('lastpipe', None) else []
+            return (state[1] if state[2] <= 1 else (kind, state[1], state[2] - 1)), events
         if kind == 'file-next':
             return None, ([(state[1], value)] if value is not None else [])
         if value is None:
@@ -788,7 +789,7 @@ class ScriptFile(str):
         return result
 
 
-def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env):
+def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, pythonpath, ignore_env, lastpipe, interpreter):
     if script == 'exec' and inputs:
         raise Unsupported('cannot resolve persistent script input descriptor')
     if 0 not in inputs or inputs[0] == ():
@@ -806,18 +807,18 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
             isolated = False
         if runner == '(sh)':
             nested = shell_calls(body, start, body_lexer, directory, pythonpath=pythonpath)
-            calls.extend(external(nested, body_lexer, directory) if AUDIT_CHECKOUT.get() is not None else nested)
+            calls.extend(external(nested, body_lexer, directory, lastpipe=lastpipe, interpreter=interpreter) if AUDIT_CHECKOUT.get() is not None else nested)
         elif runner == '(py)':
-            calls.extend(python_calls(body, start, body_lexer, directory, isolated=isolated,
-                                      pythonpath=pythonpath, ignore_env=ignore_env))
+            nested = python_calls(body, start, body_lexer, directory, isolated=isolated, pythonpath=pythonpath, ignore_env=ignore_env)
+            calls.extend(external(nested, body_lexer, directory, lastpipe=lastpipe, interpreter=interpreter) if AUDIT_CHECKOUT.get() is not None else nested)
     elif runner:
         if operator == '<<<' and word.literal:
             if runner == '(sh)':
                 nested = shell_calls(word.value, word.line, word.lexer, directory, pythonpath=pythonpath)
-                calls.extend(external(nested, word.lexer, directory) if AUDIT_CHECKOUT.get() is not None else nested)
+                calls.extend(external(nested, word.lexer, directory, lastpipe=lastpipe, interpreter=interpreter) if AUDIT_CHECKOUT.get() is not None else nested)
             else:
-                calls.extend(python_calls(word.value, word.line, word.lexer, directory, isolated=isolated,
-                                          pythonpath=pythonpath, ignore_env=ignore_env))
+                nested = python_calls(word.value, word.line, word.lexer, directory, isolated=isolated, pythonpath=pythonpath, ignore_env=ignore_env)
+                calls.extend(external(nested, word.lexer, directory, lastpipe=lastpipe, interpreter=interpreter) if AUDIT_CHECKOUT.get() is not None else nested)
         elif directory is not None and not word.literal:
             raise Unsupported('cannot resolve gate script input before Just installation')
         elif operator == '<<<':
@@ -827,11 +828,15 @@ def flush_stdin(script, inputs, found, calls, lexer, directory, isolated, python
             operand = script_marker(runner, isolated, pythonpath in ('.', b'.')) + path
             if directory is not None:
                 operand = ScriptFile(operand, pythonpath, ignore_env, True)
+                operand.interpreter = interpreter
+                operand.lastpipe = lastpipe
             found.append(lexer.call(word.line, operand, True, directory=directory))
 
 
 ENVIRON = {'os.environ', 'os.environb'}
 CHILD_PATH = 'os.environ.PYTHONPATH', 'provider'
+CHILD_BASHOPTS = 'os.environ.BASHOPTS', 'provider'
+INHERIT_BASHOPTS = object()
 UNREAD_STDIN = 'sys.stdin', 'unread'
 PYTHON_QUERIES = frozenset({
     'os.getcwd', 'os.getcwdb', 'os.getenv', 'os.stat', 'os.lstat', 'os.fstat', 'os.listdir',
@@ -843,10 +848,9 @@ EnvironmentPath = namedtuple('EnvironmentPath', 'process mapping')
 DEFAULT_PYTHON_PATHS = (UNSET_PATH, '', '.', b'', b'.')
 
 
-def check_bashopts(value):
-    if value is not UNSET_PATH and (not isinstance(value, (str, bytes)) or
-            'lastpipe' in os.fsdecode(value).split(':') or '${{' in os.fsdecode(value)):
-        raise Unsupported('cannot resolve Bash lastpipe ownership')
+def may_enable_lastpipe(value):
+    return value is not UNSET_PATH and (not isinstance(value, (str, bytes)) or
+           'lastpipe' in os.fsdecode(value).split(':') or '${{' in os.fsdecode(value))
 
 
 def check_pythonpath(value):
@@ -893,6 +897,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     workflow = AUDIT_CHECKOUT.get() is not None
+    child_lastpipe = interpreter = None
 
     def checkpoint():
         return len(calls), definitions, sourced, (shell_value, exported, allexport, ambient_path, environment_writes)
@@ -905,10 +910,10 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         nonlocal definitions, sourced
         nonlocal shell_value, exported, allexport, ambient_path, environment_writes
         start, previous, was_sourced, environment = position
-        if kind in ('subshell', 'background', 'process-substitution'):
+        if kind in ('subshell', 'pipeline-stage', 'background', 'process-substitution'):
             shell_value, exported, allexport, ambient_path, environment_writes = environment
         if workflow:
-            if kind in ('subshell', 'background', 'process-substitution', 'trap'):
+            if kind in ('subshell', 'pipeline-stage', 'background', 'process-substitution', 'trap'):
                 definitions, sourced = previous, was_sourced
             elif definitions is not previous:
                 definitions = {name: definitions.get(name) if definitions.get(name) is previous.get(name) else None
@@ -984,6 +989,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             stream = inputs.get(0, ())
             for operand in operands:
                 operand.stdin = stream
+                operand.interpreter = interpreter
+                operand.lastpipe = child_lastpipe
             operands.clear()
             defining = workflow and any(group[-2] is not None for group in groups)
             for event, body, number, parser in () if defining else inline:
@@ -992,10 +999,15 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                                           pythonpath=pythonpath, ignore_env=ignore_env, stdin=stream)
                 else:
                     nested = shell_calls(body, number, parser, directory, pythonpath=pythonpath, stdin=stream)
-                calls.extend(external(nested, parser, directory) if event == 'shell' or workflow and event == 'inline-shell' else nested)
+                calls.extend(external(nested, parser, directory, lastpipe=child_lastpipe, interpreter=interpreter)
+                             if event == 'shell' or workflow and event in ('inline-shell', 'python') else nested)
             inline.clear()
             if not defining:
-                flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
+                flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(),
+                            pythonpath, ignore_env, child_lastpipe, interpreter)
+            if workflow and child_lastpipe and expect and prefix is None and not defining:
+                calls.append(lexer.call(0, CheckoutScope('bashopts-assignment'), True, directory=directory))
+            child_lastpipe = interpreter = None
             conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
             if auto_flag is not None:
                 environment_writes += 1
@@ -1016,7 +1028,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 pipeline = True
             elif op in (';', '\n', '&&', '||', '&', ';;', ';&', ';;&', ')') and not function_end:
                 if pipeline:
-                    wrap(stage_start, 'subshell')
+                    wrap(stage_start, 'pipeline-stage')
                     wrap(pipeline_start, 'begin')
                 if conditional_command:
                     wrap(pipeline_start, 'conditional')
@@ -1094,6 +1106,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             mode = None
             continue
         if mode == 'env-unset':
+            if word.value == 'BASHOPTS':
+                child_lastpipe = False
             if word.value == 'PYTHONPATH':
                 pythonpath = UNSET_PATH
             mode = None
@@ -1193,7 +1207,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         if expect or declaration:
             assignment = word.value if word.literal else word.raw.lstrip('"\'')
             if assignment.startswith('BASHOPTS='):
-                check_bashopts(assignment.partition('=')[2] if word.literal else None)
+                child_lastpipe = may_enable_lastpipe(assignment.partition('=')[2] if word.literal else None)
             if re.match(r'PYTHONPATH(?:\+?=|\[)', assignment) or declaration and assignment == 'PYTHONPATH':
                 if assignment == 'PYTHONPATH':
                     pythonpath = shell_value
@@ -1236,7 +1250,9 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     raise Unsupported('cannot resolve gate script operand before Just installation')
                 script, events = operand_word(script, word.value if word.literal else None, word.raw)
                 for event, text in events:
-                    if event == 'isolated':
+                    if event == 'lastpipe':
+                        child_lastpipe = True
+                    elif event == 'isolated':
                         isolated = True
                     elif event == 'ignore-environment':
                         ignore_env = True
@@ -1271,6 +1287,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if prefix in PREFIXES and word.literal and word.value.startswith('-'):
             option, equals, argument = word.value.partition('=')
+            if prefix == 'env' and word.value in ('-', '-i', '--ignore-environment', '-uBASHOPTS', '--unset=BASHOPTS'):
+                child_lastpipe = False
             if prefix == 'env' and word.value in ('-', '-i', '--ignore-environment', '-uPYTHONPATH', '--unset=PYTHONPATH'):
                 pythonpath = UNSET_PATH
             elif prefix == 'env' and word.value in ('-u', '--unset'):
@@ -1310,6 +1328,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if prefix == 'env' and ENV_ASSIGNMENT.match(word.raw):
             if not word.literal and '$' in word.raw.partition('=')[0]:
+                child_lastpipe = True
                 pythonpath = None
             continue
         if prefix == 'timeout' and word.literal and re.fullmatch(r'[0-9.]+[smhd]?', word.value):
@@ -1367,6 +1386,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
         isolated = False
         owner = value.rsplit('/', 1)[-1] if word.literal else None
+        interpreter = owner
         if owner not in ('env', 'exec', 'command', 'nice', 'timeout'):
             may_consume |= value not in (':', 'true', 'false', 'echo', 'printf') or value in functions
         python = bool(owner and PYTHONS.fullmatch(owner))
@@ -1455,8 +1475,9 @@ def argv_text(items, strict=False):
 
 
 class PythonHelper:
-    def __init__(self, node, frames, decorator, source):
+    def __init__(self, node, frames, decorator, source, defaults):
         self.node = node
+        self.defaults = defaults
         self.decorator = decorator
         self.source = source
         self.frames = frames
@@ -1880,8 +1901,7 @@ def asyncio_main(call):
     for keyword in call.keywords:
         if keyword.arg == 'main' and main is None:
             main = keyword.value
-        elif (keyword.arg != 'debug' or not isinstance(keyword.value, ast.Constant)
-              or type(keyword.value.value) not in (bool, type(None))):
+        elif keyword.arg != 'debug':
             raise Unsupported('cannot resolve asyncio.run option')
     if main is None:
         raise Unsupported('cannot resolve asyncio.run coroutine')
@@ -2038,6 +2058,19 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
     def frames(names):
         return enclosing if class_body else (*enclosing, (scope, names))
 
+    def helper_defaults(args, names):
+        positional = args.posonlyargs + args.args
+        pairs = [*zip(positional[len(positional) - len(args.defaults):], args.defaults),
+                 *zip(args.kwonlyargs, args.kw_defaults)]
+        defaults = []
+        for param, value in pairs:
+            if value is not None:
+                owners = qualified(value, names)
+                defaults.append((param.arg, frozenset(BoundCall(UNKNOWN_CALLABLE)
+                    if item in (None, UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(item, ast.arg) else item
+                    for item in owners)))
+        return tuple(defaults)
+
     def read_helper(helper, names, call=None, receiver=None, strict=False, interrupted=None, protocol=False,
                     phase=None, suspended=None):
         function = helper.node
@@ -2047,6 +2080,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         for parameter in ast.iter_child_nodes(function.args):
             if isinstance(parameter, ast.arg):
                 local[parameter.arg] = frozenset({parameter})
+        if call is not None:
+            local.update(helper.defaults)
         positional = function.args.posonlyargs + function.args.args
         if receiver is not None and positional:
             local[positional[0].arg] = frozenset({receiver})
@@ -2063,10 +2098,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
             for parameter, value in zip(positional, expanded_items(call.args)):
                 if isinstance(value, ast.Starred):
+                    if helper.defaults:
+                        raise Unsupported('cannot resolve unpacked Python helper defaults')
                     break
                 bind_argument(parameter, value)
             named = {arg.arg: arg for arg in function.args.args + function.args.kwonlyargs}
             for keyword in call.keywords:
+                if keyword.arg is None and helper.defaults:
+                    raise Unsupported('cannot resolve unpacked Python helper defaults')
                 if keyword.arg in named:
                     bind_argument(named[keyword.arg], keyword.value)
         if suspended:
@@ -2831,25 +2870,24 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def write_environment(key, value, names, operation='set', native=False, *, optional=False):
         name = path_value(key, names)
-        if name == 'BASHOPTS':
-            check_bashopts(value)
-        if name not in ('PYTHONPATH', None):
-            return
-        paths = set()
-        for prior in names.get(CHILD_PATH, (None,)):
-            if not isinstance(prior, EnvironmentPath):
-                prior = EnvironmentPath(None, None)
-            if name is None or optional:
-                paths.add(prior)
-            if operation in ('setdefault', 'pop', 'clear'):
-                if prior.mapping is None and (operation == 'setdefault' or prior.process != prior.mapping):
+        for variable, field in (('PYTHONPATH', CHILD_PATH), ('BASHOPTS', CHILD_BASHOPTS)):
+            if name not in (variable, None):
+                continue
+            paths = set()
+            for prior in names.get(field, (None,)):
+                if not isinstance(prior, EnvironmentPath):
+                    prior = EnvironmentPath(None, None)
+                if name is None or optional:
                     paths.add(prior)
-                if (operation == 'setdefault' and prior.mapping not in (None, UNSET_PATH) or
-                        operation in ('pop', 'clear') and prior.mapping is UNSET_PATH):
-                    paths.add(prior)
-                    continue
-            paths.add(EnvironmentPath(value, prior.mapping if native else value))
-        names[CHILD_PATH] = frozenset(paths)
+                if operation in ('setdefault', 'pop', 'clear'):
+                    if prior.mapping in (None, INHERIT_BASHOPTS) and (operation == 'setdefault' or prior.process != prior.mapping):
+                        paths.add(prior)
+                    if (operation == 'setdefault' and prior.mapping not in (None, UNSET_PATH, INHERIT_BASHOPTS) or
+                            operation in ('pop', 'clear') and prior.mapping is UNSET_PATH):
+                        paths.add(prior)
+                        continue
+                paths.add(EnvironmentPath(value, prior.mapping if native else value))
+            names[field] = frozenset(paths)
 
     def update_environment(mapping, keywords, names, *, optional=False):
         mapping = argument(mapping, names)
@@ -2882,6 +2920,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             write_environment(key, value, names, method, native, optional=optional)
         elif method in ('__delitem__', 'delitem', 'unsetenv', 'pop', 'clear', 'popitem'):
             if method == 'clear':
+                write_environment(ast.Constant('BASHOPTS'), UNSET_PATH, names, method, native, optional=optional)
                 key = ast.Constant('PYTHONPATH')
             write_environment(key, UNSET_PATH, names, method, native, optional=optional)
 
@@ -2894,7 +2933,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if previous:
                     raise Unsupported('cannot resolve repeatedly started executable provider patch')
                 default = ast.Constant('test') if name == 'unittest.mock.patch.TEST_PREFIX' else name
-                state[saved] = state.get(field, frozenset({EnvironmentPath(None, None) if field == CHILD_PATH else default}))
+                state[saved] = state.get(field, frozenset({EnvironmentPath(None, None) if field in (CHILD_PATH, CHILD_BASHOPTS) else default}))
                 if changes:
                     state[field] = frozenset({UNKNOWN_CALLABLE})
             elif previous:
@@ -2994,6 +3033,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     names[(child, 'joined')] = frozenset({True})
                     return {UNKNOWN_CALLABLE}
         if target == 'asyncio.run':
+            for kw in call.keywords:
+                if kw.arg == 'debug' and not all(isinstance(item, ast.Constant) and type(item.value) in (bool, type(None))
+                                                 for item in qualified(kw.value, names)):
+                    raise Unsupported('cannot resolve asyncio.run option')
             values = qualified(asyncio_main(call), names)
             if len(values) == 1:
                 value, = values
@@ -3011,6 +3054,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                       isinstance(target, (ast.arg, ImportedMember, PythonInstance))):
             names[UNREAD_STDIN] = frozenset({False})
         if isinstance(receiver, DEFERRED):
+            if 'iterating' in names.get((receiver, 'consumed'), ()):
+                raise Unsupported('cannot establish interleaved Python generator consumption')
             if target in ('generator.throw', 'generator.close'):
                 if isinstance(receiver, DeferredCall) and names.get((receiver, 'consumed')) == {'partial'}:
                     raise Unsupported('cannot resolve partially consumed Python generator cleanup')
@@ -3282,9 +3327,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if isinstance(path, ast.Constant) and isinstance(path.value, str):
                     owners = {path.value}
                 providers = provider_fields(owners, None, names, dictionary=True)
-                if ENVIRON.intersection(owners) and (not isinstance(clear, ast.Constant) or clear.value or
-                        any(mapping_writes(mapping, call.keywords, key, names) for key in ('PYTHONPATH', b'PYTHONPATH'))):
-                    return {PatchedProvider({CHILD_PATH[0]: True})}
+                if ENVIRON.intersection(owners):
+                    changes = {}
+                    for key, field in (('PYTHONPATH', CHILD_PATH), ('BASHOPTS', CHILD_BASHOPTS)):
+                        if (not isinstance(clear, ast.Constant) or clear.value or
+                                any(mapping_writes(mapping, call.keywords, k, names) for k in (key, key.encode()))):
+                            changes[field[0]] = True
+                    if changes:
+                        return {PatchedProvider(changes)}
                 if providers:
                     return {PatchedProvider({name: not isinstance(clear, ast.Constant) or clear.value or
                                              mapping_writes(mapping, call.keywords, name.rpartition('.')[2], names)
@@ -3415,8 +3465,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 names[(child, 'joined')] = frozenset({False})
                 call = ast.copy_location(ast.Call(func=call.func, args=call.args, keywords=call.keywords), call)
                 call._child_process = child
-            paths = frozenset(path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None)
-                              for path in names.get(CHILD_PATH, ()))
+            paths = tuple(frozenset(path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None)
+                                    for path in names.get(field, ())) for field in (CHILD_PATH, CHILD_BASHOPTS))
             yield call, target, wrapped or require_command, source, paths, unread, joined_children(names)
             if child is not None:
                 return {child}
@@ -3588,8 +3638,19 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         state = names.get((value, 'consumed'), ())
         if state == {'exhausted'}:
             return [] if collect else set()
+        if 'iterating' in state:
+            raise Unsupported('cannot establish interleaved Python generator consumption')
         if state:
             raise Unsupported('cannot resolve repeated Python generator consumption')
+        if collect and isinstance(value, DeferredGenerator):
+            clauses = value.node.generators
+            clause = clauses[0]
+            if (len(clauses) != 1 or clause.ifs or not isinstance(clause.target, ast.Name)
+                    or not (isinstance(value.node.elt, ast.Constant) or isinstance(value.node.elt, ast.Name)
+                            and clause.target.id == value.node.elt.id)
+                    or not all(isinstance(owner, SequenceBinding) and isinstance(owner.origin, ast.Tuple)
+                               for owner in value.iterable)):
+                raise Unsupported('cannot establish interleaved Python generator consumption')
         if isinstance(value, DeferredCall) or isinstance(value.node, ast.GeneratorExp):
             names[(value, 'consumed')] = frozenset({'partial' if partial else 'exhausted'})
         if isinstance(value, DeferredCall):
@@ -3618,6 +3679,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if index:
                 yield from visit(iterable, local, interrupted, allow_generator=True)
             items = literal_elements(sequence_value(iterable, local))
+            owners = qualified(iterable, local)
+            producer = next((owner for owner in owners if isinstance(owner, DEFERRED)), None)
+            if isinstance(producer, DeferredCall) and local.get((producer, 'consumed')) != {'exhausted'}:
+                raise Unsupported('cannot establish interleaved Python generator consumption')
             consumed = yield from iterate(iterable, local, interrupted, collect=True)
             if consumed is not None:
                 items = consumed
@@ -3626,6 +3691,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if items is None:
                 exact = False
                 items = [CapturedArgument({UNKNOWN_CALLABLE})]
+            if producer is not None and items:
+                local[(producer, 'consumed')] = frozenset({'iterating'})
             for item in items:
                 iterations += 1
                 check_sequence_length(iterations)
@@ -3647,6 +3714,9 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         elements.append(CapturedArgument(qualified(item, local)))
                         if isinstance(node, ast.DictComp):
                             yield from visit(node.value, local, interrupted)
+
+            if producer is not None and items:
+                local[(producer, 'consumed')] = frozenset({'exhausted'})
 
         for event in level(0):
             if partial:
@@ -3711,7 +3781,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             result = ast.copy_location(ast.Return(value=node.body), node.body)
             function = ast.copy_location(ast.FunctionDef(name='<lambda>', args=node.args, body=[result],
                                                          decorator_list=[], returns=None, type_params=[]), node)
-            results[node] = {PythonHelper(function, frames(names), None, source)}
+            results[node] = {PythonHelper(function, frames(names), None, source, helper_defaults(node.args, names))}
             return
         if isinstance(node, ast.Await):
             yield from visit(node.value, names, interrupted, allow_generator=True)
@@ -3845,7 +3915,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                             wrapped = set()
                             for value in values:
                                 if isinstance(value, PythonHelper):
-                                    helper = PythonHelper(value.node, value.frames, value.decorator, value.source)
+                                    helper = PythonHelper(value.node, value.frames, value.decorator, value.source, value.defaults)
                                     context = ast.withitem(context_expr=CapturedArgument({patch}), optional_vars=None)
                                     body = value.node.body if value.managed_body is None else value.managed_body
                                     helper.managed_body = [ast.With(items=[context], body=body)] if body else []
@@ -3874,12 +3944,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         decorator, = decorators[0]
                     else:
                         decorator = UNKNOWN_CALLABLE
-                key = node, decorator
+                defaults = helper_defaults(node.args, names)
+                key = node, decorator, defaults
                 managers = [owner for group in decorators for owner in group if isinstance(owner, (GeneratorManager, PatchedProvider))]
                 if managers:
-                    key = node, tuple(map(frozenset, decorators))
+                    key = node, tuple(map(frozenset, decorators)), defaults
                 if key not in functions:
-                    helper = PythonHelper(node, frames(bindings), decorator, source)
+                    helper = PythonHelper(node, frames(bindings), decorator, source, defaults)
                     if managers:
                         helper.managed_body = []
                         if len(managers) == len(decorators) and all(len(group) == 1 for group in decorators):
@@ -3967,7 +4038,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 candidates = [captured(item, names) for item in items]
             sequence = owner if isinstance(owner, SequenceBinding) else None
             if not isinstance(node, ast.While):
-                drains = isinstance(node.target, ast.Name) and all(isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in node.body)
+                drains = (isinstance(node, ast.For) and isinstance(node.target, ast.Name)
+                          and all(isinstance(stmt, (ast.Pass, ast.Continue)) for stmt in node.body))
+                if drains and isinstance(owner, DeferredCall) and names.get((owner, 'consumed')) != {'exhausted'}:
+                    helper = owner.helper
+                    parameters = {arg.arg for arg in ast.walk(helper.node.args) if isinstance(arg, ast.arg)}
+                    elements = []
+                    for stmt in helper.node.body:
+                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield) and isinstance(stmt.value.value, ast.Constant):
+                            elements.append(stmt.value.value)
+                            continue
+                        if isinstance(stmt, ast.Expr) and isinstance(call := stmt.value, ast.Call) and isinstance(call.func, ast.Name):
+                            if (helper.frames and helper.frames[-1][0] is scope and call.func.id != node.target.id
+                                    and call.func.id not in parameters and qualified(call.func, names) <= PY_ARGV.keys()
+                                    and all(isinstance(part, (ast.Constant, ast.List, ast.Tuple, ast.Load))
+                                            for arg in call.args for part in ast.walk(arg)) and not call.keywords):
+                                continue
+                        raise Unsupported('cannot establish interleaved Python generator consumption')
                 yielded = yield from iterate(node.iter, names, interrupted, partial=not drains, collect=drains)
                 if drains and yielded is not None:
                     elements = yielded
@@ -4252,17 +4339,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
 
 def resolve_module_calls(calls, lexer):
-    pending = list(reversed(calls))
-    inspected = set()
-    scopes = []
+    pending = [(call, frozenset()) for call in reversed(calls)]
+    traversals = 0
     while pending:
-        call = pending.pop()
+        call, active = pending.pop()
         line, word = call[:2]
-        if isinstance(word, CheckoutScope):
-            if word == 'end':
-                scopes.pop()
-            elif word not in ('wait', 'joined-child'):
-                scopes.append(None if word in ('child', 'subshell', 'conditional', 'after-join') else object())
         if not word.startswith(('(module)', '(isolated-module)', '(noenv-module)', '(cwdpath-module)')):
             yield call
             continue
@@ -4279,15 +4360,18 @@ def resolve_module_calls(calls, lexer):
             yield lexer.call(line, path, True, directory=directory)
         if origin:
             stdin = getattr(word, 'stdin', ())
+            override = getattr(word, 'lastpipe', None)
             key = directory, module, tuple(arguments) if arguments is not None else None, pythonpath, stdin_key(stdin)
-            key += (frozenset(AUDIT_CHECKOUT.get() or ()), tuple(scope for scope in scopes if scope is not None))
-            if key not in inspected:
-                if len(inspected) >= 128:
+            key += (override, frozenset(AUDIT_CHECKOUT.get() or ()))
+            if key not in active:
+                traversals += 1
+                if traversals > 128:
                     raise Unsupported('cannot resolve Python module traversal beyond context budget')
-                inspected.add(key)
                 entry = python_calls(None, line, lexer, directory, module=(module, call[3:]),
                                      pythonpath=pythonpath, ignore_env=ignore_env, stdin=stdin)
-                pending.extend(reversed(entry))
+                if directory is not None:
+                    entry = external(entry, lexer, directory, lastpipe=override)
+                pending.extend([(event, active | {key}) for event in reversed(entry)])
         elif directory is not None and module in ('unittest', 'unittest.__main__'):
             yield (line, '(module)' + module, *call[2:])
         else:
@@ -4305,6 +4389,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
     imports = SuiteImports(import_directory if import_directory is not None else directory, exclude_checkout,
                            directory if not ignore_env and pythonpath in ('.', b'.') else None)
     startup = {CHILD_PATH: frozenset({EnvironmentPath(pythonpath, pythonpath)})}
+    startup[CHILD_BASHOPTS] = frozenset({EnvironmentPath(INHERIT_BASHOPTS, INHERIT_BASHOPTS)})
     if stdin:
         startup[UNREAD_STDIN] = frozenset({True})
     bindings = startup.copy()
@@ -4525,22 +4610,29 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
             environment = args[3]
         elif name in ('os.execle', 'os.execlpe', 'os.spawnle', 'os.spawnlpe') and args:
             environment = args[-1]
+        inherited_paths, inherited_opts = inherited_paths
+        opts = {path.process for path in inherited_opts}
         path_values = {path.process for path in inherited_paths}
         child_path = next(iter(path_values)) if len(path_values) == 1 else None
         if isinstance(environment, CapturedArgument) and environment.owners and environment.owners <= ENVIRON:
+            opts = {path.mapping for path in inherited_opts}
             mapping_values = {path.mapping for path in inherited_paths}
             child_path = next(iter(mapping_values)) if len(mapping_values) == 1 else None
         elif isinstance(environment, ast.Dict):
+            opts = {UNSET_PATH}
             child_path = UNSET_PATH
             for key, value in zip(environment.keys, environment.values):
                 if not isinstance(key, ast.Constant):
+                    opts = {None}
                     child_path = None
                 elif key.value in ('BASHOPTS', b'BASHOPTS'):
-                    check_bashopts(value.value if isinstance(value, ast.Constant) else None)
+                    opts = {value.value if isinstance(value, ast.Constant) else None}
                 elif key.value in ('PYTHONPATH', b'PYTHONPATH'):
                     child_path = value.value if isinstance(value, ast.Constant) else None
         elif environment is not None and not (isinstance(environment, ast.Constant) and environment.value is None):
             child_path = None
+            opts = {None}
+        lastpipe = None if opts == {INHERIT_BASHOPTS} else any(may_enable_lastpipe(value) for value in opts)
         value = args[9] if subprocess_argv and len(args) > 9 else keywords.get('cwd')
         if directory is not None and texts and value is not None:
             if not isinstance(value, ast.Constant) or (value.value is not None and not isinstance(value.value, str)):
@@ -4601,7 +4693,7 @@ def python_calls(text, line=1, lexer=Lexer, directory=None, *, filename=None, is
                     mode = args[0] if args else keywords.get('mode')
                     pending = not isinstance(mode, ast.Constant) or mode.value != os.P_WAIT
                 child = shell_calls(shell_text, start, lexer, cwd, pythonpath=child_path, stdin=child_stdin)
-                yield from external(child, lexer, cwd, 'pending-child' if pending else 'child', getattr(node, '_child_process', None))
+                yield from external(child, lexer, cwd, 'pending-child' if pending else 'child', getattr(node, '_child_process', None), lastpipe)
             else:
                 raise Unsupported('cannot resolve Python process command')
 
