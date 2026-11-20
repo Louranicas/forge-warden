@@ -394,8 +394,8 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
     writes = set() if checkout_writes is None else checkout_writes
 
     read_scopes = []
-    deferred_reads = {'functions': set(), 'deferred': set()}
-    functions = set()
+    deferred_reads = {}
+    functions = {}
 
     def require_original(path):
         for _, reads in read_scopes:
@@ -403,7 +403,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
         if None in writes or any(path.is_relative_to(changed) for changed in writes):
             raise ValueError('cannot resolve modified gate script ' + str(path.relative_to(lexer.workspace)))
 
-    def record_write(path, *, invocation=False):
+    def record_write(path):
         if path is not None:
             path = Path(os.path.normpath(path))
             if not path.is_relative_to(lexer.workspace):
@@ -412,27 +412,28 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             if (None in writes or any(path.is_relative_to(changed) for changed in writes)
                     or file.resolve() != file or file.is_file() and file.stat().st_nlink > 1):
                 path = None
-        for kind, reads in (*deferred_reads.items(), *read_scopes):
+        for reads in (*deferred_reads.values(), *(reads for kind, reads in read_scopes if not kind.startswith('function:'))):
             for read in reads:
-                if invocation and kind == 'functions':
-                    if None not in writes and not any(read.is_relative_to(changed) for changed in writes):
-                        continue
-                elif path is not None and not read.is_relative_to(path):
-                    continue
-                raise ValueError('cannot resolve modified gate script ' + str(read.relative_to(lexer.workspace)))
+                if path is None or read.is_relative_to(path):
+                    raise ValueError('cannot resolve modified gate script ' + str(read.relative_to(lexer.workspace)))
         writes.add(path)
 
     def inspect(calls, active):
         nonlocal files
-        functions.update(word[2:] for _, word, *_ in calls if word.startswith('()'))
         for _, word, external, arguments, cwd in commands['resolve_module_calls'](calls, lexer):
             if isinstance(word, commands['CheckoutScope']):
-                if word == 'end':
+                if word == 'wait':
+                    if 'wait' in functions:
+                        continue
+                    deferred_reads.pop(('background', word.shell), None)
+                elif word == 'end':
                     if not read_scopes:
                         raise ValueError('cannot resolve shell checkout read scope')
                     kind, reads = read_scopes.pop()
-                    if kind in deferred_reads:
-                        deferred_reads[kind].update(reads)
+                    if kind.startswith('function:'):
+                        functions.setdefault(kind.removeprefix('function:'), set()).update(reads)
+                    elif kind in ('trap', 'background'):
+                        deferred_reads.setdefault((kind, kind.shell), set()).update(reads)
                 else:
                     read_scopes.append((word, set()))
                 continue
@@ -454,6 +455,11 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
             if target.name == 'just':
                 return 'just'
             program = word if '/' not in word else target.name
+            if not external and not marker and word in functions:
+                for read in functions[word]:
+                    require_original(read)
+                record_write(None)
+                continue
             if not marker and ('/' not in word or word.startswith(commands['STANDARD_BIN'])):
                 if program in ('cp', 'mv') and arguments and len(arguments) >= 2 and all(
                         arg and Path(arg).is_absolute() for arg in arguments):
@@ -462,9 +468,9 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
                 elif (program not in (commands['PREFIXES'] - {'xargs'}) | commands['SHELLS'] | READ_ONLY_PROGRAMS and
                       not commands['PYTHONS'].fullmatch(program) and
                       program not in (':', '.', 'source', 'true', 'false', 'echo', 'printf', 'cat', 'export', 'unset',
-                                      'set', 'declare', 'typeset', 'local', 'readonly', 'test', '[', '[[', 'pwd') and
+                                      'set', 'declare', 'typeset', 'local', 'readonly', 'test', '[', '[[', 'pwd', 'trap', 'wait') and
                       (program, arguments) != ('git', ['--version'])):
-                    record_write(None, invocation=not external and word in functions)
+                    record_write(None)
                 continue
             path = Path(os.path.normpath(cwd / target))
             if not path.is_relative_to(lexer.workspace):
@@ -536,7 +542,9 @@ def just_consumer(step, commands, cases, root=None, inherited_env=(), checkout_w
     audit_token = audit.set(writes)
     try:
         options = ({'isolated': arguments_format == '-I {0}', 'temporary_script': True}
-                   if reader is commands['python_calls'] else {})
+                   if reader is commands['python_calls'] else {
+                       'runner_environment': all(isinstance(env, dict) and 'GITHUB_ENV' not in env
+                                                 for env in (*inherited_env, step.get('env', {})))})
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
         return inspect(calls, ())
     finally:

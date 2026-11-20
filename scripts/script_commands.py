@@ -366,7 +366,8 @@ class Lexer:
             while j < len(text) and text[j] != "'":
                 j += 2 if text[j] == '\\' else 1
             self.i = j + 1
-            return text[i + 2:j]
+            value = text[i + 2:j]
+            return None if '\\' in value else value
         match = re.compile(r'\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])').match(text, i)
         self.i = match.end() if match else i + 1
         return None if match else '$'
@@ -535,12 +536,28 @@ class ExpandedWorkflowLexer(WorkflowLexer):
 UNSET_PATH = object()
 
 
-def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=UNSET_PATH, shell_state=None, stdin=()):
+def shell_calls(text, line=1, lexer=Lexer, directory=None, *, pythonpath=UNSET_PATH, shell_state=None, stdin=(), runner_environment=False):
     """(line, word, external) for each command word of the shell text, nested substitutions
     included. external: the word is run by a prefix or by find, so no shell function can be it."""
     calls = []
 
-    calls.extend(command_words(lexer(text, line).tokens(), calls, lexer, directory, pythonpath, shell_state, stdin))
+    tokens = lexer(text, line).tokens()
+    if runner_environment:
+        words = []
+        for index, token in enumerate(tokens):
+            if not words and token[:2] == ('op', '\n'):
+                continue
+            if token[0] == 'word' and token[1].literal and not token[1].substitutions:
+                words.append(token[1].value)
+                continue
+            if (words and words[0] in ('echo', 'printf') and token[:2] in (('redirect', '>>'), ('redirect', '>'))
+                    and index + 1 < len(tokens) and tokens[index + 1][0] == 'word'
+                    and (index + 2 == len(tokens) or tokens[index + 2][:2] in (('op', ';'), ('op', '\n')))):
+                operand = tokens[index + 1][1]
+                if operand.raw in ('"$GITHUB_ENV"', '"${GITHUB_ENV}"'):
+                    operand.runner_environment = True
+            break
+    calls.extend(command_words(tokens, calls, lexer, directory, pythonpath, shell_state, stdin))
     return calls
 
 
@@ -806,8 +823,33 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
     expect, mode, prefix, script = True, None, None, None
     finding = by_find = skip_parens = after_coproc = False
     workflow = AUDIT_CHECKOUT.get() is not None
-    begin = len(calls)
-    deferred = concurrent = False
+    list_start = pipeline_start = len(calls)
+    pipeline = False
+    delayed = function_name = None
+    shell = object()
+
+    def wrap(start, kind):
+        if workflow:
+            marker = CheckoutScope(kind)
+            marker.shell = object() if kind == 'background' and groups else shell
+            calls.insert(start, lexer.call(0, marker, True, directory=initial_directory))
+            calls.append(lexer.call(0, CheckoutScope('end'), True, directory=initial_directory))
+
+    def open_group(end, uncertain):
+        nonlocal list_start, pipeline_start, pipeline, delayed, function_name
+        groups.append((end, uncertain, list_start, pipeline_start, pipeline, delayed, function_name, len(calls)))
+        list_start = pipeline_start = len(calls)
+        pipeline = False
+        delayed = function_name = None
+
+    def close_group():
+        nonlocal list_start, pipeline_start, pipeline, delayed
+        end, _, list_start, pipeline_start, pipeline, delayed, name, start = groups.pop()
+        if end == 'done':
+            wrap(start, 'begin')
+        if name is not None:
+            wrap(start, 'function:' + name)
+
     inline = []
     operands = []
     inputs = {} if stdin == () else {0: stdin}
@@ -826,8 +868,6 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if kind == 'op':
             op = token[1]
-            concurrent |= op in ('|', '|&')
-            deferred |= op == '&'
             if (piped or conditional_command) and expect and not changes_path and script is None and op == '\n':
                 continue
             if piped and expect and script is None and op == '(':
@@ -852,7 +892,19 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 calls.extend(external(nested) if event == 'shell' else nested)
             inline.clear()
             flush_stdin(script, inputs, calls if workflow else found, calls, lexer, directory, excludes_checkout(), pythonpath, ignore_env)
-            conditional = any(uncertain for _, uncertain in groups) or conditional_command or piped or op in ('|', '|&', '&')
+            if op in ('|', '|&'):
+                pipeline = True
+            elif op in (';', '\n', '&&', '||', '&', ';;', ';&', ';;&', ')') and not function_end:
+                if pipeline:
+                    wrap(pipeline_start, 'begin')
+                if delayed or op == '&':
+                    wrap(list_start if op == '&' else pipeline_start, delayed or 'background')
+                pipeline = False
+                delayed = None
+                pipeline_start = len(calls)
+                if op not in ('&&', '||'):
+                    list_start = pipeline_start
+            conditional = any(group[1] for group in groups) or conditional_command or piped or op in ('|', '|&', '&')
             if auto_flag is not None:
                 allexport = None if conditional and allexport != auto_flag else auto_flag
             if changes_path and (expect and prefix is None or script in ('export', 'declare', 'typeset', 'local', 'readonly', 'unset')):
@@ -864,10 +916,10 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 ambient_path = UNSET_PATH if exported is False else shell_value if exported is True else None
             export_flag = auto_flag = set_option = None
             changes_path = False
-            if op == '(' and not skip_parens and mode != 'array':
-                groups.append((')', True))
-            elif groups and op == groups[-1][0]:
-                groups.pop()
+            if op == '(' and not (skip_parens or function_start) and mode != 'array':
+                open_group(')', True)
+            elif groups and op == groups[-1][0] and not function_end:
+                close_group()
             conditional_command = op in ('&&', '||')
             piped = op in ('|', '|&')
             if op == '|&':
@@ -908,7 +960,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                 continue
             skip_parens = False
             if function_end and found:
-                functions.add(found.pop()[1])
+                function_name = found.pop()[1]
+                functions.add(function_name)
                 continue
             expect, prefix, script, finding, by_find = op != ')', None, None, False, False
             if mode == 'for' and op in (';', '\n'):
@@ -964,7 +1017,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
                     if duplicate and inputs and not word.literal:
                         raise Unsupported('cannot resolve script input descriptor')
                 if workflow and not (source_fd is not None or closed or here or operator == '<'):
-                    if word.raw not in ('"$GITHUB_ENV"', '"${GITHUB_ENV}"'):
+                    if not getattr(word, 'runner_environment', False):
                         target = checkout_destination(word, initial_directory)
                         calls.append(lexer.call(word.line, CheckoutWrite(target or ''), True, directory=initial_directory))
                 for dest in destinations:
@@ -983,7 +1036,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             continue
         if mode == 'function-name':
             # `function NAME`, with or without `()`: NAME is defined here, not called.
-            functions.add(word.value if word.literal else word.raw)
+            function_name = word.value if word.literal else word.raw
+            functions.add(function_name)
             mode, expect, skip_parens = None, True, True
             continue
         if mode in ('for', 'for-do'):
@@ -997,7 +1051,7 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
         if mode == 'case-pattern':
             if word.value == 'esac':
                 if groups and groups[-1][0] == 'esac':
-                    groups.pop()
+                    close_group()
                 mode, expect = None, False
             continue
         if mode == '[[':
@@ -1156,17 +1210,12 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             if nxt and nxt[0][0] == 'word' and nxt[0][1].value == '{':
                 continue  # `coproc NAME { ...; }`: NAME names the coprocess
         if word.literal and value in KEYWORDS:
-            if workflow and (GROUP_END.get(value) == 'done' or value == 'done'):
-                scope = 'begin' if value != 'done' else 'end'
-                calls.append(lexer.call(word.line, CheckoutScope(scope), True, directory=directory))
             if value in GROUP_END:
-                groups.append((GROUP_END[value], True))
+                open_group(GROUP_END[value], True)
             elif value == '{':
-                previous = tokens[index - 1][:2] if index else ()
-                groups.append(('}', conditional_command or previous == ('op', ')') or
-                               index > 0 and tokens[index - 1][0] == 'word' and tokens[index - 1][1].value in functions))
+                open_group('}', conditional_command or function_name is not None)
             elif groups and value == groups[-1][0]:
-                groups.pop()
+                close_group()
             if piped and value in ('{', 'if', 'for', 'case', 'until', 'while', 'select'):
                 raise Unsupported('cannot resolve grouped pipe input')
             if value in ('for', 'select'):
@@ -1176,7 +1225,8 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             elif value == 'function':
                 mode = 'function-name'
             after_coproc = value == 'coproc'
-            deferred |= after_coproc
+            if after_coproc:
+                delayed = 'background'
             expect = value in OPENERS
             continue
         if word.literal and value == '[[':
@@ -1191,6 +1241,11 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             operands.append(command)
         found.append(lexer.call(word.line, command, prefix is not None or by_find,
                                 tokens, index + 1, directory))
+        if (workflow and command == 'wait' and not (groups or piped or conditional_command or prefix or by_find or functions)
+                and tokens[index + 1:index + 2] and tokens[index + 1][:2] in (('op', ';'), ('op', '\n'))):
+            marker = CheckoutScope('wait')
+            marker.shell = shell
+            found.append(lexer.call(word.line, marker, True, directory=directory))
         # /usr/bin/env runs its operand as env does; an absolute path acts as its file name.
         isolated = False
         owner = value.rsplit('/', 1)[-1] if word.literal else None
@@ -1198,15 +1253,16 @@ def command_words(tokens, calls, lexer, directory, pythonpath=UNSET_PATH, shell_
             may_consume |= value not in (':', 'true', 'false', 'echo', 'printf') or value in functions
         python = bool(owner and PYTHONS.fullmatch(owner))
         prefix = owner if owner in PREFIXES else None
-        deferred |= owner == 'trap'
+        if workflow and function_name is not None:
+            raise Unsupported('cannot resolve shell function body')
+        if owner == 'trap':
+            delayed = 'trap'
         script = 'next' if owner == 'trap' else owner
         finding = finding or owner == 'find'
         by_find = False
         expect = prefix is not None
-    if workflow and (functions or deferred or concurrent):
-        scope = 'deferred' if deferred or functions and concurrent else 'functions' if functions else 'begin'
-        calls.insert(begin, lexer.call(0, CheckoutScope(scope), True, directory=initial_directory))
-        found.append(lexer.call(0, CheckoutScope('end'), True, directory=initial_directory))
+    if workflow and (groups or function_name):
+        raise Unsupported('cannot resolve incomplete shell group')
     return found + [lexer.call(0, '()' + name, False, directory=directory) for name in functions]
 
 
@@ -2977,26 +3033,33 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         method in ('__setitem__', '__delitem__', 'setitem', 'delitem', 'pop') and operands and
                         name in provider_fields(owners, operands[0], names, dictionary=True)):
                     names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
+        module, _, operation = target.partition('.') if isinstance(target, str) else ('', '', '')
+        if module not in ('os', 'posix'):
+            operation = ''
+        descriptor_change = operation in ('close', 'closerange', 'dup2', 'dup3') or target == 'socket.close'
+        if descriptor_change:
+            keywords = {kw.arg: kw.value for kw in call.keywords}
+            replacing = operation in ('dup2', 'dup3')
+            index = int(replacing)
+            destination = call.args[index] if len(call.args) > index else keywords.get('fd2' if replacing else 'fd')
+            limit = None
+            if operation == 'closerange':
+                destination = call.args[0] if call.args else keywords.get('fd_low')
+                limit = call.args[1] if len(call.args) > 1 else keywords.get('fd_high', CapturedArgument({None}))
+            if not disjoint_range(destination, limit, names, {None}):
+                names[UNREAD_STDIN] = frozenset({False})
+        elif target in ('sys.stdin.close', 'sys.stdin.buffer.close', 'sys.stdin.buffer.raw.close',
+                        'sys.__stdin__.close', 'sys.__stdin__.buffer.close', 'sys.__stdin__.buffer.raw.close'):
+            names[UNREAD_STDIN] = frozenset({False})
         if imports.fixture_manager is not None:
             live = {key[0] for key, values in names.items() if isinstance(key, tuple)
                     and isinstance(key[0], FixtureDescriptor) and True in values}
-            module, _, operation = target.partition('.') if isinstance(target, str) else ('', '', '')
-            if module not in ('os', 'posix'):
-                operation = ''
             if operation == 'open' and (live or imports.fixture_manager in active):
                 path = call.args[0] if call.args else next((kw.value for kw in call.keywords if kw.arg == 'path'), None)
                 fd = FixtureDescriptor(qualified(path, names))
                 names[(fd, 'verified')] = frozenset({False})
                 return {fd}
-            if operation in ('close', 'closerange', 'dup2', 'dup3') or target == 'socket.close':
-                keywords = {kw.arg: kw.value for kw in call.keywords}
-                replacing = operation in ('dup2', 'dup3')
-                index = int(replacing)
-                destination = call.args[index] if len(call.args) > index else keywords.get('fd2' if replacing else 'fd')
-                limit = None
-                if operation == 'closerange':
-                    destination = call.args[0] if call.args else keywords.get('fd_low')
-                    limit = call.args[1] if len(call.args) > 1 else keywords.get('fd_high', CapturedArgument({None}))
+            if descriptor_change:
                 owners = qualified(destination, names)
                 known = (limit is None and len(owners) == 1 and isinstance(fd := next(iter(owners)), FixtureDescriptor)
                          and names.get((fd, 'verified')) in ({True}, {False}))
@@ -3038,8 +3101,14 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if args != call.args or keyword_values != [kw.value for kw in call.keywords]:
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
+            if target == 'builtins.print' and all(isinstance(argument(arg, names), ast.Constant) for arg in call.args):
+                if all((kw.arg in ('sep', 'end', 'flush') and isinstance(argument(kw.value, names), ast.Constant)) or
+                       (kw.arg == 'file' and all(owner in ('sys.stdout', 'sys.stderr', 'sys.__stdout__', 'sys.__stderr__')
+                                                or isinstance(owner, ast.Constant) and owner.value is None
+                                                for owner in qualified(kw.value, names))) for kw in call.keywords):
+                    return {ast.Constant(None)}
             unread = names.get(UNREAD_STDIN, {True}) == {True}
-            if UNREAD_STDIN in names and target not in PYTHON_QUERIES | PATH_CONSTRUCTORS:
+            if UNREAD_STDIN in names and not descriptor_change and target not in PYTHON_QUERIES | PATH_CONSTRUCTORS:
                 subprocess_argv = target in PY_ARGV and PY_ARGV[target] is None
                 options = {kw.arg: kw.value for kw in call.keywords}
                 payload = options.get('input')
@@ -3047,7 +3116,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 independent = (subprocess_argv or target.startswith('asyncio.create_subprocess_')) and (
                     isinstance(payload, ast.Constant) and isinstance(payload.value, (str, bytes)) or
                     isinstance(stream, ast.Constant) and stream.value in (subprocess.DEVNULL, subprocess.PIPE))
-                if not independent and not (target == 'builtins.print' and not options):
+                if not independent:
                     names[UNREAD_STDIN] = frozenset({False})
             yield call, target, wrapped or require_command, source, frozenset(
                 path if isinstance(path, EnvironmentPath) else EnvironmentPath(None, None) for path in names.get(CHILD_PATH, ())), unread
@@ -3206,7 +3275,21 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return completed
 
     def visit_node(node, names, interrupted):
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        if isinstance(node, ast.GeneratorExp):
+            first = node.generators[0]
+            yield from visit(first.iter, names, interrupted)
+            unread = names.get(UNREAD_STDIN, frozenset({True}))
+            for generator in node.generators:
+                if generator is not first:
+                    yield from visit(generator.iter, names, interrupted)
+                iterate(generator.iter, names)
+                yield from visit(generator.target, names, interrupted)
+                yield from suite(generator.ifs, names, interrupted)
+            yield from visit(node.elt, names, interrupted)
+            if UNREAD_STDIN in names:
+                names[UNREAD_STDIN] = unread
+            return
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
             for generator in node.generators:
                 iterate(generator.iter, names)
         elif isinstance(node, (ast.Starred, ast.YieldFrom)):
@@ -3687,9 +3770,15 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 def resolve_module_calls(calls, lexer):
     pending = list(reversed(calls))
     inspected = set()
+    scopes = []
     while pending:
         call = pending.pop()
         line, word = call[:2]
+        if isinstance(word, CheckoutScope):
+            if word == 'end':
+                scopes.pop()
+            elif word != 'wait':
+                scopes.append(object())
         if not word.startswith(('(module)', '(isolated-module)', '(noenv-module)', '(cwdpath-module)')):
             yield call
             continue
@@ -3707,7 +3796,7 @@ def resolve_module_calls(calls, lexer):
         if origin:
             stdin = getattr(word, 'stdin', ())
             key = directory, module, tuple(arguments) if arguments is not None else None, pythonpath, stdin_key(stdin)
-            key += (frozenset(AUDIT_CHECKOUT.get() or ()),)
+            key += (frozenset(AUDIT_CHECKOUT.get() or ()), tuple(scopes))
             if key not in inspected:
                 if len(inspected) >= 128:
                     raise Unsupported('cannot resolve Python module traversal beyond context budget')
