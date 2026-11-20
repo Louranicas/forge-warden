@@ -427,6 +427,10 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / """O'Brien's "gate" checkout"""
             self.copy_ci_fixture(root)
+            for name in ('scripts/dogfood.sh', 'scripts/$GITHUB_WORKSPACE/scripts/tests/dogfood.sh'):
+                script = root / name
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text('true')
             check_ci = load('plant_tools', root).check_ci
             path = root / ".github/workflows/ci.yml"
             original = path.read_text()
@@ -1624,7 +1628,7 @@ class GateImageCommands(unittest.TestCase):
         for path, cls in (('.claude/hooks/test_guard.py', 'Guard'), ('scripts/tests/managed_review_bundle.py', 'ReviewBundle')):
             fixture = Path(path)
             source = f'from {fixture.stem} import {cls} as Alias\nimport unittest\nunittest.main()'
-            for step in ({'shell': 'python', 'run': source}, {'run': 'python3 -c ' + shlex.quote(source)}):
+            for step in ({'shell': 'python', 'env': {'PYTHONPATH': '.'}, 'run': source}, {'run': 'python3 -c ' + shlex.quote(source)}):
                 with self.subTest(path=path, step=step):
                     self.assertEqual(CAPS.just_consumer(dict(step, **{'working-directory': str(fixture.parent)}),
                                                         vars(COMMANDS), []), path)
@@ -1658,7 +1662,7 @@ class GateImageCommands(unittest.TestCase):
                 path.write_text(body.replace("'diff'", "'just'").replace("'cmp'", "'just'"))
             for statement in ('from pkg.data.suite import Case', 'import pkg.data.suite',
                               'import pkg', 'from pkg import run'):
-                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': statement}, vars(COMMANDS), [], root), 'just')
+                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'env': {'PYTHONPATH': '.'}, 'run': statement}, vars(COMMANDS), [], root), 'just')
             (root / 'wrap.sh').write_text('python3 entry.py')
             (root / 'pkg' / 'job.py').write_text("import subprocess\nsubprocess.run(['bash', 'wrap.sh'])")
             for run in ('python3 entry.py', 'bash wrap.sh', 'python3 <entry.py',
@@ -1674,7 +1678,7 @@ class GateImageCommands(unittest.TestCase):
                     self.assertEqual(CAPS.just_consumer({'run': run}, vars(COMMANDS), [], root), expected)
             (root / 'pkg/data/__init__.py').unlink()
             with self.assertRaisesRegex(ValueError, 'cannot resolve'):
-                CAPS.just_consumer({'shell': 'python', 'run': 'import pkg.data.suite'}, vars(COMMANDS), [], root)
+                CAPS.just_consumer({'shell': 'python', 'env': {'PYTHONPATH': '.'}, 'run': 'import pkg.data.suite'}, vars(COMMANDS), [], root)
 
     def test_local_package_exports_reach_qualified_calls(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1691,7 +1695,7 @@ class GateImageCommands(unittest.TestCase):
                                      (f'from {package} import *', 'launch')):
                     source = prefix + '\n' + call + "(['just'])"
                     with self.subTest(source=source):
-                        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source},
+                        self.assertEqual(CAPS.just_consumer({'shell': 'python', 'env': {'PYTHONPATH': '.'}, 'run': source},
                                                             vars(COMMANDS), [], root), 'just')
 
     def test_isolated_python_omits_checkout_imports(self):
@@ -1708,7 +1712,31 @@ class GateImageCommands(unittest.TestCase):
                              {'run': 'python3 -I <<< ' + shlex.quote(source)}):
                     with self.subTest(step=step):
                         self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
-                self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root), 'just')
+                for shell in ('python', 'python3 {0}'):
+                    step = {'shell': shell, 'run': source}
+                    self.assertIsNone(CAPS.just_consumer(step, vars(COMMANDS), [], root))
+                    self.assertEqual(CAPS.just_consumer(dict(step, env={'PYTHONPATH': '.'}), vars(COMMANDS), [], root), 'just')
+
+    def test_missing_gate_script_operands_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'original').write_text('just --version')
+            for command in ('bash generated', 'python3 generated', '. ./generated', 'source ./generated',
+                            'bash <generated', 'python3 <generated', './generated'):
+                with self.subTest(command=command), self.assertRaisesRegex(ValueError, 'cannot resolve.*generated'):
+                    CAPS.just_consumer({'run': 'cp original generated\n' + command}, vars(COMMANDS), [], root)
+
+    def test_sourced_state_precedes_python_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'setup').write_text('export PYTHONPATH=.')
+            (root / 'statistics.py').write_text("import subprocess\nsubprocess.run(['just'])")
+            for source in ('. ./setup', 'source ./setup'):
+                for lookup in ("python3 -Pc'import statistics'", "python3 -P <<< 'import statistics'",
+                               "python3 -Pm statistics"):
+                    with self.subTest(source=source, lookup=lookup), self.assertRaisesRegex(ValueError, 'PYTHONPATH'):
+                        CAPS.just_consumer({'run': source + '\n' + lookup}, vars(COMMANDS), [], root)
+                self.assertIsNone(CAPS.just_consumer({'run': source + "\npython3 -Ic'import statistics'"}, vars(COMMANDS), [], root))
 
     def test_safe_path_and_heredocs_use_the_owning_python(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1813,6 +1841,11 @@ class GateImageCommands(unittest.TestCase):
             for command, expected in (('PYTHONPATH=.', None), ('declare PYTHONPATH=.', None),
                                       ('readonly PYTHONPATH=.', None), ('export PYTHONPATH=.', 'just'),
                                       ('declare -x PYTHONPATH=.', 'just'), ('set -a\nPYTHONPATH=.', 'just'),
+                                      ('set -a\nset -- +a\nPYTHONPATH=.', 'just'),
+                                      ('set -o allexport\nset value +o allexport\nPYTHONPATH=.', 'just'),
+                                      ('set -- -o allexport\nPYTHONPATH=.', None),
+                                      ('set - -a\nPYTHONPATH=.', None),
+                                      ('set -a\nset +o allexport\nPYTHONPATH=.', None),
                                       ('PYTHONPATH=.\nexport PYTHONPATH', 'just'),
                                       ('export PYTHONPATH=.\nexport -n PYTHONPATH', None)):
                 run = "unset PYTHONPATH\n" + command + "\npython3 -Pc'import statistics'"
@@ -1827,6 +1860,9 @@ class GateImageCommands(unittest.TestCase):
                         'run': 'import os, subprocess\n' + mutation + '\n' + child}
                 with self.subTest(mutation=mutation):
                     self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), [], root), expected)
+            step = {'shell': 'python', 'run': "import os, subprocess\nrows = [['PYTHONPATH', '.'], ['PYTHONPATH', '']]\n"
+                    "os.environ[rows.pop(0)[0]] = rows[0][1]\n" + child}
+            self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), [], root), 'just')
             with self.assertRaisesRegex(COMMANDS.Unsupported, 'PYTHONPATH'):
                 CAPS.just_consumer({'run': "git status && export PYTHONPATH=.\npython3 -Pc'import statistics'"},
                                    vars(COMMANDS), [], root)
@@ -1887,7 +1923,7 @@ class GateImageCommands(unittest.TestCase):
                                    'settings.launch(["just"])\ndef check(): launch(["just"])')
 
             def consumer(source):
-                return CAPS.just_consumer({'shell': 'python', 'run': source}, vars(COMMANDS), [], root)
+                return CAPS.just_consumer({'shell': 'python', 'env': {'PYTHONPATH': '.'}, 'run': source}, vars(COMMANDS), [], root)
 
             self.assertIsNone(consumer('import pkg\npkg.child.check()'))
             self.assertEqual(consumer('import pkg, subprocess\npkg.launch = subprocess.run\npkg.check()'), 'just')
@@ -2028,6 +2064,44 @@ class GateImageCommands(unittest.TestCase):
                 self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['just'])
         source = 'from subprocess import run\nitems = (print,)\nold = items\nitems += (run,)\nold[-1](["just"])'
         self.assertEqual(COMMANDS.python_calls(source), [])
+
+    def test_indexed_writes_and_deletions_evaluate_operands_once(self):
+        for operation, invoke in (
+                ('rows.pop(0)[0] = rows[0][0]', 'first[0]'),
+                ('saved = rows.pop(0)[0] = rows[0][0]', 'saved'),
+                ('rows.pop(0)[0]: object = rows[0][0]', 'first[0]'),
+                ('rows.pop(0)[:] = rows[0][:]', 'first[0]'),
+                ('rows.pop(0)[0], rows[0][0] = (run, print)', 'first[0]'),
+                ('first.insert(0, print)\ndel rows.pop(0)[0]', 'first[0]'),
+                ('indexes = [0]\nfirst.insert(0, print)\ndel rows.pop(0)[indexes.pop(0)]', 'first[0]')):
+            source = ('from subprocess import run\nfirst = [run]\nrows = [first, [print]]\n'
+                      + operation + '\n' + invoke + '(["just"])')
+            with self.subTest(operation=operation):
+                expected = self.recorded_commands(source)
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], [args[0] for args in expected])
+
+    def test_subprocess_interpreter_reads_effective_stdin(self):
+        setup = 'import asyncio, subprocess\n'
+        python_input = b"import subprocess; subprocess.run(['just'])"
+        for launch in ("subprocess.run(['bash'], input='just --version', text=True)",
+                       f"subprocess.run(['python3', '-'], input={python_input!r})",
+                       "subprocess.run(['unused'], executable='sh', input=b'just')",
+                       "subprocess.run('bash', shell=True, input=b'just')",
+                       "subprocess.run(['env', 'bash', '-s'], input='just', text=True)"):
+            with self.subTest(launch=launch):
+                self.assertEqual(CAPS.just_consumer({'run': setup + launch, 'shell': 'python'}, vars(COMMANDS), []), 'just')
+                self.assertIn('just', [word for _, word, _ in COMMANDS.python_calls(setup + launch)])
+        for launch in ("subprocess.Popen(['bash'], -1, None, stream)",
+                       "subprocess.run(['python3'], stdin=stream)", "subprocess.run(['bash'], input=payload)",
+                       "asyncio.run(asyncio.create_subprocess_exec('sh', stdin=stream))",
+                       "asyncio.run(asyncio.create_subprocess_shell('python3', stdin=stream))"):
+            with self.subTest(launch=launch), self.assertRaisesRegex(COMMANDS.Unsupported, 'script input'):
+                COMMANDS.python_calls(setup + launch)
+        for launch in ("subprocess.run(['git', '--version'], input=payload)",
+                       "subprocess.run(['python3', '-c', 'pass'], stdin=stream)",
+                       "subprocess.run(['bash'], stdin=subprocess.DEVNULL)"):
+            with self.subTest(launch=launch):
+                self.assertIsNone(CAPS.just_consumer({'run': setup + launch, 'shell': 'python'}, vars(COMMANDS), []))
 
     def test_augmented_writeback_uses_the_original_destination(self):
         for setup, change, invoke in (

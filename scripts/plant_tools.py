@@ -427,8 +427,6 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
             file = root / path
             if file.is_symlink() or file.resolve() != file:
                 raise ValueError('cannot resolve linked gate script before Just installation')
-            if not file.exists():
-                continue
             if not file.is_file() or path in active or len(active) >= 12:
                 raise ValueError('cannot resolve unsafe or recursive gate script ' + path)
             if files is None:
@@ -437,6 +435,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
                 raise ValueError('cannot resolve untracked gate script ' + path)
             env_path = getattr(word, 'pythonpath', pythonpath)
             ignore_env = getattr(word, 'ignore_env', False)
+            stdin = getattr(word, 'stdin', ())
             if not marker:
                 kind, bang = commands['classify'](root, path)
                 if bang and kind not in ('python', 'shell'):
@@ -447,7 +446,7 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
                     with file.open(encoding='utf-8') as first:
                         interpreter = first.readline().strip()[2:]
                     nested = commands['shell_calls'](interpreter + ' ' + shlex.quote(str(lexer.workspace / path)),
-                                                     lexer=lexer, directory=cwd, pythonpath=env_path)
+                                                     lexer=lexer, directory=cwd, pythonpath=env_path, stdin=stdin)
                     consumer = inspect(nested, (*active, ('shebang', path)))
                     if consumer:
                         return consumer
@@ -456,9 +455,10 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
             if marker in ('(py)', '(isolated-py)', '(cwdpath-py)'):
                 origin = cwd if getattr(word, 'cwd_imports', False) else (lexer.workspace / path).parent
                 nested = commands['python_calls'](body, lexer=lexer, directory=cwd, filename=path, import_directory=origin,
-                                                  pythonpath=env_path, ignore_env=ignore_env, isolated=marker == '(isolated-py)')
+                                                  pythonpath=env_path, ignore_env=ignore_env, isolated=marker == '(isolated-py)', stdin=stdin)
             else:
-                nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path)
+                nested = commands['shell_calls'](body, lexer=lexer, directory=cwd, pythonpath=env_path,
+                                                 shell_state=getattr(word, 'shell_state', None), stdin=stdin)
             consumer = inspect(nested, (*active, path))
             if consumer:
                 return consumer
@@ -466,7 +466,8 @@ def just_consumer(step, commands, cases, root=None, inherited_env=()):
     source = commands['IMPORT_SOURCE']
     token = source.set((root, directory, None, JUST_TESTS))
     try:
-        options = {'isolated': True} if arguments_format == '-I {0}' else {}
+        options = ({'isolated': arguments_format == '-I {0}', 'temporary_script': True}
+                   if reader is commands['python_calls'] else {})
         calls = reader(run, lexer=lexer, directory=directory, pythonpath=pythonpath, **options)
         return inspect(calls, ())
     finally:
