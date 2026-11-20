@@ -2637,6 +2637,58 @@ class GateImageCommands(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'keyword callable'):
                 COMMANDS.python_calls(source)
 
+    def test_collected_keyword_copies_preserve_callbacks(self):
+        prefix = "from subprocess import run\nimport copy\ndef check(**kw):\n    copied = "
+        for expression, expected in (("kw | {}", ['cmp']), ("{'launch': print} | kw", ['cmp']),
+                                     ("kw | {'launch': print}", []), ("dict(kw)", ['cmp']),
+                                     ("dict(**kw)", ['cmp']), ("dict(kw, launch=print)", []),
+                                     ("{**kw}", ['cmp']), ("kw.copy()", ['cmp']),
+                                     ("dict.copy(kw)", ['cmp']), ("copy.copy(kw)", ['cmp'])):
+            source = prefix + expression + "\n    kw['launch'] = print\n    copied.get('launch')(['cmp'])\ncheck(launch=run)"
+            with self.subTest(expression=expression):
+                self.assertEqual(self.recorded_commands(source), [[word] for word in expected])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+
+    def test_collected_keyword_reads_preserve_callbacks(self):
+        prefix = "from subprocess import run\ndef check(**kw):\n    "
+        for method in ('keys', 'items', 'values'):
+            for expression in (f"read = kw.{method}\n    view = read()", f"view = dict.{method}(kw)"):
+                source = prefix + expression + "\n    print(view, len(view), len(kw))\n    kw['launch'](['cmp'])\ncheck(launch=run)"
+                with self.subTest(expression=expression):
+                    self.assertEqual(self.recorded_commands(source), [['cmp']])
+                    self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], ['cmp'])
+        source = prefix + "view = kw.values()\n    for f in view: f(['cmp'])\ncheck(launch=run)"
+        self.assertEqual(self.recorded_commands(source), [['cmp']])
+        with self.assertRaisesRegex(ValueError, 'keyword view'):
+            COMMANDS.python_calls(source)
+
+    def test_local_argument_expansion_requires_known_protocol_effects(self):
+        prefix = ("from subprocess import run\nclass Items:\n"
+                  "    def __iter__(self): run(['iter']); return iter(())\n"
+                  "    def keys(self): run(['keys']); return ['item']\n"
+                  "    def __getitem__(self, key): run(['item']); return 1\n"
+                  "def log(*args, **kw): pass\nasync def later(*args, **kw): pass\nitems = Items()\n")
+        for expression, expected in (("log(*items)", ['iter']), ("log(*items, *())", ['iter']),
+                                     ("later(*items).close()", ['iter']), ("print(*items)", ['iter']),
+                                     ("[*items]", ['iter']), ("log(**items)", ['keys', 'item']),
+                                     ("{**items}", ['keys', 'item'])):
+            with self.subTest(expression=expression):
+                source = prefix + expression
+                self.assertEqual(self.recorded_commands(source), [[word] for word in expected])
+                with self.assertRaisesRegex(ValueError, 'expansion protocol'):
+                    COMMANDS.python_calls(source)
+
+    def test_exact_expansion_for_mixed_callees(self):
+        prefix = ("import os\nfrom subprocess import run\ndef log(message): print(message)\n"
+                  "handler = log if os.getenv('FW_TEST_ARGS') else ")
+        for other, operand, expected in (('print', "('ready',)", []), ('run', "(['cmp'],)", ['cmp'])):
+            source = prefix + other + "\nhandler(*" + operand + ")"
+            with self.subTest(other=other), patch.dict(os.environ, {'FW_TEST_ARGS': ''}):
+                self.assertEqual(self.recorded_commands(source), [[word] for word in expected])
+                self.assertEqual([word for _, word, _ in COMMANDS.python_calls(source)], expected)
+        with self.assertRaisesRegex(ValueError, 'mixed Python helper argument expansion'):
+            COMMANDS.python_calls(prefix + "print\nhandler(*os.getenv('FW_TEST_ARGS', '').split())")
+
     def test_generator_loop_distinguishes_exhaustion_from_break(self):
         setup = "from subprocess import run\ndef reader():\n    yield 1\n    run(['just'])\n"
         self.assertEqual(CAPS.just_consumer({'shell': 'python', 'run': setup + 'for x in reader(): pass'},
@@ -3275,6 +3327,11 @@ class GateImageCommands(unittest.TestCase):
             with self.subTest(setup=setup), self.assertRaisesRegex(ValueError, "cannot resolve Python process executable"):
                 consumer(setup + "\nrun(" + argument + ")")
 
+    def harmless_script_root(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / 'other.sh').write_text('true\n')
+        return root
+
     def test_fixed_executable_with_variable_arguments(self):
         for program in ("git", "cmp"):
             source = f"import subprocess\ndef git(*args): return subprocess.run(['{program}', *args])\ngit('status')"
@@ -3287,6 +3344,7 @@ class GateImageCommands(unittest.TestCase):
                         self.assertEqual(len(problems), 1)
                         self.assertIn("calls `cmp`", problems[0])
             self.assertIsNone(CAPS.just_consumer({"shell": "python", "run": source}, vars(COMMANDS), []))
+        root = self.harmless_script_root()
         for source, expected in (
             ("subprocess.run(['bash', 'other.sh', *args])", None),
             ("subprocess.run(['bash', 'scripts/tests/dogfood.sh', *args])", "scripts/tests/dogfood.sh"),
@@ -3295,13 +3353,14 @@ class GateImageCommands(unittest.TestCase):
         ):
             step = {"shell": "python", "run": "import subprocess; " + source}
             with self.subTest(source=source):
-                self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), []), expected)
+                self.assertEqual(CAPS.just_consumer(step, vars(COMMANDS), [], root), expected)
         path = "scripts/worktree_diff.py"
         with patch.object(COMMANDS, "DECLARED", COMMANDS.DECLARED - {"git"}):
             problems = self.problems({path: (ROOT / path).read_text()})
             self.assertTrue(any("calls `git`" in problem for problem in problems), problems)
 
     def test_starred_process_arguments_preserve_script_operands(self):
+        root = self.harmless_script_root()
         for template in (
             "os.execvp('bash', [*ARGS])",
             "os.spawnvp(os.P_WAIT, 'bash', [*ARGS])",
@@ -3315,10 +3374,10 @@ class GateImageCommands(unittest.TestCase):
             "asyncio.run(asyncio.create_subprocess_exec(*ARGS))",
         ):
             for vector, expected in (("['bash', 'scripts/tests/dogfood.sh']", "scripts/tests/dogfood.sh"),
-                                     ("['bash', 'unrelated.sh']", None)):
+                                     ("['bash', 'other.sh']", None)):
                 with self.subTest(template=template, vector=vector):
                     source = "import asyncio, os, subprocess; " + template.replace("ARGS", vector)
-                    self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), []), expected)
+                    self.assertEqual(CAPS.just_consumer({"run": source, "shell": "python"}, vars(COMMANDS), [], root), expected)
             unknown = template.replace("*[ARGS]", "*dynamic").replace("ARGS", "dynamic")
             source = "import asyncio, os, subprocess; " + unknown
             with self.subTest(unknown=unknown):
