@@ -1747,8 +1747,21 @@ class GateImageCommands(unittest.TestCase):
                 COMMANDS.python_calls(changed, filename=filename)
             self.assertEqual(refused.exception.lineno, changed.partition('out = subprocess.run')[0].count('\n') + 1)
 
+        for old, new in (('os.open(binary,', 'os.open(receipt_path,'),
+                         ('home, receipt_path, expected_subject)\n            yield',
+                          'home, binary, expected_subject)\n            yield'),
+                         ('home, receipt_path, expected_subject)\n            yield',
+                          'home, receipt_path, json.loads(Path(receipt_path).read_text())["subject"])\n            yield'),
+                         ('named = Path(home)', 'home = "/tmp"\n            named = Path(home)')):
+            with self.subTest(substitution=new), self.assertRaisesRegex(COMMANDS.Unsupported, 'verified fixture inputs'):
+                COMMANDS.python_calls(producer.replace(old, new), filename=filename)
+
         for operation, accepted in (('os.fstat(fd)', True), ('os.pread(fd, 4, 0)', True),
                                     ("with os.fdopen(fd, 'rb', closefd=False) as stream: stream.read(4)", True),
+                                    ("with open(Path('/dev/full'), 'wb') as full: pass", True),
+                                    ("import io\n            device = Path('/dev/full')\n"
+                                     "            with io.open(file=device, mode='wb') as full: pass", True),
+                                    ("import io\n            with io.FileIO(Path('/dev') / 'full', 'wb') as full: pass", True),
                                     ("os.fdopen(fd, 'rb')", False), ("os.fdopen(3, 'rb')", False), ('os.dup2(0, 3)', False),
                                     ('os.dup2(fd=0, fd2=3)', False), ('os.closerange(0, fd)', True),
                                     ('os.closerange(fd + 1, fd + 3)', True), ('os.closerange(fd, fd + 1)', False),
@@ -1768,6 +1781,13 @@ class GateImageCommands(unittest.TestCase):
         self.assertEqual(CAPS.just_consumer({'run': checkout, 'shell': 'python'}, vars(COMMANDS), []), 'just')
         unknown = checkout.replace('which("just")', 'which(sys.argv[1])')
         self.assertIn('cannot resolve Python process executable', self.problems({'checkout.py': unknown})[0])
+
+    def test_agreement_and_mutation_fixture_commands_are_readable(self):
+        for name, commands in (('guardrails.py', {'cargo'}), ('mutation_env.py', {'bash', 'python3'})):
+            with self.subTest(name=name):
+                source = (ROOT / 'scripts/tests' / name).read_text()
+                self.assertTrue(commands <= {word for _, word, _ in COMMANDS.python_calls(source)})
+                self.assertEqual(self.problems({name: source}), [])
 
     def test_shell_payload_requires_resolved_text(self):
         for call in ("subprocess.run([payload], shell=True)", "os.system(payload)", "os.popen(payload)",
@@ -1800,18 +1820,63 @@ class GateImageCommands(unittest.TestCase):
                                                  ('shutil', 'which', "shutil.which('just')", 'just')):
             head = f"subprocess.run([{lookup}, '--version'])"
             setup = f"import sys, shutil, subprocess\nfrom unittest.mock import patch\nd = vars({module})\n"
-            for constructor in (f"patch('{module}.{field}')", f"patch.object({module}, '{field}')",
-                                f"patch.dict(d, {{'{field}': 'cmp'}})", f"patch.dict('{module}.__dict__', {field}='cmp')"):
+            replacement = "'cmp'" if module == 'sys' else "(lambda name: 'cmp')"
+            provider = sys if module == 'sys' else shutil
+            baseline = 'original' if module == 'sys' else lambda name: 'original'
+            for constructor in (f"patch('{module}.{field}', {replacement})", f"patch.object({module}, '{field}', {replacement})",
+                                f"patch.dict(d, {{'{field}': {replacement}}})",
+                                f"patch.dict('{module}.__dict__', {field}={replacement})"):
                 patcher = setup + 'p = ' + constructor + '\n'
                 with self.subTest(provider=field, constructor=constructor):
                     clean = patcher + head + '\np.start()\np.stop()\n' + head
                     self.assertEqual([word for _, word, _ in COMMANDS.python_calls(clean)], [original, original])
-                    for active in ('p.start()\n' + head, 'with p:\n    ' + head):
-                        self.assertIn('cannot resolve', self.problems({'entry.py': patcher + active})[0])
-            for write in (f"setattr({module}, '{field}', 'cmp')", f"d['{field}'] = 'cmp'",
-                          f"d.update({field}='cmp')"):
+                    for active in ('p.start()\n' + head + '\np.stop()', 'with p:\n    ' + head):
+                        source = patcher + head + '\n' + active + '\n' + head
+                        with patch.object(provider, field, baseline):
+                            self.assertEqual(self.recorded_commands(source),
+                                             [[exe, '--version'] for exe in ('original', 'cmp', 'original')])
+                        self.assertIn('cannot resolve', self.problems({'entry.py': source})[0])
+            for write in (f"setattr({module}, '{field}', {replacement})", f"d['{field}'] = {replacement}",
+                          f"d.update({field}={replacement})"):
                 with self.subTest(provider=field, write=write):
-                    self.assertIn('cannot resolve', self.problems({'entry.py': setup + write + '\n' + head})[0])
+                    source = setup + write + '\n' + head
+                    with patch.object(provider, field, baseline):
+                        self.assertEqual(self.recorded_commands(source), [['cmp', '--version']])
+                    self.assertIn('cannot resolve', self.problems({'entry.py': source})[0])
+
+    def test_fresh_provider_lookups_follow_module_registry(self):
+        for module, field, replacement, suffix in (('sys', 'executable', "'cmp'", ''),
+                                                   ('shutil', 'which', "lambda _: 'cmp'", "('just')")):
+            setup = (f"import {module} as original, sys, subprocess\nfrom unittest.mock import patch\n"
+                     f"from types import ModuleType\nother = ModuleType('{module}')\nother.{field} = {replacement}\n"
+                     f"registry = sys.modules\nwith patch.dict(registry, {{'{module}': other}}):\n")
+            for lookup, command in (('', f"registry['{module}'].{field}"), (f'import {module} as fresh', f'fresh.{field}'),
+                                    (f'from {module} import {field} as fresh', 'fresh')):
+                source = setup + (f'    {lookup}\n' if lookup else '') + f'    subprocess.run([{command}{suffix}])'
+                with self.subTest(module=module, lookup=command):
+                    self.assertEqual(self.recorded_commands(source), [['cmp']])
+                    self.assertIn('cannot resolve', self.problems({'entry.py': source})[0])
+            clean = setup + f'    subprocess.run([original.{field}{suffix}])\nimport {module}\nsubprocess.run([{module}.{field}{suffix}])'
+            self.assertEqual(self.problems({'entry.py': clean}), [])
+            for update in (f"registry['{module}'] = other", f"registry.update({module}=other)",
+                           f"registry |= {{'{module}': other}}"):
+                source = setup.partition('with patch.dict')[0] + update + f'\nfrom {module} import {field}\nsubprocess.run([{field}{suffix}])'
+                with self.subTest(update=update):
+                    with patch.dict(sys.modules):
+                        self.assertEqual(self.recorded_commands(source), [['cmp']])
+                    self.assertIn('cannot resolve replaced Python provider module', self.problems({'entry.py': source})[0])
+
+    def test_class_provider_patch_covers_test_method_calls(self):
+        setup = ("import unittest, sys, subprocess\nfrom unittest.mock import patch\n"
+                 "class Parent:\n    def test_inherited(self): BODY\n@patch('sys.executable', 'cmp')\n"
+                 "class Suite(Parent, unittest.TestCase):\n    def test_local(self): BODY\n")
+        launch = 'subprocess.run([sys.executable])'
+        self.assertEqual(self.problems({'entry.py': setup.replace('BODY', 'pass') + 'unittest.main()'}), [])
+        for call in ('Suite().test_local()', 'Suite().test_inherited()', 'unittest.main()'):
+            source = setup.replace('BODY', launch) + call
+            with self.subTest(call=call):
+                self.assertEqual(self.recorded_commands(source), [['cmp']] * (2 if call == 'unittest.main()' else 1))
+                self.assertIn('cannot resolve Python process executable', self.problems({'entry.py': source})[0])
 
     def test_direct_helper_argv_preserves_proven_command(self):
         for vector in ("[tool, '--version']", "(tool, '--version')"):

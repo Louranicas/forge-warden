@@ -1007,7 +1007,8 @@ class PythonInstance:
 
 
 class FixtureDescriptor(ast.expr):
-    pass
+    def __init__(self, paths):
+        self.paths = paths
 
 
 class FixtureExecutable(ast.expr):
@@ -1043,16 +1044,20 @@ UNRESOLVED_CONTEXT = object()
 LIST_MUTATIONS = frozenset({'append', 'extend', 'insert', 'pop', 'remove', 'clear', 'sort', 'reverse',
                             '__iadd__', '__imul__', '__setitem__', '__delitem__'})
 FILE_CONTEXT = object()
+FILESYSTEM_PATH = object()
+PRIVATE_FIXTURE_HOME = object()
 NONSUPPRESSING_CONTEXT = object()
 GENERATOR_DECORATORS = ('contextlib.contextmanager', 'contextlib.asynccontextmanager')
 GeneratorManager = namedtuple('GeneratorManager', 'helper call receiver')
-EXECUTABLE_PROVIDERS = {'sys': 'executable', 'shutil': 'which'}
+PATH_CONSTRUCTORS = {'pathlib.Path', 'pathlib.PosixPath', 'pathlib.WindowsPath',
+                     'pathlib.PurePath', 'pathlib.PurePosixPath', 'pathlib.PureWindowsPath'}
+PROVIDER_FIELDS = {'sys.executable', 'shutil.which', 'sys.modules', 'tempfile.TemporaryDirectory'} | PATH_CONSTRUCTORS
+PROVIDER_MODULES = {name.partition('.')[0] for name in PROVIDER_FIELDS}
 FIXTURE_VERIFIER_SHA256 = '738ecf280222d99f9d5042d41f37129fc7cb924ca2481fafe605f9c93918447a'
 
 
 class PatchedProvider:
-    def __init__(self, name, changes=True):
-        self.name = name
+    def __init__(self, changes):
         self.changes = changes
 
 
@@ -1349,6 +1354,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     bind_argument(named[keyword.arg], keyword.value)
         if suspended:
             local.update(suspended)
+        elif function is imports.fixture_manager:
+            for parameter in positional:
+                local[parameter.arg] = frozenset({object()})
+            local[PRIVATE_FIXTURE_HOME] = frozenset({object()})
         helper.called = True
         if function in active:
             if (ordering or strict) and active[function] != local:
@@ -1466,6 +1475,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             return frozenset({ast.Constant(''.join(parts))})
         if isinstance(node, ast.Call):
             return results.get(node, frozenset({UNKNOWN_CALLABLE}))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) and qualified(node.left, names) == {FILESYSTEM_PATH}:
+            parts = qualified(node.right, names)
+            if parts and all(part is FILESYSTEM_PATH or isinstance(part, ast.Constant) and isinstance(part.value, str)
+                             for part in parts):
+                return frozenset({FILESYSTEM_PATH})
         if isinstance(node, ast.Name):
             if node.id in names:
                 return names[node.id]
@@ -1501,12 +1515,12 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             container = qualified(node.value, names)
             key = argument(node.slice, names)
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                if container == {'sys.modules'} and key.value in EXECUTABLE_PROVIDERS:
-                    return frozenset({key.value})
-                for module, attr in EXECUTABLE_PROVIDERS.items():
-                    if container == {module + '.__dict__'} and key.value == attr:
-                        name = module + '.' + attr
-                        return names.get((name, 'provider'), frozenset({name}))
+                if len(container) == 1:
+                    for field in provider_fields(container, key, names, dictionary=True):
+                        values = names.get((field, 'provider'), frozenset({field}))
+                        if container == {'sys.modules'} and values != {key.value}:
+                            raise Unsupported('cannot resolve Python provider module ' + key.value)
+                        return values
         if isinstance(node, ast.BoolOp):
             return frozenset().union(*(qualified(value, names) for value in node.values))
         if isinstance(node, ast.NamedExpr):
@@ -1792,9 +1806,25 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
 
     def provider_fields(owners, key, names, *, dictionary=False):
         key = argument(key, names)
-        return {module + '.' + attr for module, attr in EXECUTABLE_PROVIDERS.items()
-                if (module + '.__dict__' if dictionary else module) in owners
-                and (not isinstance(key, ast.Constant) or key.value == attr)}
+        fields = set()
+        for name in PROVIDER_FIELDS:
+            module, _, attr = name.rpartition('.')
+            if (module + '.__dict__' if dictionary else module) in owners:
+                if not isinstance(key, ast.Constant) or key.value == attr:
+                    fields.add(name)
+        if dictionary and 'sys.modules' in owners:
+            fields.update('sys.modules.' + module for module in PROVIDER_MODULES
+                          if not isinstance(key, ast.Constant) or key.value == module)
+        return fields
+
+    def record_provider_import(module, names):
+        if module in PROVIDER_MODULES:
+            field = 'sys.modules.' + module
+            known = names.get((field, 'provider'), ())
+            if (not names.get(('sys.modules', 'provider'), frozenset()) <= {'sys.modules', MISSING_FIELD} or
+                    any(value not in (module, field, MISSING_FIELD) for value in known)):
+                raise Unsupported('cannot resolve replaced Python provider module ' + module)
+            names[(field, 'provider')] = frozenset({module})
 
     def mapping_writes(mapping, keywords, attr, names):
         if any(kw.arg in (None, attr) for kw in keywords):
@@ -1808,20 +1838,21 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         return not (isinstance(mapping, (ast.List, ast.Tuple)) and not mapping.elts)
 
     def patch_provider(patch, state, enter, *, saved_as):
-        field = patch.name, 'provider'
-        saved = patch, saved_as
-        previous = state.get(saved, frozenset())
-        if enter:
-            if previous:
-                raise Unsupported('cannot resolve repeatedly started executable provider patch')
-            state[saved] = state.get(field, frozenset({patch.name}))
-            if patch.changes:
-                state[field] = frozenset({UNKNOWN_CALLABLE})
-        elif previous:
-            if MISSING_FIELD in previous:
-                raise Unsupported('cannot resolve conditional executable provider patch')
-            state[field] = previous
-            state[saved] = frozenset()
+        for name, changes in patch.changes.items():
+            field = name, 'provider'
+            saved = patch, (saved_as, name)
+            previous = state.get(saved, frozenset())
+            if enter:
+                if previous:
+                    raise Unsupported('cannot resolve repeatedly started executable provider patch')
+                state[saved] = state.get(field, frozenset({name}))
+                if changes:
+                    state[field] = frozenset({UNKNOWN_CALLABLE})
+            elif previous:
+                if MISSING_FIELD in previous:
+                    raise Unsupported('cannot resolve conditional executable provider patch')
+                state[field] = previous
+                state[saved] = frozenset()
 
     def invoke(target, call, names, receiver=None, wrapped=False, interrupted=None):
         if isinstance(target, BoundCall):
@@ -1858,6 +1889,13 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if (len(descriptors) != 1 or not isinstance(fd := next(iter(descriptors)), FixtureDescriptor)
                         or names.get((fd, 'verified')) not in ({True}, {False})):
                     raise Unsupported('cannot resolve verified fixture descriptor')
+                inputs = imports.fixture_manager.args.args
+                entry = active[imports.fixture_manager]
+                if (len(inputs) != 3 or fd.paths != entry[inputs[0].arg] or
+                        qualified(call.args[2], names) != entry.get(PRIVATE_FIXTURE_HOME) or
+                        qualified(call.args[3], names) != entry[inputs[1].arg] or
+                        qualified(call.args[4], names) != entry[inputs[2].arg]):
+                    raise Unsupported('cannot resolve verified fixture inputs')
                 names[(fd, 'verified')] = frozenset({True})
                 names[call.args[1].id] = frozenset({FixtureExecutable(fd, named=True)})
             return {BoundCall(value) if value in (UNKNOWN_CALLABLE, UNRESOLVED_CONTEXT) or isinstance(value, ast.arg) else value
@@ -1965,7 +2003,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 return {LookupExecutable('just')}
         if target == 'builtins.vars' and len(call.args) == 1:
             modules = qualified(call.args[0], names)
-            if modules and all(module in EXECUTABLE_PROVIDERS for module in modules):
+            if modules and all(module in PROVIDER_MODULES for module in modules):
                 return {module + '.__dict__' for module in modules}
         patching = target in ('unittest.mock.patch', 'unittest.mock.patch.object', 'unittest.mock.patch.dict')
         if patching or target in ('builtins.setattr', 'builtins.delattr'):
@@ -1975,7 +2013,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             providers = set()
             if target == 'unittest.mock.patch':
                 path = argument(subject, names)
-                if isinstance(path, ast.Constant) and path.value in {m + '.' + a for m, a in EXECUTABLE_PROVIDERS.items()}:
+                if isinstance(path, ast.Constant) and path.value in PROVIDER_FIELDS:
                     providers.add(path.value)
             elif target == 'unittest.mock.patch.dict':
                 owners = qualified(subject, names)
@@ -1986,23 +2024,24 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     owners = {path.value}
                 providers = provider_fields(owners, None, names, dictionary=True)
                 if providers:
-                    return {PatchedProvider(name, not isinstance(clear, ast.Constant) or clear.value or
-                                            mapping_writes(mapping, call.keywords, name.split('.')[1], names))
-                            for name in providers}
+                    return {PatchedProvider({name: not isinstance(clear, ast.Constant) or clear.value or
+                                             mapping_writes(mapping, call.keywords, name.rpartition('.')[2], names)
+                                             for name in providers})}
             else:
                 providers = provider_fields(qualified(subject, names), second or keywords.get('attribute'), names)
             if patching and providers:
-                return {PatchedProvider(name) for name in providers}
+                return {PatchedProvider(dict.fromkeys(providers, True))}
             for name in providers:
                 names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if target == 'unittest.mock.patch.stopall':
-            started = [key[0] for key, values in names.items() if isinstance(key, tuple) and
-                       isinstance(key[0], PatchedProvider) and key[1] == 'started' and values]
-            if len({patch.name for patch in started}) != len(started):
+            started = {key[0] for key, values in names.items() if isinstance(key, tuple) and
+                       isinstance(key[0], PatchedProvider) and key[1][0] == 'started' and values}
+            patched_fields = [name for patch in started for name in patch.changes]
+            if len(set(patched_fields)) != len(patched_fields):
                 raise Unsupported('cannot resolve overlapping executable provider patches')
             for patch in started:
                 patch_provider(patch, names, False, saved_as='started')
-        if isinstance(target, str) and ('.__dict__.' in target or target.startswith('builtins.dict.')
+        if isinstance(target, str) and ('.__dict__.' in target or target.startswith(('builtins.dict.', 'sys.modules.'))
                                         or target in ('operator.setitem', 'operator.delitem')):
             owner, _, method = target.rpartition('.')
             operands = call.args
@@ -2012,7 +2051,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             else:
                 owners = {owner}
             for name in provider_fields(owners, None, names, dictionary=True):
-                attr = name.split('.')[1]
+                attr = name.rpartition('.')[2]
                 if method in ('clear', 'popitem') or (method in ('update', '__ior__') and
                         mapping_writes(operands[0] if operands else None, call.keywords, attr, names)) or (
                         method in ('__setitem__', '__delitem__', 'setitem', 'delitem', 'pop') and operands and
@@ -2025,7 +2064,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
             if module not in ('os', 'posix'):
                 operation = ''
             if operation == 'open' and (live or imports.fixture_manager in active):
-                fd = FixtureDescriptor()
+                path = call.args[0] if call.args else next((kw.value for kw in call.keywords if kw.arg == 'path'), None)
+                fd = FixtureDescriptor(qualified(path, names))
                 names[(fd, 'verified')] = frozenset({False})
                 return {fd}
             if operation in ('close', 'closerange', 'dup2', 'dup3') or target == 'socket.close':
@@ -2057,9 +2097,11 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen'):
                     file = call.args[0] if call.args else next((kw.value for kw in call.keywords
                                                               if kw.arg in ('fd', 'file', 'name')), None)
-                    value = argument(file, names)
-                    if not (isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes)) or
-                            disjoint_range(file, None, names, live)):
+                    owners = qualified(file, names)
+                    path = owners and all(owner is FILESYSTEM_PATH or
+                                          isinstance(owner, ast.Constant) and isinstance(owner.value, (str, bytes))
+                                          for owner in owners)
+                    if not path and not disjoint_range(file, None, names, live):
                         raise Unsupported('cannot resolve fixture descriptor ownership')
                 process = target in PY_ARGV or target in ('asyncio.create_subprocess_exec', 'asyncio.subprocess.create_subprocess_exec')
                 operands = [*call.args, *(kw.value for kw in call.keywords if not (process and kw.arg == 'pass_fds'))]
@@ -2077,6 +2119,8 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     keywords = [ast.keyword(arg=kw.arg, value=value) for kw, value in zip(call.keywords, keyword_values)]
                     call = ast.copy_location(ast.Call(func=call.func, args=args, keywords=keywords), call)
             yield call, target, wrapped or require_command, source
+            if target in PATH_CONSTRUCTORS:
+                return {FILESYSTEM_PATH}
             if target in ('builtins.open', 'io.open', 'io.FileIO', 'os.fdopen', 'io.StringIO', 'io.BytesIO', 'tempfile.TemporaryFile',
                           'tempfile.NamedTemporaryFile'):
                 return {FILE_CONTEXT}
@@ -2154,7 +2198,10 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                     if isinstance(manager, BoundCall) or manager in (MISSING_NAME, UNRESOLVED_CONTEXT) or (
                             ordering and manager not in (STANDARD_CONTEXT, FILE_CONTEXT, NONSUPPRESSING_CONTEXT)):
                         raise Unsupported('cannot resolve Python context manager')
-                    if method == exit_method and manager in (FILE_CONTEXT, NONSUPPRESSING_CONTEXT):
+                    if (method == entry and getattr(node, '_generator_span', False) and active
+                            and next(reversed(active)) is imports.fixture_manager):
+                        values.update(active[imports.fixture_manager][PRIVATE_FIXTURE_HOME])
+                    elif method == exit_method and manager in (FILE_CONTEXT, NONSUPPRESSING_CONTEXT):
                         values.add(ast.Constant(False))
                     else:
                         values.add(FILE_CONTEXT if manager is FILE_CONTEXT and method == entry else UNKNOWN_CALLABLE)
@@ -2229,7 +2276,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr):
             for name in provider_fields(qualified(node.target, names), None, names, dictionary=True):
-                if mapping_writes(node.value, (), name.split('.')[1], names):
+                if mapping_writes(node.value, (), name.rpartition('.')[2], names):
                     names[(name, 'provider')] = frozenset({UNKNOWN_CALLABLE})
         if isinstance(node, ast.AugAssign):
             method = '__iadd__' if isinstance(node.op, ast.Add) else '__imul__'
@@ -2262,8 +2309,6 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                         continue
                 decorators.append(qualified(expression, names))
             if isinstance(node, ast.ClassDef):
-                if any(isinstance(owner, PatchedProvider) for group in decorators for owner in group):
-                    raise Unsupported('cannot resolve class-wide executable provider patch')
                 bases = [qualified(base, names) for base in node.bases]
                 cls = PythonClass(node, bases, skipped)
                 allocations.append(cls)
@@ -2271,6 +2316,23 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                                          class_body=True, require_command=require_command, reachable=reachable, allocations=allocations,
                                          imports=imports, source=source)
                 for owners in reversed(decorators):
+                    if len(owners) == 1 and isinstance(patch := next(iter(owners)), PatchedProvider):
+                        inherited = {name: values for ancestor in reversed(cls.lineage)
+                                     for name, values in ancestor.members.items()
+                                     if isinstance(name, str) and name.startswith('test')}
+                        for name, values in inherited.items():
+                            wrapped = set()
+                            for value in values:
+                                if isinstance(value, PythonHelper):
+                                    helper = PythonHelper(value.node, value.frames, value.decorator, value.source)
+                                    context = ast.withitem(context_expr=CapturedArgument({patch}), optional_vars=None)
+                                    body = value.node.body if value.managed_body is None else value.managed_body
+                                    helper.managed_body = [ast.With(items=[context], body=body)] if body else []
+                                    wrapped.add(helper)
+                                else:
+                                    wrapped.add(value)
+                            cls.members[name] = frozenset(wrapped)
+                        continue
                     application = ast.copy_location(ast.Call(func=node, args=[CapturedArgument({cls})], keywords=[]), node)
                     for owner in owners or {UNKNOWN_CALLABLE}:
                         if isinstance(owner, PythonHelper):
@@ -2489,6 +2551,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split('.')[0]
+                record_provider_import(root, names)
                 if (root not in sys.stdlib_module_names and
                         ((imports.directory / root).is_dir() or
                          (imports.directory / root).with_suffix('.py').is_file())):
@@ -2496,6 +2559,7 @@ def python_callees(body, bindings, ordering, targets, enclosing=(), active=None,
                 bind(alias.asname or root, frozenset({alias.name if alias.asname else root}))
         elif isinstance(node, ast.ImportFrom):
             module = '.' * node.level + (node.module or '')
+            record_provider_import(module.partition('.')[0], names)
             for alias in node.names:
                 if alias.name == '*' and module in ('subprocess', 'asyncio', 'asyncio.subprocess', 'os', 'pty', 'shlex', 'functools'):
                     for exported in import_module(module).__all__:

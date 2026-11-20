@@ -313,11 +313,10 @@ class AgreementFixtures(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        found = shutil.which("cargo")
-        if found is None:
+        if shutil.which("cargo") is None:
             raise RuntimeError("GUARDRAILS_TOOL_UNAVAILABLE: install Cargo and set PATH before running source-agreement fixtures")
-        cls.cargo = os.path.abspath(found)
-        fetched = subprocess.run([cls.cargo, "fetch", "--locked", "--offline"], cwd=ROOT,
+        cls.cargo_env = dict(os.environ, PATH=os.pathsep.join(os.path.abspath(entry) for entry in os.get_exec_path()))
+        fetched = subprocess.run(["cargo", "fetch", "--locked", "--offline"], cwd=ROOT, env=cls.cargo_env,
                                  capture_output=True, text=True)
         if fetched.returncode:
             raise RuntimeError(
@@ -332,8 +331,8 @@ class AgreementFixtures(unittest.TestCase):
         shutil.copytree(ROOT, self.root, ignore=shutil.ignore_patterns(".git", "target", "__pycache__"))
 
     def run_cargo(self, *args):
-        return subprocess.run([self.cargo, *args, "--target-dir", str(self.root / "target")],
-                              cwd=self.root, capture_output=True, text=True)
+        return subprocess.run(["cargo", *args, "--target-dir", str(self.root / "target")],
+                              cwd=self.root, env=self.cargo_env, capture_output=True, text=True)
 
     def agreement(self):
         return self.run_cargo("test", "-p", "forge-warden-cli", "--test", "classifier_agreement",
@@ -352,7 +351,7 @@ class AgreementFixtures(unittest.TestCase):
             'description="Compiler context agreement fixture"\nlicense="MIT"\n'
             '[lints]\nworkspace=true\n')
         (member / "src/lib.rs").write_text('//! Compiled workspace identity control.\n/// A public control.\npub fn control() {}\n')
-        lock = subprocess.run([self.cargo, "generate-lockfile", "--offline"], cwd=self.root,
+        lock = subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=self.root, env=self.cargo_env,
                               capture_output=True, text=True)
         self.assertEqual(lock.returncode, 0, lock.stderr)
         result = self.agreement()

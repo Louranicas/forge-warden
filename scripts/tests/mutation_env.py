@@ -14,9 +14,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class MutationEnvironment(unittest.TestCase):
     def test_both_entrypoints_drop_inherited_target(self):
-        commands = {"ci_local": ["bash", "scripts/ci_local.sh"],
-                    "workflow": ["python3", "-I", "scripts/mutation_ci.py", "run", "diff"],
-                    "baseline": ["python3", "-I", "scripts/mutation_ci.py", "run", "full"]}
         with tempfile.TemporaryDirectory(prefix="mutation-env-") as directory:
             root = Path(directory)
             sentinel = root / "source.rs"
@@ -87,7 +84,7 @@ if sys.argv[1] == "mutants":
                 path = root / "bin" / name
                 path.write_text(text)
                 path.chmod(0o700)
-            for entry, command in commands.items():
+            for entry in ("ci_local", "workflow", "baseline"):
                 if entry == "workflow":
                     (root / "pr.diff").symlink_to(sentinel)
                 for inherited in (False, True):
@@ -108,7 +105,12 @@ if sys.argv[1] == "mutants":
                             subprocess.run(["python3", "-I", "scripts/mutation_ci.py", "plan", "diff"], cwd=root, env=env,
                                            capture_output=True, check=True)
                             self.assertEqual(sentinel.read_text(), "original source\n")
-                        result = subprocess.run(command, cwd=root, env=env, capture_output=True)
+                        if entry == "ci_local":
+                            result = subprocess.run(["bash", "scripts/ci_local.sh"], cwd=root, env=env, capture_output=True)
+                        else:
+                            mode = "diff" if entry == "workflow" else "full"
+                            result = subprocess.run(["python3", "-I", "scripts/mutation_ci.py", "run", mode],
+                                                    cwd=root, env=env, capture_output=True)
                         self.assertEqual(result.returncode, 2 if entry == "ci_local" else 1, result.stderr)
                         actual = json.loads(receipt.read_text())
                         self.assertEqual("--in-diff" in actual["args"], entry != "baseline")
